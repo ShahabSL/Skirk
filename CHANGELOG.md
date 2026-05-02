@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 - 2026-05-02
 
 - Added Go Skirk CLI with Drive data lane and Sheets control lane.
 - Added one-command Google kit setup and config generation.
