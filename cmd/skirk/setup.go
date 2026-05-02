@@ -46,6 +46,8 @@ func setupInit(ctx context.Context, args []string) error {
 	sheet := fs.String("sheet", "skirk", "Google Sheet tab name")
 	adcPath := fs.String("adc", "", "Application Default Credentials JSON path")
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of launching gcloud login if ADC is missing")
+	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
+	resetGoogleLogin := fs.Bool("reset-google-login", false, "revoke local gcloud and ADC credentials before Google login")
 	clientRoute := fs.String("client-route", "google_front_pinned", "client Google API route: direct, real_pinned, google_front_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for the client")
@@ -60,14 +62,32 @@ func setupInit(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *noLogin && (*googleLogin || *resetGoogleLogin) {
+		return fmt.Errorf("--no-gcloud-login cannot be combined with --google-login or --reset-google-login")
+	}
+	if *adcPath != "" && (*googleLogin || *resetGoogleLogin) {
+		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login or --reset-google-login")
+	}
 
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
-	if err != nil {
+	if *resetGoogleLogin {
+		fmt.Printf("Resetting local Google credentials before login.\n\n")
+		if err := runGcloudCredentialReset(ctx); err != nil {
+			return err
+		}
+		creds = adcCredentials{}
+		err = errors.New("Google login was reset")
+	}
+	if *googleLogin || err != nil {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
-		fmt.Printf("Google login is required. Skirk will run gcloud and ask you to paste the browser code.\n\n")
+		if *googleLogin && err == nil {
+			fmt.Printf("Google login was requested. Skirk will run gcloud and ask you to paste the browser code.\n\n")
+		} else {
+			fmt.Printf("Google login is required. Skirk will run gcloud and ask you to paste the browser code.\n\n")
+		}
 		if err := runGcloudLogin(ctx); err != nil {
 			return err
 		}
@@ -211,6 +231,15 @@ func setupInit(ctx context.Context, args []string) error {
 	return nil
 }
 
+func ensureGcloud(ctx context.Context) (string, error) {
+	gcloud, err := findGcloud()
+	if err == nil {
+		return gcloud, nil
+	}
+	fmt.Printf("Google Cloud CLI was not found. Skirk will install it under ~/google-cloud-sdk.\n\n")
+	return installGcloud(ctx)
+}
+
 func (c adcCredentials) AuthConfig() skirk.AuthConfig {
 	return skirk.AuthConfig{
 		ClientID:     c.ClientID,
@@ -261,20 +290,42 @@ func defaultADCPath() string {
 }
 
 func runGcloudLogin(ctx context.Context) error {
-	gcloud, err := findGcloud()
+	gcloud, err := ensureGcloud(ctx)
 	if err != nil {
-		fmt.Printf("Google Cloud CLI was not found. Skirk will install it under ~/google-cloud-sdk.\n\n")
-		gcloud, err = installGcloud(ctx)
-		if err != nil {
-			return err
-		}
+		return err
 	}
-	cmd := exec.CommandContext(ctx, gcloud, "auth", "login", "--no-launch-browser", "--enable-gdrive-access", "--update-adc", "--force")
+	cmd := exec.CommandContext(ctx, gcloud,
+		"auth", "application-default", "login",
+		"--no-launch-browser",
+		"--scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email,openid",
+	)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = withGcloudPath(os.Environ())
 	return cmd.Run()
+}
+
+func runGcloudCredentialReset(ctx context.Context) error {
+	gcloud, err := ensureGcloud(ctx)
+	if err != nil {
+		return err
+	}
+	commands := [][]string{
+		{"auth", "application-default", "revoke", "--quiet"},
+		{"auth", "revoke", "--all", "--quiet"},
+	}
+	for _, args := range commands {
+		cmd := exec.CommandContext(ctx, gcloud, args...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Env = withGcloudPath(os.Environ())
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: gcloud %s failed: %v\n", strings.Join(args, " "), err)
+		}
+	}
+	return nil
 }
 
 func findGcloud() (string, error) {

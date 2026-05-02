@@ -43,12 +43,35 @@ You can also run the interactive operator menu:
 If Application Default Credentials are missing, setup runs:
 
 ```bash
-gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force
+gcloud auth application-default login --no-launch-browser --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email,openid
 ```
 
 That command prints a browser URL and code. Open the URL, approve the Google account, paste the code back into the terminal, then setup continues.
 
 If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` before starting the login flow.
+
+## Switch Google Accounts
+
+By default, setup reuses the existing local Application Default Credentials. To create a kit with a different Google account, force a new login:
+
+```bash
+skirk setup init --out skirk-kit-new --google-login
+```
+
+If the old account is blocked, banned, expired, or just wrong, reset local Google credentials first:
+
+```bash
+skirk setup init --out skirk-kit-new --reset-google-login
+```
+
+That reset runs the documented local credential cleanup commands before opening the login flow:
+
+```bash
+gcloud auth application-default revoke --quiet
+gcloud auth revoke --all --quiet
+```
+
+This only changes credentials on the machine running setup. Existing generated Skirk configs keep using the refresh token embedded in those config files until you delete the workspace or revoke the Google app access for that account.
 
 ## Generated Files
 
