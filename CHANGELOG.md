@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 - 2026-05-02
+
+- Added official Skirk logo assets.
+- Added the Skirk terminal banner.
+- Updated desktop and Android launcher icons.
+
 ## v0.1.0 - 2026-05-02
 
 - Added Go Skirk CLI with Drive data lane and Sheets control lane.

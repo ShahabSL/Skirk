@@ -12,7 +12,7 @@ func menu(ctx context.Context) error {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Println()
-		fmt.Println("Skirk")
+		fmt.Print(skirkBanner)
 		fmt.Println("1. Create Google kit")
 		fmt.Println("2. Run exit")
 		fmt.Println("3. Run client SOCKS")
@@ -59,6 +59,24 @@ func menu(ctx context.Context) error {
 		}
 	}
 }
+
+const skirkBanner = `             ##################
+            ####################
+            ####            ####
+            ####            ###
+            ####
+            ####    ####
+            #########  ########
+            #########  #########
+                    ####    ####
+                            ####
+             ###            ####
+            ####            ####
+            ####################
+             ##################
+
+Skirk
+`
 
 func prompt(reader *bufio.Reader, label, fallback string) string {
 	if fallback != "" {

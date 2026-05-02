@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { desktopApi, type ClientProfile, type DesktopSnapshot } from "./lib/api";
+import logoMark from "./assets/logo-mark.png";
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -70,7 +71,9 @@ function App() {
     <div className="shell">
       <aside>
         <div className="brand">
-          <div className="mark">S</div>
+          <div className="mark">
+            <img src={logoMark} alt="" />
+          </div>
           <span>Skirk</span>
         </div>
         <nav>

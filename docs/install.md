@@ -25,7 +25,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=v0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=v0.1.1 sh
 ```
 
 Install to a different directory:

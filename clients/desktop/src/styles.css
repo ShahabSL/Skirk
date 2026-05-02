@@ -69,13 +69,20 @@ main {
 }
 
 .mark {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  background: var(--foreground);
-  color: var(--background);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
   display: grid;
   place-items: center;
+  overflow: hidden;
+}
+
+.mark img {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 
 nav {

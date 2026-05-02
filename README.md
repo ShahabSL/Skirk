@@ -1,5 +1,9 @@
 # Skirk
 
+<p align="center">
+  <img src="assets/logo.png" alt="Skirk logo" width="160">
+</p>
+
 Skirk is a Go-first restricted-network transport that uses Google Drive as the encrypted data lane and Google Sheets as the control lane. It is designed for the case where ordinary endpoints fail but Google APIs can still be reached, including through Google-fronted TLS routing.
 
 ## Current Status

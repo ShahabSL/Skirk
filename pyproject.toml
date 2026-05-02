@@ -1,6 +1,6 @@
 [project]
 name = "skirk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Selectable Skirk transport prototypes for restricted Google-reachable networks."
 requires-python = ">=3.11"
 dependencies = [
