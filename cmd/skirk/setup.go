@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -289,43 +291,78 @@ func findGcloud() (string, error) {
 }
 
 func installGcloud(ctx context.Context) (string, error) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		return "", fmt.Errorf("automatic Google Cloud CLI install is not supported on %s; install gcloud manually or run setup with --adc", runtime.GOOS)
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	script := `set -eu
-if ! command -v bash >/dev/null 2>&1; then
-  echo "error: bash is required to install Google Cloud CLI" >&2
-  exit 1
-fi
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT INT TERM
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL https://sdk.cloud.google.com > "$tmp/install-gcloud.sh"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp/install-gcloud.sh" https://sdk.cloud.google.com
-else
-  echo "error: curl or wget is required to install Google Cloud CLI" >&2
-  exit 1
-fi
-bash "$tmp/install-gcloud.sh" --disable-prompts --install-dir="$HOME"
-`
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
-	cmd.Stdin = os.Stdin
+	archive, err := gcloudArchiveName(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp("", "skirk-gcloud-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	archivePath := filepath.Join(tmp, archive)
+	url := "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/" + archive
+	fmt.Printf("Downloading Google Cloud CLI archive: %s\n", url)
+	if err := downloadFile(ctx, url, archivePath); err != nil {
+		return "", err
+	}
+	fmt.Printf("Extracting Google Cloud CLI to %s\n", home)
+	cmd := exec.CommandContext(ctx, "tar", "-xzf", archivePath, "-C", home)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = withGcloudPath(os.Environ())
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("Google Cloud CLI install failed: %w", err)
+		return "", fmt.Errorf("Google Cloud CLI extract failed: %w", err)
 	}
 	gcloud := filepath.Join(home, "google-cloud-sdk", "bin", "gcloud")
 	if _, err := os.Stat(gcloud); err != nil {
 		return "", fmt.Errorf("Google Cloud CLI install finished but %s was not found: %w", gcloud, err)
 	}
 	return gcloud, nil
+}
+
+func gcloudArchiveName(goos, goarch string) (string, error) {
+	if goos != "linux" {
+		return "", fmt.Errorf("automatic Google Cloud CLI install is not supported on %s; install gcloud manually or run setup with --adc", goos)
+	}
+	switch goarch {
+	case "amd64":
+		return "google-cloud-cli-linux-x86_64.tar.gz", nil
+	case "arm64":
+		return "google-cloud-cli-linux-arm.tar.gz", nil
+	case "386":
+		return "google-cloud-cli-linux-x86.tar.gz", nil
+	default:
+		return "", fmt.Errorf("automatic Google Cloud CLI install does not support %s/%s; install gcloud manually or run setup with --adc", goos, goarch)
+	}
+}
+
+func downloadFile(ctx context.Context, url, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download failed status=%d", resp.StatusCode)
+	}
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func withGcloudPath(env []string) []string {

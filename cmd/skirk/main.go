@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -27,14 +28,26 @@ var (
 
 func main() {
 	if err := run(os.Args); err != nil {
+		if errors.Is(err, context.Canceled) {
+			os.Exit(130)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt)
+	defer signal.Stop(signals)
+	defer cancel()
+	go func() {
+		<-signals
+		cancel()
+		<-signals
+		os.Exit(130)
+	}()
 	if len(args) < 2 {
 		return menu(ctx)
 	}

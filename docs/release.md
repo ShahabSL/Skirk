@@ -26,7 +26,7 @@ The second command should print nothing.
 ## Build Release Archives
 
 ```bash
-VERSION=v0.1.2 make package-release
+VERSION=v0.1.3 make package-release
 ```
 
 This writes:
@@ -41,8 +41,8 @@ This writes:
 The included GitHub Actions release workflow publishes these artifacts when a `v*` tag is pushed:
 
 ```bash
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
 After the release exists, Linux users can install with:

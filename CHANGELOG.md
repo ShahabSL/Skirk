@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3 - 2026-05-02
+
+- Replaced noisy Google Cloud CLI setup with quiet archive installation.
+- Fixed Ctrl-C handling for Skirk menu prompts and long-running commands.
+
 ## v0.1.2 - 2026-05-02
 
 - Added automatic Google Cloud CLI install/check during server setup.
