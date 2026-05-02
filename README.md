@@ -47,7 +47,7 @@ Create a Google-backed kit:
 skirk setup init --out skirk-kit
 ```
 
-If Google login is needed, Skirk runs `gcloud auth application-default login --no-launch-browser ...` with Drive and Sheets scopes and prints the browser URL/code flow.
+If Google login is needed, Skirk runs `gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force` and prints the browser URL/code flow.
 If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` first.
 
 To switch to a different Google account, force a new login:

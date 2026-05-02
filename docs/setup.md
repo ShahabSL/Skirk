@@ -43,10 +43,12 @@ You can also run the interactive operator menu:
 If Application Default Credentials are missing, setup runs:
 
 ```bash
-gcloud auth application-default login --no-launch-browser --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email,openid
+gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force
 ```
 
 That command prints a browser URL and code. Open the URL, approve the Google account, paste the code back into the terminal, then setup continues.
+
+Skirk uses Google Sheets through the Drive authorization scope. Google Sheets API accepts Drive scope for spreadsheet creation and values read/write, so setup does not need to request a separate Sheets scope during login.
 
 If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` before starting the login flow.
 

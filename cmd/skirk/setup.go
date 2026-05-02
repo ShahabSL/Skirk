@@ -295,9 +295,11 @@ func runGcloudLogin(ctx context.Context) error {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, gcloud,
-		"auth", "application-default", "login",
+		"auth", "login",
 		"--no-launch-browser",
-		"--scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/userinfo.email,openid",
+		"--enable-gdrive-access",
+		"--update-adc",
+		"--force",
 	)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
