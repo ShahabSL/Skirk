@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,12 @@ type adcCredentials struct {
 	Type         string `json:"type"`
 }
 
-const defaultCustomOAuthScopes = "openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/drive.file"
+type oauthClientCredentials struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive.file"
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -50,8 +56,8 @@ func setupInit(ctx context.Context, args []string) error {
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of launching gcloud login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
 	resetGoogleLogin := fs.Bool("reset-google-login", false, "revoke local gcloud and ADC credentials before Google login")
-	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth Desktop client JSON; uses your own OAuth project/quota and implies --google-login")
-	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma-separated scopes used with --oauth-client-file")
+	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth TV/Limited Input client JSON; uses device login and your own OAuth project/quota")
+	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used with --oauth-client-file")
 	clientRoute := fs.String("client-route", "google_front_pinned", "client Google API route: direct, real_pinned, google_front_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for the client")
@@ -78,8 +84,12 @@ func setupInit(ctx context.Context, args []string) error {
 	loginRequested := *googleLogin || strings.TrimSpace(*oauthClientFile) != ""
 	if *resetGoogleLogin {
 		fmt.Printf("Resetting local Google credentials before login.\n\n")
-		if err := runGcloudCredentialReset(ctx); err != nil {
-			return err
+		if strings.TrimSpace(*oauthClientFile) != "" {
+			_ = os.Remove(credsPath)
+		} else {
+			if err := runGcloudCredentialReset(ctx); err != nil {
+				return err
+			}
 		}
 		creds = adcCredentials{}
 		err = errors.New("Google login was reset")
@@ -88,19 +98,30 @@ func setupInit(ctx context.Context, args []string) error {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
-		if strings.TrimSpace(*oauthClientFile) != "" {
-			fmt.Printf("Google login will use your OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
+		if oauthPath := strings.TrimSpace(*oauthClientFile); oauthPath != "" {
+			fmt.Printf("Google login will use the device flow with your OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
+			creds, err = runGoogleDeviceOAuth(ctx, oauthPath, *oauthScopes)
+			if err != nil {
+				return err
+			}
 		} else if *googleLogin && err == nil {
 			fmt.Printf("Google login was requested. Skirk will run gcloud and ask you to paste the browser code.\n\n")
+			if err := runGcloudLogin(ctx); err != nil {
+				return err
+			}
+			creds, err = readADCCredentials(credsPath)
+			if err != nil {
+				return fmt.Errorf("google ADC still unavailable at %s after login: %w", credsPath, err)
+			}
 		} else {
 			fmt.Printf("Google login is required. Skirk will run gcloud and ask you to paste the browser code.\n\n")
-		}
-		if err := runGcloudLogin(ctx, *oauthClientFile, *oauthScopes); err != nil {
-			return err
-		}
-		creds, err = readADCCredentials(credsPath)
-		if err != nil {
-			return fmt.Errorf("google ADC still unavailable at %s after login: %w", credsPath, err)
+			if err := runGcloudLogin(ctx); err != nil {
+				return err
+			}
+			creds, err = readADCCredentials(credsPath)
+			if err != nil {
+				return fmt.Errorf("google ADC still unavailable at %s after login: %w", credsPath, err)
+			}
 		}
 	}
 	if strings.TrimSpace(creds.Account) == "" {
@@ -296,40 +317,206 @@ func defaultADCPath() string {
 	return filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
 }
 
-func gcloudLoginArgs(oauthClientFile, oauthScopes string) []string {
-	oauthClientFile = strings.TrimSpace(oauthClientFile)
-	if oauthClientFile == "" {
-		return []string{
-			"auth", "login",
-			"--no-launch-browser",
-			"--enable-gdrive-access",
-			"--update-adc",
-			"--force",
-		}
-	}
-	oauthScopes = strings.TrimSpace(oauthScopes)
-	if oauthScopes == "" {
-		oauthScopes = defaultCustomOAuthScopes
-	}
+func gcloudLoginArgs() []string {
 	return []string{
-		"auth", "application-default", "login",
-		"--no-browser",
-		"--client-id-file", oauthClientFile,
-		"--scopes", oauthScopes,
+		"auth", "login",
+		"--no-launch-browser",
+		"--enable-gdrive-access",
+		"--update-adc",
+		"--force",
 	}
 }
 
-func runGcloudLogin(ctx context.Context, oauthClientFile, oauthScopes string) error {
+func runGcloudLogin(ctx context.Context) error {
 	gcloud, err := ensureGcloud(ctx)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, gcloud, gcloudLoginArgs(oauthClientFile, oauthScopes)...)
+	cmd := exec.CommandContext(ctx, gcloud, gcloudLoginArgs()...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = withGcloudPath(os.Environ())
 	return cmd.Run()
+}
+
+func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return oauthClientCredentials{}, err
+	}
+	var raw struct {
+		Installed *oauthClientCredentials `json:"installed"`
+		Web       *oauthClientCredentials `json:"web"`
+		ClientID  string                  `json:"client_id"`
+		Secret    string                  `json:"client_secret"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return oauthClientCredentials{}, err
+	}
+	creds := oauthClientCredentials{ClientID: raw.ClientID, ClientSecret: raw.Secret}
+	if raw.Installed != nil {
+		creds = *raw.Installed
+	}
+	if raw.Web != nil && creds.ClientID == "" {
+		creds = *raw.Web
+	}
+	if strings.TrimSpace(creds.ClientID) == "" || strings.TrimSpace(creds.ClientSecret) == "" {
+		return oauthClientCredentials{}, errors.New("OAuth client JSON must contain client_id and client_secret")
+	}
+	return creds, nil
+}
+
+func normalizeOAuthScopes(scopes string) string {
+	scopes = strings.TrimSpace(scopes)
+	if scopes == "" {
+		scopes = defaultCustomOAuthScopes
+	}
+	parts := strings.FieldsFunc(scopes, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t' || r == '\r'
+	})
+	clean := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		clean = append(clean, part)
+	}
+	return strings.Join(clean, " ")
+}
+
+func runGoogleDeviceOAuth(ctx context.Context, oauthClientFile, oauthScopes string) (adcCredentials, error) {
+	client, err := readOAuthClientCredentials(oauthClientFile)
+	if err != nil {
+		return adcCredentials{}, err
+	}
+	scopes := normalizeOAuthScopes(oauthScopes)
+	code, err := requestDeviceCode(ctx, client.ClientID, scopes)
+	if err != nil {
+		return adcCredentials{}, err
+	}
+	fmt.Printf("Open this URL in a browser and enter the code:\n\n%s\n\nCode: %s\n\nWaiting for Google approval...\n\n", code.VerificationURL, code.UserCode)
+	token, err := pollDeviceToken(ctx, client, code)
+	if err != nil {
+		return adcCredentials{}, err
+	}
+	return adcCredentials{
+		Account:      "unknown",
+		ClientID:     client.ClientID,
+		ClientSecret: client.ClientSecret,
+		RefreshToken: token.RefreshToken,
+		Type:         "authorized_user",
+	}, nil
+}
+
+type deviceCodeResponse struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURL string `json:"verification_url"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+	ErrorCode       string `json:"error_code"`
+	Error           string `json:"error"`
+	ErrorDesc       string `json:"error_description"`
+}
+
+type deviceTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	Error        string `json:"error"`
+	ErrorDesc    string `json:"error_description"`
+}
+
+func requestDeviceCode(ctx context.Context, clientID, scopes string) (deviceCodeResponse, error) {
+	values := url.Values{}
+	values.Set("client_id", strings.TrimSpace(clientID))
+	values.Set("scope", scopes)
+	var out deviceCodeResponse
+	if err := postOAuthForm(ctx, "https://oauth2.googleapis.com/device/code", values, &out); err != nil {
+		return out, err
+	}
+	if out.ErrorCode != "" || out.Error != "" {
+		return out, fmt.Errorf("device code request failed: %s %s", firstNonEmpty(out.ErrorCode, out.Error), out.ErrorDesc)
+	}
+	if out.DeviceCode == "" || out.UserCode == "" || out.VerificationURL == "" {
+		return out, errors.New("device code response was missing required fields")
+	}
+	if out.Interval <= 0 {
+		out.Interval = 5
+	}
+	if out.ExpiresIn <= 0 {
+		out.ExpiresIn = 1800
+	}
+	return out, nil
+}
+
+func pollDeviceToken(ctx context.Context, client oauthClientCredentials, code deviceCodeResponse) (deviceTokenResponse, error) {
+	deadline := time.Now().Add(time.Duration(code.ExpiresIn) * time.Second)
+	interval := time.Duration(code.Interval) * time.Second
+	for {
+		if time.Now().After(deadline) {
+			return deviceTokenResponse{}, errors.New("device authorization expired before approval")
+		}
+		select {
+		case <-ctx.Done():
+			return deviceTokenResponse{}, ctx.Err()
+		case <-time.After(interval):
+		}
+		values := url.Values{}
+		values.Set("client_id", strings.TrimSpace(client.ClientID))
+		values.Set("client_secret", strings.TrimSpace(client.ClientSecret))
+		values.Set("device_code", code.DeviceCode)
+		values.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+		var out deviceTokenResponse
+		err := postOAuthForm(ctx, "https://oauth2.googleapis.com/token", values, &out)
+		if err == nil && out.RefreshToken != "" {
+			return out, nil
+		}
+		if out.Error == "authorization_pending" {
+			continue
+		}
+		if out.Error == "slow_down" {
+			interval += 5 * time.Second
+			continue
+		}
+		if out.Error != "" {
+			return out, fmt.Errorf("device token request failed: %s %s", out.Error, out.ErrorDesc)
+		}
+		if err != nil {
+			return out, err
+		}
+		return out, errors.New("device token response did not include a refresh token")
+	}
+}
+
+func postOAuthForm(ctx context.Context, endpoint string, values url.Values, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("OAuth response JSON decode failed status=%d: %w", resp.StatusCode, err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	if resp.StatusCode == http.StatusPreconditionRequired || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
+		return nil
+	}
+	return fmt.Errorf("OAuth request failed status=%d body=%q", resp.StatusCode, string(body))
 }
 
 func runGcloudCredentialReset(ctx context.Context) error {

@@ -33,7 +33,7 @@ func TestGcloudArchiveNameRejectsUnsupportedOS(t *testing.T) {
 }
 
 func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
-	got := gcloudLoginArgs("", "")
+	got := gcloudLoginArgs()
 	want := []string{
 		"auth", "login",
 		"--no-launch-browser",
@@ -51,17 +51,14 @@ func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
 	}
 }
 
-func TestGcloudLoginArgsUseCustomOAuthClient(t *testing.T) {
-	got := gcloudLoginArgs("client.json", "")
-	joined := strings.Join(got, " ")
-	for _, want := range []string{
-		"auth application-default login",
-		"--no-browser",
-		"--client-id-file client.json",
-		"https://www.googleapis.com/auth/drive.file",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("gcloudLoginArgs missing %q in %#v", want, got)
+func TestNormalizeOAuthScopes(t *testing.T) {
+	got := normalizeOAuthScopes("openid,email https://www.googleapis.com/auth/drive.file openid")
+	for _, want := range []string{"openid", "email", "https://www.googleapis.com/auth/drive.file"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("normalizeOAuthScopes missing %q in %q", want, got)
 		}
+	}
+	if strings.Count(got, "openid") != 1 {
+		t.Fatalf("normalizeOAuthScopes did not deduplicate: %q", got)
 	}
 }

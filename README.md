@@ -62,7 +62,7 @@ To start from a clean local Google login state first:
 skirk setup init --out skirk-kit-new --reset-google-login
 ```
 
-If Drive returns quota for Google Cloud CLI's shared OAuth project, create a Desktop OAuth client in your own Google Cloud project and run:
+If Drive returns quota for Google Cloud CLI's shared OAuth project, create a `TVs and Limited Input devices` OAuth client in your own Google Cloud project and run:
 
 ```bash
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
