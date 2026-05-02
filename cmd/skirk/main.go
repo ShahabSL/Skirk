@@ -19,6 +19,12 @@ import (
 	"skirk/internal/skirk"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	if err := run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -33,6 +39,12 @@ func run(args []string) error {
 		return menu(ctx)
 	}
 	switch args[1] {
+	case "help", "--help", "-h":
+		usage()
+		return nil
+	case "version":
+		fmt.Printf("skirk %s commit=%s date=%s\n", version, commit, date)
+		return nil
 	case "keygen":
 		secret, err := skirk.RandomSecret()
 		if err != nil {
@@ -74,6 +86,8 @@ func run(args []string) error {
 
 func usage() {
 	fmt.Println(`skirk commands:
+  help
+  version
   keygen
   sample-config --out skirk.json --spreadsheet-id SHEET_ID --secret SECRET
   setup init --out skirk-kit

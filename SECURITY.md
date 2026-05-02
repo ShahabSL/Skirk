@@ -22,7 +22,14 @@ If a config leaks:
    skirk workspace delete --config skirk-kit/exit.json --delete-drive-folder
    ```
 
-3. Revoke the Google OAuth access from the Google account security page.
+3. Revoke the Google OAuth access:
+
+   ```bash
+   skirk revoke --config skirk-kit/exit.json --revoke-oauth --keep-workspace
+   ```
+
+   If the config is unavailable, revoke the app access from the Google account security page.
+
 4. Generate a new kit.
 
 Workspace deletion removes the current mailbox. OAuth revocation invalidates refresh tokens so leaked configs cannot mint new Google access tokens.
@@ -34,3 +41,5 @@ The Google account stores encrypted Skirk chunks and control metadata. The exit 
 ## Responsible Use
 
 Skirk is intended for owned accounts, owned exits, and authorized network testing. Do not run it as an unauthenticated public relay.
+
+See [DISCLAIMER.md](DISCLAIMER.md) for the full legal and acceptable-use notice.

@@ -4,11 +4,20 @@ __pycache__/
 .pytest_cache/
 
 # Secrets and generated configs
+.env
+.env.*
+!.env.example
+application_default_credentials.json
+private/
 skirk.json
 skirk-kit/
 skirk-config/
+client.json
+exit.json
 *.secret
 *.token
+*.pem
+*.key
 
 # Probe/build artifacts
 probe_results/

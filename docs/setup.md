@@ -16,7 +16,13 @@ It does need an exit machine. The exit is the machine that dials the real intern
 
 ## First-Time Setup
 
-Build the binary:
+Install Skirk on Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
+```
+
+Or build the binary from a clone:
 
 ```bash
 make build

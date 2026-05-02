@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build release archives
+        run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/skirk-*.tar.gz dist/skirk-*.zip dist/SHA256SUMS --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/skirk-*.tar.gz dist/skirk-*.zip dist/SHA256SUMS --title "${GITHUB_REF_NAME}" --generate-notes
+          fi
