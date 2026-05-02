@@ -111,6 +111,7 @@ main() {
   esac
   echo
   echo "Next: run 'skirk' for the operator menu, or 'skirk setup init --out skirk-kit'."
+  echo "Server setup will check/install Google Cloud CLI if Google login is needed."
 }
 
 main "$@"

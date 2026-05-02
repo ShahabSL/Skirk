@@ -34,11 +34,11 @@ func menu(ctx context.Context) error {
 			config := prompt(reader, "Exit config", "skirk-kit/exit.json")
 			return serveExit(ctx, []string{"--config", config})
 		case "3":
-			config := prompt(reader, "Client config", "skirk-kit/client.json")
+			config := prompt(reader, "Client config or pasted text", "skirk-kit/client.skirk")
 			listen := prompt(reader, "SOCKS listen", "127.0.0.1:18080")
 			return serveClient(ctx, []string{"--config", config, "--listen", listen})
 		case "4":
-			config := prompt(reader, "Client config", "skirk-kit/client.json")
+			config := prompt(reader, "Client config or pasted text", "skirk-kit/client.skirk")
 			socks := prompt(reader, "SOCKS listen", "127.0.0.1:18080")
 			ui := prompt(reader, "UI listen", "127.0.0.1:18280")
 			return clientUI(ctx, []string{"--config", config, "--socks", socks, "--ui", ui})

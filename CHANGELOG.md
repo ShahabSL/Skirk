@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.2 - 2026-05-02
+
+- Added automatic Google Cloud CLI install/check during server setup.
+- Added one-line `.skirk` client configs for paste-friendly sharing.
+- Added config export/decode commands while keeping JSON compatibility.
+
 ## v0.1.1 - 2026-05-02
 
 - Added official Skirk logo assets.

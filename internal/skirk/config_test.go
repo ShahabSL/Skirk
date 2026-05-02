@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +53,57 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 	if token != "access-token" {
 		t.Fatalf("token = %q, want access-token", token)
+	}
+}
+
+func TestTextConfigRoundTrip(t *testing.T) {
+	cfg := &Config{
+		Secret:    "0123456789abcdef0123456789abcdef",
+		SessionID: "session",
+		Auth: AuthConfig{
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			RefreshToken: "refresh-token",
+			TokenURL:     "https://oauth2.googleapis.com/token",
+		},
+		Route:  RouteConfig{Mode: "google_front_pinned", GoogleIP: "216.239.38.120"},
+		Drive:  DriveConfig{FolderID: "drive-folder"},
+		Sheets: SheetsConfig{SpreadsheetID: "sheet-id", Range: "skirk!A:D"},
+		Tunnel: TunnelConfig{Listen: "127.0.0.1:18080", ChunkSize: 1024 * 1024, PollIntervalMS: 1200, Concurrency: 4, CleanupProcessed: true},
+	}
+
+	text, err := EncodeConfigText(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(text, ConfigTextPrefix) {
+		t.Fatalf("text prefix = %q, want %q", text[:len(ConfigTextPrefix)], ConfigTextPrefix)
+	}
+
+	decoded, err := DecodeConfigText(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Secret != cfg.Secret || decoded.Auth.RefreshToken != cfg.Auth.RefreshToken || decoded.Drive.FolderID != cfg.Drive.FolderID {
+		t.Fatalf("decoded config mismatch: %#v", decoded)
+	}
+
+	path := filepath.Join(t.TempDir(), "client.skirk")
+	if err := os.WriteFile(path, []byte(text+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fromFile, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFile.Sheets.SpreadsheetID != cfg.Sheets.SpreadsheetID {
+		t.Fatalf("spreadsheet id = %q, want %q", fromFile.Sheets.SpreadsheetID, cfg.Sheets.SpreadsheetID)
+	}
+	fromInline, err := LoadConfig("SKIRK_CONFIG=" + text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromInline.Route.Mode != cfg.Route.Mode {
+		t.Fatalf("route mode = %q, want %q", fromInline.Route.Mode, cfg.Route.Mode)
 	}
 }

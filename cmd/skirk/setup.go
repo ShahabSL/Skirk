@@ -54,6 +54,7 @@ func setupInit(ctx context.Context, args []string) error {
 	pollMS := fs.Int("poll-ms", 1200, "mailbox poll interval in milliseconds")
 	clientConcurrency := fs.Int("client-concurrency", 1, "client Drive upload/download concurrency")
 	exitConcurrency := fs.Int("exit-concurrency", 8, "exit Drive upload/download concurrency")
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON instead of the copy-paste setup summary")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,6 +134,8 @@ func setupInit(ctx context.Context, args []string) error {
 		return err
 	}
 	clientPath := filepath.Join(*outDir, "client.json")
+	clientTextPath := filepath.Join(*outDir, "client.skirk")
+	clientCommandPath := filepath.Join(*outDir, "client-command.txt")
 	exitPath := filepath.Join(*outDir, "exit.json")
 	readmePath := filepath.Join(*outDir, "README.md")
 	if err := writeJSONFile(clientPath, clientCfg); err != nil {
@@ -141,33 +144,69 @@ func setupInit(ctx context.Context, args []string) error {
 	if err := writeJSONFile(exitPath, exitCfg); err != nil {
 		return err
 	}
+	clientText, err := skirk.EncodeConfigText(&clientCfg)
+	if err != nil {
+		return err
+	}
+	if err := writeTextFile(clientTextPath, clientText+"\n"); err != nil {
+		return err
+	}
+	clientCommand := fmt.Sprintf("skirk serve-client --config '%s' --listen %s\n", clientText, *listen)
+	if err := writeTextFile(clientCommandPath, clientCommand); err != nil {
+		return err
+	}
 	if err := writeSetupReadme(readmePath, setupSummary{
-		Title:         *title,
-		ADCPath:       credsPath,
-		Account:       creds.Account,
-		ClientPath:    clientPath,
-		ExitPath:      exitPath,
-		SpreadsheetID: spreadsheetID,
-		DriveFolderID: folderID,
-		Listen:        *listen,
-		ClientRoute:   *clientRoute,
-		ExitRoute:     *exitRoute,
+		Title:             *title,
+		ADCPath:           credsPath,
+		Account:           creds.Account,
+		ClientPath:        clientPath,
+		ClientTextPath:    clientTextPath,
+		ClientCommandPath: clientCommandPath,
+		ExitPath:          exitPath,
+		SpreadsheetID:     spreadsheetID,
+		DriveFolderID:     folderID,
+		Listen:            *listen,
+		ClientRoute:       *clientRoute,
+		ExitRoute:         *exitRoute,
 	}); err != nil {
 		return err
 	}
 
-	return printJSON(map[string]any{
-		"result":          "ok",
-		"account":         creds.Account,
-		"client_config":   clientPath,
-		"exit_config":     exitPath,
-		"readme":          readmePath,
-		"spreadsheet_id":  spreadsheetID,
-		"drive_folder_id": folderID,
-		"client_route":    *clientRoute,
-		"exit_route":      *exitRoute,
-		"note":            "generated configs contain Google refresh credentials; treat them like passwords",
-	})
+	result := setupResult{
+		Account:           creds.Account,
+		ClientPath:        clientPath,
+		ClientTextPath:    clientTextPath,
+		ClientCommandPath: clientCommandPath,
+		ClientText:        clientText,
+		ClientCommand:     strings.TrimSpace(clientCommand),
+		ExitPath:          exitPath,
+		ReadmePath:        readmePath,
+		SpreadsheetID:     spreadsheetID,
+		DriveFolderID:     folderID,
+		ClientRoute:       *clientRoute,
+		ExitRoute:         *exitRoute,
+		Listen:            *listen,
+	}
+	if *jsonOut {
+		return printJSON(map[string]any{
+			"result":              "ok",
+			"account":             result.Account,
+			"client_config":       result.ClientPath,
+			"client_text":         result.ClientTextPath,
+			"client_command_file": result.ClientCommandPath,
+			"client_config_text":  result.ClientText,
+			"client_command":      result.ClientCommand,
+			"exit_config":         result.ExitPath,
+			"readme":              result.ReadmePath,
+			"spreadsheet_id":      result.SpreadsheetID,
+			"drive_folder_id":     result.DriveFolderID,
+			"client_route":        result.ClientRoute,
+			"exit_route":          result.ExitRoute,
+			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
+		})
+	}
+	printSetupResult(result)
+	return nil
 }
 
 func (c adcCredentials) AuthConfig() skirk.AuthConfig {
@@ -222,13 +261,17 @@ func defaultADCPath() string {
 func runGcloudLogin(ctx context.Context) error {
 	gcloud, err := findGcloud()
 	if err != nil {
-		return err
+		fmt.Printf("Google Cloud CLI was not found. Skirk will install it under ~/google-cloud-sdk.\n\n")
+		gcloud, err = installGcloud(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	cmd := exec.CommandContext(ctx, gcloud, "auth", "login", "--no-launch-browser", "--enable-gdrive-access", "--update-adc", "--force")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = withGcloudPath(os.Environ())
 	return cmd.Run()
 }
 
@@ -245,6 +288,64 @@ func findGcloud() (string, error) {
 	return "", errors.New("gcloud not found; install Google Cloud CLI or run setup with --adc /path/to/application_default_credentials.json")
 }
 
+func installGcloud(ctx context.Context) (string, error) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		return "", fmt.Errorf("automatic Google Cloud CLI install is not supported on %s; install gcloud manually or run setup with --adc", runtime.GOOS)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	script := `set -eu
+if ! command -v bash >/dev/null 2>&1; then
+  echo "error: bash is required to install Google Cloud CLI" >&2
+  exit 1
+fi
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT INT TERM
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL https://sdk.cloud.google.com > "$tmp/install-gcloud.sh"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$tmp/install-gcloud.sh" https://sdk.cloud.google.com
+else
+  echo "error: curl or wget is required to install Google Cloud CLI" >&2
+  exit 1
+fi
+bash "$tmp/install-gcloud.sh" --disable-prompts --install-dir="$HOME"
+`
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("Google Cloud CLI install failed: %w", err)
+	}
+	gcloud := filepath.Join(home, "google-cloud-sdk", "bin", "gcloud")
+	if _, err := os.Stat(gcloud); err != nil {
+		return "", fmt.Errorf("Google Cloud CLI install finished but %s was not found: %w", gcloud, err)
+	}
+	return gcloud, nil
+}
+
+func withGcloudPath(env []string) []string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return env
+	}
+	bin := filepath.Join(home, "google-cloud-sdk", "bin")
+	path := os.Getenv("PATH")
+	path = bin + string(os.PathListSeparator) + path
+	out := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if strings.HasPrefix(item, "PATH=") {
+			continue
+		}
+		out = append(out, item)
+	}
+	return append(out, "PATH="+path)
+}
+
 func writeJSONFile(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -254,17 +355,66 @@ func writeJSONFile(path string, value any) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+func writeTextFile(path string, text string) error {
+	return os.WriteFile(path, []byte(text), 0600)
+}
+
 type setupSummary struct {
-	Title         string
-	ADCPath       string
-	Account       string
-	ClientPath    string
-	ExitPath      string
-	SpreadsheetID string
-	DriveFolderID string
-	Listen        string
-	ClientRoute   string
-	ExitRoute     string
+	Title             string
+	ADCPath           string
+	Account           string
+	ClientPath        string
+	ClientTextPath    string
+	ClientCommandPath string
+	ExitPath          string
+	SpreadsheetID     string
+	DriveFolderID     string
+	Listen            string
+	ClientRoute       string
+	ExitRoute         string
+}
+
+type setupResult struct {
+	Account           string
+	ClientPath        string
+	ClientTextPath    string
+	ClientCommandPath string
+	ClientText        string
+	ClientCommand     string
+	ExitPath          string
+	ReadmePath        string
+	SpreadsheetID     string
+	DriveFolderID     string
+	ClientRoute       string
+	ExitRoute         string
+	Listen            string
+}
+
+func printSetupResult(result setupResult) {
+	fmt.Println()
+	fmt.Println("Skirk kit created.")
+	fmt.Printf("Google account: %s\n", result.Account)
+	fmt.Printf("Exit config: %s\n", result.ExitPath)
+	fmt.Printf("Client JSON config: %s\n", result.ClientPath)
+	fmt.Printf("Client text config: %s\n", result.ClientTextPath)
+	fmt.Printf("Ready client command: %s\n", result.ClientCommandPath)
+	fmt.Printf("Control spreadsheet: %s\n", result.SpreadsheetID)
+	fmt.Printf("Data folder: %s\n", result.DriveFolderID)
+	fmt.Println()
+	fmt.Println("Run this on the exit machine:")
+	fmt.Println()
+	fmt.Printf("skirk serve-exit --config %s\n", result.ExitPath)
+	fmt.Println()
+	fmt.Println("Copy and send this one-line client config:")
+	fmt.Println()
+	fmt.Println(result.ClientText)
+	fmt.Println()
+	fmt.Println("Or copy and send this full client command:")
+	fmt.Println()
+	fmt.Println(result.ClientCommand)
+	fmt.Println()
+	fmt.Println("Anyone using the client config does not need Google login or gcloud.")
+	fmt.Println("Treat the client config like a password. Revoke/delete the kit if it leaks.")
 }
 
 func writeSetupReadme(path string, summary setupSummary) error {
@@ -294,11 +444,25 @@ skirk serve-client --config %s --listen %s
 curl --socks5-hostname %s http://example.com/
 `+"```"+`
 
+Or send the one-line text config instead of a JSON file:
+
+`+"```bash"+`
+read -r SKIRK_CLIENT_CONFIG
+# paste the contents of %s, press Enter, then run:
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen %s
+`+"```"+`
+
+A ready-to-copy command is also written to:
+
+`+"```text"+`
+%s
+`+"```"+`
+
 ## Config Handling
 
-Send only `+"`client.json`"+` to client devices. Keep `+"`exit.json`"+` on the exit machine.
+Send only `+"`client.skirk`"+` or `+"`client.json`"+` to client devices. Keep `+"`exit.json`"+` on the exit machine.
 
-Both files contain Google refresh credentials and the Skirk tunnel secret. Treat them like passwords:
+All generated client and exit configs contain Google refresh credentials and the Skirk tunnel secret. Treat them like passwords:
 
 - do not commit them;
 - do not paste them into logs or chats;
@@ -317,6 +481,6 @@ To immediately invalidate every config generated from this OAuth login, revoke t
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive and Google Sheets. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.SpreadsheetID, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ExitPath)
+`, summary.Title, summary.Account, summary.ADCPath, summary.SpreadsheetID, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath)
 	return os.WriteFile(path, []byte(content), 0600)
 }

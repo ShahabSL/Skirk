@@ -10,7 +10,7 @@ Skirk is a Go-first restricted-network transport that uses Google Drive as the e
 
 - Production path: Go CLI in `cmd/skirk`.
 - Transport: encrypted Drive chunks + Sheets control rows.
-- Client UX: one generated `client.json`; no client-side Google login required.
+- Client UX: one generated `skirk:...` text config; no client-side Google login required.
 - Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
 - Client mode: local SOCKS5 proxy on Linux today; Windows and Android clients can consume the same config format.
 
@@ -48,6 +48,7 @@ skirk setup init --out skirk-kit
 ```
 
 If Google login is needed, Skirk runs `gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force` and prints the browser URL/code flow.
+If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` first.
 
 Run the exit on a VPS, laptop, or server with normal internet:
 
@@ -58,14 +59,21 @@ skirk serve-exit --config skirk-kit/exit.json
 Run the client SOCKS5 proxy:
 
 ```bash
-skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080
+skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
 curl --socks5-hostname 127.0.0.1:18080 http://example.com/
+```
+
+For sharing without file transfer, send the one-line text inside `skirk-kit/client.skirk`. The client can paste it into the menu or use it directly:
+
+```bash
+read -r SKIRK_CLIENT_CONFIG
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
 Optional: run the desktop dashboard on Windows or a desktop Linux machine with a browser:
 
 ```bash
-skirk client-ui --config skirk-kit/client.json --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+skirk client-ui --config skirk-kit/client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
 ```
 
 Preferred Windows app:
@@ -96,7 +104,7 @@ skirk revoke --config skirk-kit/exit.json --revoke-oauth
 
 The Google account sees encrypted chunks and control metadata. The exit sees target addresses and plaintext for non-TLS application traffic, like any proxy or VPN exit. HTTPS payloads remain protected by the target site's TLS.
 
-Generated configs contain a Google refresh token and the Skirk tunnel secret. Treat `client.json` and `exit.json` like passwords.
+Generated configs contain a Google refresh token and the Skirk tunnel secret. Treat `client.skirk`, `client.json`, and `exit.json` like passwords.
 
 ## Documentation
 

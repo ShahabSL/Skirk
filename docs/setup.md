@@ -4,9 +4,9 @@ This is the intended user flow:
 
 1. The operator runs Skirk on a machine with Google login available.
 2. Skirk creates a dedicated Google Sheet and Drive folder.
-3. Skirk writes `exit.json` and `client.json`.
+3. Skirk writes `exit.json`, `client.json`, and one-line `client.skirk`.
 4. The operator runs the exit on a VPS, laptop, or home server.
-5. Clients import `client.json` and start a local SOCKS5 proxy.
+5. Clients paste/import `client.skirk` and start a local SOCKS5 proxy.
 
 ## Does Skirk Need A VPS?
 
@@ -48,18 +48,26 @@ gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --forc
 
 That command prints a browser URL and code. Open the URL, approve the Google account, paste the code back into the terminal, then setup continues.
 
+If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` before starting the login flow.
+
 ## Generated Files
 
 `skirk-kit/exit.json`:
 Use this on the exit machine.
 
 `skirk-kit/client.json`:
-Send this to clients. Clients do not need Google login, OAuth, or `gcloud`.
+JSON form of the client config.
+
+`skirk-kit/client.skirk`:
+One-line text form of the same client config. This is the easiest thing to send or paste. Clients do not need Google login, OAuth, or `gcloud`.
+
+`skirk-kit/client-command.txt`:
+A ready-to-copy client command containing the one-line config.
 
 `skirk-kit/README.md`:
 Per-kit run and cleanup commands.
 
-Both JSON files contain a Google refresh token and the Skirk tunnel secret. Do not commit them.
+All generated config files contain a Google refresh token and the Skirk tunnel secret. Do not commit them.
 
 ## Run The Exit
 
@@ -74,7 +82,7 @@ On the VPS, laptop, or server:
 On the client:
 
 ```bash
-./bin/skirk serve-client --config client.json --listen 127.0.0.1:18080
+./bin/skirk serve-client --config client.skirk --listen 127.0.0.1:18080
 ```
 
 This is the default Linux path. No GUI is required.
@@ -86,6 +94,13 @@ curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```
 
 Use `socks5h` semantics in apps that support it so DNS resolution happens through the exit path.
+
+Without copying any file, paste the one-line text config:
+
+```bash
+read -r SKIRK_CLIENT_CONFIG
+./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
+```
 
 ## Restricted Networks
 

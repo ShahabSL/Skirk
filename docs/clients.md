@@ -5,7 +5,7 @@
 Linux uses the Go binary directly:
 
 ```bash
-./bin/skirk client --config client.json --listen 127.0.0.1:18080
+./bin/skirk client --config client.skirk --listen 127.0.0.1:18080
 ```
 
 This is the correct path for headless Linux servers, terminal-only desktops, and SSH sessions.
@@ -13,14 +13,14 @@ This is the correct path for headless Linux servers, terminal-only desktops, and
 For a desktop Linux machine with a browser, an optional local dashboard is available:
 
 ```bash
-./bin/skirk client-ui --config client.json --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+./bin/skirk client-ui --config client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
 ```
 
 Open `http://127.0.0.1:18280`.
 
 ## Windows
 
-Preferred Windows UX is the portable desktop app under `clients/desktop`. It imports `client.json`, stores profiles in portable data, and starts/stops the Go Skirk SOCKS sidecar.
+Preferred Windows UX is the portable desktop app under `clients/desktop`. It imports the one-line `client.skirk` text config, stores profiles in portable data, and starts/stops the Go Skirk SOCKS sidecar.
 
 Development run:
 
@@ -50,7 +50,7 @@ make build-windows
 Run it from PowerShell:
 
 ```powershell
-.\skirk-windows-amd64.exe client-ui --config .\client.json --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+.\skirk-windows-amd64.exe client-ui --config .\client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
 ```
 
 Configure browser or application proxy settings to SOCKS5 `127.0.0.1:18080`.
@@ -58,7 +58,7 @@ Configure browser or application proxy settings to SOCKS5 `127.0.0.1:18080`.
 The dashboard is optional on Windows too. The non-GUI command also works:
 
 ```powershell
-.\skirk-windows-amd64.exe client --config .\client.json --listen 127.0.0.1:18080
+.\skirk-windows-amd64.exe client --config .\client.skirk --listen 127.0.0.1:18080
 ```
 
 ## Android

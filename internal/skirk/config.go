@@ -1,7 +1,10 @@
 package skirk
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +16,8 @@ import (
 	"strings"
 	"time"
 )
+
+const ConfigTextPrefix = "skirk:"
 
 type Config struct {
 	Secret    string       `json:"secret"`
@@ -58,13 +63,87 @@ type TunnelConfig struct {
 }
 
 func LoadConfig(path string) (*Config, error) {
+	if cfg, ok, err := ParseInlineConfig(path); ok || err != nil {
+		return cfg, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return ParseConfig(data)
+}
+
+func ParseConfig(data []byte) (*Config, error) {
+	text := strings.TrimSpace(string(data))
+	if cfg, ok, err := ParseInlineConfig(text); ok || err != nil {
+		return cfg, err
+	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func ParseInlineConfig(text string) (*Config, bool, error) {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "SKIRK_CONFIG=")
+	text = strings.Trim(text, `"'`)
+	if !strings.HasPrefix(text, ConfigTextPrefix) {
+		return nil, false, nil
+	}
+	cfg, err := DecodeConfigText(text)
+	return cfg, true, err
+}
+
+func EncodeConfigText(cfg *Config) (string, error) {
+	if cfg == nil {
+		return "", errors.New("nil config")
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(data); err != nil {
+		_ = zw.Close()
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return ConfigTextPrefix + base64.RawURLEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func DecodeConfigText(text string) (*Config, error) {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "SKIRK_CONFIG=")
+	text = strings.Trim(text, `"'`)
+	if !strings.HasPrefix(text, ConfigTextPrefix) {
+		return nil, fmt.Errorf("config text must start with %q", ConfigTextPrefix)
+	}
+	encoded := strings.TrimPrefix(text, ConfigTextPrefix)
+	compressed, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("config text base64 decode failed: %w", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, fmt.Errorf("config text gzip decode failed: %w", err)
+	}
+	defer zr.Close()
+	data, err := io.ReadAll(io.LimitReader(zr, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("config text read failed: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("config text JSON decode failed: %w", err)
 	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {

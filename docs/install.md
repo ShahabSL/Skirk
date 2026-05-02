@@ -25,7 +25,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=v0.1.2 sh
 ```
 
 Install to a different directory:
@@ -50,6 +50,8 @@ curl -fsSL https://raw.githubusercontent.com/OWNER/Skirk/main/install.sh | SKIRK
 
 The source-build fallback requires Go. Release-archive installs do not.
 
+Google Cloud CLI is only needed for server-side kit creation. `skirk setup init` checks for `gcloud` and installs it under `~/google-cloud-sdk` when it is missing.
+
 ## Exit Machine Flow
 
 On the machine that will act as the exit:
@@ -60,7 +62,7 @@ skirk
 
 Choose `Create Google kit`, complete the Google login flow if prompted, then choose `Run exit`.
 
-The generated `client.json` can be copied to clients. Clients do not need Google login or `gcloud`.
+The generated `client.skirk` is a one-line text config that can be pasted or sent to clients. Clients do not need Google login or `gcloud`.
 
 ## Safer Manual Install
 

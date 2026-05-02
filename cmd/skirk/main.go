@@ -58,6 +58,8 @@ func run(args []string) error {
 		return setup(ctx, args[2:])
 	case "revoke":
 		return revoke(ctx, args[2:])
+	case "config":
+		return configCommand(args[2:])
 	case "hybrid-send":
 		return hybridSend(ctx, args[2:])
 	case "hybrid-recv":
@@ -91,6 +93,8 @@ func usage() {
   keygen
   sample-config --out skirk.json --spreadsheet-id SHEET_ID --secret SECRET
   setup init --out skirk-kit
+  config export --config skirk-kit/client.json [--out client.skirk]
+  config decode --config client.skirk --out client.json
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   workspace create --config skirk.json --title TITLE --sheet skirk
   workspace delete --config skirk.json --spreadsheet-id SHEET_ID [--delete-drive-folder]
@@ -101,6 +105,51 @@ func usage() {
   serve-exit --config skirk.json
   serve-client --config skirk.json [--listen 127.0.0.1:18080]
   client-ui --config skirk.json [--socks 127.0.0.1:18080] [--ui 127.0.0.1:18280]`)
+}
+
+func configCommand(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("config needs export or decode")
+	}
+	switch args[0] {
+	case "export":
+		fs := flag.NewFlagSet("config export", flag.ExitOnError)
+		configPath := fs.String("config", "skirk-kit/client.json", "config path or inline config text")
+		out := fs.String("out", "", "optional output file for one-line text config")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		cfg, err := skirk.LoadConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		text, err := skirk.EncodeConfigText(cfg)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(*out) == "" {
+			fmt.Println(text)
+			return nil
+		}
+		return os.WriteFile(*out, []byte(text+"\n"), 0600)
+	case "decode":
+		fs := flag.NewFlagSet("config decode", flag.ExitOnError)
+		configText := fs.String("config", "", "config path or inline config text")
+		out := fs.String("out", "client.json", "output JSON path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*configText) == "" {
+			return fmt.Errorf("--config is required")
+		}
+		cfg, err := skirk.LoadConfig(*configText)
+		if err != nil {
+			return err
+		}
+		return writeJSONFile(*out, cfg)
+	default:
+		return fmt.Errorf("unknown config command %q", args[0])
+	}
 }
 
 func load(path string) (*skirk.Config, *skirk.DriveStore, *skirk.SheetsLog, *skirk.Workspace, error) {
