@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestGcloudArchiveName(t *testing.T) {
 	cases := []struct {
@@ -26,5 +29,38 @@ func TestGcloudArchiveName(t *testing.T) {
 func TestGcloudArchiveNameRejectsUnsupportedOS(t *testing.T) {
 	if _, err := gcloudArchiveName("windows", "amd64"); err == nil {
 		t.Fatal("expected unsupported OS error")
+	}
+}
+
+func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
+	got := gcloudLoginArgs("", "")
+	want := []string{
+		"auth", "login",
+		"--no-launch-browser",
+		"--enable-gdrive-access",
+		"--update-adc",
+		"--force",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len(gcloudLoginArgs) = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("gcloudLoginArgs[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGcloudLoginArgsUseCustomOAuthClient(t *testing.T) {
+	got := gcloudLoginArgs("client.json", "")
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"auth application-default login",
+		"--client-id-file client.json",
+		"https://www.googleapis.com/auth/drive.file",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("gcloudLoginArgs missing %q in %#v", want, got)
+		}
 	}
 }

@@ -26,6 +26,8 @@ type adcCredentials struct {
 	Type         string `json:"type"`
 }
 
+const defaultCustomOAuthScopes = "openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/drive.file"
+
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("setup needs init")
@@ -48,6 +50,8 @@ func setupInit(ctx context.Context, args []string) error {
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of launching gcloud login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
 	resetGoogleLogin := fs.Bool("reset-google-login", false, "revoke local gcloud and ADC credentials before Google login")
+	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth Desktop client JSON; uses your own OAuth project/quota and implies --google-login")
+	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma-separated scopes used with --oauth-client-file")
 	clientRoute := fs.String("client-route", "google_front_pinned", "client Google API route: direct, real_pinned, google_front_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for the client")
@@ -62,15 +66,16 @@ func setupInit(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *noLogin && (*googleLogin || *resetGoogleLogin) {
-		return fmt.Errorf("--no-gcloud-login cannot be combined with --google-login or --reset-google-login")
+	if *noLogin && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
+		return fmt.Errorf("--no-gcloud-login cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
 	}
-	if *adcPath != "" && (*googleLogin || *resetGoogleLogin) {
-		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login or --reset-google-login")
+	if *adcPath != "" && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
+		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
 	}
 
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
+	loginRequested := *googleLogin || strings.TrimSpace(*oauthClientFile) != ""
 	if *resetGoogleLogin {
 		fmt.Printf("Resetting local Google credentials before login.\n\n")
 		if err := runGcloudCredentialReset(ctx); err != nil {
@@ -79,16 +84,18 @@ func setupInit(ctx context.Context, args []string) error {
 		creds = adcCredentials{}
 		err = errors.New("Google login was reset")
 	}
-	if *googleLogin || err != nil {
+	if loginRequested || err != nil {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
-		if *googleLogin && err == nil {
+		if strings.TrimSpace(*oauthClientFile) != "" {
+			fmt.Printf("Google login will use your OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
+		} else if *googleLogin && err == nil {
 			fmt.Printf("Google login was requested. Skirk will run gcloud and ask you to paste the browser code.\n\n")
 		} else {
 			fmt.Printf("Google login is required. Skirk will run gcloud and ask you to paste the browser code.\n\n")
 		}
-		if err := runGcloudLogin(ctx); err != nil {
+		if err := runGcloudLogin(ctx, *oauthClientFile, *oauthScopes); err != nil {
 			return err
 		}
 		creds, err = readADCCredentials(credsPath)
@@ -289,18 +296,35 @@ func defaultADCPath() string {
 	return filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
 }
 
-func runGcloudLogin(ctx context.Context) error {
+func gcloudLoginArgs(oauthClientFile, oauthScopes string) []string {
+	oauthClientFile = strings.TrimSpace(oauthClientFile)
+	if oauthClientFile == "" {
+		return []string{
+			"auth", "login",
+			"--no-launch-browser",
+			"--enable-gdrive-access",
+			"--update-adc",
+			"--force",
+		}
+	}
+	oauthScopes = strings.TrimSpace(oauthScopes)
+	if oauthScopes == "" {
+		oauthScopes = defaultCustomOAuthScopes
+	}
+	return []string{
+		"auth", "application-default", "login",
+		"--no-launch-browser",
+		"--client-id-file", oauthClientFile,
+		"--scopes", oauthScopes,
+	}
+}
+
+func runGcloudLogin(ctx context.Context, oauthClientFile, oauthScopes string) error {
 	gcloud, err := ensureGcloud(ctx)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, gcloud,
-		"auth", "login",
-		"--no-launch-browser",
-		"--enable-gdrive-access",
-		"--update-adc",
-		"--force",
-	)
+	cmd := exec.CommandContext(ctx, gcloud, gcloudLoginArgs(oauthClientFile, oauthScopes)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -75,6 +75,36 @@ gcloud auth revoke --all --quiet
 
 This only changes credentials on the machine running setup. Existing generated Skirk configs keep using the refresh token embedded in those config files until you delete the workspace or revoke the Google app access for that account.
 
+## Avoid Shared Google CLI Quota
+
+The easiest setup path uses Google Cloud CLI's built-in OAuth client. That is convenient, but Drive API quota can be charged to Google Cloud CLI's shared OAuth project. If you see an error like:
+
+```text
+Quota exceeded for quota metric 'Queries' ... drive.googleapis.com ... project_number:32555940559
+```
+
+use an OAuth Desktop client from your own Google Cloud project:
+
+1. Create or select a Google Cloud project.
+2. Enable Google Drive API and Google Sheets API.
+3. Configure the OAuth consent screen for your account. In testing mode, add your Gmail as a test user.
+4. Create an OAuth client ID with application type `Desktop app`.
+5. Download the client JSON and copy it to the exit/setup machine as `oauth-client.json`.
+
+Then run:
+
+```bash
+skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+```
+
+With `--oauth-client-file`, Skirk runs:
+
+```bash
+gcloud auth application-default login --no-launch-browser --client-id-file ./oauth-client.json --scopes openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/drive.file
+```
+
+`drive.file` is enough for Skirk's generated workspace because Skirk creates the Drive folder and spreadsheet itself, then accesses those app-created files.
+
 ## Generated Files
 
 `skirk-kit/exit.json`:
