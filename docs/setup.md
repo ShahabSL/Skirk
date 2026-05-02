@@ -100,7 +100,7 @@ skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oaut
 With `--oauth-client-file`, Skirk runs:
 
 ```bash
-gcloud auth application-default login --no-launch-browser --client-id-file ./oauth-client.json --scopes openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/drive.file
+gcloud auth application-default login --no-browser --client-id-file ./oauth-client.json --scopes openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/drive.file
 ```
 
 `drive.file` is enough for Skirk's generated workspace because Skirk creates the Drive folder and spreadsheet itself, then accesses those app-created files.

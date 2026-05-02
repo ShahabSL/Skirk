@@ -56,6 +56,7 @@ func TestGcloudLoginArgsUseCustomOAuthClient(t *testing.T) {
 	joined := strings.Join(got, " ")
 	for _, want := range []string{
 		"auth application-default login",
+		"--no-browser",
 		"--client-id-file client.json",
 		"https://www.googleapis.com/auth/drive.file",
 	} {

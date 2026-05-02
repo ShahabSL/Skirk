@@ -313,7 +313,7 @@ func gcloudLoginArgs(oauthClientFile, oauthScopes string) []string {
 	}
 	return []string{
 		"auth", "application-default", "login",
-		"--no-launch-browser",
+		"--no-browser",
 		"--client-id-file", oauthClientFile,
 		"--scopes", oauthScopes,
 	}
