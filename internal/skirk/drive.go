@@ -20,10 +20,17 @@ type DriveStore struct {
 	http     *GoogleHTTPClient
 	token    string
 	folderID string
+	space    string
 }
 
 func NewDriveStore(httpClient *GoogleHTTPClient, token string, cfg DriveConfig) *DriveStore {
-	return &DriveStore{http: httpClient, token: token, folderID: cfg.FolderID}
+	space := strings.TrimSpace(cfg.Space)
+	folderID := strings.TrimSpace(cfg.FolderID)
+	if folderID == "appDataFolder" && space == "" {
+		space = "appDataFolder"
+		folderID = ""
+	}
+	return &DriveStore{http: httpClient, token: token, folderID: folderID, space: space}
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -43,7 +50,9 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 		"mimeType":      "application/octet-stream",
 		"appProperties": map[string]string{"skirkName": name},
 	}
-	if d.folderID != "" {
+	if d.isAppData() {
+		metadata["parents"] = []string{"appDataFolder"}
+	} else if d.folderID != "" {
 		metadata["parents"] = []string{d.folderID}
 	}
 	metaBytes, err := json.Marshal(metadata)
@@ -127,6 +136,9 @@ func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	values.Set("q", d.query(prefix, false))
 	values.Set("fields", "files(id,name,size,modifiedTime)")
 	values.Set("pageSize", "1000")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
 	result, err := d.http.Request(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/files?"+values.Encode(), d.authHeaders(), nil)
 	if err != nil {
 		return nil, err
@@ -238,6 +250,9 @@ func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, 
 	values.Set("fields", "files(id,name,size,modifiedTime)")
 	values.Set("orderBy", "modifiedTime desc")
 	values.Set("pageSize", "1000")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
 	result, err := d.http.Request(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/files?"+values.Encode(), d.authHeaders(), nil)
 	if err != nil {
 		return nil, err
@@ -273,7 +288,7 @@ func (d *DriveStore) authHeaders() map[string]string {
 
 func (d *DriveStore) query(value string, exact bool) string {
 	clauses := []string{"trashed = false"}
-	if d.folderID != "" {
+	if d.folderID != "" && !d.isAppData() {
 		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
 	}
 	if exact {
@@ -282,6 +297,10 @@ func (d *DriveStore) query(value string, exact bool) string {
 		clauses = append(clauses, fmt.Sprintf("name contains '%s'", escapeDriveQuery(value)))
 	}
 	return strings.Join(clauses, " and ")
+}
+
+func (d *DriveStore) isAppData() bool {
+	return d.space == "appDataFolder"
 }
 
 func escapeDriveQuery(value string) string {

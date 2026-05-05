@@ -52,8 +52,8 @@ func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
 }
 
 func TestNormalizeOAuthScopes(t *testing.T) {
-	got := normalizeOAuthScopes("openid,email https://www.googleapis.com/auth/drive.file openid")
-	for _, want := range []string{"openid", "email", "https://www.googleapis.com/auth/drive.file"} {
+	got := normalizeOAuthScopes("openid,email https://www.googleapis.com/auth/drive.appdata openid")
+	for _, want := range []string{"openid", "email", "https://www.googleapis.com/auth/drive.appdata"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("normalizeOAuthScopes missing %q in %q", want, got)
 		}

@@ -4,11 +4,11 @@ Skirk's production client is implemented in Go under `cmd/skirk` and `internal/s
 
 ## Current Modes
 
-- `hybrid-send` and `hybrid-recv`: encrypted file/object round trips over Drive data + Sheets control.
+- `hybrid-send` and `hybrid-recv`: encrypted file/object round trips over Drive appData/folder storage, with legacy Sheets control support.
 - `e2e`: creates a random payload, sends it through the hybrid transport, receives it back, compares bytes, and optionally cleans up data/control rows.
-- `serve-client`: local SOCKS5 listener that sends CONNECT streams through the Drive+Sheets mailbox.
+- `serve-client`: local SOCKS5 listener that sends CONNECT streams through the Drive mailbox.
 - `serve-exit`: exit poller that reads client stream events, dials target TCP, and writes downstream events back.
-- `workspace create/delete`: creates or deletes the temporary Google Sheet used as Skirk's control lane.
+- `workspace create/delete`: deletes visible Drive fallback workspaces; appData kits are disconnected by revoking OAuth access.
 
 ## Config
 
@@ -24,21 +24,22 @@ The important fields are:
 - `session_id`: optional fixed 32-hex session for a paired client and exit.
 - `route.proxy`: restricted-network SOCKS proxy, usually `socks5h://127.0.0.1:1080`.
 - `route.google_ip`: known Google edge IP for pinned routing.
-- `sheets.spreadsheet_id`: Sheets control-lane spreadsheet.
+- `drive.space`: set to `appDataFolder` for the recommended app-private mailbox.
+- `drive.folder_id`: visible Drive folder ID for the fallback mailbox.
 - `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.
 - `tunnel.concurrency`: number of parallel Drive upload/download/delete workers.
 - `tunnel.cleanup_processed`: removes Drive chunks and tombstones processed control rows.
 
-## Why Drive + Sheets
+## Why Drive appData
 
-Drive is better for binary chunks than Sheets. Sheets is better as a visible append-only control/index/ACK lane than repeatedly listing Drive folders for discovery. Skirk uses Sheets to announce chunk readiness and Drive to carry encrypted payload blobs.
+Drive appDataFolder keeps Skirk's encrypted mailbox private to the OAuth application and lets the runtime use one Google API and one narrow OAuth scope. Legacy Drive+Sheets configs still work, but new custom-OAuth kits use Drive-only control and data objects.
 
-This improves on a pure Drive queue because data discovery and control state are separated from the binary payload lifecycle. It does not make Google Workspace APIs a low-latency stream substrate; polling and API quotas still define the ceiling.
+This does not make Google Drive a low-latency stream substrate; polling and API quotas still define the ceiling.
 
 ## Operational Notes
 
 - Use a dedicated Google account or workspace for testing.
-- Use a dedicated spreadsheet per Skirk config.
+- Use a dedicated OAuth client/project per operator where practical.
 - Keep `chunk_size` within a measured range; larger chunks improve bulk throughput but hurt latency and retries.
 - `cleanup_processed` should stay enabled for interactive tests to avoid Drive object buildup.
 - The access token can come from `SKIRK_ACCESS_TOKEN`, `auth.access_token`, or `auth.token_command`.

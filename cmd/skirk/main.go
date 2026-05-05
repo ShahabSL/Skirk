@@ -204,25 +204,30 @@ func workspace(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		deleted := map[string]string{}
 		id := *spreadsheetID
 		if id == "" {
 			id = cfg.Sheets.SpreadsheetID
 		}
-		if id == "" {
-			return fmt.Errorf("--spreadsheet-id is required when config has none")
+		if id != "" {
+			if err := workspace.DeleteSpreadsheet(ctx, id); err != nil {
+				return err
+			}
+			deleted["deleted_spreadsheet_id"] = id
 		}
-		if err := workspace.DeleteSpreadsheet(ctx, id); err != nil {
-			return err
-		}
-		deleted := map[string]string{"deleted_spreadsheet_id": id}
 		if *deleteDriveFolder {
 			folderID := firstNonEmpty(*driveFolderID, cfg.Drive.FolderID)
-			if folderID != "" {
+			if folderID != "" && folderID != "appDataFolder" {
 				if err := workspace.DeleteDriveFile(ctx, folderID); err != nil {
 					return err
 				}
 				deleted["deleted_drive_folder_id"] = folderID
+			} else if cfg.Drive.Space == "appDataFolder" {
+				deleted["appdata"] = "not deleted; revoke the OAuth app to disconnect appDataFolder access"
 			}
+		}
+		if len(deleted) == 0 {
+			deleted["result"] = "nothing to delete"
 		}
 		return printJSON(deleted)
 	default:
@@ -287,9 +292,6 @@ func hybridSend(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Sheets.SpreadsheetID == "" {
-		return fmt.Errorf("config.sheets.spreadsheet_id is required")
-	}
 	size := cfg.Tunnel.ChunkSize
 	if *chunkSize > 0 {
 		size = *chunkSize
@@ -298,7 +300,12 @@ func hybridSend(ctx context.Context, args []string) error {
 	if *concurrency > 0 {
 		workers = *concurrency
 	}
-	result, err := skirk.HybridSendFileBulk(ctx, drive, sheets, *input, cfg.Secret, firstNonEmpty(*session, cfg.SessionID), skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: size, Concurrency: workers})
+	var result skirk.HybridSendResult
+	if cfg.Sheets.SpreadsheetID == "" {
+		result, err = skirk.HybridSendFile(ctx, drive, controlStore(drive, sheets, cfg), *input, cfg.Secret, firstNonEmpty(*session, cfg.SessionID), skirk.DirectionUp, size, false)
+	} else {
+		result, err = skirk.HybridSendFileBulk(ctx, drive, sheets, *input, cfg.Secret, firstNonEmpty(*session, cfg.SessionID), skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: size, Concurrency: workers})
+	}
 	if err != nil {
 		return err
 	}
@@ -322,18 +329,20 @@ func hybridRecv(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Sheets.SpreadsheetID == "" {
-		return fmt.Errorf("config.sheets.spreadsheet_id is required")
-	}
 	workers := cfg.Tunnel.Concurrency
 	if *concurrency > 0 {
 		workers = *concurrency
 	}
-	result, err := skirk.HybridReceiveFileBulk(ctx, drive, sheets, *output, cfg.Secret, *session, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: workers})
+	var result skirk.HybridReceiveResult
+	if cfg.Sheets.SpreadsheetID == "" {
+		result, err = skirk.HybridReceiveFile(ctx, drive, controlStore(drive, sheets, cfg), *output, cfg.Secret, *session, skirk.DirectionUp, *deleteAfter)
+	} else {
+		result, err = skirk.HybridReceiveFileBulk(ctx, drive, sheets, *output, cfg.Secret, *session, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: workers})
+	}
 	if err != nil {
 		return err
 	}
-	if *deleteAfter {
+	if *deleteAfter && cfg.Sheets.SpreadsheetID != "" {
 		if err := cleanupHybrid(ctx, drive, sheets, result.DriveFileIDs, result.DriveObjects, result.ControlRows, workers); err != nil {
 			return err
 		}
@@ -353,9 +362,6 @@ func e2e(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Sheets.SpreadsheetID == "" {
-		return fmt.Errorf("config.sheets.spreadsheet_id is required")
-	}
 	tmpDir, err := os.MkdirTemp("", "skirk-e2e-*")
 	if err != nil {
 		return err
@@ -371,15 +377,24 @@ func e2e(ctx context.Context, args []string) error {
 		return err
 	}
 	start := time.Now()
-	send, err := skirk.HybridSendFileBulk(ctx, drive, sheets, input, cfg.Secret, cfg.SessionID, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: cfg.Tunnel.Concurrency})
+	var send skirk.HybridSendResult
+	var recv skirk.HybridReceiveResult
+	if cfg.Sheets.SpreadsheetID == "" {
+		control := controlStore(drive, sheets, cfg)
+		send, err = skirk.HybridSendFile(ctx, drive, control, input, cfg.Secret, cfg.SessionID, skirk.DirectionUp, cfg.Tunnel.ChunkSize, false)
+		if err == nil {
+			recv, err = skirk.HybridReceiveFile(ctx, drive, control, output, cfg.Secret, send.SessionID, skirk.DirectionUp, *deleteAfter)
+		}
+	} else {
+		send, err = skirk.HybridSendFileBulk(ctx, drive, sheets, input, cfg.Secret, cfg.SessionID, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: cfg.Tunnel.Concurrency})
+		if err == nil {
+			recv, err = skirk.HybridReceiveFileBulk(ctx, drive, sheets, output, cfg.Secret, send.SessionID, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: cfg.Tunnel.Concurrency})
+		}
+	}
 	if err != nil {
 		return err
 	}
-	recv, err := skirk.HybridReceiveFileBulk(ctx, drive, sheets, output, cfg.Secret, send.SessionID, skirk.DirectionUp, skirk.HybridBulkOptions{ChunkSize: cfg.Tunnel.ChunkSize, Concurrency: cfg.Tunnel.Concurrency})
-	if err != nil {
-		return err
-	}
-	if *deleteAfter {
+	if *deleteAfter && cfg.Sheets.SpreadsheetID != "" {
 		if err := cleanupHybrid(ctx, drive, sheets, recv.DriveFileIDs, recv.DriveObjects, recv.ControlRows, cfg.Tunnel.Concurrency); err != nil {
 			return err
 		}
@@ -401,6 +416,7 @@ func e2e(ctx context.Context, args []string) error {
 		"delete_after":   *deleteAfter,
 		"chunk_size":     cfg.Tunnel.ChunkSize,
 		"spreadsheet_id": cfg.Sheets.SpreadsheetID,
+		"transport":      driveTransportName(cfg.Drive, cfg.Sheets),
 	})
 }
 
@@ -596,10 +612,8 @@ func serveClient(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Sheets.SpreadsheetID == "" {
-		return fmt.Errorf("config.sheets.spreadsheet_id is required")
-	}
-	tunnel, err := skirk.NewTunnel(drive, sheets, cfg)
+	control := controlStore(drive, sheets, cfg)
+	tunnel, err := skirk.NewTunnel(drive, control, cfg)
 	if err != nil {
 		return err
 	}
@@ -618,15 +632,20 @@ func serveExit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Sheets.SpreadsheetID == "" {
-		return fmt.Errorf("config.sheets.spreadsheet_id is required")
-	}
-	tunnel, err := skirk.NewTunnel(drive, sheets, cfg)
+	control := controlStore(drive, sheets, cfg)
+	tunnel, err := skirk.NewTunnel(drive, control, cfg)
 	if err != nil {
 		return err
 	}
 	log.Printf("skirk exit polling session=%s", skirk.SessionString(tunnel.SessionID))
 	return tunnel.ServeExit(ctx)
+}
+
+func controlStore(drive *skirk.DriveStore, sheets *skirk.SheetsLog, cfg *skirk.Config) skirk.BlobStore {
+	if cfg != nil && cfg.Sheets.SpreadsheetID != "" {
+		return sheets
+	}
+	return drive
 }
 
 func sampleConfig(args []string) error {

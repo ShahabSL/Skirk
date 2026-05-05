@@ -3,14 +3,14 @@
 This is the intended user flow:
 
 1. The operator runs Skirk on a machine with Google login available.
-2. Skirk creates a dedicated Google Sheet and Drive folder.
+2. Skirk creates app-private Google Drive storage when using the recommended OAuth flow, or a visible Drive folder in fallback mode.
 3. Skirk writes `exit.json`, `client.json`, and one-line `client.skirk`.
 4. The operator runs the exit on a VPS, laptop, or home server.
 5. Clients paste/import `client.skirk` and start a local SOCKS5 proxy.
 
 ## Does Skirk Need A VPS?
 
-No. Skirk does not need an inbound server port because both sides exchange encrypted messages through Google Drive and Google Sheets.
+No. Skirk does not need an inbound server port because both sides exchange encrypted messages through Google Drive.
 
 It does need an exit machine. The exit is the machine that dials the real internet targets. A VPS is best for uptime and stable egress, but a laptop works while it is awake and online.
 
@@ -28,7 +28,19 @@ Or build the binary from a clone:
 make build
 ```
 
-Create the Google-backed kit:
+Recommended: create the Google-backed kit with your own OAuth `TVs and Limited Input devices` client:
+
+```bash
+./bin/skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+```
+
+This uses Google's device authorization flow and Drive `appDataFolder`, so Skirk only requests:
+
+```text
+openid email https://www.googleapis.com/auth/drive.appdata
+```
+
+Easy fallback: create a kit through Google Cloud CLI:
 
 ```bash
 ./bin/skirk setup init --out skirk-kit
@@ -47,8 +59,6 @@ gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --forc
 ```
 
 That command prints a browser URL and code. Open the URL, approve the Google account, paste the code back into the terminal, then setup continues.
-
-Skirk uses Google Sheets through the Drive authorization scope. Google Sheets API accepts Drive scope for spreadsheet creation and values read/write, so setup does not need to request a separate Sheets scope during login.
 
 If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` before starting the login flow.
 
@@ -86,7 +96,7 @@ Quota exceeded for quota metric 'Queries' ... drive.googleapis.com ... project_n
 use an OAuth `TVs and Limited Input devices` client from your own Google Cloud project:
 
 1. Create or select a Google Cloud project.
-2. Enable Google Drive API and Google Sheets API.
+2. Enable Google Drive API.
 3. Configure the OAuth consent screen for your account. In testing mode, add your Gmail as a test user.
 4. Create an OAuth client ID with application type `TVs and Limited Input devices`.
 5. Download the client JSON and copy it to the exit/setup machine as `oauth-client.json`.
@@ -103,7 +113,7 @@ With `--oauth-client-file`, Skirk uses Google's device authorization flow direct
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-`drive.file` is enough for Skirk's generated workspace because Skirk creates the Drive folder and spreadsheet itself, then accesses those app-created files.
+`drive.appdata` is the default because Skirk's runtime data is encrypted app-private state, not user-visible files. The fallback Google Cloud CLI path still uses a visible Drive folder because that login path is broader and easier, but it is not the recommended high-reliability path.
 
 ## Generated Files
 
@@ -191,7 +201,7 @@ To revoke every config generated from the same OAuth login, remove the app acces
 
 ## Operational Notes
 
-- One Google account can create multiple kits, but each kit should use its own Sheet, Drive folder, secret, and session.
+- One Google account can create multiple kits, but each kit should use its own OAuth client/project where practical, secret, and session.
 - The current protocol is TCP-over-mailbox. It is reliable enough for proof and selected use, but latency is higher than a streaming endpoint.
-- Drive and Sheets rate limits still apply. Use this as an owned-user transport, not as an anonymous public relay.
+- Drive rate limits still apply. Use this as an owned-user transport, not as an anonymous public relay.
 - If a client config leaks, revoke OAuth access and generate a new kit.

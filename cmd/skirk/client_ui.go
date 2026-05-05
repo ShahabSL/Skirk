@@ -34,7 +34,7 @@ func clientUI(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	tunnel, err := skirk.NewTunnel(drive, sheets, cfg)
+	tunnel, err := skirk.NewTunnel(drive, controlStore(drive, sheets, cfg), cfg)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,8 @@
 
 Date: 2026-05-01
 
+Status: historical design note. Current recommended Google transport is Drive `appDataFolder` for both control and data. Legacy Drive+Sheets support remains for old configs and comparison.
+
 Reference checked: `sources/twoman` at `0d4227b4ddcbe947fd34f609d9e6089f517ef565`.
 
 ## Why This Shape

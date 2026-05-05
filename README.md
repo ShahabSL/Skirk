@@ -4,12 +4,12 @@
   <img src="assets/logo.png" alt="Skirk logo" width="160">
 </p>
 
-Skirk is a Go-first restricted-network transport that uses Google Drive as the encrypted data lane and Google Sheets as the control lane. It is designed for the case where ordinary endpoints fail but Google APIs can still be reached, including through Google-fronted TLS routing.
+Skirk is a Go-first restricted-network transport that uses Google Drive as an encrypted mailbox. It is designed for the case where ordinary endpoints fail but Google APIs can still be reached, including through Google-fronted TLS routing.
 
 ## Current Status
 
 - Production path: Go CLI in `cmd/skirk`.
-- Transport: encrypted Drive chunks + Sheets control rows.
+- Transport: encrypted Drive appDataFolder mailbox with Drive-folder fallback.
 - Client UX: one generated `skirk:...` text config; no client-side Google login required.
 - Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
 - Client mode: local SOCKS5 proxy on Linux today; Windows and Android clients can consume the same config format.
@@ -62,11 +62,13 @@ To start from a clean local Google login state first:
 skirk setup init --out skirk-kit-new --reset-google-login
 ```
 
-If Drive returns quota for Google Cloud CLI's shared OAuth project, create a `TVs and Limited Input devices` OAuth client in your own Google Cloud project and run:
+Recommended setup: create a `TVs and Limited Input devices` OAuth client in your own Google Cloud project and run:
 
 ```bash
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
+
+That path uses Google's device login flow and Drive `appDataFolder` with the narrow `drive.appdata` scope. The plain `skirk setup init` path remains as an easy fallback through Google Cloud CLI, but it can hit shared OAuth quota.
 
 Run the exit on a VPS, laptop, or server with normal internet:
 
@@ -104,7 +106,7 @@ npm run tauri dev
 
 ## Cleanup
 
-Delete the Google Sheet and Drive folder created by setup:
+Delete the visible Drive folder created by the fallback setup path:
 
 ```bash
 skirk workspace delete --config skirk-kit/exit.json --delete-drive-folder
@@ -132,6 +134,6 @@ Generated configs contain a Google refresh token and the Skirk tunnel secret. Tr
 - [Client Guide](docs/clients.md)
 - [Release Guide](docs/release.md)
 - [Go CLI Notes](docs/go_skirk.md)
-- [Drive + Sheets Architecture](docs/skirk_drive_sheets_architecture.md)
+- [Drive Architecture](docs/skirk_drive_sheets_architecture.md)
 - [Modes](docs/skirk_modes.md)
 - [Latest Throughput Notes](docs/optimized_throughput_2026_05_02.md)

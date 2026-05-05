@@ -32,7 +32,7 @@ type oauthClientCredentials struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive.file"
+const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive.appdata"
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -128,27 +128,26 @@ func setupInit(ctx context.Context, args []string) error {
 		creds.Account = "unknown"
 	}
 	auth := creds.AuthConfig()
-	adminCfg := skirk.Config{
-		Secret: "setup-only",
-		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: *googleIP, TimeoutSeconds: 240},
-		Sheets: skirk.SheetsConfig{Range: *sheet + "!A:D"},
-		Tunnel: skirk.TunnelConfig{ChunkSize: *chunkSize, PollIntervalMS: *pollMS, Concurrency: *exitConcurrency, CleanupProcessed: true},
-	}
-	adminCfg.ApplyDefaults()
-	_, _, workspace, err := skirk.StoresFromConfig(ctx, &adminCfg)
-	if err != nil {
-		return err
-	}
-
-	spreadsheetID, err := workspace.CreateSpreadsheet(ctx, *title+" control", *sheet)
-	if err != nil {
-		return err
-	}
-	folderID, err := workspace.CreateDriveFolder(ctx, *title+" data")
-	if err != nil {
-		_ = workspace.DeleteSpreadsheet(ctx, spreadsheetID)
-		return err
+	useAppData := strings.TrimSpace(*oauthClientFile) != ""
+	var spreadsheetID, folderID string
+	if useAppData {
+		folderID = "appDataFolder"
+	} else {
+		adminCfg := skirk.Config{
+			Secret: "setup-only",
+			Auth:   auth,
+			Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: *googleIP, TimeoutSeconds: 240},
+			Tunnel: skirk.TunnelConfig{ChunkSize: *chunkSize, PollIntervalMS: *pollMS, Concurrency: *exitConcurrency, CleanupProcessed: true},
+		}
+		adminCfg.ApplyDefaults()
+		_, _, workspace, err := skirk.StoresFromConfig(ctx, &adminCfg)
+		if err != nil {
+			return err
+		}
+		folderID, err = workspace.CreateDriveFolder(ctx, *title+" data")
+		if err != nil {
+			return err
+		}
 	}
 
 	secret, err := skirk.RandomSecret()
@@ -161,7 +160,13 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	sessionID := skirk.SessionString(session)
 	baseDrive := skirk.DriveConfig{FolderID: folderID}
+	if useAppData {
+		baseDrive = skirk.DriveConfig{Space: "appDataFolder"}
+	}
 	baseSheets := skirk.SheetsConfig{SpreadsheetID: spreadsheetID, Range: *sheet + "!A:D"}
+	if err := validateDriveMailbox(ctx, auth, baseDrive, *googleIP, sessionID); err != nil {
+		return err
+	}
 	clientCfg := skirk.Config{
 		Secret:    secret,
 		SessionID: sessionID,
@@ -215,6 +220,7 @@ func setupInit(ctx context.Context, args []string) error {
 		ExitPath:          exitPath,
 		SpreadsheetID:     spreadsheetID,
 		DriveFolderID:     folderID,
+		Transport:         driveTransportName(baseDrive, baseSheets),
 		Listen:            *listen,
 		ClientRoute:       *clientRoute,
 		ExitRoute:         *exitRoute,
@@ -233,6 +239,7 @@ func setupInit(ctx context.Context, args []string) error {
 		ReadmePath:        readmePath,
 		SpreadsheetID:     spreadsheetID,
 		DriveFolderID:     folderID,
+		Transport:         driveTransportName(baseDrive, baseSheets),
 		ClientRoute:       *clientRoute,
 		ExitRoute:         *exitRoute,
 		Listen:            *listen,
@@ -253,9 +260,33 @@ func setupInit(ctx context.Context, args []string) error {
 			"client_route":        result.ClientRoute,
 			"exit_route":          result.ExitRoute,
 			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
+			"transport":           driveTransportName(baseDrive, baseSheets),
 		})
 	}
 	printSetupResult(result)
+	return nil
+}
+
+func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
+	cfg := skirk.Config{
+		Secret: "setup-only",
+		Auth:   auth,
+		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Drive:  driveCfg,
+		Tunnel: skirk.TunnelConfig{ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
+	}
+	cfg.ApplyDefaults()
+	drive, _, _, err := skirk.StoresFromConfig(ctx, &cfg)
+	if err != nil {
+		return err
+	}
+	name := "setup/" + sessionID + "/marker.json"
+	if err := drive.Put(ctx, name, []byte(`{"ok":true}`)); err != nil {
+		return fmt.Errorf("drive mailbox validation upload failed: %w", err)
+	}
+	if err := drive.Delete(ctx, name); err != nil {
+		return fmt.Errorf("drive mailbox validation cleanup failed: %w", err)
+	}
 	return nil
 }
 
@@ -670,6 +701,7 @@ type setupSummary struct {
 	ExitPath          string
 	SpreadsheetID     string
 	DriveFolderID     string
+	Transport         string
 	Listen            string
 	ClientRoute       string
 	ExitRoute         string
@@ -686,6 +718,7 @@ type setupResult struct {
 	ReadmePath        string
 	SpreadsheetID     string
 	DriveFolderID     string
+	Transport         string
 	ClientRoute       string
 	ExitRoute         string
 	Listen            string
@@ -699,8 +732,13 @@ func printSetupResult(result setupResult) {
 	fmt.Printf("Client JSON config: %s\n", result.ClientPath)
 	fmt.Printf("Client text config: %s\n", result.ClientTextPath)
 	fmt.Printf("Ready client command: %s\n", result.ClientCommandPath)
-	fmt.Printf("Control spreadsheet: %s\n", result.SpreadsheetID)
-	fmt.Printf("Data folder: %s\n", result.DriveFolderID)
+	fmt.Printf("Transport: %s\n", result.Transport)
+	if result.SpreadsheetID != "" {
+		fmt.Printf("Control spreadsheet: %s\n", result.SpreadsheetID)
+	}
+	if result.DriveFolderID != "" {
+		fmt.Printf("Data folder: %s\n", result.DriveFolderID)
+	}
 	fmt.Println()
 	fmt.Println("Run this on the exit machine:")
 	fmt.Println()
@@ -725,8 +763,8 @@ Created workspace: %s
 
 Google account: %s
 ADC path: %s
-Control spreadsheet: %s
-Data folder: %s
+Transport: %s
+Data store: %s
 Client route: %s
 Exit route: %s
 
@@ -771,7 +809,7 @@ All generated client and exit configs contain Google refresh credentials and the
 
 ## Cleanup / Disconnect
 
-To delete the Google Sheet and Drive folder created by this kit:
+To delete the Google workspace created by this kit:
 
 `+"```bash"+`
 skirk workspace delete --config %s --delete-drive-folder
@@ -781,7 +819,17 @@ To immediately invalidate every config generated from this OAuth login, revoke t
 
 ## Notes
 
-The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive and Google Sheets. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.SpreadsheetID, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath)
+The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath)
 	return os.WriteFile(path, []byte(content), 0600)
+}
+
+func driveTransportName(drive skirk.DriveConfig, sheets skirk.SheetsConfig) string {
+	if drive.Space == "appDataFolder" {
+		return "drive_appdata"
+	}
+	if sheets.SpreadsheetID != "" {
+		return "drive_folder+sheets"
+	}
+	return "drive_folder"
 }

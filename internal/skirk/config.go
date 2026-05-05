@@ -47,6 +47,7 @@ type RouteConfig struct {
 
 type DriveConfig struct {
 	FolderID string `json:"folder_id,omitempty"`
+	Space    string `json:"space,omitempty"`
 }
 
 type SheetsConfig struct {
