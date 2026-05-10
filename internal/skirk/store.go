@@ -15,3 +15,12 @@ type BlobStore interface {
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 	Delete(ctx context.Context, name string) error
 }
+
+type ObjectPutStore interface {
+	PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error)
+}
+
+type ObjectIDStore interface {
+	GetByID(ctx context.Context, fileID string) ([]byte, error)
+	DeleteID(ctx context.Context, fileID string) error
+}
