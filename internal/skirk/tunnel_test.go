@@ -76,6 +76,21 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}
 }
 
+func TestControlConnIDParsesStreamPrefix(t *testing.T) {
+	sid, err := ParseSessionID("00112233445566778899aabbccddeeff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := streamControlDirPrefix(sid, DirectionDown)
+	name := streamBatchControlName(sid, DirectionDown, "abc123", 1, 8)
+	if got := controlConnID(prefix, name); got != "abc123" {
+		t.Fatalf("controlConnID() = %q, want abc123", got)
+	}
+	if got := controlConnID(prefix, "control/other/down/abc123/0000000000000001.DATA"); got != "" {
+		t.Fatalf("controlConnID() for wrong prefix = %q, want empty", got)
+	}
+}
+
 func freeTCPAddr(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

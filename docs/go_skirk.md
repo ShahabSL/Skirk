@@ -26,10 +26,10 @@ The important fields are:
 - `route.google_ip`: known Google edge IP for pinned routing. The default setup path uses hostname fronting (`google_front`) because some SOCKS relays allow `www.google.com` but reject IP-literal Google edge targets; use `google_front_pinned` only when a specific Google edge IP is measured to work.
 - `drive.space`: set to `appDataFolder` for the recommended app-private mailbox.
 - `drive.folder_id`: visible Drive folder ID for the fallback mailbox.
-- `tunnel.profile`: `auto` by default. The client and exit choose different Drive upload/download windows based on role and whether the client is using an upstream proxy.
+- `tunnel.profile`: `auto` by default. Direct routes start at the full measured Drive windows. Restricted/proxied routes start lower, then grow and back off based on Google API success or rate-limit pressure.
 - `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.
 - `tunnel.concurrency`: legacy shared cap for Drive workers.
-- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps. Leave unset for `profile=auto`; selected caps are enforced globally across all streams.
+- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps for experiments. Leave unset for `profile=auto`.
 - `tunnel.cleanup_processed`: removes Drive chunks and tombstones processed control rows.
 
 ## Why Drive appData
@@ -43,6 +43,7 @@ This does not make Google Drive a low-latency stream substrate; polling and API 
 - Use a dedicated Google account or workspace for testing.
 - Use a dedicated OAuth client/project per operator where practical.
 - Keep `chunk_size` within a measured range; larger chunks improve bulk throughput but hurt latency and retries.
+- Runtime control polling is shared per tunnel direction. This avoids one Drive list loop per TCP stream, which matters once browsers open many parallel connections.
 - `cleanup_processed` should stay enabled. Runtime cleanup is delayed out of the foreground byte path so active streams get priority.
 - The access token can come from `SKIRK_ACCESS_TOKEN`, `auth.access_token`, or `auth.token_command`.
 

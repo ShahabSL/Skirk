@@ -36,12 +36,13 @@ type Tunnel struct {
 	UploadConcurrency   int
 	DownloadConcurrency int
 	Profile             string
-	RouteMode           string
 	RouteProxy          string
 	role                string
 	limiterMu           sync.Mutex
-	uploadLimiter       chan struct{}
-	downloadLimiter     chan struct{}
+	uploadLimiter       *adaptiveLimiter
+	downloadLimiter     *adaptiveLimiter
+	watcherMu           sync.Mutex
+	watchers            map[byte]*controlWatcher
 	PollInterval        time.Duration
 	CleanupProcessed    bool
 	Logger              *log.Logger
@@ -62,7 +63,6 @@ func NewTunnel(data BlobStore, control BlobStore, cfg *Config) (*Tunnel, error) 
 		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,
 		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
 		Profile:             cfg.Tunnel.Profile,
-		RouteMode:           cfg.Route.Mode,
 		RouteProxy:          cfg.Route.Proxy,
 		PollInterval:        cfg.PollInterval(),
 		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
@@ -126,18 +126,6 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 		}
 		return t.Control.List(ctx, prefix)
 	}
-	changeStore, useChanges := t.changeStore()
-	changeToken := ""
-	if useChanges {
-		var err error
-		changeToken, err = changeStore.StartChangeToken(ctx)
-		if err != nil {
-			useChanges = false
-			if t.Logger != nil {
-				t.Logger.Printf("exit change feed unavailable, using list polling: %v", err)
-			}
-		}
-	}
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
 	seedInfos, err := listOpenControls(ctx)
@@ -172,22 +160,6 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 		}
 	}
 	poll := func() []ObjectInfo {
-		if useChanges {
-			infos, next, err := changeStore.ListChanges(ctx, changeToken)
-			if err == nil {
-				changeToken = next
-				filtered := infos[:0]
-				for _, info := range infos {
-					if strings.HasPrefix(info.Name, prefix) {
-						filtered = append(filtered, info)
-					}
-				}
-				return filtered
-			}
-			if t.Logger != nil {
-				t.Logger.Printf("exit changes failed, falling back to list once: %v", err)
-			}
-		}
 		infos, err := listOpenControls(ctx)
 		if err != nil {
 			if t.Logger != nil {
@@ -305,7 +277,7 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 					return
 				}
 				event, err := t.prepareDataEvent(workerCtx, direction, connID, job.seq, dataName, sealed, len(job.data))
-				release()
+				release(err)
 				if err != nil {
 					errCh <- err
 					cancel()
@@ -445,22 +417,13 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		plaintext []byte
 		err       error
 	}
-	seen := map[string]bool{}
 	cleanup := t.newDeferredCleanup()
 	defer cleanup.FlushAsync()
+	controlInfos, unsubscribe := t.subscribeControls(ctx, direction, connID)
+	defer unsubscribe()
 	pending := map[uint64]ControlPayload{}
 	inflight := map[uint64]bool{}
 	ready := map[uint64]dataResult{}
-	prefix := streamControlPrefix(t.SessionID, direction, connID)
-	changeStore, useChanges := t.changeStore()
-	changeToken := ""
-	if useChanges {
-		var err error
-		changeToken, err = changeStore.StartChangeToken(ctx)
-		if err != nil {
-			useChanges = false
-		}
-	}
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
 	expected := firstSeq
@@ -486,7 +449,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 						return
 					}
 					sealed, err := t.getEventData(ctx, event)
-					release()
+					release(err)
 					if err != nil {
 						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
 						return
@@ -550,11 +513,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		}
 		sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 		for _, info := range infos {
-			if seen[info.Name] {
-				continue
-			}
 			if event, ok := t.parseDataControlInfo(info.Name, direction); ok {
-				seen[info.Name] = true
 				cleanup.Control(info.Name, info.ID)
 				if event.Sequence >= expected {
 					pending[event.Sequence] = event
@@ -567,10 +526,8 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			}
 			var event ControlPayload
 			if err := json.Unmarshal(raw, &event); err != nil {
-				seen[info.Name] = true
 				continue
 			}
-			seen[info.Name] = true
 			cleanup.Control(info.Name, info.ID)
 			if event.Event == "BATCH" {
 				for _, item := range event.Batch {
@@ -581,31 +538,6 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			enqueue(event)
 		}
 	}
-	poll := func() []ObjectInfo {
-		if useChanges {
-			infos, next, err := changeStore.ListChanges(ctx, changeToken)
-			if err == nil {
-				changeToken = next
-				filtered := infos[:0]
-				for _, info := range infos {
-					if strings.HasPrefix(info.Name, prefix) {
-						filtered = append(filtered, info)
-					}
-				}
-				return filtered
-			}
-		}
-		infos, err := t.Control.List(ctx, prefix)
-		if err != nil {
-			return nil
-		}
-		return infos
-	}
-	if seedInfos, err := t.Control.List(ctx, prefix); err == nil {
-		processInfos(seedInfos)
-	} else {
-		processInfos(poll())
-	}
 	if remoteReset != nil {
 		return remoteReset
 	}
@@ -614,6 +546,19 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case info, ok := <-controlInfos:
+			if !ok {
+				return ctx.Err()
+			}
+			processInfos([]ObjectInfo{info})
+			if remoteReset != nil {
+				return remoteReset
+			}
+			startDownloads()
+			done, err := writeReady()
+			if done || err != nil {
+				return err
+			}
 		case result := <-results:
 			delete(inflight, result.seq)
 			if result.err != nil {
@@ -626,11 +571,6 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			}
 			startDownloads()
 		case <-ticker.C:
-			infos := poll()
-			processInfos(infos)
-			if remoteReset != nil {
-				return remoteReset
-			}
 			startDownloads()
 			done, err := writeReady()
 			if done || err != nil {
@@ -771,12 +711,144 @@ func (t *Tunnel) deleteControl(ctx context.Context, name, fileID string) error {
 	return t.Control.Delete(ctx, name)
 }
 
-func (t *Tunnel) changeStore() (ChangeStore, bool) {
-	drive, ok := t.Control.(*DriveStore)
-	if !ok || !drive.isAppData() {
-		return nil, false
+type controlSubscription struct {
+	connID string
+	ch     chan ObjectInfo
+}
+
+type controlWatcher struct {
+	t           *Tunnel
+	direction   byte
+	register    chan controlSubscription
+	unregister  chan string
+	subscribers map[string]chan ObjectInfo
+	pending     map[string][]ObjectInfo
+	seen        map[string]bool
+}
+
+func (t *Tunnel) subscribeControls(ctx context.Context, direction byte, connID string) (<-chan ObjectInfo, func()) {
+	watcher := t.getControlWatcher(direction)
+	ch := make(chan ObjectInfo, 4096)
+	select {
+	case watcher.register <- controlSubscription{connID: connID, ch: ch}:
+	case <-ctx.Done():
+		close(ch)
+		return ch, func() {}
 	}
-	return drive, true
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			select {
+			case watcher.unregister <- connID:
+			default:
+				go func() { watcher.unregister <- connID }()
+			}
+		})
+	}
+}
+
+func (t *Tunnel) getControlWatcher(direction byte) *controlWatcher {
+	t.watcherMu.Lock()
+	defer t.watcherMu.Unlock()
+	if t.watchers == nil {
+		t.watchers = map[byte]*controlWatcher{}
+	}
+	if watcher := t.watchers[direction]; watcher != nil {
+		return watcher
+	}
+	watcher := &controlWatcher{
+		t:           t,
+		direction:   direction,
+		register:    make(chan controlSubscription, 64),
+		unregister:  make(chan string, 64),
+		subscribers: map[string]chan ObjectInfo{},
+		pending:     map[string][]ObjectInfo{},
+		seen:        map[string]bool{},
+	}
+	t.watchers[direction] = watcher
+	go watcher.run()
+	return watcher
+}
+
+func (w *controlWatcher) run() {
+	ticker := time.NewTicker(w.t.PollInterval)
+	defer ticker.Stop()
+	w.poll()
+	for {
+		select {
+		case sub := <-w.register:
+			if old := w.subscribers[sub.connID]; old != nil && old != sub.ch {
+				close(old)
+			}
+			w.subscribers[sub.connID] = sub.ch
+			w.flushPending(sub.connID)
+		case connID := <-w.unregister:
+			if ch := w.subscribers[connID]; ch != nil {
+				close(ch)
+				delete(w.subscribers, connID)
+			}
+		case <-ticker.C:
+			w.poll()
+		}
+	}
+}
+
+func (w *controlWatcher) poll() {
+	prefix := streamControlDirPrefix(w.t.SessionID, w.direction)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	infos, err := w.t.Control.List(ctx, prefix)
+	if err != nil {
+		if w.t.Logger != nil {
+			w.t.Logger.Printf("control list direction=%s failed: %v", directionName(w.direction), err)
+		}
+		return
+	}
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	for _, info := range infos {
+		if w.seen[info.Name] {
+			continue
+		}
+		connID := controlConnID(prefix, info.Name)
+		if connID == "" {
+			w.seen[info.Name] = true
+			continue
+		}
+		w.seen[info.Name] = true
+		w.deliver(connID, info)
+	}
+}
+
+func (w *controlWatcher) deliver(connID string, info ObjectInfo) {
+	if ch := w.subscribers[connID]; ch != nil {
+		ch <- info
+		return
+	}
+	w.pending[connID] = append(w.pending[connID], info)
+}
+
+func (w *controlWatcher) flushPending(connID string) {
+	ch := w.subscribers[connID]
+	if ch == nil {
+		return
+	}
+	pending := w.pending[connID]
+	delete(w.pending, connID)
+	for _, info := range pending {
+		ch <- info
+	}
+}
+
+func controlConnID(prefix, name string) string {
+	if !strings.HasPrefix(name, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(name, prefix)
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return ""
+	}
+	return rest[:slash]
 }
 
 func (t *Tunnel) parseDataControlInfo(name string, direction byte) (ControlPayload, bool) {
@@ -819,9 +891,9 @@ func (t *Tunnel) uploadWorkerCount() int {
 		switch t.role {
 		case "client":
 			if t.RouteProxy != "" {
-				return 1
+				return 8
 			}
-			return 8
+			return 16
 		case "exit":
 			return 32
 		}
@@ -851,37 +923,63 @@ func (t *Tunnel) autoProfile() bool {
 	return strings.TrimSpace(t.Profile) == "" || strings.TrimSpace(t.Profile) == "auto"
 }
 
-func (t *Tunnel) acquireUploadSlot(ctx context.Context) (func(), error) {
-	return t.acquireLimiterSlot(ctx, true)
+func (t *Tunnel) acquireUploadSlot(ctx context.Context) (func(error), error) {
+	return t.limiter(true).Acquire(ctx)
 }
 
-func (t *Tunnel) acquireDownloadSlot(ctx context.Context) (func(), error) {
-	return t.acquireLimiterSlot(ctx, false)
+func (t *Tunnel) acquireDownloadSlot(ctx context.Context) (func(error), error) {
+	return t.limiter(false).Acquire(ctx)
 }
 
-func (t *Tunnel) acquireLimiterSlot(ctx context.Context, upload bool) (func(), error) {
-	limiter := t.limiter(upload)
-	select {
-	case limiter <- struct{}{}:
-		return func() { <-limiter }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (t *Tunnel) limiter(upload bool) chan struct{} {
+func (t *Tunnel) limiter(upload bool) *adaptiveLimiter {
 	t.limiterMu.Lock()
 	defer t.limiterMu.Unlock()
 	if upload {
 		if t.uploadLimiter == nil {
-			t.uploadLimiter = make(chan struct{}, t.uploadWorkerCount())
+			max := t.uploadWorkerCount()
+			t.uploadLimiter = newAdaptiveLimiter(t.initialUploadWindow(max), max)
 		}
 		return t.uploadLimiter
 	}
 	if t.downloadLimiter == nil {
-		t.downloadLimiter = make(chan struct{}, t.downloadWorkerCount())
+		max := t.downloadWorkerCount()
+		t.downloadLimiter = newAdaptiveLimiter(t.initialDownloadWindow(max), max)
 	}
 	return t.downloadLimiter
+}
+
+func (t *Tunnel) initialUploadWindow(max int) int {
+	if t.UploadConcurrency > 0 || !t.autoProfile() {
+		return max
+	}
+	switch t.role {
+	case "client":
+		if t.RouteProxy != "" {
+			return 1
+		}
+		return max
+	case "exit":
+		return max
+	default:
+		return max
+	}
+}
+
+func (t *Tunnel) initialDownloadWindow(max int) int {
+	if t.DownloadConcurrency > 0 || !t.autoProfile() {
+		return max
+	}
+	switch t.role {
+	case "client":
+		if t.RouteProxy != "" {
+			return minInt(4, max)
+		}
+		return max
+	case "exit":
+		return max
+	default:
+		return max
+	}
 }
 
 func clampWorkers(workers int) int {
@@ -892,6 +990,84 @@ func clampWorkers(workers int) int {
 		return 32
 	}
 	return workers
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+type adaptiveLimiter struct {
+	mu        sync.Mutex
+	limit     int
+	max       int
+	inFlight  int
+	successes int
+}
+
+func newAdaptiveLimiter(initial, max int) *adaptiveLimiter {
+	max = clampWorkers(max)
+	if initial < 1 {
+		initial = 1
+	}
+	if initial > max {
+		initial = max
+	}
+	return &adaptiveLimiter{limit: initial, max: max}
+}
+
+func (l *adaptiveLimiter) Acquire(ctx context.Context) (func(error), error) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		l.mu.Lock()
+		if l.inFlight < l.limit {
+			l.inFlight++
+			l.mu.Unlock()
+			var once sync.Once
+			return func(err error) {
+				once.Do(func() {
+					l.release(err)
+				})
+			}, nil
+		}
+		l.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (l *adaptiveLimiter) release(err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight > 0 {
+		l.inFlight--
+	}
+	if err != nil {
+		if l.limit > 1 {
+			l.limit = maxInt(1, l.limit/2)
+		}
+		l.successes = 0
+		return
+	}
+	l.successes++
+	threshold := maxInt(2, l.limit*2)
+	if l.successes >= threshold && l.limit < l.max {
+		l.limit++
+		l.successes = 0
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 type cleanupTask struct {

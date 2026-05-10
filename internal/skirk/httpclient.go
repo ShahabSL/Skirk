@@ -6,8 +6,10 @@ import (
 	stdtls "crypto/tls"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,15 +98,15 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
-	attempts := 1
+	attempts := 4
 	if isGoogleFrontRoute(c.route.Mode) {
-		attempts = 4
+		attempts = 5
 	}
 	var lastErr error
 	var lastResult *HTTPResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		result, err := c.requestOnce(ctx, method, host, path, headers, body)
-		if err == nil && !shouldRetryStatus(result.Status) {
+		if err == nil && !shouldRetryResult(result) {
 			return result, nil
 		}
 		if err == nil {
@@ -115,7 +117,7 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 		if attempt == attempts-1 {
 			break
 		}
-		if err := sleepBeforeRetry(ctx, attempt); err != nil {
+		if err := sleepBeforeRetry(ctx, attempt, retryAfter(result)); err != nil {
 			if lastErr != nil {
 				return nil, lastErr
 			}
@@ -170,12 +172,49 @@ func isGoogleFrontRoute(mode string) bool {
 	return mode == "google_front" || mode == "google_front_pinned"
 }
 
-func shouldRetryStatus(status int) bool {
-	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+func shouldRetryResult(result *HTTPResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.Status == http.StatusRequestTimeout || result.Status == http.StatusTooManyRequests || result.Status >= 500 {
+		return true
+	}
+	if result.Status != http.StatusForbidden {
+		return false
+	}
+	body := string(result.Body)
+	return strings.Contains(body, "rateLimitExceeded") || strings.Contains(body, "userRateLimitExceeded")
 }
 
-func sleepBeforeRetry(ctx context.Context, attempt int) error {
-	delay := time.Duration(300*(1<<attempt)) * time.Millisecond
+func retryAfter(result *HTTPResult) time.Duration {
+	if result == nil {
+		return 0
+	}
+	value := strings.TrimSpace(result.Header.Get("Retry-After"))
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		return time.Until(when)
+	}
+	return 0
+}
+
+func sleepBeforeRetry(ctx context.Context, attempt int, serverDelay time.Duration) error {
+	delay := 300 * time.Millisecond * time.Duration(1<<attempt)
+	if delay > 5*time.Second {
+		delay = 5 * time.Second
+	}
+	delay += time.Duration(rand.Intn(300)) * time.Millisecond
+	if serverDelay > delay {
+		delay = serverDelay
+	}
+	if delay < 0 {
+		delay = 0
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
