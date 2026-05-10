@@ -63,13 +63,23 @@ The dashboard is optional on Windows too. The non-GUI command also works:
 
 ## Android
 
-Android is different from desktop because Android apps cannot become whole-device VPNs by opening a SOCKS listener alone. The standard native path is an Android `VpnService` that owns a TUN interface and forwards traffic into the Skirk tunnel engine.
+Android currently ships as a native proxy client. It packages the Go `skirk`
+engine inside the APK, imports the same one-line `skirk:` config, and runs a
+foreground SOCKS5 service.
 
-The repository includes an Android project scaffold under `clients/android` with:
+Build:
 
-- config import UI;
-- shadcn/ChatGPT-inspired neutral styling using native Compose Material 3;
-- `VpnService` permission wiring;
-- a placeholder service boundary for the Go tunnel engine bridge.
+```bash
+cd clients/android
+./gradlew :app:assembleDebug --console=plain
+```
 
-The Android network engine is intentionally not marked production-complete until the Go core is bound with `gomobile` or reimplemented behind the same config contract. Desktop Linux/Windows clients are the production clients in this repository today.
+Install `app/build/outputs/apk/debug/app-debug.apk`, paste the generated
+one-line config, import it, then tap Connect. The default listener is
+`127.0.0.1:18080`; enable LAN sharing to bind `0.0.0.0:18080` and let another
+device use the phone as a SOCKS5 proxy.
+
+Whole-device VPN mode is not released yet. A correct VPN mode needs Android
+`VpnService` plus a real TUN-to-SOCKS forwarding engine such as a tun2socks
+component. The previous fake `VpnService` scaffold was removed because it
+created a VPN interface but did not forward packets.

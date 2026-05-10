@@ -36,6 +36,12 @@ This writes:
 - `dist/skirk-windows-amd64.zip`
 - `dist/SHA256SUMS`
 
+Client release assets are built by GitHub Actions:
+
+- `skirk-android-arm64-preview.apk`
+- `Skirk_windows_x64_portable.zip`
+- `skirk-desktop-windows-x64-installer.exe`
+
 ## Publish A GitHub Release
 
 The included GitHub Actions release workflow publishes these artifacts when a `v*` tag is pushed:
@@ -44,6 +50,10 @@ The included GitHub Actions release workflow publishes these artifacts when a `v
 git tag v0.1.3
 git push origin v0.1.3
 ```
+
+The Android APK is a debug-signed preview build so it can be sideloaded without
+release-signing secrets. A production Android release should add a signing
+keystore through GitHub Actions secrets and publish a signed release APK or AAB.
 
 After the release exists, Linux users can install with:
 

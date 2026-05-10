@@ -13,7 +13,7 @@ Skirk is a Go-first restricted-network transport that uses Google Drive as an en
 - Tuning: adaptive Drive profile by default; direct routes start at full measured windows, restricted/proxied routes ramp up and back off on Google API pressure.
 - Client UX: one generated `skirk:...` text config; no client-side Google login required.
 - Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
-- Client mode: local SOCKS5 proxy on Linux today; Windows and Android clients can consume the same config format.
+- Client mode: local SOCKS5 proxy on Linux, portable desktop client on Windows, and native Android proxy client with LAN sharing.
 
 Skirk does not require a VPS for protocol reasons. It requires an exit machine with working internet egress. A VPS is the most reliable exit because it stays online, but a laptop or home server also works while it is awake and connected.
 
@@ -114,6 +114,17 @@ cd clients/desktop
 npm install
 npm run tauri dev
 ```
+
+Android app:
+
+```bash
+cd clients/android
+./gradlew :app:assembleDebug --console=plain
+```
+
+Install the APK from `clients/android/app/build/outputs/apk/debug/app-debug.apk`,
+paste the one-line `skirk:` config, and tap Connect. Enable LAN sharing if other
+devices should use the phone as a SOCKS5 proxy.
 
 ## Cleanup
 
