@@ -781,6 +781,7 @@ func (w *controlWatcher) run() {
 				close(old)
 			}
 			w.subscribers[sub.connID] = sub.ch
+			w.poll()
 			w.flushPending(sub.connID)
 		case connID := <-w.unregister:
 			if ch := w.subscribers[connID]; ch != nil {
@@ -788,7 +789,9 @@ func (w *controlWatcher) run() {
 				delete(w.subscribers, connID)
 			}
 		case <-ticker.C:
-			w.poll()
+			if len(w.subscribers) > 0 {
+				w.poll()
+			}
 		}
 	}
 }
