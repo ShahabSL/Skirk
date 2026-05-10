@@ -29,7 +29,7 @@ The important fields are:
 - `tunnel.profile`: `auto` by default. The client and exit choose different Drive upload/download windows based on role and whether the client is using an upstream proxy.
 - `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.
 - `tunnel.concurrency`: legacy shared cap for Drive workers.
-- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps. Leave unset for `profile=auto`.
+- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps. Leave unset for `profile=auto`; selected caps are enforced globally across all streams.
 - `tunnel.cleanup_processed`: removes Drive chunks and tombstones processed control rows.
 
 ## Why Drive appData

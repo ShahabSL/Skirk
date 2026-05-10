@@ -10,7 +10,7 @@ Skirk is a Go-first restricted-network transport that uses Google Drive as an en
 
 - Production path: Go CLI in `cmd/skirk`.
 - Transport: encrypted Drive appDataFolder mailbox with Drive-folder fallback.
-- Tuning: adaptive Drive profile by default; upload/download windows are chosen per role and route, with manual caps still available.
+- Tuning: bounded auto Drive profile by default; upload/download windows are chosen per role and route, then enforced globally across all streams.
 - Client UX: one generated `skirk:...` text config; no client-side Google login required.
 - Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
 - Client mode: local SOCKS5 proxy on Linux today; Windows and Android clients can consume the same config format.

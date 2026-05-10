@@ -142,7 +142,7 @@ On the VPS, laptop, or server:
 ./bin/skirk serve-exit --config skirk-kit/exit.json
 ```
 
-Generated kits use `profile=auto`. In that mode Skirk chooses different Drive windows for the client and exit: restricted client uploads stay conservative, client downloads can fan out, and the exit can upload response chunks aggressively. You can still override the caps for experiments:
+Generated kits use `profile=auto`. In that mode Skirk chooses different Drive windows for the client and exit: restricted client uploads stay conservative, client downloads can fan out, and the exit can upload response chunks aggressively. These windows are enforced globally across all streams, so many application connections cannot multiply into unbounded Drive requests. You can still override the caps for experiments:
 
 ```bash
 ./bin/skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 32 --download-concurrency 16

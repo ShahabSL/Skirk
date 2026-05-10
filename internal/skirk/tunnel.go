@@ -39,6 +39,9 @@ type Tunnel struct {
 	RouteMode           string
 	RouteProxy          string
 	role                string
+	limiterMu           sync.Mutex
+	uploadLimiter       chan struct{}
+	downloadLimiter     chan struct{}
 	PollInterval        time.Duration
 	CleanupProcessed    bool
 	Logger              *log.Logger
@@ -295,7 +298,14 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 					cancel()
 					return
 				}
+				release, err := t.acquireUploadSlot(workerCtx)
+				if err != nil {
+					errCh <- err
+					cancel()
+					return
+				}
 				event, err := t.prepareDataEvent(workerCtx, direction, connID, job.seq, dataName, sealed, len(job.data))
+				release()
 				if err != nil {
 					errCh <- err
 					cancel()
@@ -470,7 +480,13 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 				inflight[seq] = true
 				started = true
 				go func(event ControlPayload) {
+					release, err := t.acquireDownloadSlot(ctx)
+					if err != nil {
+						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
+						return
+					}
 					sealed, err := t.getEventData(ctx, event)
+					release()
 					if err != nil {
 						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
 						return
@@ -833,6 +849,39 @@ func (t *Tunnel) downloadWorkerCount() int {
 
 func (t *Tunnel) autoProfile() bool {
 	return strings.TrimSpace(t.Profile) == "" || strings.TrimSpace(t.Profile) == "auto"
+}
+
+func (t *Tunnel) acquireUploadSlot(ctx context.Context) (func(), error) {
+	return t.acquireLimiterSlot(ctx, true)
+}
+
+func (t *Tunnel) acquireDownloadSlot(ctx context.Context) (func(), error) {
+	return t.acquireLimiterSlot(ctx, false)
+}
+
+func (t *Tunnel) acquireLimiterSlot(ctx context.Context, upload bool) (func(), error) {
+	limiter := t.limiter(upload)
+	select {
+	case limiter <- struct{}{}:
+		return func() { <-limiter }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (t *Tunnel) limiter(upload bool) chan struct{} {
+	t.limiterMu.Lock()
+	defer t.limiterMu.Unlock()
+	if upload {
+		if t.uploadLimiter == nil {
+			t.uploadLimiter = make(chan struct{}, t.uploadWorkerCount())
+		}
+		return t.uploadLimiter
+	}
+	if t.downloadLimiter == nil {
+		t.downloadLimiter = make(chan struct{}, t.downloadWorkerCount())
+	}
+	return t.downloadLimiter
 }
 
 func clampWorkers(workers int) int {

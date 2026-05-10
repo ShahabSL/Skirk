@@ -127,6 +127,7 @@ Changes applied:
 - added runtime overrides for `serve-client` and `serve-exit`: `--chunk-size`, `--poll-ms`, and `--concurrency`;
 - evaluated `changes.list`; it is retained only for appData-compatible future use and is not used for normal folder-backed kits because folder-scoped `files.list` was faster in the measured path.
 - added split upload/download concurrency and `profile=auto`, so the client can keep restricted uploads conservative while allowing higher download fanout and higher exit response upload fanout;
+- enforced selected upload/download windows globally across all streams, preventing parallel application connections from multiplying into hundreds of simultaneous Drive requests;
 - moved cleanup out of the foreground byte path. Processed Drive objects are now queued for delayed background cleanup so active streams do not compete with their own garbage collection.
 
 Controlled test target:
@@ -149,10 +150,11 @@ Measured results:
 | 32 parallel streams after batched manifests | 32 x 10 MiB | ~43.98 Mbps aggregate |
 | Single stream with split concurrency and delayed cleanup | 25 MiB | best sample **~13.1 Mbps**, high-variance samples around 10 Mbps |
 | 16 parallel streams with split concurrency and delayed cleanup | 16 x 25 MiB | best stable sample **~37.9 Mbps aggregate**, later confirmation ~36.3 Mbps |
+| 16 parallel streams with global Drive request windows | 16 x 25 MiB | **~62.13 Mbps aggregate**, all streams completed |
 
 The current sweet spot on this machine is still about 16 concurrent application streams. Higher stream counts create more Drive API contention and tail latency without improving aggregate throughput.
 
-`profile=auto` is not a promise that Drive behaves like a streaming CDN. It is an adaptive profile with caps: restricted client uploads are kept low because that path previously produced EOFs under upload pressure; client downloads and exit response uploads are allowed higher windows because those are the paths that benefit from fanout.
+`profile=auto` is not a promise that Drive behaves like a streaming CDN. It is a bounded auto profile: restricted client uploads are kept low because that path previously produced EOFs under upload pressure; client downloads and exit response uploads are allowed higher windows because those are the paths that benefit from fanout. The windows are global per tunnel, not per application stream.
 
 ## Learning Notes
 
