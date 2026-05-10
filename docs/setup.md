@@ -167,6 +167,14 @@ read -r SKIRK_CLIENT_CONFIG
 ./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
+When testing from a machine where the restricted network is represented by another local SOCKS proxy, override the upstream route at runtime instead of regenerating the shared config:
+
+```bash
+./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
+  --route-mode google_front \
+  --upstream-proxy socks5h://127.0.0.1:11093
+```
+
 ## Restricted Networks
 
 The default generated client route is `google_front`, which connects to the hostname `www.google.com` with Google-looking SNI while sending the real Google API Host header after TLS. This is more compatible with SOCKS relays that allow Google hostnames but reject IP-literal Google edge targets. `google_front_pinned` is still available when a specific Google edge IP is known to work. The default exit route is `direct`, because the exit normally has ordinary internet.

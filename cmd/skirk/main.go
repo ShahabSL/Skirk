@@ -605,10 +605,26 @@ func serveClient(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-client", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	listen := fs.String("listen", "", "SOCKS5 listen address")
+	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
+	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned")
+	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, drive, sheets, _, err := load(*configPath)
+	cfg, err := skirk.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(*upstreamProxy) != "" {
+		cfg.Route.Proxy = strings.TrimSpace(*upstreamProxy)
+	}
+	if strings.TrimSpace(*routeMode) != "" {
+		cfg.Route.Mode = strings.TrimSpace(*routeMode)
+	}
+	if strings.TrimSpace(*googleIP) != "" {
+		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	drive, sheets, _, err := skirk.StoresFromConfig(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -618,7 +634,7 @@ func serveClient(ctx context.Context, args []string) error {
 		return err
 	}
 	addr := firstNonEmpty(*listen, cfg.Tunnel.Listen)
-	log.Printf("skirk client SOCKS5 listening on %s session=%s", addr, skirk.SessionString(tunnel.SessionID))
+	log.Printf("skirk client SOCKS5 listening on %s session=%s route=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Route.Mode, firstNonEmpty(cfg.Route.Proxy, "none"))
 	return tunnel.ServeClient(ctx, addr)
 }
 

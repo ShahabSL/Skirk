@@ -90,6 +90,14 @@ read -r SKIRK_CLIENT_CONFIG
 skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
+For local reachability tests where the restricted network is exposed as another SOCKS proxy:
+
+```bash
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
+  --route-mode google_front \
+  --upstream-proxy socks5h://127.0.0.1:11093
+```
+
 Optional: run the desktop dashboard on Windows or a desktop Linux machine with a browser:
 
 ```bash
