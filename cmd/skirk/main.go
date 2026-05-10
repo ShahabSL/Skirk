@@ -611,6 +611,8 @@ func serveClient(ctx context.Context, args []string) error {
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
+	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -627,7 +629,7 @@ func serveClient(ctx context.Context, args []string) error {
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
 	}
-	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency); err != nil {
+	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
 	}
 	drive, sheets, _, err := skirk.StoresFromConfig(ctx, cfg)
@@ -650,6 +652,8 @@ func serveExit(ctx context.Context, args []string) error {
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
+	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -657,7 +661,7 @@ func serveExit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency); err != nil {
+	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
 	}
 	control := controlStore(drive, sheets, cfg)
@@ -669,7 +673,7 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
-func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency int) error {
+func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency, uploadConcurrency, downloadConcurrency int) error {
 	if cfg == nil {
 		return nil
 	}
@@ -681,6 +685,14 @@ func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency int)
 	}
 	if concurrency > 0 {
 		cfg.Tunnel.Concurrency = concurrency
+		cfg.Tunnel.UploadConcurrency = concurrency
+		cfg.Tunnel.DownloadConcurrency = concurrency
+	}
+	if uploadConcurrency > 0 {
+		cfg.Tunnel.UploadConcurrency = uploadConcurrency
+	}
+	if downloadConcurrency > 0 {
+		cfg.Tunnel.DownloadConcurrency = downloadConcurrency
 	}
 	return cfg.Validate()
 }
@@ -719,7 +731,7 @@ func sampleConfig(args []string) error {
 		Auth:      skirk.AuthConfig{TokenCommand: "gcloud auth print-access-token"},
 		Route:     skirk.RouteConfig{Mode: *routeMode, Proxy: *proxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Sheets:    skirk.SheetsConfig{SpreadsheetID: *spreadsheetID, Range: "skirk!A:D"},
-		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", ChunkSize: 1024 * 1024, PollIntervalMS: 1200, Concurrency: *concurrency, CleanupProcessed: true},
+		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", Profile: "auto", ChunkSize: 1024 * 1024, PollIntervalMS: 250, Concurrency: *concurrency, CleanupProcessed: true},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

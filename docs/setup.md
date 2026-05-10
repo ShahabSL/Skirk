@@ -142,6 +142,12 @@ On the VPS, laptop, or server:
 ./bin/skirk serve-exit --config skirk-kit/exit.json
 ```
 
+Generated kits use `profile=auto`. In that mode Skirk chooses different Drive windows for the client and exit: restricted client uploads stay conservative, client downloads can fan out, and the exit can upload response chunks aggressively. You can still override the caps for experiments:
+
+```bash
+./bin/skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 32 --download-concurrency 16
+```
+
 ## Run A Linux Client
 
 On the client:
@@ -173,6 +179,13 @@ When testing from a machine where the restricted network is represented by anoth
 ./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
   --route-mode google_front \
   --upstream-proxy socks5h://127.0.0.1:11093
+```
+
+For throughput experiments on a normal network, remove `--upstream-proxy` and optionally force direct Google APIs:
+
+```bash
+./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
+  --route-mode direct
 ```
 
 ## Restricted Networks

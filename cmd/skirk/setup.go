@@ -65,9 +65,13 @@ func setupInit(ctx context.Context, args []string) error {
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 1024*1024, "maximum tunnel chunk size")
-	pollMS := fs.Int("poll-ms", 1200, "mailbox poll interval in milliseconds")
-	clientConcurrency := fs.Int("client-concurrency", 1, "client Drive upload/download concurrency")
-	exitConcurrency := fs.Int("exit-concurrency", 8, "exit Drive upload/download concurrency")
+	pollMS := fs.Int("poll-ms", 250, "mailbox poll interval in milliseconds")
+	clientConcurrency := fs.Int("client-concurrency", 0, "legacy client Drive upload/download concurrency; sets both split knobs")
+	exitConcurrency := fs.Int("exit-concurrency", 0, "legacy exit Drive upload/download concurrency; sets both split knobs")
+	clientUploadConcurrency := fs.Int("client-upload-concurrency", 0, "client Drive upload concurrency; 0 uses auto profile")
+	clientDownloadConcurrency := fs.Int("client-download-concurrency", 0, "client Drive download concurrency; 0 uses auto profile")
+	exitUploadConcurrency := fs.Int("exit-upload-concurrency", 0, "exit Drive upload concurrency; 0 uses auto profile")
+	exitDownloadConcurrency := fs.Int("exit-download-concurrency", 0, "exit Drive download concurrency; 0 uses auto profile")
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON instead of the copy-paste setup summary")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -77,6 +81,14 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	if *adcPath != "" && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
+	}
+	if *clientConcurrency > 0 {
+		*clientUploadConcurrency = *clientConcurrency
+		*clientDownloadConcurrency = *clientConcurrency
+	}
+	if *exitConcurrency > 0 {
+		*exitUploadConcurrency = *exitConcurrency
+		*exitDownloadConcurrency = *exitConcurrency
 	}
 
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
@@ -137,7 +149,7 @@ func setupInit(ctx context.Context, args []string) error {
 			Secret: "setup-only",
 			Auth:   auth,
 			Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: *googleIP, TimeoutSeconds: 240},
-			Tunnel: skirk.TunnelConfig{ChunkSize: *chunkSize, PollIntervalMS: *pollMS, Concurrency: *exitConcurrency, CleanupProcessed: true},
+			Tunnel: setupTunnelConfig("", *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency),
 		}
 		adminCfg.ApplyDefaults()
 		_, _, workspace, err := skirk.StoresFromConfig(ctx, &adminCfg)
@@ -174,7 +186,7 @@ func setupInit(ctx context.Context, args []string) error {
 		Route:     skirk.RouteConfig{Mode: *clientRoute, Proxy: *clientProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     baseDrive,
 		Sheets:    baseSheets,
-		Tunnel:    skirk.TunnelConfig{Listen: *listen, ChunkSize: *chunkSize, PollIntervalMS: *pollMS, Concurrency: *clientConcurrency, CleanupProcessed: true},
+		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *clientUploadConcurrency, *clientDownloadConcurrency),
 	}
 	exitCfg := skirk.Config{
 		Secret:    secret,
@@ -183,7 +195,7 @@ func setupInit(ctx context.Context, args []string) error {
 		Route:     skirk.RouteConfig{Mode: *exitRoute, Proxy: *exitProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     baseDrive,
 		Sheets:    baseSheets,
-		Tunnel:    skirk.TunnelConfig{Listen: *listen, ChunkSize: *chunkSize, PollIntervalMS: *pollMS, Concurrency: *exitConcurrency, CleanupProcessed: true},
+		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency),
 	}
 	if err := os.MkdirAll(*outDir, 0700); err != nil {
 		return err
@@ -273,7 +285,7 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 		Auth:   auth,
 		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
 		Drive:  driveCfg,
-		Tunnel: skirk.TunnelConfig{ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
+		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
 	cfg.ApplyDefaults()
 	drive, _, _, err := skirk.StoresFromConfig(ctx, &cfg)
@@ -288,6 +300,24 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 		return fmt.Errorf("drive mailbox validation cleanup failed: %w", err)
 	}
 	return nil
+}
+
+func setupTunnelConfig(listen string, chunkSize, pollMS, uploadConcurrency, downloadConcurrency int) skirk.TunnelConfig {
+	cfg := skirk.TunnelConfig{
+		Listen:           listen,
+		Profile:          "auto",
+		ChunkSize:        chunkSize,
+		PollIntervalMS:   pollMS,
+		Concurrency:      32,
+		CleanupProcessed: true,
+	}
+	if uploadConcurrency > 0 {
+		cfg.UploadConcurrency = uploadConcurrency
+	}
+	if downloadConcurrency > 0 {
+		cfg.DownloadConcurrency = downloadConcurrency
+	}
+	return cfg
 }
 
 func ensureGcloud(ctx context.Context) (string, error) {

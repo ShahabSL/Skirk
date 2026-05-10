@@ -56,11 +56,14 @@ type SheetsConfig struct {
 }
 
 type TunnelConfig struct {
-	Listen           string `json:"listen,omitempty"`
-	ChunkSize        int    `json:"chunk_size,omitempty"`
-	PollIntervalMS   int    `json:"poll_interval_ms,omitempty"`
-	Concurrency      int    `json:"concurrency,omitempty"`
-	CleanupProcessed bool   `json:"cleanup_processed,omitempty"`
+	Listen              string `json:"listen,omitempty"`
+	Profile             string `json:"profile,omitempty"`
+	ChunkSize           int    `json:"chunk_size,omitempty"`
+	PollIntervalMS      int    `json:"poll_interval_ms,omitempty"`
+	Concurrency         int    `json:"concurrency,omitempty"`
+	UploadConcurrency   int    `json:"upload_concurrency,omitempty"`
+	DownloadConcurrency int    `json:"download_concurrency,omitempty"`
+	CleanupProcessed    bool   `json:"cleanup_processed,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -172,14 +175,17 @@ func (c *Config) ApplyDefaults() {
 	if c.Tunnel.Listen == "" {
 		c.Tunnel.Listen = "127.0.0.1:18080"
 	}
+	if c.Tunnel.Profile == "" {
+		c.Tunnel.Profile = "auto"
+	}
 	if c.Tunnel.ChunkSize == 0 {
-		c.Tunnel.ChunkSize = 8192
+		c.Tunnel.ChunkSize = 1024 * 1024
 	}
 	if c.Tunnel.PollIntervalMS == 0 {
-		c.Tunnel.PollIntervalMS = 1200
+		c.Tunnel.PollIntervalMS = 250
 	}
 	if c.Tunnel.Concurrency == 0 {
-		c.Tunnel.Concurrency = 8
+		c.Tunnel.Concurrency = 32
 	}
 }
 
@@ -192,6 +198,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Tunnel.Concurrency < 1 || c.Tunnel.Concurrency > 32 {
 		return fmt.Errorf("config.tunnel.concurrency must be between 1 and 32")
+	}
+	switch strings.TrimSpace(c.Tunnel.Profile) {
+	case "", "auto", "fixed":
+	default:
+		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
+	}
+	if c.Tunnel.UploadConcurrency < 0 || c.Tunnel.UploadConcurrency > 32 {
+		return fmt.Errorf("config.tunnel.upload_concurrency must be between 0 and 32")
+	}
+	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 32 {
+		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 32")
 	}
 	return nil
 }

@@ -18,22 +18,30 @@ import (
 )
 
 const (
-	inlineDataThreshold = 64 * 1024
-	readCoalesceDelay   = 25 * time.Millisecond
-	controlBatchSize    = 8
-	controlBatchDelay   = 25 * time.Millisecond
+	inlineDataThreshold           = 64 * 1024
+	readCoalesceDelay             = 25 * time.Millisecond
+	controlBatchSize              = 8
+	controlBatchDelay             = 25 * time.Millisecond
+	deferredCleanupDelay          = 2 * time.Minute
+	deferredCleanupFlushThreshold = 2048
 )
 
 type Tunnel struct {
-	Data             BlobStore
-	Control          BlobStore
-	Secret           string
-	SessionID        [16]byte
-	ChunkSize        int
-	Concurrency      int
-	PollInterval     time.Duration
-	CleanupProcessed bool
-	Logger           *log.Logger
+	Data                BlobStore
+	Control             BlobStore
+	Secret              string
+	SessionID           [16]byte
+	ChunkSize           int
+	Concurrency         int
+	UploadConcurrency   int
+	DownloadConcurrency int
+	Profile             string
+	RouteMode           string
+	RouteProxy          string
+	role                string
+	PollInterval        time.Duration
+	CleanupProcessed    bool
+	Logger              *log.Logger
 }
 
 func NewTunnel(data BlobStore, control BlobStore, cfg *Config) (*Tunnel, error) {
@@ -42,19 +50,25 @@ func NewTunnel(data BlobStore, control BlobStore, cfg *Config) (*Tunnel, error) 
 		return nil, err
 	}
 	return &Tunnel{
-		Data:             data,
-		Control:          control,
-		Secret:           cfg.Secret,
-		SessionID:        sid,
-		ChunkSize:        cfg.Tunnel.ChunkSize,
-		Concurrency:      cfg.Tunnel.Concurrency,
-		PollInterval:     cfg.PollInterval(),
-		CleanupProcessed: cfg.Tunnel.CleanupProcessed,
-		Logger:           log.Default(),
+		Data:                data,
+		Control:             control,
+		Secret:              cfg.Secret,
+		SessionID:           sid,
+		ChunkSize:           cfg.Tunnel.ChunkSize,
+		Concurrency:         cfg.Tunnel.Concurrency,
+		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,
+		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
+		Profile:             cfg.Tunnel.Profile,
+		RouteMode:           cfg.Route.Mode,
+		RouteProxy:          cfg.Route.Proxy,
+		PollInterval:        cfg.PollInterval(),
+		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
+		Logger:              log.Default(),
 	}, nil
 }
 
 func (t *Tunnel) ServeClient(ctx context.Context, listen string) error {
+	t.role = "client"
 	server := SOCKSServer{
 		Listen: listen,
 		Logger: t.Logger,
@@ -96,12 +110,19 @@ func (t *Tunnel) handleClientConn(ctx context.Context, target string, local net.
 }
 
 func (t *Tunnel) ServeExit(ctx context.Context) error {
+	t.role = "exit"
 	type state struct {
 		conn net.Conn
 	}
 	conns := map[string]*state{}
 	seen := map[string]bool{}
 	prefix := streamControlDirPrefix(t.SessionID, DirectionUp)
+	listOpenControls := func(ctx context.Context) ([]ObjectInfo, error) {
+		if store, ok := t.Control.(ContainsListStore); ok {
+			return store.ListContains(ctx, []string{prefix, ".OPEN"})
+		}
+		return t.Control.List(ctx, prefix)
+	}
 	changeStore, useChanges := t.changeStore()
 	changeToken := ""
 	if useChanges {
@@ -116,7 +137,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
-	seedInfos, err := t.Control.List(ctx, prefix)
+	seedInfos, err := listOpenControls(ctx)
 	if err == nil {
 		sort.Slice(seedInfos, func(i, j int) bool { return seedInfos[i].Name < seedInfos[j].Name })
 		for _, info := range seedInfos {
@@ -164,7 +185,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 				t.Logger.Printf("exit changes failed, falling back to list once: %v", err)
 			}
 		}
-		infos, err := t.Control.List(ctx, prefix)
+		infos, err := listOpenControls(ctx)
 		if err != nil {
 			if t.Logger != nil {
 				t.Logger.Printf("exit control list failed: %v", err)
@@ -257,11 +278,12 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	jobs := make(chan uploadJob, t.workerCount())
-	results := make(chan uploadResult, t.workerCount()*2)
-	errCh := make(chan error, t.workerCount()+2)
+	uploadWorkers := t.uploadWorkerCount()
+	jobs := make(chan uploadJob, uploadWorkers)
+	results := make(chan uploadResult, uploadWorkers*2)
+	errCh := make(chan error, uploadWorkers+2)
 	var wg sync.WaitGroup
-	for i := 0; i < t.workerCount(); i++ {
+	for i := 0; i < uploadWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -414,6 +436,8 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		err       error
 	}
 	seen := map[string]bool{}
+	cleanup := t.newDeferredCleanup()
+	defer cleanup.FlushAsync()
 	pending := map[uint64]ControlPayload{}
 	inflight := map[uint64]bool{}
 	ready := map[uint64]dataResult{}
@@ -430,7 +454,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
 	expected := firstSeq
-	concurrency := t.workerCount()
+	concurrency := t.downloadWorkerCount()
 	results := make(chan dataResult, concurrency*2)
 	hasFIN := false
 	var finSeq uint64
@@ -477,8 +501,8 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			if _, err := writer.Write(result.plaintext); err != nil {
 				return false, err
 			}
-			if t.CleanupProcessed && (result.object != "" || result.fileID != "") {
-				_ = t.deleteData(ctx, result.object, result.fileID)
+			if result.object != "" || result.fileID != "" {
+				cleanup.Data(result.object, result.fileID)
 			}
 			delete(ready, expected)
 			delete(pending, expected)
@@ -515,9 +539,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			}
 			if event, ok := t.parseDataControlInfo(info.Name, direction); ok {
 				seen[info.Name] = true
-				if t.CleanupProcessed {
-					_ = t.deleteControl(ctx, info.Name, info.ID)
-				}
+				cleanup.Control(info.Name, info.ID)
 				if event.Sequence >= expected {
 					pending[event.Sequence] = event
 				}
@@ -533,9 +555,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 				continue
 			}
 			seen[info.Name] = true
-			if t.CleanupProcessed {
-				_ = t.deleteControl(ctx, info.Name, info.ID)
-			}
+			cleanup.Control(info.Name, info.ID)
 			if event.Event == "BATCH" {
 				for _, item := range event.Batch {
 					enqueue(item)
@@ -775,14 +795,131 @@ func (t *Tunnel) parseDataControlInfo(name string, direction byte) (ControlPaylo
 	}, true
 }
 
-func (t *Tunnel) workerCount() int {
-	if t.Concurrency < 1 {
+func (t *Tunnel) uploadWorkerCount() int {
+	if t.UploadConcurrency > 0 {
+		return clampWorkers(t.UploadConcurrency)
+	}
+	if t.autoProfile() {
+		switch t.role {
+		case "client":
+			if t.RouteProxy != "" {
+				return 1
+			}
+			return 8
+		case "exit":
+			return 32
+		}
+	}
+	return clampWorkers(t.Concurrency)
+}
+
+func (t *Tunnel) downloadWorkerCount() int {
+	if t.DownloadConcurrency > 0 {
+		return clampWorkers(t.DownloadConcurrency)
+	}
+	if t.autoProfile() {
+		switch t.role {
+		case "client":
+			if t.RouteProxy != "" {
+				return 16
+			}
+			return 32
+		case "exit":
+			return 16
+		}
+	}
+	return clampWorkers(t.Concurrency)
+}
+
+func (t *Tunnel) autoProfile() bool {
+	return strings.TrimSpace(t.Profile) == "" || strings.TrimSpace(t.Profile) == "auto"
+}
+
+func clampWorkers(workers int) int {
+	if workers < 1 {
 		return 1
 	}
-	if t.Concurrency > 32 {
+	if workers > 32 {
 		return 32
 	}
-	return t.Concurrency
+	return workers
+}
+
+type cleanupTask struct {
+	data bool
+	name string
+	id   string
+}
+
+type deferredCleanup struct {
+	tasks []cleanupTask
+	t     *Tunnel
+}
+
+func (t *Tunnel) newDeferredCleanup() *deferredCleanup {
+	return &deferredCleanup{t: t}
+}
+
+func (c *deferredCleanup) Data(name, id string) {
+	c.add(cleanupTask{data: true, name: name, id: id})
+}
+
+func (c *deferredCleanup) Control(name, id string) {
+	c.add(cleanupTask{name: name, id: id})
+}
+
+func (c *deferredCleanup) add(task cleanupTask) {
+	if c == nil || c.t == nil || !c.t.CleanupProcessed || (task.name == "" && task.id == "") {
+		return
+	}
+	c.tasks = append(c.tasks, task)
+	if len(c.tasks) >= deferredCleanupFlushThreshold {
+		c.flushAsyncAfter(0)
+	}
+}
+
+func (c *deferredCleanup) FlushAsync() {
+	c.flushAsyncAfter(deferredCleanupDelay)
+}
+
+func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
+	if c == nil || c.t == nil || len(c.tasks) == 0 {
+		return
+	}
+	tasks := append([]cleanupTask(nil), c.tasks...)
+	c.tasks = c.tasks[:0]
+	tunnel := c.t
+	go func() {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		workers := clampWorkers(tunnel.Concurrency)
+		if workers > 4 {
+			workers = 4
+		}
+		jobs := make(chan cleanupTask)
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for task := range jobs {
+					ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+					if task.data {
+						_ = tunnel.deleteData(ctx, task.name, task.id)
+					} else {
+						_ = tunnel.deleteControl(ctx, task.name, task.id)
+					}
+					cancel()
+				}
+			}()
+		}
+		for _, task := range tasks {
+			jobs <- task
+		}
+		close(jobs)
+		wg.Wait()
+	}()
 }
 
 func readChunk(reader io.Reader, buffer []byte) (int, error) {

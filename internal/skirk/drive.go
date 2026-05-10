@@ -131,8 +131,26 @@ func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error)
 }
 
 func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	infos, err := d.listContains(ctx, []string{prefix})
+	if err != nil {
+		return nil, err
+	}
+	filtered := infos[:0]
+	for _, info := range infos {
+		if strings.HasPrefix(info.Name, prefix) {
+			filtered = append(filtered, info)
+		}
+	}
+	return filtered, nil
+}
+
+func (d *DriveStore) ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
+	return d.listContains(ctx, contains)
+}
+
+func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
 	values := url.Values{}
-	values.Set("q", d.query(prefix, false))
+	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "files(id,name,size,modifiedTime)")
 	values.Set("pageSize", "1000")
 	if d.isAppData() {
@@ -158,7 +176,14 @@ func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	}
 	var infos []ObjectInfo
 	for _, item := range payload.Files {
-		if !strings.HasPrefix(item.Name, prefix) {
+		matched := true
+		for _, value := range contains {
+			if !strings.Contains(item.Name, value) {
+				matched = false
+				break
+			}
+		}
+		if !matched {
 			continue
 		}
 		size, _ := strconv.ParseInt(item.Size, 10, 64)
@@ -375,6 +400,20 @@ func (d *DriveStore) query(value string, exact bool) string {
 	if exact {
 		clauses = append(clauses, fmt.Sprintf("name = '%s'", escapeDriveQuery(value)))
 	} else {
+		clauses = append(clauses, fmt.Sprintf("name contains '%s'", escapeDriveQuery(value)))
+	}
+	return strings.Join(clauses, " and ")
+}
+
+func (d *DriveStore) containsQuery(values []string) string {
+	clauses := []string{"trashed = false"}
+	if d.folderID != "" && !d.isAppData() {
+		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
 		clauses = append(clauses, fmt.Sprintf("name contains '%s'", escapeDriveQuery(value)))
 	}
 	return strings.Join(clauses, " and ")
