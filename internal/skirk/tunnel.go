@@ -63,12 +63,24 @@ func (t *Tunnel) handleClientConn(ctx context.Context, target string, local net.
 	if err := t.sendEvent(ctx, DirectionUp, connID, 0, "OPEN", "", target, 0, false, ""); err != nil {
 		return err
 	}
-	errCh := make(chan error, 2)
-	go func() { errCh <- t.pumpReaderToMailbox(ctx, local, DirectionUp, connID, 1) }()
-	go func() { errCh <- t.pumpMailboxToWriter(ctx, local, DirectionDown, connID, 1) }()
-	err = <-errCh
-	_ = local.Close()
-	return err
+	type pumpResult struct {
+		downstream bool
+		err        error
+	}
+	errCh := make(chan pumpResult, 2)
+	go func() { errCh <- pumpResult{err: t.pumpReaderToMailbox(ctx, local, DirectionUp, connID, 1)} }()
+	go func() {
+		errCh <- pumpResult{downstream: true, err: t.pumpMailboxToWriter(ctx, local, DirectionDown, connID, 1)}
+	}()
+	for {
+		result := <-errCh
+		if result.downstream || result.err != nil {
+			_ = local.Close()
+			return result.err
+		}
+		// A clean upstream EOF means the client finished sending bytes. Keep the
+		// local connection open so the downstream response can still arrive.
+	}
 }
 
 func (t *Tunnel) ServeExit(ctx context.Context) error {
@@ -151,7 +163,16 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 					if t.CleanupProcessed {
 						_ = t.Data.Delete(ctx, event.DriveObject)
 					}
-				case "FIN", "RST":
+				case "FIN":
+					if s := conns[event.ConnID]; s != nil {
+						if tcp, ok := s.conn.(*net.TCPConn); ok {
+							_ = tcp.CloseWrite()
+						} else {
+							_ = s.conn.Close()
+							delete(conns, event.ConnID)
+						}
+					}
+				case "RST":
 					if s := conns[event.ConnID]; s != nil {
 						_ = s.conn.Close()
 						delete(conns, event.ConnID)

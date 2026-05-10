@@ -3,13 +3,16 @@ package skirk
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	stdtls "crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
+	"golang.org/x/net/http2"
 )
 
 type HTTPResult struct {
@@ -44,6 +47,37 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		}
 		return baseDialer.DialContext(ctx, network, target)
 	}
+	if isGoogleFrontRoute(route.Mode) {
+		transport := &http2.Transport{
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *stdtls.Config) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				raw, err := dialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				handshakeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				uconn := utls.UClient(raw, &utls.Config{
+					ServerName: host,
+					MinVersion: utls.VersionTLS12,
+				}, utls.HelloChrome_Auto)
+				if err := uconn.HandshakeContext(handshakeCtx); err != nil {
+					_ = raw.Close()
+					return nil, err
+				}
+				return uconn, nil
+			},
+			ReadIdleTimeout: 30 * time.Second,
+			PingTimeout:     15 * time.Second,
+		}
+		return &GoogleHTTPClient{
+			client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
+			route:  route,
+		}
+	}
 	transport := &http.Transport{
 		DialContext:           dialContext,
 		ForceAttemptHTTP2:     false,
@@ -53,7 +87,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: time.Duration(route.TimeoutSeconds) * time.Second,
 		ExpectContinueTimeout: 0,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSClientConfig:       &stdtls.Config{MinVersion: stdtls.VersionTLS12},
 	}
 	return &GoogleHTTPClient{
 		client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
@@ -62,6 +96,39 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	attempts := 1
+	if isGoogleFrontRoute(c.route.Mode) {
+		attempts = 4
+	}
+	var lastErr error
+	var lastResult *HTTPResult
+	for attempt := 0; attempt < attempts; attempt++ {
+		result, err := c.requestOnce(ctx, method, host, path, headers, body)
+		if err == nil && !shouldRetryStatus(result.Status) {
+			return result, nil
+		}
+		if err == nil {
+			lastResult = result
+		} else {
+			lastErr = err
+		}
+		if attempt == attempts-1 {
+			break
+		}
+		if err := sleepBeforeRetry(ctx, attempt); err != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return lastResult, err
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return lastResult, nil
+}
+
+func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
 	requestHost := host
 	if isGoogleFrontRoute(c.route.Mode) {
 		requestHost = "www.google.com"
@@ -101,6 +168,22 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 
 func isGoogleFrontRoute(mode string) bool {
 	return mode == "google_front" || mode == "google_front_pinned"
+}
+
+func shouldRetryStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+func sleepBeforeRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(300*(1<<attempt)) * time.Millisecond
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func require2xx(result *HTTPResult, op string) error {
