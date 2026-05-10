@@ -10,10 +10,11 @@ Stack:
 
 What it does:
 
-- imports a generated `client.json`;
+- imports a one-line `skirk:` config or generated `client.json`;
 - stores profiles in app-local or portable data;
 - starts/stops the Go Skirk SOCKS client;
 - shows the SOCKS address, process status, and logs;
+- can bind the SOCKS listener to `0.0.0.0` for LAN proxy sharing;
 - supports a portable Windows folder layout.
 
 ## Development
@@ -55,9 +56,13 @@ The app stores:
 
 - `portable-data/config/profiles.json`
 - `portable-data/config/settings.json`
-- imported profile configs as `portable-data/config/profile-*.json`
+- imported profile configs as `portable-data/config/profile-*.skirk` or `profile-*.json`
 - logs under `portable-data/logs/`
 
 ## Production Notes
 
-The desktop app intentionally only manages the local SOCKS client. It does not set the Windows system proxy or install a TUN driver yet. That keeps the first Windows release portable and low-risk. A future Windows tunnel mode can add a sidecar such as sing-box or wintun after the SOCKS client has enough real-user validation.
+The desktop app intentionally only manages the local SOCKS client. It does not set
+the Windows system proxy or install a TUN driver yet. That keeps the first
+Windows release portable and low-risk. A future Windows tunnel mode can add a
+sidecar such as sing-box or Wintun after the SOCKS client has enough real-user
+validation.

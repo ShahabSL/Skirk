@@ -23,6 +23,8 @@ struct ClientProfile {
     config_path: String,
     socks_host: String,
     socks_port: u16,
+    #[serde(default)]
+    share_lan: bool,
     route_mode: String,
     spreadsheet_id: String,
     drive_folder_id: String,
@@ -45,6 +47,7 @@ struct ConnectionStatus {
     active_profile_id: Option<String>,
     pid: Option<u32>,
     socks_address: Option<String>,
+    lan_addresses: Vec<String>,
     message: String,
 }
 
@@ -130,6 +133,7 @@ impl DesktopRuntime {
                 active_profile_id: Some(client.profile_id.clone()),
                 pid: Some(client.child.id()),
                 socks_address: Some(client.socks_address.clone()),
+                lan_addresses: share_addresses(&client.socks_address),
                 message: state.message.clone(),
             }
         } else {
@@ -138,6 +142,7 @@ impl DesktopRuntime {
                 active_profile_id: None,
                 pid: None,
                 socks_address: None,
+                lan_addresses: Vec::new(),
                 message: state.message.clone(),
             }
         };
@@ -158,13 +163,13 @@ impl DesktopRuntime {
         name: String,
         raw_config: String,
         socks_port: u16,
+        share_lan: bool,
     ) -> Result<(), String> {
         let raw_config = raw_config.trim();
         if raw_config.is_empty() {
             return Err("client config is empty".into());
         }
-        let parsed: Value =
-            serde_json::from_str(raw_config).map_err(|error| format!("invalid JSON: {error}"))?;
+        let parsed = self.decode_config(raw_config)?;
         let route_mode = parsed
             .pointer("/route/mode")
             .and_then(Value::as_str)
@@ -180,11 +185,15 @@ impl DesktopRuntime {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        if spreadsheet_id.is_empty() {
-            return Err("client config is missing sheets.spreadsheet_id".into());
+        if spreadsheet_id.is_empty() && drive_folder_id.is_empty() {
+            return Err("client config is missing both sheets.spreadsheet_id and drive.folder_id".into());
         }
         let id = format!("profile-{}", epoch_millis());
-        let config_path = self.paths.config_dir.join(format!("{id}.json"));
+        let config_path = self.paths.config_dir.join(if raw_config.starts_with("skirk:") {
+            format!("{id}.skirk")
+        } else {
+            format!("{id}.json")
+        });
         fs::write(&config_path, raw_config)
             .map_err(|error| format!("failed to write config: {error}"))?;
 
@@ -196,8 +205,9 @@ impl DesktopRuntime {
                 name.trim().into()
             },
             config_path: config_path.display().to_string(),
-            socks_host: "127.0.0.1".into(),
+            socks_host: if share_lan { "0.0.0.0".into() } else { "127.0.0.1".into() },
             socks_port,
+            share_lan,
             route_mode,
             spreadsheet_id,
             drive_folder_id,
@@ -212,6 +222,35 @@ impl DesktopRuntime {
                 selected_profile_id: Some(id),
             },
         )
+    }
+
+    fn decode_config(&self, raw_config: &str) -> Result<Value, String> {
+        if raw_config.starts_with("skirk:") || raw_config.starts_with("SKIRK_CONFIG=") {
+            let skirk = self.resolve_sidecar()?;
+            let decoded_path = self
+                .paths
+                .config_dir
+                .join(format!("decode-{}.json", epoch_millis()));
+            let status = Command::new(skirk)
+                .arg("config")
+                .arg("decode")
+                .arg("--config")
+                .arg(raw_config)
+                .arg("--out")
+                .arg(&decoded_path)
+                .status()
+                .map_err(|error| format!("failed to decode one-line config: {error}"))?;
+            if !status.success() {
+                let _ = fs::remove_file(&decoded_path);
+                return Err(format!("one-line config decode failed: {status}"));
+            }
+            let content = fs::read_to_string(&decoded_path)
+                .map_err(|error| format!("failed to read decoded config: {error}"))?;
+            let _ = fs::remove_file(&decoded_path);
+            return serde_json::from_str(&content)
+                .map_err(|error| format!("decoded config is invalid JSON: {error}"));
+        }
+        serde_json::from_str(raw_config).map_err(|error| format!("invalid JSON: {error}"))
     }
 
     fn delete_profile(&self, profile_id: &str) -> Result<(), String> {
@@ -380,8 +419,9 @@ async fn import_config(
     name: String,
     raw_config: String,
     socks_port: u16,
+    share_lan: bool,
 ) -> Result<DesktopSnapshot, String> {
-    runtime.import_config(name, raw_config, socks_port)?;
+    runtime.import_config(name, raw_config, socks_port, share_lan)?;
     runtime.snapshot()
 }
 
@@ -541,6 +581,36 @@ fn ensure_port_free(address: &str) -> Result<(), String> {
     TcpListener::bind(address)
         .map(|listener| drop(listener))
         .map_err(|error| format!("{address} is not available: {error}"))
+}
+
+fn share_addresses(address: &str) -> Vec<String> {
+    let Some((host, port)) = address.rsplit_once(':') else {
+        return Vec::new();
+    };
+    if host != "0.0.0.0" && host != "::" {
+        return Vec::new();
+    }
+    discover_lan_ips()
+        .into_iter()
+        .map(|ip| format!("{ip}:{port}"))
+        .collect()
+}
+
+fn discover_lan_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+    for target in ["8.8.8.8:80", "1.1.1.1:80"] {
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect(target).is_ok() {
+                if let Ok(addr) = socket.local_addr() {
+                    let ip = addr.ip().to_string();
+                    if ip != "0.0.0.0" && !ips.contains(&ip) {
+                        ips.push(ip);
+                    }
+                }
+            }
+        }
+    }
+    ips
 }
 
 fn epoch_millis() -> u128 {

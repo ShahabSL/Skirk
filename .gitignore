@@ -39,6 +39,7 @@ clients/desktop/dist/
 clients/desktop/src-tauri/target/
 clients/desktop/src-tauri/resources/sidecars/
 clients/desktop/src-tauri/gen/
+clients/android/local.properties
 clients/android/.gradle/
 clients/android/app/build/
 coverage.out

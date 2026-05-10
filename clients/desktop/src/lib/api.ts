@@ -8,6 +8,7 @@ export type ClientProfile = {
   configPath: string;
   socksHost: string;
   socksPort: number;
+  shareLan: boolean;
   routeMode: string;
   spreadsheetId: string;
   driveFolderId: string;
@@ -21,6 +22,7 @@ export type DesktopSnapshot = {
     activeProfileId: string | null;
     pid: number | null;
     socksAddress: string | null;
+    lanAddresses: string[];
     message: string;
   };
   logsDir: string;
@@ -31,8 +33,8 @@ export type DesktopSnapshot = {
 
 export const desktopApi = {
   loadSnapshot: () => invoke<DesktopSnapshot>("load_snapshot"),
-  importConfig: (name: string, rawConfig: string, socksPort: number) =>
-    invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort }),
+  importConfig: (name: string, rawConfig: string, socksPort: number, shareLan: boolean) =>
+    invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, shareLan }),
   deleteProfile: (profileId: string) => invoke<DesktopSnapshot>("delete_profile", { profileId }),
   selectProfile: (profileId: string | null) =>
     invoke<DesktopSnapshot>("select_profile", { profileId }),

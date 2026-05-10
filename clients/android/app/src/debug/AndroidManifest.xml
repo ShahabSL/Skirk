@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".DebugControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.skirk.client.debug.IMPORT" />
+                <action android:name="app.skirk.client.debug.START" />
+                <action android:name="app.skirk.client.debug.STOP" />
+                <action android:name="app.skirk.client.debug.DELETE_ALL" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

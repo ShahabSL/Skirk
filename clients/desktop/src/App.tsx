@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Copy,
   FileJson,
+  Network,
   LoaderCircle,
   Play,
   Power,
@@ -20,6 +21,7 @@ function App() {
   const [rawConfig, setRawConfig] = useState("");
   const [profileName, setProfileName] = useState("Skirk profile");
   const [socksPort, setSocksPort] = useState(18080);
+  const [shareLan, setShareLan] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -102,7 +104,7 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h2>Import Config</h2>
-                  <p>Paste the generated `client.json`. The app stores it in portable data.</p>
+                  <p>Paste a one-line skirk config or client.json. The app stores it in portable data.</p>
                 </div>
                 <FileJson />
               </div>
@@ -121,13 +123,26 @@ function App() {
                 />
               </label>
               <label>
-                client.json
+                Client config
                 <textarea value={rawConfig} onChange={(event) => setRawConfig(event.target.value)} />
+              </label>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={shareLan}
+                  onChange={(event) => setShareLan(event.target.checked)}
+                />
+                <span>
+                  <strong>Share SOCKS on LAN</strong>
+                  <small>Bind to 0.0.0.0 so other devices can use this machine as their proxy.</small>
+                </span>
               </label>
               <button
                 className="primary"
                 disabled={busy || rawConfig.trim() === ""}
-                onClick={() => run(() => desktopApi.importConfig(profileName, rawConfig, socksPort))}
+                onClick={() =>
+                  run(() => desktopApi.importConfig(profileName, rawConfig, socksPort, shareLan))
+                }
               >
                 <Upload />
                 Import
@@ -173,9 +188,9 @@ function App() {
             </div>
             <div className="metrics">
               <Metric label="SOCKS" value={snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile)} />
+              <Metric label="LAN" value={snapshot?.connection.lanAddresses.join(", ") || "-"} />
               <Metric label="PID" value={snapshot?.connection.pid?.toString() ?? "-"} />
               <Metric label="Platform" value={snapshot?.platform ?? "-"} />
-              <Metric label="Config Dir" value={snapshot?.configDir ?? "-"} />
             </div>
             <div className="actions">
               <button
@@ -195,7 +210,12 @@ function App() {
               </button>
               <button
                 disabled={!selectedProfile}
-                onClick={() => copyText(`127.0.0.1:${selectedProfile?.socksPort ?? 18080}`)}
+                onClick={() =>
+                  copyText(
+                    snapshot?.connection.socksAddress ??
+                      selectedProfileAddress(selectedProfile),
+                  )
+                }
               >
                 <Copy />
                 Copy SOCKS
@@ -237,9 +257,12 @@ function ProfileRow({
       <button disabled={disabled} onClick={onSelect}>
         <div>
           <strong>{profile.name}</strong>
-          <span>{profile.routeMode} · 127.0.0.1:{profile.socksPort}</span>
+          <span>
+            {profile.routeMode} · {selectedProfileAddress(profile)}
+            {profile.shareLan ? " · LAN" : ""}
+          </span>
         </div>
-        {selected ? <CheckCircle2 /> : null}
+        {selected ? <CheckCircle2 /> : profile.shareLan ? <Network /> : null}
       </button>
       <button className="icon" disabled={disabled} onClick={onDelete}>
         <Trash2 />
@@ -265,12 +288,12 @@ function selectedProfileAddress(profile: ClientProfile | null) {
   if (!profile) {
     return "-";
   }
-  return `127.0.0.1:${profile.socksPort}`;
+  return `${profile.shareLan ? "0.0.0.0" : "127.0.0.1"}:${profile.socksPort}`;
 }
 
 function runtimeMessage(connected: boolean, profile?: ClientProfile) {
   if (connected && profile) {
-    return `Connected using ${profile.name}. Configure apps for SOCKS5 127.0.0.1:${profile.socksPort}.`;
+    return `Connected using ${profile.name}. Configure apps for SOCKS5 ${selectedProfileAddress(profile)}.`;
   }
   return "Disconnected.";
 }
