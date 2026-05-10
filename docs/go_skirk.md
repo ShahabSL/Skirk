@@ -23,7 +23,7 @@ The important fields are:
 - `secret`: shared AEAD secret. Use `skirk keygen`.
 - `session_id`: optional fixed 32-hex session for a paired client and exit.
 - `route.proxy`: restricted-network SOCKS proxy, usually `socks5h://127.0.0.1:1080`.
-- `route.google_ip`: known Google edge IP for pinned routing.
+- `route.google_ip`: known Google edge IP for pinned routing. The default setup path uses hostname fronting (`google_front`) because some SOCKS relays allow `www.google.com` but reject IP-literal Google edge targets; use `google_front_pinned` only when a specific Google edge IP is measured to work.
 - `drive.space`: set to `appDataFolder` for the recommended app-private mailbox.
 - `drive.folder_id`: visible Drive folder ID for the fallback mailbox.
 - `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.

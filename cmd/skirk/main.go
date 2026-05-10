@@ -655,7 +655,7 @@ func sampleConfig(args []string) error {
 	secret := fs.String("secret", "", "secret from keygen")
 	session := fs.String("session", "", "fixed 32-hex session id")
 	proxy := fs.String("proxy", "socks5h://127.0.0.1:1080", "upstream restricted-network proxy")
-	routeMode := fs.String("route-mode", "real_pinned", "route mode: direct, real_pinned, google_front_pinned")
+	routeMode := fs.String("route-mode", "google_front", "route mode: direct, real_pinned, google_front, google_front_pinned")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routing")
 	concurrency := fs.Int("concurrency", 8, "Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {

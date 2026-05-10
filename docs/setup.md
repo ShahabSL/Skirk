@@ -169,7 +169,7 @@ read -r SKIRK_CLIENT_CONFIG
 
 ## Restricted Networks
 
-The default generated client route is `google_front_pinned`, which connects with Google-looking SNI while sending the real Google API Host header after TLS. The default exit route is `direct`, because the exit normally has ordinary internet.
+The default generated client route is `google_front`, which connects to the hostname `www.google.com` with Google-looking SNI while sending the real Google API Host header after TLS. This is more compatible with SOCKS relays that allow Google hostnames but reject IP-literal Google edge targets. `google_front_pinned` is still available when a specific Google edge IP is known to work. The default exit route is `direct`, because the exit normally has ordinary internet.
 
 For normal-network clients where speed matters more than reachability, generate direct configs:
 

@@ -34,7 +34,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			return nil, err
 		}
 		target := addr
-		if route.GoogleIP != "" && port == "443" && route.Mode != "direct" {
+		if route.GoogleIP != "" && port == "443" && route.Mode != "direct" && route.Mode != "google_front" {
 			target = net.JoinHostPort(route.GoogleIP, port)
 		} else if host == "" {
 			target = addr
@@ -63,7 +63,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
 	requestHost := host
-	if c.route.Mode == "google_front_pinned" {
+	if isGoogleFrontRoute(c.route.Mode) {
 		requestHost = "www.google.com"
 	}
 	if !strings.HasPrefix(path, "/") {
@@ -78,7 +78,7 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 	if err != nil {
 		return nil, err
 	}
-	if c.route.Mode == "google_front_pinned" {
+	if isGoogleFrontRoute(c.route.Mode) {
 		req.Host = host
 	}
 	for key, value := range headers {
@@ -97,6 +97,10 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 		return nil, err
 	}
 	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header}, nil
+}
+
+func isGoogleFrontRoute(mode string) bool {
+	return mode == "google_front" || mode == "google_front_pinned"
 }
 
 func require2xx(result *HTTPResult, op string) error {
