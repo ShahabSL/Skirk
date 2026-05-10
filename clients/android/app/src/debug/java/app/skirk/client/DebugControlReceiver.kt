@@ -3,6 +3,7 @@ package app.skirk.client
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.VpnService
 import android.util.Log
 
 class DebugControlReceiver : BroadcastReceiver() {
@@ -14,23 +15,35 @@ class DebugControlReceiver : BroadcastReceiver() {
                 val name = intent.getStringExtra("name") ?: "ADB profile"
                 val port = intent.getIntExtra("port", 18080)
                 val shareLan = intent.getBooleanExtra("shareLan", false)
-                val profile = ClientProfile.fromRawConfig(name, rawConfig, port, shareLan)
+                val mode = intent.getStringExtra("mode") ?: ClientProfile.CONNECTION_MODE_VPN
+                val profile = ClientProfile.fromRawConfig(name, rawConfig, port, shareLan, mode)
                 store.saveProfile(profile)
                 Log.i(TAG, "Imported ${profile.id} ${profile.socksAddress}")
             }
 
             ACTION_START -> {
                 val profile = store.selectedProfile() ?: error("No selected profile")
-                SkirkProxyService.start(context, profile)
+                if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+                    if (VpnService.prepare(context) != null) {
+                        error("VPN permission has not been granted")
+                    }
+                    SkirkProxyService.stop(context)
+                    SkirkVpnService.start(context, profile)
+                } else {
+                    SkirkVpnService.stop(context)
+                    SkirkProxyService.start(context, profile)
+                }
                 Log.i(TAG, "Started ${profile.id} ${profile.socksAddress}")
             }
 
             ACTION_STOP -> {
+                SkirkVpnService.stop(context)
                 SkirkProxyService.stop(context)
                 Log.i(TAG, "Stopped")
             }
 
             ACTION_DELETE_ALL -> {
+                SkirkVpnService.stop(context)
                 SkirkProxyService.stop(context)
                 store.deleteAll()
                 Log.i(TAG, "Deleted all profiles")

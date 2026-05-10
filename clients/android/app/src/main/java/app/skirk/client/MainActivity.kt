@@ -1,6 +1,8 @@
 package app.skirk.client
 
 import android.Manifest
+import android.app.Activity
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -76,15 +78,51 @@ fun ConfigScreen() {
     var profileName by remember { mutableStateOf("Skirk profile") }
     var socksPort by remember { mutableStateOf("18080") }
     var shareLan by remember { mutableStateOf(false) }
+    var useVpn by remember { mutableStateOf(true) }
     var running by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {}
+    val vpnPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val profile = pendingVpnProfile
+        pendingVpnProfile = null
+        if (result.resultCode == Activity.RESULT_OK && profile != null) {
+            SkirkProxyService.stop(context)
+            SkirkVpnService.start(context, profile)
+            running = true
+            message = "VPN connected"
+        } else {
+            message = "VPN permission was not granted"
+        }
+    }
 
     fun refresh() {
         profiles = store.listProfiles()
         selectedId = store.selectedProfileId()
+    }
+
+    fun startProfile(profile: ClientProfile) {
+        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+            val intent = VpnService.prepare(context)
+            if (intent != null) {
+                pendingVpnProfile = profile
+                vpnPermission.launch(intent)
+            } else {
+                SkirkProxyService.stop(context)
+                SkirkVpnService.start(context, profile)
+                running = true
+                message = "VPN connected"
+            }
+        } else {
+            SkirkVpnService.stop(context)
+            SkirkProxyService.start(context, profile)
+            running = true
+            message = "SOCKS connected on ${profile.socksAddress}"
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -104,7 +142,7 @@ fun ConfigScreen() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("Skirk", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                Text("Portable SOCKS client", color = Color(0xFF666660))
+                Text("VPN and SOCKS client", color = Color(0xFF666660))
             }
         }
 
@@ -135,6 +173,10 @@ fun ConfigScreen() {
                     label = { Text("skirk config") },
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = useVpn, onCheckedChange = { useVpn = it })
+                    Text("Use VPN mode")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = shareLan, onCheckedChange = { shareLan = it })
                     Text("Share SOCKS on LAN")
                 }
@@ -148,6 +190,11 @@ fun ConfigScreen() {
                                 rawConfig = rawConfig,
                                 socksPort = port,
                                 shareLan = shareLan,
+                                connectionMode = if (useVpn) {
+                                    ClientProfile.CONNECTION_MODE_VPN
+                                } else {
+                                    ClientProfile.CONNECTION_MODE_PROXY
+                                },
                             )
                             store.saveProfile(profile)
                             rawConfig = ""
@@ -169,7 +216,8 @@ fun ConfigScreen() {
                 Text("Connection", fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    selected?.let { "${it.name} · ${it.socksAddress}" } ?: "No profile selected",
+                    selected?.let { "${it.name} · ${it.connectionMode.uppercase()} · ${it.socksAddress}" }
+                        ?: "No profile selected",
                     color = Color(0xFF666660),
                 )
                 selected?.takeIf { it.shareLan }?.let {
@@ -181,11 +229,7 @@ fun ConfigScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
-                            selected?.let {
-                                SkirkProxyService.start(context, it)
-                                running = true
-                                message = "Connected on ${it.socksAddress}"
-                            }
+                            selected?.let(::startProfile)
                         },
                         enabled = selected != null && !running,
                     ) {
@@ -193,6 +237,7 @@ fun ConfigScreen() {
                     }
                     OutlinedButton(
                         onClick = {
+                            SkirkVpnService.stop(context)
                             SkirkProxyService.stop(context)
                             running = false
                             message = "Disconnected"
@@ -224,6 +269,7 @@ fun ConfigScreen() {
                     },
                     onDelete = {
                         if (running && selected?.id == profile.id) {
+                            SkirkVpnService.stop(context)
                             SkirkProxyService.stop(context)
                             running = false
                         }
@@ -281,7 +327,10 @@ private fun ProfileRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(profile.name, fontWeight = FontWeight.SemiBold)
-                Text("${profile.routeMode} · ${profile.socksAddress}", color = Color(0xFF666660))
+                Text(
+                    "${profile.connectionMode.uppercase()} · ${profile.routeMode} · ${profile.socksAddress}",
+                    color = Color(0xFF666660),
+                )
             }
             OutlinedButton(onClick = onSelect, enabled = !selected) {
                 Text(if (selected) "Selected" else "Select")

@@ -42,4 +42,6 @@ clients/desktop/src-tauri/gen/
 clients/android/local.properties
 clients/android/.gradle/
 clients/android/app/build/
+third_party/hev-socks5-tunnel/libs/
+third_party/hev-socks5-tunnel/obj/
 coverage.out

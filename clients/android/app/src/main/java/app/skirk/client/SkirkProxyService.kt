@@ -12,12 +12,9 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import org.json.JSONObject
-import java.io.File
-import java.net.NetworkInterface
-import java.util.concurrent.TimeUnit
 
 class SkirkProxyService : Service() {
-    private var process: Process? = null
+    private val engine by lazy { AndroidSkirkEngine(this, "skirk-client.log") }
     private var activeProfile: ClientProfile? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -34,7 +31,6 @@ class SkirkProxyService : Service() {
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
-            Log.e(TAG, "No profile is available")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -57,74 +53,18 @@ class SkirkProxyService : Service() {
     }
 
     private fun startProxy(profile: ClientProfile) {
-        if (activeProfile?.id == profile.id && process?.isAlive == true) {
+        if (activeProfile?.runtimeKey == profile.runtimeKey) {
             return
         }
         stopProxy()
-
-        val configFile = writeRuntimeConfig(profile)
-        val engine = File(applicationInfo.nativeLibraryDir, ENGINE_NAME)
-        check(engine.exists()) { "Skirk engine was not packaged at ${engine.absolutePath}" }
-
-        val logsDir = File(filesDir, "logs").apply { mkdirs() }
-        val logFile = File(logsDir, "skirk-client.log")
-        Log.i(TAG, "Starting ${engine.absolutePath} on ${profile.socksAddress}")
-        process = ProcessBuilder(
-            buildProcessArgs(engine, configFile, profile),
-        )
-            .directory(filesDir)
-            .redirectErrorStream(true)
-            .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
-            .start()
-        Thread.sleep(250)
-        process?.let { child ->
-            try {
-                val code = child.exitValue()
-                val tail = logFile.takeIf { it.exists() }?.readLines()?.takeLast(8)?.joinToString("\n").orEmpty()
-                error("Skirk engine exited with code $code\n$tail")
-            } catch (_: IllegalThreadStateException) {
-                // The process is still running.
-            }
-        }
+        engine.start(profile)
+        engine.waitUntilReady(profile.socksHost, profile.socksPort)
         activeProfile = profile
-        ProfileStore(this).saveProfile(profile)
-        Log.i(TAG, "Skirk SOCKS listening on ${profile.socksAddress}; LAN=${lanAddresses(profile.socksPort)}")
-    }
-
-    private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
-        val routeMode = when (profile.routeMode) {
-            "google_front", "direct", "real_pinned" -> "google_front_pinned"
-            else -> profile.routeMode
-        }
-        return listOf(
-            engine.absolutePath,
-            "client",
-            "--config",
-            configFile.absolutePath,
-            "--listen",
-            profile.socksAddress,
-            "--route-mode",
-            routeMode,
-        )
     }
 
     private fun stopProxy() {
-        process?.destroy()
-        runCatching {
-            if (process?.waitFor(2, TimeUnit.SECONDS) == false) {
-                process?.destroyForcibly()
-            }
-        }
-        process = null
+        engine.stop()
         activeProfile = null
-    }
-
-    private fun writeRuntimeConfig(profile: ClientProfile): File {
-        val configsDir = File(filesDir, "configs").apply { mkdirs() }
-        val suffix = if (profile.rawConfig.trim().startsWith("skirk:")) "skirk" else "json"
-        val configFile = File(configsDir, "${profile.id}.$suffix")
-        configFile.writeText(profile.rawConfig)
-        return configFile
     }
 
     private fun startForegroundCompat(profile: ClientProfile) {
@@ -184,7 +124,6 @@ class SkirkProxyService : Service() {
 
     companion object {
         private const val TAG = "SkirkProxy"
-        private const val ENGINE_NAME = "libskirk.so"
         private const val CHANNEL_ID = "skirk_proxy"
         private const val NOTIFICATION_ID = 1907
         const val ACTION_START = "app.skirk.client.START_PROXY"
@@ -203,21 +142,14 @@ class SkirkProxyService : Service() {
         }
 
         fun stop(context: Context) {
-            context.startService(Intent(context, SkirkProxyService::class.java).setAction(ACTION_STOP))
+            val intent = Intent(context, SkirkProxyService::class.java).setAction(ACTION_STOP)
+            if (runCatching { context.startService(intent) }.isFailure) {
+                context.stopService(Intent(context, SkirkProxyService::class.java))
+            }
         }
 
         fun lanAddresses(port: Int): List<String> {
-            return NetworkInterface.getNetworkInterfaces().toList()
-                .filter { it.isUp && !it.isLoopback }
-                .flatMap { networkInterface ->
-                    networkInterface.inetAddresses.toList()
-                        .filter { it.hostAddress?.contains(':') == false }
-                        .mapNotNull { address ->
-                            val host = address.hostAddress ?: return@mapNotNull null
-                            if (host.startsWith("127.")) null else "$host:$port"
-                        }
-                }
-                .distinct()
+            return AndroidSkirkEngine.lanAddresses(port)
         }
     }
 }

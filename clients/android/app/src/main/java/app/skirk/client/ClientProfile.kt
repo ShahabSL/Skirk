@@ -9,6 +9,7 @@ data class ClientProfile(
     val rawConfig: String,
     val socksPort: Int,
     val shareLan: Boolean,
+    val connectionMode: String,
     val routeMode: String,
     val sessionId: String,
     val spreadsheetId: String,
@@ -20,12 +21,16 @@ data class ClientProfile(
     val socksAddress: String
         get() = "$socksHost:$socksPort"
 
+    val runtimeKey: String
+        get() = listOf(id, rawConfig, socksAddress, routeMode).joinToString("|")
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
         .put("rawConfig", rawConfig)
         .put("socksPort", socksPort)
         .put("shareLan", shareLan)
+        .put("connectionMode", connectionMode)
         .put("routeMode", routeMode)
         .put("sessionId", sessionId)
         .put("spreadsheetId", spreadsheetId)
@@ -37,6 +42,7 @@ data class ClientProfile(
             rawConfig: String,
             socksPort: Int,
             shareLan: Boolean,
+            connectionMode: String = CONNECTION_MODE_VPN,
             id: String = "profile-${UUID.randomUUID()}",
         ): ClientProfile {
             val parsed = SkirkConfig.parse(rawConfig)
@@ -49,6 +55,7 @@ data class ClientProfile(
                 rawConfig = rawConfig.trim(),
                 socksPort = socksPort,
                 shareLan = shareLan,
+                connectionMode = normalizeConnectionMode(connectionMode),
                 routeMode = parsed.routeMode,
                 sessionId = parsed.sessionId,
                 spreadsheetId = parsed.spreadsheetId,
@@ -62,10 +69,17 @@ data class ClientProfile(
             rawConfig = json.getString("rawConfig"),
             socksPort = json.optInt("socksPort", 18080),
             shareLan = json.optBoolean("shareLan", false),
+            connectionMode = normalizeConnectionMode(json.optString("connectionMode", CONNECTION_MODE_VPN)),
             routeMode = json.optString("routeMode", "real_pinned"),
             sessionId = json.optString("sessionId"),
             spreadsheetId = json.optString("spreadsheetId"),
             driveFolderId = json.optString("driveFolderId"),
         )
+
+        const val CONNECTION_MODE_PROXY = "proxy"
+        const val CONNECTION_MODE_VPN = "vpn"
+
+        fun normalizeConnectionMode(value: String): String =
+            if (value == CONNECTION_MODE_PROXY) CONNECTION_MODE_PROXY else CONNECTION_MODE_VPN
     }
 }

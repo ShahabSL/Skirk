@@ -5,7 +5,9 @@ plugins {
 }
 
 val repoRoot = layout.projectDirectory.dir("../../..")
-val generatedJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
+val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
+val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
+val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
 
 val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     group = "build"
@@ -13,14 +15,14 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     inputs.dir(repoRoot.dir("cmd"))
     inputs.dir(repoRoot.dir("internal"))
     inputs.file(repoRoot.file("go.mod"))
-    outputs.dir(generatedJniLibs)
+    outputs.dir(generatedSkirkJniLibs)
 
     doLast {
         val targets = listOf(
             Triple("arm64-v8a", "arm64", "libskirk.so"),
         )
         targets.forEach { (abi, goArch, fileName) ->
-            val outputDir = generatedJniLibs.get().dir(abi).asFile
+            val outputDir = generatedSkirkJniLibs.get().dir(abi).asFile
             outputDir.mkdirs()
             exec {
                 workingDir = repoRoot.asFile
@@ -43,9 +45,64 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     }
 }
 
+fun androidSdkRoot(): File {
+    val explicit = providers.gradleProperty("android.sdk.path").orNull
+    val env = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+    val local = rootProject.file("local.properties")
+        .takeIf { it.exists() }
+        ?.readLines()
+        ?.firstOrNull { it.startsWith("sdk.dir=") }
+        ?.substringAfter("sdk.dir=")
+    return File(explicit ?: env ?: local ?: error("Android SDK path was not found"))
+}
+
+val buildHevTun2socks = tasks.register("buildHevTun2socks") {
+    group = "build"
+    description = "Build the Android TUN-to-SOCKS bridge used by VPN mode."
+    inputs.dir(hevSourceDir)
+    outputs.dir(generatedHevJniLibs)
+
+    doLast {
+        val sdkRoot = androidSdkRoot()
+        val ndkBuild = sdkRoot.resolve("ndk/${android.ndkVersion}/ndk-build")
+        check(ndkBuild.exists()) { "ndk-build was not found at ${ndkBuild.absolutePath}" }
+
+        val appMk = temporaryDir.resolve("SkirkApplication.mk")
+        appMk.writeText(
+            """
+            APP_PLATFORM := android-26
+            APP_OPTIM := release
+            APP_ABI := arm64-v8a
+            APP_CFLAGS := -O3 -DPKGNAME=app/skirk/client -DCLSNAME=HevTun2Socks
+            APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
+            NDK_TOOLCHAIN_VERSION := clang
+            """.trimIndent() + "\n",
+        )
+
+        exec {
+            environment("ANDROID_HOME", sdkRoot.absolutePath)
+            environment("ANDROID_SDK_ROOT", sdkRoot.absolutePath)
+            workingDir = hevSourceDir.asFile
+            commandLine(
+                ndkBuild.absolutePath,
+                "NDK_PROJECT_PATH=.",
+                "NDK_APPLICATION_MK=${appMk.absolutePath}",
+                "APP_BUILD_SCRIPT=${hevSourceDir.file("Android.mk").asFile.absolutePath}",
+                "V=0",
+            )
+        }
+
+        val outputDir = generatedHevJniLibs.get().dir("arm64-v8a").asFile
+        outputDir.mkdirs()
+        hevSourceDir.file("libs/arm64-v8a/libhev-socks5-tunnel.so").asFile
+            .copyTo(outputDir.resolve("libhev-socks5-tunnel.so"), overwrite = true)
+    }
+}
+
 android {
     namespace = "app.skirk.client"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "app.skirk.client"
@@ -70,7 +127,8 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDir(generatedJniLibs)
+            jniLibs.srcDir(generatedSkirkJniLibs)
+            jniLibs.srcDir(generatedHevJniLibs)
         }
     }
 
@@ -83,6 +141,7 @@ android {
 
 tasks.named("preBuild") {
     dependsOn(buildSkirkAndroidSidecar)
+    dependsOn(buildHevTun2socks)
 }
 
 dependencies {

@@ -63,9 +63,9 @@ The dashboard is optional on Windows too. The non-GUI command also works:
 
 ## Android
 
-Android currently ships as a native proxy client. It packages the Go `skirk`
+Android ships as a native VPN and proxy client. It packages the Go `skirk`
 engine inside the APK, imports the same one-line `skirk:` config, and runs a
-foreground SOCKS5 service.
+foreground Android `VpnService` by default.
 
 Build:
 
@@ -75,11 +75,14 @@ cd clients/android
 ```
 
 Install `app/build/outputs/apk/debug/app-debug.apk`, paste the generated
-one-line config, import it, then tap Connect. The default listener is
-`127.0.0.1:18080`; enable LAN sharing to bind `0.0.0.0:18080` and let another
-device use the phone as a SOCKS5 proxy.
+one-line config, keep **Use VPN mode** enabled, import it, then tap Connect.
+Android will ask for VPN consent the first time. After approval, normal app
+traffic routes through Skirk without per-app proxy settings.
 
-Whole-device VPN mode is not released yet. A correct VPN mode needs Android
-`VpnService` plus a real TUN-to-SOCKS forwarding engine such as a tun2socks
-component. The previous fake `VpnService` scaffold was removed because it
-created a VPN interface but did not forward packets.
+Proxy mode is still available for apps or LAN devices that explicitly support
+SOCKS5. Disable **Use VPN mode** and enable LAN sharing to bind
+`0.0.0.0:18080` so another device can use the phone as a SOCKS5 proxy.
+
+Telegram note: when Skirk VPN mode is connected, Telegram's built-in proxy
+setting should be off. If Telegram's internal proxy remains enabled, Telegram
+will continue testing that proxy entry even though Android VPN routing is active.
