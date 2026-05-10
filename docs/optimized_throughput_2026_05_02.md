@@ -114,6 +114,40 @@ The confirmed maximum from this machine to Google APIs is now about:
 
 The confirmed restricted Google-fronted path is still limited mostly by the user-provided SOCKS path and upload behavior, not by the Skirk protocol.
 
+## SOCKS tunnel throughput update: 2026-05-10
+
+The SOCKS tunnel path was optimized after reviewing the current Drive API docs for appData files, file IDs, custom property limits, changes feeds, partial response fields, and batching behavior.
+
+Changes applied:
+
+- removed long `appProperties` values from Drive uploads because Drive limits each custom property key+value string to 124 UTF-8 bytes;
+- encoded Drive file IDs into large DATA control filenames so receivers can download by ID without a second metadata lookup;
+- inlined small encrypted payloads directly into control objects to avoid a separate Drive media file for TLS handshakes and small writes;
+- batched multiple DATA events into manifest control objects, reducing control object churn for bulk streams;
+- added runtime overrides for `serve-client` and `serve-exit`: `--chunk-size`, `--poll-ms`, and `--concurrency`;
+- evaluated `changes.list`; it is retained only for appData-compatible future use and is not used for normal folder-backed kits because folder-scoped `files.list` was faster in the measured path.
+
+Controlled test target:
+
+```text
+client -> Skirk SOCKS -> Drive mailbox -> exit -> 127.0.0.1:8000 static file on exit
+chunk size: 1 MiB
+poll interval: 250 ms
+Drive concurrency: 32
+```
+
+Measured results:
+
+| Mode | Payload | Result |
+|---|---:|---:|
+| Single stream before DATA filename IDs | 25 MiB | ~2.8 Mbps |
+| Single stream after DATA filename IDs | 25 MiB | ~4.3 Mbps |
+| Single stream after batched manifests | 25 MiB | **~5.85 Mbps** |
+| 16 parallel streams after batched manifests | 16 x 25 MiB | **~48.74 Mbps aggregate** |
+| 32 parallel streams after batched manifests | 32 x 10 MiB | ~43.98 Mbps aggregate |
+
+The current sweet spot on this machine is 16 concurrent streams. Higher stream counts create more Drive API contention and tail latency without improving aggregate throughput.
+
 ## Learning Notes
 
 This is the expected object-store pattern: batching the control plane and parallelizing the data plane changes the scaling curve. Before optimization, every chunk paid independent Drive and Sheets latency. After optimization, Sheets is one append/read per transfer and Drive requests run concurrently.

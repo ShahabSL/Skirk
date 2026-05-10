@@ -46,9 +46,8 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 		return ObjectInfo{}, err
 	}
 	metadata := map[string]any{
-		"name":          name,
-		"mimeType":      "application/octet-stream",
-		"appProperties": map[string]string{"skirkName": name},
+		"name":     name,
+		"mimeType": "application/octet-stream",
 	}
 	if d.isAppData() {
 		metadata["parents"] = []string{"appDataFolder"}
@@ -167,6 +166,88 @@ func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 	return infos, nil
+}
+
+func (d *DriveStore) StartChangeToken(ctx context.Context) (string, error) {
+	values := url.Values{}
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	result, err := d.http.Request(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/changes/startPageToken?"+values.Encode(), d.authHeaders(), nil)
+	if err != nil {
+		return "", err
+	}
+	if err := require2xx(result, "drive start change token"); err != nil {
+		return "", err
+	}
+	var payload struct {
+		StartPageToken string `json:"startPageToken"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return "", err
+	}
+	if payload.StartPageToken == "" {
+		return "", fmt.Errorf("drive start change token response did not include startPageToken")
+	}
+	return payload.StartPageToken, nil
+}
+
+func (d *DriveStore) ListChanges(ctx context.Context, pageToken string) ([]ObjectInfo, string, error) {
+	values := url.Values{}
+	values.Set("pageToken", pageToken)
+	values.Set("pageSize", "1000")
+	values.Set("includeRemoved", "false")
+	values.Set("fields", "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,size,modifiedTime))")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	var infos []ObjectInfo
+	token := pageToken
+	for {
+		result, err := d.http.Request(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/changes?"+values.Encode(), d.authHeaders(), nil)
+		if err != nil {
+			return nil, pageToken, err
+		}
+		if err := require2xx(result, "drive changes"); err != nil {
+			return nil, pageToken, err
+		}
+		var payload struct {
+			NextPageToken     string `json:"nextPageToken"`
+			NewStartPageToken string `json:"newStartPageToken"`
+			Changes           []struct {
+				FileID  string `json:"fileId"`
+				Removed bool   `json:"removed"`
+				File    struct {
+					ID           string `json:"id"`
+					Name         string `json:"name"`
+					Size         string `json:"size"`
+					ModifiedTime string `json:"modifiedTime"`
+				} `json:"file"`
+			} `json:"changes"`
+		}
+		if err := json.Unmarshal(result.Body, &payload); err != nil {
+			return nil, pageToken, err
+		}
+		for _, change := range payload.Changes {
+			if change.Removed || change.File.Name == "" {
+				continue
+			}
+			id := change.File.ID
+			if id == "" {
+				id = change.FileID
+			}
+			size, _ := strconv.ParseInt(change.File.Size, 10, 64)
+			infos = append(infos, ObjectInfo{Name: change.File.Name, ID: id, Size: size, Updated: change.File.ModifiedTime})
+		}
+		if payload.NewStartPageToken != "" {
+			token = payload.NewStartPageToken
+		}
+		if payload.NextPageToken == "" {
+			break
+		}
+		values.Set("pageToken", payload.NextPageToken)
+	}
+	return infos, token, nil
 }
 
 func (d *DriveStore) Delete(ctx context.Context, name string) error {

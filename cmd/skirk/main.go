@@ -608,6 +608,9 @@ func serveClient(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
+	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
+	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
+	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -623,6 +626,9 @@ func serveClient(ctx context.Context, args []string) error {
 	}
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency); err != nil {
+		return err
 	}
 	drive, sheets, _, err := skirk.StoresFromConfig(ctx, cfg)
 	if err != nil {
@@ -641,11 +647,17 @@ func serveClient(ctx context.Context, args []string) error {
 func serveExit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-exit", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
+	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
+	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
+	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	cfg, drive, sheets, _, err := load(*configPath)
 	if err != nil {
+		return err
+	}
+	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency); err != nil {
 		return err
 	}
 	control := controlStore(drive, sheets, cfg)
@@ -655,6 +667,22 @@ func serveExit(ctx context.Context, args []string) error {
 	}
 	log.Printf("skirk exit polling session=%s", skirk.SessionString(tunnel.SessionID))
 	return tunnel.ServeExit(ctx)
+}
+
+func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency int) error {
+	if cfg == nil {
+		return nil
+	}
+	if chunkSize > 0 {
+		cfg.Tunnel.ChunkSize = chunkSize
+	}
+	if pollMS > 0 {
+		cfg.Tunnel.PollIntervalMS = pollMS
+	}
+	if concurrency > 0 {
+		cfg.Tunnel.Concurrency = concurrency
+	}
+	return cfg.Validate()
 }
 
 func controlStore(drive *skirk.DriveStore, sheets *skirk.SheetsLog, cfg *skirk.Config) skirk.BlobStore {

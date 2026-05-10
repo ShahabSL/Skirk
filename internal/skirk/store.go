@@ -24,3 +24,8 @@ type ObjectIDStore interface {
 	GetByID(ctx context.Context, fileID string) ([]byte, error)
 	DeleteID(ctx context.Context, fileID string) error
 }
+
+type ChangeStore interface {
+	StartChangeToken(ctx context.Context) (string, error)
+	ListChanges(ctx context.Context, pageToken string) ([]ObjectInfo, string, error)
+}

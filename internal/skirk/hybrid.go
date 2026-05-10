@@ -34,18 +34,20 @@ type HybridReceiveResult struct {
 }
 
 type ControlPayload struct {
-	Version     int    `json:"v"`
-	Event       string `json:"event"`
-	SessionID   string `json:"session_id"`
-	ConnID      string `json:"conn_id,omitempty"`
-	Direction   string `json:"direction"`
-	Sequence    uint64 `json:"sequence"`
-	DriveObject string `json:"drive_object,omitempty"`
-	DriveFileID string `json:"drive_file_id,omitempty"`
-	Target      string `json:"target,omitempty"`
-	Bytes       int    `json:"bytes,omitempty"`
-	Final       bool   `json:"final,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Version     int              `json:"v"`
+	Event       string           `json:"event"`
+	SessionID   string           `json:"session_id"`
+	ConnID      string           `json:"conn_id,omitempty"`
+	Direction   string           `json:"direction"`
+	Sequence    uint64           `json:"sequence"`
+	Batch       []ControlPayload `json:"batch,omitempty"`
+	DriveObject string           `json:"drive_object,omitempty"`
+	DriveFileID string           `json:"drive_file_id,omitempty"`
+	InlineData  string           `json:"inline_data,omitempty"`
+	Target      string           `json:"target,omitempty"`
+	Bytes       int              `json:"bytes,omitempty"`
+	Final       bool             `json:"final,omitempty"`
+	Error       string           `json:"error,omitempty"`
 }
 
 func HybridSendFile(ctx context.Context, data BlobStore, control BlobStore, inputPath, secret, sessionID string, direction byte, chunkSize int, cleanupExisting bool) (HybridSendResult, error) {

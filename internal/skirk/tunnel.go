@@ -3,6 +3,7 @@ package skirk
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,9 +11,17 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	inlineDataThreshold = 64 * 1024
+	readCoalesceDelay   = 25 * time.Millisecond
+	controlBatchSize    = 8
+	controlBatchDelay   = 25 * time.Millisecond
 )
 
 type Tunnel struct {
@@ -93,8 +102,77 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 	conns := map[string]*state{}
 	seen := map[string]bool{}
 	prefix := streamControlDirPrefix(t.SessionID, DirectionUp)
+	changeStore, useChanges := t.changeStore()
+	changeToken := ""
+	if useChanges {
+		var err error
+		changeToken, err = changeStore.StartChangeToken(ctx)
+		if err != nil {
+			useChanges = false
+			if t.Logger != nil {
+				t.Logger.Printf("exit change feed unavailable, using list polling: %v", err)
+			}
+		}
+	}
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
+	seedInfos, err := t.Control.List(ctx, prefix)
+	if err == nil {
+		sort.Slice(seedInfos, func(i, j int) bool { return seedInfos[i].Name < seedInfos[j].Name })
+		for _, info := range seedInfos {
+			if seen[info.Name] {
+				continue
+			}
+			raw, err := t.Control.Get(ctx, info.Name)
+			if err != nil {
+				continue
+			}
+			var event ControlPayload
+			if err := json.Unmarshal(raw, &event); err != nil {
+				seen[info.Name] = true
+				continue
+			}
+			seen[info.Name] = true
+			if t.CleanupProcessed {
+				_ = t.deleteControl(ctx, info.Name, info.ID)
+			}
+			if event.Event == "OPEN" {
+				remote, err := net.DialTimeout("tcp", event.Target, 30*time.Second)
+				if err != nil {
+					_ = t.sendEvent(ctx, DirectionDown, event.ConnID, 0, "RST", "", "", 0, true, err.Error())
+					continue
+				}
+				conns[event.ConnID] = &state{conn: remote}
+				t.serveExitConn(ctx, event.ConnID, remote)
+			}
+		}
+	}
+	poll := func() []ObjectInfo {
+		if useChanges {
+			infos, next, err := changeStore.ListChanges(ctx, changeToken)
+			if err == nil {
+				changeToken = next
+				filtered := infos[:0]
+				for _, info := range infos {
+					if strings.HasPrefix(info.Name, prefix) {
+						filtered = append(filtered, info)
+					}
+				}
+				return filtered
+			}
+			if t.Logger != nil {
+				t.Logger.Printf("exit changes failed, falling back to list once: %v", err)
+			}
+		}
+		infos, err := t.Control.List(ctx, prefix)
+		if err != nil {
+			if t.Logger != nil {
+				t.Logger.Printf("exit control list failed: %v", err)
+			}
+			return nil
+		}
+		return infos
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -103,13 +181,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 			}
 			return nil
 		case <-ticker.C:
-			infos, err := t.Control.List(ctx, prefix)
-			if err != nil {
-				if t.Logger != nil {
-					t.Logger.Printf("exit control list failed: %v", err)
-				}
-				continue
-			}
+			infos := poll()
 			sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 			for _, info := range infos {
 				if !strings.HasSuffix(info.Name, ".OPEN") {
@@ -129,7 +201,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 				}
 				seen[info.Name] = true
 				if t.CleanupProcessed {
-					_ = t.Control.Delete(ctx, info.Name)
+					_ = t.deleteControl(ctx, info.Name, info.ID)
 				}
 				switch event.Event {
 				case "OPEN":
@@ -139,31 +211,35 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 						continue
 					}
 					conns[event.ConnID] = &state{conn: remote}
-					go func(connID string, conn net.Conn) {
-						if err := t.pumpReaderToMailbox(ctx, conn, DirectionDown, connID, 1); err != nil && t.Logger != nil {
-							t.Logger.Printf("exit downstream pump %s: %v", connID, err)
-						}
-						_ = conn.Close()
-					}(event.ConnID, remote)
-					go func(connID string, conn net.Conn) {
-						err := t.pumpMailboxToWriter(ctx, conn, DirectionUp, connID, 1)
-						if err != nil {
-							if t.Logger != nil {
-								t.Logger.Printf("exit upstream pump %s: %v", connID, err)
-							}
-							_ = conn.Close()
-							return
-						}
-						if tcp, ok := conn.(*net.TCPConn); ok {
-							_ = tcp.CloseWrite()
-						} else {
-							_ = conn.Close()
-						}
-					}(event.ConnID, remote)
+					t.serveExitConn(ctx, event.ConnID, remote)
 				}
 			}
 		}
 	}
+}
+
+func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn) {
+	go func() {
+		if err := t.pumpReaderToMailbox(ctx, conn, DirectionDown, connID, 1); err != nil && t.Logger != nil {
+			t.Logger.Printf("exit downstream pump %s: %v", connID, err)
+		}
+		_ = conn.Close()
+	}()
+	go func() {
+		err := t.pumpMailboxToWriter(ctx, conn, DirectionUp, connID, 1)
+		if err != nil {
+			if t.Logger != nil {
+				t.Logger.Printf("exit upstream pump %s: %v", connID, err)
+			}
+			_ = conn.Close()
+			return
+		}
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		} else {
+			_ = conn.Close()
+		}
+	}()
 }
 
 func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, direction byte, connID string, firstSeq uint64) error {
@@ -175,10 +251,15 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 		seq  uint64
 		data []byte
 	}
+	type uploadResult struct {
+		event ControlPayload
+		err   error
+	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	jobs := make(chan uploadJob, t.workerCount())
-	errCh := make(chan error, t.workerCount()+1)
+	results := make(chan uploadResult, t.workerCount()*2)
+	errCh := make(chan error, t.workerCount()+2)
 	var wg sync.WaitGroup
 	for i := 0; i < t.workerCount(); i++ {
 		wg.Add(1)
@@ -192,29 +273,97 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 					cancel()
 					return
 				}
-				info, err := t.putData(workerCtx, dataName, sealed)
+				event, err := t.prepareDataEvent(workerCtx, direction, connID, job.seq, dataName, sealed, len(job.data))
 				if err != nil {
 					errCh <- err
 					cancel()
 					return
 				}
-				if err := t.sendDataEvent(workerCtx, direction, connID, job.seq, dataName, info.ID, len(job.data)); err != nil {
-					errCh <- err
-					cancel()
-					return
-				}
+				results <- uploadResult{event: event}
 			}
 		}()
 	}
+	aggDone := make(chan struct{})
+	go func() {
+		defer close(aggDone)
+		batch := make([]ControlPayload, 0, controlBatchSize)
+		timer := time.NewTimer(controlBatchDelay)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		timerActive := false
+		flush := func() bool {
+			if len(batch) == 0 {
+				return true
+			}
+			if err := t.sendDataBatchEvent(workerCtx, direction, connID, batch); err != nil {
+				errCh <- err
+				cancel()
+				return false
+			}
+			batch = batch[:0]
+			return true
+		}
+		for {
+			select {
+			case result, ok := <-results:
+				if !ok {
+					if timerActive && !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					flush()
+					return
+				}
+				if result.err != nil {
+					errCh <- result.err
+					cancel()
+					return
+				}
+				batch = append(batch, result.event)
+				if len(batch) >= controlBatchSize {
+					if timerActive && !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timerActive = false
+					if !flush() {
+						return
+					}
+					continue
+				}
+				if !timerActive {
+					timer.Reset(controlBatchDelay)
+					timerActive = true
+				}
+			case <-timer.C:
+				timerActive = false
+				if !flush() {
+					return
+				}
+			case <-workerCtx.Done():
+				return
+			}
+		}
+	}()
 	buffer := make([]byte, t.ChunkSize)
 	seq := firstSeq
+	chunks := 0
+	var bytesSent int64
+	started := time.Now()
 	for {
-		n, readErr := reader.Read(buffer)
+		n, readErr := readChunk(reader, buffer)
 		if n > 0 {
 			data := append([]byte(nil), buffer[:n]...)
 			select {
 			case jobs <- uploadJob{seq: seq, data: data}:
 				seq++
+				chunks++
+				bytesSent += int64(n)
 			case err := <-errCh:
 				close(jobs)
 				wg.Wait()
@@ -228,6 +377,11 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 		if readErr == io.EOF {
 			close(jobs)
 			wg.Wait()
+			close(results)
+			<-aggDone
+			if t.Logger != nil && bytesSent > 0 {
+				t.Logger.Printf("mailbox pump direction=%s conn=%s chunks=%d bytes=%d duration=%s", directionName(direction), connID, chunks, bytesSent, time.Since(started).Round(time.Millisecond))
+			}
 			select {
 			case err := <-errCh:
 				return err
@@ -239,6 +393,8 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 			cancel()
 			close(jobs)
 			wg.Wait()
+			close(results)
+			<-aggDone
 			_ = t.sendEvent(ctx, direction, connID, seq, "RST", "", "", 0, true, readErr.Error())
 			return readErr
 		}
@@ -262,6 +418,15 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 	inflight := map[uint64]bool{}
 	ready := map[uint64]dataResult{}
 	prefix := streamControlPrefix(t.SessionID, direction, connID)
+	changeStore, useChanges := t.changeStore()
+	changeToken := ""
+	if useChanges {
+		var err error
+		changeToken, err = changeStore.StartChangeToken(ctx)
+		if err != nil {
+			useChanges = false
+		}
+	}
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
 	expected := firstSeq
@@ -269,6 +434,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 	results := make(chan dataResult, concurrency*2)
 	hasFIN := false
 	var finSeq uint64
+	var remoteReset error
 	startDownloads := func() {
 		for len(inflight) < concurrency {
 			started := false
@@ -280,7 +446,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 				inflight[seq] = true
 				started = true
 				go func(event ControlPayload) {
-					sealed, err := t.getData(ctx, event.DriveObject, event.DriveFileID)
+					sealed, err := t.getEventData(ctx, event)
 					if err != nil {
 						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
 						return
@@ -311,7 +477,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			if _, err := writer.Write(result.plaintext); err != nil {
 				return false, err
 			}
-			if t.CleanupProcessed {
+			if t.CleanupProcessed && (result.object != "" || result.fileID != "") {
 				_ = t.deleteData(ctx, result.object, result.fileID)
 			}
 			delete(ready, expected)
@@ -323,6 +489,91 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		}
 		return false, nil
 	}
+	processInfos := func(infos []ObjectInfo) {
+		enqueue := func(event ControlPayload) {
+			switch event.Event {
+			case "DATA":
+				if event.Sequence < expected {
+					return
+				}
+				pending[event.Sequence] = event
+			case "FIN":
+				hasFIN = true
+				finSeq = event.Sequence
+			case "RST":
+				if event.Error != "" {
+					remoteReset = fmt.Errorf("remote reset: %s", event.Error)
+				} else {
+					remoteReset = fmt.Errorf("remote reset")
+				}
+			}
+		}
+		sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+		for _, info := range infos {
+			if seen[info.Name] {
+				continue
+			}
+			if event, ok := t.parseDataControlInfo(info.Name, direction); ok {
+				seen[info.Name] = true
+				if t.CleanupProcessed {
+					_ = t.deleteControl(ctx, info.Name, info.ID)
+				}
+				if event.Sequence >= expected {
+					pending[event.Sequence] = event
+				}
+				continue
+			}
+			raw, err := t.Control.Get(ctx, info.Name)
+			if err != nil {
+				continue
+			}
+			var event ControlPayload
+			if err := json.Unmarshal(raw, &event); err != nil {
+				seen[info.Name] = true
+				continue
+			}
+			seen[info.Name] = true
+			if t.CleanupProcessed {
+				_ = t.deleteControl(ctx, info.Name, info.ID)
+			}
+			if event.Event == "BATCH" {
+				for _, item := range event.Batch {
+					enqueue(item)
+				}
+				continue
+			}
+			enqueue(event)
+		}
+	}
+	poll := func() []ObjectInfo {
+		if useChanges {
+			infos, next, err := changeStore.ListChanges(ctx, changeToken)
+			if err == nil {
+				changeToken = next
+				filtered := infos[:0]
+				for _, info := range infos {
+					if strings.HasPrefix(info.Name, prefix) {
+						filtered = append(filtered, info)
+					}
+				}
+				return filtered
+			}
+		}
+		infos, err := t.Control.List(ctx, prefix)
+		if err != nil {
+			return nil
+		}
+		return infos
+	}
+	if seedInfos, err := t.Control.List(ctx, prefix); err == nil {
+		processInfos(seedInfos)
+	} else {
+		processInfos(poll())
+	}
+	if remoteReset != nil {
+		return remoteReset
+	}
+	startDownloads()
 	for {
 		select {
 		case <-ctx.Done():
@@ -339,43 +590,10 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			}
 			startDownloads()
 		case <-ticker.C:
-			infos, err := t.Control.List(ctx, prefix)
-			if err != nil {
-				continue
-			}
-			sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
-			for _, info := range infos {
-				if seen[info.Name] {
-					continue
-				}
-				raw, err := t.Control.Get(ctx, info.Name)
-				if err != nil {
-					continue
-				}
-				var event ControlPayload
-				if err := json.Unmarshal(raw, &event); err != nil {
-					seen[info.Name] = true
-					continue
-				}
-				seen[info.Name] = true
-				if t.CleanupProcessed {
-					_ = t.Control.Delete(ctx, info.Name)
-				}
-				switch event.Event {
-				case "DATA":
-					if event.Sequence < expected {
-						continue
-					}
-					pending[event.Sequence] = event
-				case "FIN":
-					hasFIN = true
-					finSeq = event.Sequence
-				case "RST":
-					if event.Error != "" {
-						return fmt.Errorf("remote reset: %s", event.Error)
-					}
-					return fmt.Errorf("remote reset")
-				}
+			infos := poll()
+			processInfos(infos)
+			if remoteReset != nil {
+				return remoteReset
 			}
 			startDownloads()
 			done, err := writeReady()
@@ -407,8 +625,19 @@ func (t *Tunnel) sendEvent(ctx context.Context, direction byte, connID string, s
 	return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), raw)
 }
 
-func (t *Tunnel) sendDataEvent(ctx context.Context, direction byte, connID string, seq uint64, driveObject, driveFileID string, bytes int) error {
-	event := ControlPayload{
+func (t *Tunnel) prepareDataEvent(ctx context.Context, direction byte, connID string, seq uint64, dataName string, sealed []byte, bytes int) (ControlPayload, error) {
+	if len(sealed) <= inlineDataThreshold {
+		return t.dataEvent(direction, connID, seq, "", "", base64.StdEncoding.EncodeToString(sealed), bytes), nil
+	}
+	info, err := t.putData(ctx, dataName, sealed)
+	if err != nil {
+		return ControlPayload{}, err
+	}
+	return t.dataEvent(direction, connID, seq, dataName, info.ID, "", bytes), nil
+}
+
+func (t *Tunnel) dataEvent(direction byte, connID string, seq uint64, driveObject, driveFileID, inlineData string, bytes int) ControlPayload {
+	return ControlPayload{
 		Version:     1,
 		Event:       "DATA",
 		SessionID:   SessionString(t.SessionID),
@@ -417,13 +646,56 @@ func (t *Tunnel) sendDataEvent(ctx context.Context, direction byte, connID strin
 		Sequence:    seq,
 		DriveObject: driveObject,
 		DriveFileID: driveFileID,
+		InlineData:  inlineData,
 		Bytes:       bytes,
+	}
+}
+
+func (t *Tunnel) sendDataBatchEvent(ctx context.Context, direction byte, connID string, events []ControlPayload) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if len(events) == 1 {
+		return t.sendDataEvent(ctx, direction, connID, events[0])
+	}
+	batch := append([]ControlPayload(nil), events...)
+	event := ControlPayload{
+		Version:   1,
+		Event:     "BATCH",
+		SessionID: SessionString(t.SessionID),
+		ConnID:    connID,
+		Direction: directionName(direction),
+		Sequence:  batch[0].Sequence,
+		Batch:     batch,
 	}
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, "DATA"), raw)
+	return t.Control.Put(ctx, streamBatchControlName(t.SessionID, direction, connID, batch[0].Sequence, batch[len(batch)-1].Sequence), raw)
+}
+
+func (t *Tunnel) sendDataEvent(ctx context.Context, direction byte, connID string, event ControlPayload) error {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	name := streamControlName(t.SessionID, direction, connID, event.Sequence, "DATA")
+	if event.DriveFileID != "" && event.InlineData == "" {
+		name = streamDataControlName(t.SessionID, direction, connID, event.Sequence, event.Bytes, event.DriveFileID)
+	}
+	return t.Control.Put(ctx, name, raw)
+}
+
+func (t *Tunnel) getEventData(ctx context.Context, event ControlPayload) ([]byte, error) {
+	if event.InlineData != "" {
+		data, err := base64.StdEncoding.DecodeString(event.InlineData)
+		if err != nil {
+			return nil, fmt.Errorf("inline data decode failed: %w", err)
+		}
+		return data, nil
+	}
+	return t.getData(ctx, event.DriveObject, event.DriveFileID)
 }
 
 func (t *Tunnel) putData(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
@@ -454,6 +726,55 @@ func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
 	return t.Data.Delete(ctx, name)
 }
 
+func (t *Tunnel) deleteControl(ctx context.Context, name, fileID string) error {
+	if fileID != "" {
+		if store, ok := t.Control.(ObjectIDStore); ok {
+			return store.DeleteID(ctx, fileID)
+		}
+	}
+	return t.Control.Delete(ctx, name)
+}
+
+func (t *Tunnel) changeStore() (ChangeStore, bool) {
+	drive, ok := t.Control.(*DriveStore)
+	if !ok || !drive.isAppData() {
+		return nil, false
+	}
+	return drive, true
+}
+
+func (t *Tunnel) parseDataControlInfo(name string, direction byte) (ControlPayload, bool) {
+	base := name
+	if slash := strings.LastIndex(base, "/"); slash >= 0 {
+		base = base[slash+1:]
+	}
+	parts := strings.Split(base, ".")
+	if len(parts) != 4 || parts[1] != "DATA" {
+		return ControlPayload{}, false
+	}
+	seq, err := strconv.ParseUint(parts[0], 16, 64)
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	byteCount, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	idBytes, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	return ControlPayload{
+		Version:     1,
+		Event:       "DATA",
+		SessionID:   SessionString(t.SessionID),
+		Direction:   directionName(direction),
+		Sequence:    seq,
+		DriveFileID: string(idBytes),
+		Bytes:       byteCount,
+	}, true
+}
+
 func (t *Tunnel) workerCount() int {
 	if t.Concurrency < 1 {
 		return 1
@@ -462,6 +783,40 @@ func (t *Tunnel) workerCount() int {
 		return 32
 	}
 	return t.Concurrency
+}
+
+func readChunk(reader io.Reader, buffer []byte) (int, error) {
+	n, err := reader.Read(buffer)
+	if n <= 0 || err != nil || n == len(buffer) {
+		return n, err
+	}
+	deadlineConn, ok := reader.(interface {
+		SetReadDeadline(time.Time) error
+	})
+	if !ok {
+		return n, err
+	}
+	deadline := time.Now().Add(readCoalesceDelay)
+	defer deadlineConn.SetReadDeadline(time.Time{})
+	for n < len(buffer) {
+		if err := deadlineConn.SetReadDeadline(deadline); err != nil {
+			return n, nil
+		}
+		m, readErr := reader.Read(buffer[n:])
+		if m > 0 {
+			n += m
+		}
+		if readErr != nil {
+			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+				return n, nil
+			}
+			return n, readErr
+		}
+		if m == 0 {
+			return n, nil
+		}
+	}
+	return n, nil
 }
 
 func streamDataName(sid [16]byte, direction byte, connID string, sequence uint64) string {
@@ -478,6 +833,15 @@ func streamControlPrefix(sid [16]byte, direction byte, connID string) string {
 
 func streamControlName(sid [16]byte, direction byte, connID string, sequence uint64, eventType string) string {
 	return fmt.Sprintf("%s%016x.%s", streamControlPrefix(sid, direction, connID), sequence, eventType)
+}
+
+func streamDataControlName(sid [16]byte, direction byte, connID string, sequence uint64, bytes int, fileID string) string {
+	encodedID := base64.RawURLEncoding.EncodeToString([]byte(fileID))
+	return fmt.Sprintf("%s%016x.DATA.%d.%s", streamControlPrefix(sid, direction, connID), sequence, bytes, encodedID)
+}
+
+func streamBatchControlName(sid [16]byte, direction byte, connID string, first, last uint64) string {
+	return fmt.Sprintf("%s%016x.BATCH.%016x", streamControlPrefix(sid, direction, connID), first, last)
 }
 
 func randomConnID() (string, error) {
