@@ -24,6 +24,7 @@ const (
 	controlBatchDelay             = 25 * time.Millisecond
 	deferredCleanupDelay          = 2 * time.Minute
 	deferredCleanupFlushThreshold = 2048
+	idleOpenPollInterval          = 2 * time.Second
 )
 
 type Tunnel struct {
@@ -119,6 +120,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 	}
 	conns := map[string]*state{}
 	seen := map[string]bool{}
+	closedConns := make(chan string, 1024)
 	prefix := streamControlDirPrefix(t.SessionID, DirectionUp)
 	listOpenControls := func(ctx context.Context) ([]ObjectInfo, error) {
 		if store, ok := t.Control.(ContainsListStore); ok {
@@ -126,8 +128,6 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 		}
 		return t.Control.List(ctx, prefix)
 	}
-	ticker := time.NewTicker(t.PollInterval)
-	defer ticker.Stop()
 	seedInfos, err := listOpenControls(ctx)
 	if err == nil {
 		sort.Slice(seedInfos, func(i, j int) bool { return seedInfos[i].Name < seedInfos[j].Name })
@@ -155,7 +155,12 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 					continue
 				}
 				conns[event.ConnID] = &state{conn: remote}
-				t.serveExitConn(ctx, event.ConnID, remote)
+				t.serveExitConn(ctx, event.ConnID, remote, func() {
+					select {
+					case closedConns <- event.ConnID:
+					default:
+					}
+				})
 			}
 		}
 	}
@@ -169,6 +174,8 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 		}
 		return infos
 	}
+	timer := time.NewTimer(t.openPollInterval(len(conns)))
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -176,7 +183,9 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 				_ = s.conn.Close()
 			}
 			return nil
-		case <-ticker.C:
+		case connID := <-closedConns:
+			delete(conns, connID)
+		case <-timer.C:
 			infos := poll()
 			sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 			for _, info := range infos {
@@ -207,21 +216,35 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 						continue
 					}
 					conns[event.ConnID] = &state{conn: remote}
-					t.serveExitConn(ctx, event.ConnID, remote)
+					t.serveExitConn(ctx, event.ConnID, remote, func() {
+						select {
+						case closedConns <- event.ConnID:
+						default:
+						}
+					})
 				}
 			}
+			timer.Reset(t.openPollInterval(len(conns)))
 		}
 	}
 }
 
-func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn) {
+func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn, done func()) {
+	var doneOnce sync.Once
+	markDone := func() {
+		if done != nil {
+			doneOnce.Do(done)
+		}
+	}
 	go func() {
+		defer markDone()
 		if err := t.pumpReaderToMailbox(ctx, conn, DirectionDown, connID, 1); err != nil && t.Logger != nil {
 			t.Logger.Printf("exit downstream pump %s: %v", connID, err)
 		}
 		_ = conn.Close()
 	}()
 	go func() {
+		defer markDone()
 		err := t.pumpMailboxToWriter(ctx, conn, DirectionUp, connID, 1)
 		if err != nil {
 			if t.Logger != nil {
@@ -236,6 +259,13 @@ func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn
 			_ = conn.Close()
 		}
 	}()
+}
+
+func (t *Tunnel) openPollInterval(activeConns int) time.Duration {
+	if activeConns > 0 || t.PollInterval >= idleOpenPollInterval {
+		return t.PollInterval
+	}
+	return idleOpenPollInterval
 }
 
 func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, direction byte, connID string, firstSeq uint64) error {

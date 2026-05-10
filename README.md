@@ -84,7 +84,7 @@ skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
 curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```
 
-The default `profile=auto` keeps the user-facing config simple. It uses full windows on direct routes, starts safer on restricted/proxied routes, and automatically backs off when Google returns rate-limit pressure. Control polling is shared per tunnel direction so many app connections do not multiply into many independent Drive list loops.
+The default `profile=auto` keeps the user-facing config simple. It uses full windows on direct routes, starts safer on restricted/proxied routes, and automatically backs off when Google returns rate-limit pressure. Control polling is shared per tunnel direction so many app connections do not multiply into many independent Drive list loops, and the exit slows its new-connection polling while idle.
 
 For sharing without file transfer, send the one-line text inside `skirk-kit/client.skirk`. The client can paste it into the menu or use it directly:
 
