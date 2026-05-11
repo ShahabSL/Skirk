@@ -144,6 +144,42 @@ func TestOpenControlEncryptsTargetInFilename(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimiterBacksOffOnSlowSuccess(t *testing.T) {
+	limiter := newAdaptiveLimiter(4, 8, 100*time.Millisecond, "test", nil)
+	limiter.inFlight = 1
+	limiter.release(nil, 150*time.Millisecond)
+	if limiter.limit != 3 {
+		t.Fatalf("slow success limit = %d, want 3", limiter.limit)
+	}
+	limiter.inFlight = 1
+	limiter.release(nil, 250*time.Millisecond)
+	if limiter.limit != 2 {
+		t.Fatalf("second slow success limit = %d, want 2", limiter.limit)
+	}
+}
+
+func TestStreamDownloadWindowCapsPerConnectionReadAhead(t *testing.T) {
+	cfg := &Config{
+		Secret:    strings.Repeat("a", 64),
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel: TunnelConfig{
+			DownloadConcurrency: 32,
+		},
+	}
+	cfg.ApplyDefaults()
+	tunnel, err := NewTunnel(NewMemoryStore(), NewMemoryStore(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tunnel.streamDownloadWindow(); got != 4 {
+		t.Fatalf("direct stream window = %d, want 4", got)
+	}
+	tunnel.RouteProxy = "socks5h://127.0.0.1:11093"
+	if got := tunnel.streamDownloadWindow(); got != 2 {
+		t.Fatalf("proxy stream window = %d, want 2", got)
+	}
+}
+
 func freeTCPAddr(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

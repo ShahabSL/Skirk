@@ -21,7 +21,7 @@ def percentile(values: list[float], pct: float) -> float | None:
     return ordered[max(0, min(index, len(ordered) - 1))]
 
 
-def run_one(url: str, port: int, timeout: int) -> dict[str, Any]:
+def run_one(url: str, port: int, timeout: int, speed_limit: int, speed_time: int) -> dict[str, Any]:
     started = time.monotonic()
     command = [
         "curl",
@@ -36,8 +36,10 @@ def run_one(url: str, port: int, timeout: int) -> dict[str, Any]:
         f"127.0.0.1:{port}",
         "--write-out",
         "%{json}",
-        url,
     ]
+    if speed_limit > 0 and speed_time > 0:
+        command.extend(["--speed-limit", str(speed_limit), "--speed-time", str(speed_time)])
+    command.append(url)
     proc = subprocess.run(command, text=True, capture_output=True, check=False)
     elapsed = time.monotonic() - started
     if proc.returncode != 0:
@@ -63,9 +65,9 @@ def run_one(url: str, port: int, timeout: int) -> dict[str, Any]:
     return payload
 
 
-def run_sample(url: str, port: int, timeout: int, parallel: int) -> dict[str, Any]:
+def run_sample(url: str, port: int, timeout: int, parallel: int, speed_limit: int, speed_time: int) -> dict[str, Any]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
-        futures = [pool.submit(run_one, url, port, timeout) for _ in range(parallel)]
+        futures = [pool.submit(run_one, url, port, timeout, speed_limit, speed_time) for _ in range(parallel)]
         results = [future.result() for future in concurrent.futures.as_completed(futures)]
     successes = [item for item in results if item.get("ok")]
     elapsed = max((float(item.get("elapsed", 0.0)) for item in results), default=0.0)
@@ -86,12 +88,14 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=10)
     parser.add_argument("--parallel", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--speed-limit", type=int, default=1024, help="Abort a curl run when throughput stays below this many bytes/sec.")
+    parser.add_argument("--speed-time", type=int, default=45, help="Seconds below --speed-limit before curl aborts.")
     parser.add_argument("--out")
     args = parser.parse_args()
 
     samples = []
     for _ in range(args.samples):
-        samples.append(run_sample(args.url, args.port, args.timeout, max(1, args.parallel)))
+        samples.append(run_sample(args.url, args.port, args.timeout, max(1, args.parallel), args.speed_limit, args.speed_time))
 
     successes = [sample for sample in samples if sample.get("ok")]
     elapsed_values = [float(sample["elapsed"]) for sample in successes]
@@ -103,6 +107,8 @@ def main() -> int:
         "port": args.port,
         "samples": args.samples,
         "parallel": args.parallel,
+        "speed_limit_Bps": args.speed_limit,
+        "speed_time_sec": args.speed_time,
         "successes": len(successes),
         "failures": args.samples - len(successes),
         "elapsed_p50_sec": percentile(elapsed_values, 50),

@@ -27,7 +27,7 @@ type DriveStore struct {
 }
 
 const driveListPageSize = "100"
-const driveListMaxPages = 4
+const driveListMaxPages = 16
 const driveSlowRequestThreshold = 4 * time.Second
 
 func NewDriveStore(httpClient *GoogleHTTPClient, token string, cfg DriveConfig) *DriveStore {

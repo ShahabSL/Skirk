@@ -32,6 +32,8 @@ const (
 	deferredCleanupFlushThreshold = 2048
 	idleOpenPollInterval          = 1 * time.Second
 	openPollWarmWindow            = 45 * time.Second
+	directDriveSlowThreshold      = 20 * time.Second
+	proxyDriveSlowThreshold       = 35 * time.Second
 )
 
 type Tunnel struct {
@@ -572,7 +574,7 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 	ticker := time.NewTicker(t.PollInterval)
 	defer ticker.Stop()
 	expected := firstSeq
-	concurrency := t.downloadWorkerCount()
+	concurrency := t.streamDownloadWindow()
 	results := make(chan dataResult, concurrency*2)
 	hasFIN := false
 	var finSeq uint64
@@ -1222,6 +1224,14 @@ func (t *Tunnel) downloadWorkerCount() int {
 	return clampWorkers(t.Concurrency)
 }
 
+func (t *Tunnel) streamDownloadWindow() int {
+	workers := t.downloadWorkerCount()
+	if t.RouteProxy != "" {
+		return minInt(workers, 2)
+	}
+	return minInt(workers, 4)
+}
+
 func (t *Tunnel) autoProfile() bool {
 	return strings.TrimSpace(t.Profile) == "" || strings.TrimSpace(t.Profile) == "auto"
 }
@@ -1240,15 +1250,33 @@ func (t *Tunnel) limiter(upload bool) *adaptiveLimiter {
 	if upload {
 		if t.uploadLimiter == nil {
 			max := t.uploadWorkerCount()
-			t.uploadLimiter = newAdaptiveLimiter(t.initialUploadWindow(max), max)
+			t.uploadLimiter = newAdaptiveLimiter(t.initialUploadWindow(max), max, t.slowDriveThreshold(), t.limiterLabel(upload), t.Logger)
 		}
 		return t.uploadLimiter
 	}
 	if t.downloadLimiter == nil {
 		max := t.downloadWorkerCount()
-		t.downloadLimiter = newAdaptiveLimiter(t.initialDownloadWindow(max), max)
+		t.downloadLimiter = newAdaptiveLimiter(t.initialDownloadWindow(max), max, t.slowDriveThreshold(), t.limiterLabel(upload), t.Logger)
 	}
 	return t.downloadLimiter
+}
+
+func (t *Tunnel) limiterLabel(upload bool) string {
+	role := t.role
+	if role == "" {
+		role = "tunnel"
+	}
+	if upload {
+		return role + "/upload"
+	}
+	return role + "/download"
+}
+
+func (t *Tunnel) slowDriveThreshold() time.Duration {
+	if t.RouteProxy != "" {
+		return proxyDriveSlowThreshold
+	}
+	return directDriveSlowThreshold
 }
 
 func (t *Tunnel) initialUploadWindow(max int) int {
@@ -1260,11 +1288,11 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 		if t.RouteProxy != "" {
 			return minInt(4, max)
 		}
-		return max
+		return minInt(8, max)
 	case "exit":
-		return max
+		return minInt(16, max)
 	default:
-		return max
+		return minInt(8, max)
 	}
 }
 
@@ -1277,11 +1305,11 @@ func (t *Tunnel) initialDownloadWindow(max int) int {
 		if t.RouteProxy != "" {
 			return minInt(8, max)
 		}
-		return max
+		return minInt(8, max)
 	case "exit":
-		return max
+		return minInt(8, max)
 	default:
-		return max
+		return minInt(8, max)
 	}
 }
 
@@ -1303,14 +1331,18 @@ func minInt(a, b int) int {
 }
 
 type adaptiveLimiter struct {
-	mu        sync.Mutex
-	limit     int
-	max       int
-	inFlight  int
-	successes int
+	mu            sync.Mutex
+	limit         int
+	max           int
+	inFlight      int
+	successes     int
+	slowThreshold time.Duration
+	name          string
+	logger        *log.Logger
+	lastLog       time.Time
 }
 
-func newAdaptiveLimiter(initial, max int) *adaptiveLimiter {
+func newAdaptiveLimiter(initial, max int, slowThreshold time.Duration, name string, logger *log.Logger) *adaptiveLimiter {
 	max = clampWorkers(max)
 	if initial < 1 {
 		initial = 1
@@ -1318,7 +1350,10 @@ func newAdaptiveLimiter(initial, max int) *adaptiveLimiter {
 	if initial > max {
 		initial = max
 	}
-	return &adaptiveLimiter{limit: initial, max: max}
+	if slowThreshold <= 0 {
+		slowThreshold = directDriveSlowThreshold
+	}
+	return &adaptiveLimiter{limit: initial, max: max, slowThreshold: slowThreshold, name: name, logger: logger}
 }
 
 func (l *adaptiveLimiter) Acquire(ctx context.Context) (func(error), error) {
@@ -1329,10 +1364,11 @@ func (l *adaptiveLimiter) Acquire(ctx context.Context) (func(error), error) {
 		if l.inFlight < l.limit {
 			l.inFlight++
 			l.mu.Unlock()
+			started := time.Now()
 			var once sync.Once
 			return func(err error) {
 				once.Do(func() {
-					l.release(err)
+					l.release(err, time.Since(started))
 				})
 			}, nil
 		}
@@ -1345,17 +1381,30 @@ func (l *adaptiveLimiter) Acquire(ctx context.Context) (func(error), error) {
 	}
 }
 
-func (l *adaptiveLimiter) release(err error) {
+func (l *adaptiveLimiter) release(err error, duration time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.inFlight > 0 {
 		l.inFlight--
 	}
+	oldLimit := l.limit
+	reason := ""
 	if err != nil {
 		if l.limit > 1 {
 			l.limit = maxInt(1, l.limit/2)
 		}
 		l.successes = 0
+		reason = "error"
+		l.logChangeLocked(oldLimit, reason, duration)
+		return
+	}
+	if duration >= l.slowThreshold {
+		if l.limit > 1 {
+			l.limit--
+		}
+		l.successes = 0
+		reason = "slow"
+		l.logChangeLocked(oldLimit, reason, duration)
 		return
 	}
 	l.successes++
@@ -1363,7 +1412,21 @@ func (l *adaptiveLimiter) release(err error) {
 	if l.successes >= threshold && l.limit < l.max {
 		l.limit++
 		l.successes = 0
+		reason = "healthy"
 	}
+	l.logChangeLocked(oldLimit, reason, duration)
+}
+
+func (l *adaptiveLimiter) logChangeLocked(oldLimit int, reason string, duration time.Duration) {
+	if l.logger == nil || reason == "" || oldLimit == l.limit {
+		return
+	}
+	now := time.Now()
+	if now.Sub(l.lastLog) < 2*time.Second {
+		return
+	}
+	l.lastLog = now
+	l.logger.Printf("drive limiter %s window=%d->%d max=%d reason=%s duration=%s", l.name, oldLimit, l.limit, l.max, reason, duration.Round(time.Millisecond))
 }
 
 func maxInt(a, b int) int {
