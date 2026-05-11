@@ -40,7 +40,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			return nil, err
 		}
 		target := addr
-		if route.GoogleIP != "" && port == "443" && route.Mode != "direct" && route.Mode != "google_front" {
+		if route.GoogleIP != "" && port == "443" && shouldPinGoogleIP(route.Mode) {
 			target = net.JoinHostPort(route.GoogleIP, port)
 		} else if host == "" {
 			target = addr
@@ -50,7 +50,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		}
 		return baseDialer.DialContext(ctx, network, target)
 	}
-	if isGoogleFrontRoute(route.Mode) {
+	if isGoogleFrontHTTP2Route(route.Mode) {
 		transport := &http2.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *stdtls.Config) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
@@ -81,9 +81,31 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			route:  route,
 		}
 	}
+	tlsDialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		raw, err := dialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+		handshakeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		uconn := utls.UClient(raw, &utls.Config{
+			ServerName: host,
+			MinVersion: utls.VersionTLS12,
+		}, utls.HelloChrome_Auto)
+		if err := uconn.HandshakeContext(handshakeCtx); err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+		return uconn, nil
+	}
 	transport := &http.Transport{
 		DialContext:           dialContext,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     !isGoogleFrontHTTP1Route(route.Mode),
 		MaxIdleConns:          256,
 		MaxIdleConnsPerHost:   64,
 		IdleConnTimeout:       90 * time.Second,
@@ -91,6 +113,9 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		ResponseHeaderTimeout: time.Duration(route.TimeoutSeconds) * time.Second,
 		ExpectContinueTimeout: 0,
 		TLSClientConfig:       &stdtls.Config{MinVersion: stdtls.VersionTLS12},
+	}
+	if isGoogleFrontHTTP1Route(route.Mode) {
+		transport.DialTLSContext = tlsDialContext
 	}
 	return &GoogleHTTPClient{
 		client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
@@ -188,7 +213,24 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 }
 
 func isGoogleFrontRoute(mode string) bool {
+	return isGoogleFrontHTTP2Route(mode) || isGoogleFrontHTTP1Route(mode)
+}
+
+func isGoogleFrontHTTP2Route(mode string) bool {
 	return mode == "google_front" || mode == "google_front_pinned"
+}
+
+func isGoogleFrontHTTP1Route(mode string) bool {
+	return mode == "google_front_h1" || mode == "google_front_h1_pinned"
+}
+
+func shouldPinGoogleIP(mode string) bool {
+	switch mode {
+	case "", "direct", "google_front", "google_front_h1":
+		return false
+	default:
+		return true
+	}
 }
 
 func shouldRetryResult(result *HTTPResult) bool {

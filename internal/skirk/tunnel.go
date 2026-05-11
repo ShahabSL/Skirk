@@ -1317,8 +1317,8 @@ func clampWorkers(workers int) int {
 	if workers < 1 {
 		return 1
 	}
-	if workers > 32 {
-		return 32
+	if workers > 64 {
+		return 64
 	}
 	return workers
 }

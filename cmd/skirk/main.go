@@ -607,7 +607,7 @@ func serveClient(ctx context.Context, args []string) error {
 	listen := fs.String("listen", "", "SOCKS5 listen address")
 	httpProxyListen := fs.String("http-proxy-listen", "", "optional HTTP/HTTPS proxy listen address")
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
-	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned")
+	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
@@ -722,7 +722,7 @@ func sampleConfig(args []string) error {
 	secret := fs.String("secret", "", "secret from keygen")
 	session := fs.String("session", "", "fixed 32-hex session id")
 	proxy := fs.String("proxy", "socks5h://127.0.0.1:1080", "upstream restricted-network proxy")
-	routeMode := fs.String("route-mode", "google_front", "route mode: direct, real_pinned, google_front, google_front_pinned")
+	routeMode := fs.String("route-mode", "google_front", "route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routing")
 	concurrency := fs.Int("concurrency", 8, "Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {

@@ -217,19 +217,19 @@ func (c *Config) Validate() error {
 	if c.Tunnel.ChunkSize < 512 || c.Tunnel.ChunkSize > 16*1024*1024 {
 		return fmt.Errorf("config.tunnel.chunk_size must be between 512 and 16777216 bytes")
 	}
-	if c.Tunnel.Concurrency < 1 || c.Tunnel.Concurrency > 32 {
-		return fmt.Errorf("config.tunnel.concurrency must be between 1 and 32")
+	if c.Tunnel.Concurrency < 1 || c.Tunnel.Concurrency > 64 {
+		return fmt.Errorf("config.tunnel.concurrency must be between 1 and 64")
 	}
 	switch strings.TrimSpace(c.Tunnel.Profile) {
 	case "", "auto", "fixed":
 	default:
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
-	if c.Tunnel.UploadConcurrency < 0 || c.Tunnel.UploadConcurrency > 32 {
-		return fmt.Errorf("config.tunnel.upload_concurrency must be between 0 and 32")
+	if c.Tunnel.UploadConcurrency < 0 || c.Tunnel.UploadConcurrency > 64 {
+		return fmt.Errorf("config.tunnel.upload_concurrency must be between 0 and 64")
 	}
-	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 32 {
-		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 32")
+	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
+		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
 	}
 	return nil
 }

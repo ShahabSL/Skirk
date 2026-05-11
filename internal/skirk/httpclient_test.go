@@ -11,7 +11,7 @@ import (
 )
 
 func TestIsGoogleFrontRoute(t *testing.T) {
-	for _, mode := range []string{"google_front", "google_front_pinned"} {
+	for _, mode := range []string{"google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned"} {
 		if !isGoogleFrontRoute(mode) {
 			t.Fatalf("expected %s to be a Google-fronted route", mode)
 		}
@@ -19,6 +19,25 @@ func TestIsGoogleFrontRoute(t *testing.T) {
 	for _, mode := range []string{"", "direct", "real_pinned"} {
 		if isGoogleFrontRoute(mode) {
 			t.Fatalf("expected %s not to be a Google-fronted route", mode)
+		}
+	}
+}
+
+func TestGoogleFrontRouteProtocolSelection(t *testing.T) {
+	for _, mode := range []string{"google_front", "google_front_pinned"} {
+		if !isGoogleFrontHTTP2Route(mode) {
+			t.Fatalf("expected %s to use HTTP/2 fronting", mode)
+		}
+		if isGoogleFrontHTTP1Route(mode) {
+			t.Fatalf("expected %s not to use HTTP/1.1 fronting", mode)
+		}
+	}
+	for _, mode := range []string{"google_front_h1", "google_front_h1_pinned"} {
+		if !isGoogleFrontHTTP1Route(mode) {
+			t.Fatalf("expected %s to use HTTP/1.1 fronting", mode)
+		}
+		if isGoogleFrontHTTP2Route(mode) {
+			t.Fatalf("expected %s not to use HTTP/2 fronting", mode)
 		}
 	}
 }
