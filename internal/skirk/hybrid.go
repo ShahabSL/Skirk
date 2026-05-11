@@ -45,6 +45,7 @@ type ControlPayload struct {
 	DriveFileID string           `json:"drive_file_id,omitempty"`
 	ControlFile bool             `json:"control_file,omitempty"`
 	InlineData  string           `json:"inline_data,omitempty"`
+	InitialData string           `json:"initial_data,omitempty"`
 	Target      string           `json:"target,omitempty"`
 	Bytes       int              `json:"bytes,omitempty"`
 	Final       bool             `json:"final,omitempty"`

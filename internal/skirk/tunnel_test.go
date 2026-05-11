@@ -138,6 +138,27 @@ func TestOpenControlEncryptsTargetInFilename(t *testing.T) {
 	if event.Target != target || event.ConnID != "abc123" || event.Sequence != 0 {
 		t.Fatalf("parsed event = %+v", event)
 	}
+	if err := tunnel.sendOpenEvent(context.Background(), DirectionUp, "def456", 0, target, []byte("GET / HTTP/1.1\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	control.mu.Lock()
+	for key := range control.objects {
+		if strings.Contains(key, "/def456/") {
+			name = key
+		}
+	}
+	control.mu.Unlock()
+	event, ok = tunnel.parseOpenControlInfo(name)
+	if !ok {
+		t.Fatalf("failed to parse encrypted fused OPEN control: %s", name)
+	}
+	initial, err := base64.StdEncoding.DecodeString(event.InitialData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Target != target || string(initial) != "GET / HTTP/1.1\r\n" || event.Bytes != len(initial) {
+		t.Fatalf("parsed fused event = %+v initial=%q", event, initial)
+	}
 	legacy := streamControlPrefix(tunnel.SessionID, DirectionUp, "abc123") + "0000000000000000.OPEN." + base64.RawURLEncoding.EncodeToString([]byte(target))
 	if _, ok := tunnel.parseOpenControlInfo(legacy); ok {
 		t.Fatal("legacy plaintext OPEN controls should not be accepted")

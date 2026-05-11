@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestAuthConfigRefreshToken(t *testing.T) {
@@ -89,6 +90,90 @@ func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("refresh count = %d, want 2", count)
+	}
+}
+
+func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := atomic.AddInt32(&count, 1)
+		expiresIn := 900
+		if token > 1 {
+			expiresIn = 3600
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-token-" + strconv.Itoa(int(token)),
+			"expires_in":   expiresIn,
+			"token_type":   "Bearer",
+		})
+	}))
+	defer server.Close()
+
+	source := NewAccessTokenSource(AuthConfig{
+		ClientID:     "client-id",
+		RefreshToken: "refresh-token",
+		TokenURL:     server.URL,
+	}, RouteConfig{Mode: "google_front", Proxy: "socks5h://127.0.0.1:11093"})
+
+	first, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "access-token-1" || second != first {
+		t.Fatalf("cached hostile token behavior first=%q second=%q", first, second)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&count) < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&count); got < 2 {
+		t.Fatalf("background refresh count = %d, want at least 2", got)
+	}
+	third, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third != "access-token-2" {
+		t.Fatalf("third token = %q, want background-refreshed token", third)
+	}
+}
+
+func TestOAuthTokenAttemptsIncludeHostileFallbacks(t *testing.T) {
+	route := RouteConfig{
+		Mode:           "google_front",
+		Proxy:          "socks5h://127.0.0.1:11093",
+		GoogleIP:       "216.239.38.120",
+		TimeoutSeconds: 240,
+	}
+	attempts := oauthTokenAttempts(route)
+	if len(attempts) != 4 {
+		t.Fatalf("attempt count = %d, want 4", len(attempts))
+	}
+	if attempts[0].host != "oauth2.googleapis.com" || attempts[0].route.Mode != "google_front" {
+		t.Fatalf("primary attempt = %+v", attempts[0])
+	}
+	if attempts[1].host != "accounts.google.com" || attempts[1].path != "/o/oauth2/token" || attempts[1].route.Mode != "google_front" || attempts[1].route.Proxy == "" {
+		t.Fatalf("fronted accounts fallback = %+v", attempts[1])
+	}
+	if attempts[2].host != "accounts.google.com" || attempts[2].path != "/o/oauth2/token" || attempts[2].route.Mode != "direct" || attempts[2].route.Proxy == "" {
+		t.Fatalf("direct accounts fallback = %+v", attempts[2])
+	}
+	if attempts[3].host != "oauth2.googleapis.com" || attempts[3].route.Mode != "direct" || attempts[3].route.Proxy == "" {
+		t.Fatalf("direct oauth2 fallback = %+v", attempts[3])
+	}
+}
+
+func TestTerminalOAuthTokenError(t *testing.T) {
+	if !terminalOAuthTokenError(http.StatusBadRequest, []byte(`{"error":"invalid_grant"}`)) {
+		t.Fatal("invalid_grant should be terminal")
+	}
+	if terminalOAuthTokenError(http.StatusNotFound, []byte(`<html>wrong edge</html>`)) {
+		t.Fatal("wrong-edge response should allow fallback")
 	}
 }
 

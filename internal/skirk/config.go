@@ -22,6 +22,9 @@ import (
 const ConfigTextPrefix = "skirk:"
 
 const proactiveTokenRefreshMargin = 10 * time.Minute
+const hostileTokenRefreshMargin = 20 * time.Minute
+const staleTokenMinimumLifetime = 2 * time.Minute
+const tokenRefreshRetryDelay = 1 * time.Minute
 
 type Config struct {
 	Secret    string       `json:"secret"`
@@ -52,11 +55,13 @@ type AccessTokenSource struct {
 	auth  AuthConfig
 	route RouteConfig
 
-	mu        sync.Mutex
-	token     string
-	expiresAt time.Time
-	source    string
-	Logger    *log.Logger
+	mu                 sync.Mutex
+	token              string
+	expiresAt          time.Time
+	source             string
+	refreshing         bool
+	nextRefreshAttempt time.Time
+	Logger             *log.Logger
 }
 
 type RouteConfig struct {
@@ -242,24 +247,66 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
-	if s.token != "" && !tokenNeedsRefresh(now, s.expiresAt) {
-		return s.token, nil
+	if s.token != "" {
+		if !tokenNeedsRefreshForRoute(now, s.expiresAt, s.route) {
+			return s.token, nil
+		}
+		if staleSafeTokenRefresh(s.route) && tokenUsableDuringRefresh(now, s.expiresAt) {
+			if !s.refreshing && !now.Before(s.nextRefreshAttempt) {
+				s.refreshing = true
+				go s.refreshInBackground()
+			}
+			return s.token, nil
+		}
 	}
 	token, err := s.auth.accessTokenForRoute(ctx, s.route)
 	if err != nil {
+		if s.token != "" && tokenUsableDuringRefresh(now, s.expiresAt) {
+			s.nextRefreshAttempt = now.Add(tokenRefreshRetryDelay)
+			if s.Logger != nil {
+				s.Logger.Printf("oauth token refresh failed source=%s action=use-cached-token retry_after=%s error=%s", firstNonEmptyString(s.source, "cached"), tokenRefreshRetryDelay, errorSummary(err))
+			}
+			return s.token, nil
+		}
 		return "", err
 	}
 	s.token = token.Token
 	s.expiresAt = token.ExpiresAt
 	s.source = token.Source
+	s.nextRefreshAttempt = time.Time{}
 	if s.Logger != nil {
 		if s.expiresAt.IsZero() {
 			s.Logger.Printf("oauth token loaded source=%s expiry=unknown", firstNonEmptyString(s.source, "static"))
 		} else {
-			s.Logger.Printf("oauth token loaded source=%s expires_in=%s refresh_margin=%s", firstNonEmptyString(s.source, "unknown"), time.Until(s.expiresAt).Round(time.Second), proactiveTokenRefreshMargin)
+			s.Logger.Printf("oauth token loaded source=%s expires_in=%s refresh_margin=%s", firstNonEmptyString(s.source, "unknown"), time.Until(s.expiresAt).Round(time.Second), tokenRefreshMargin(s.route))
 		}
 	}
 	return s.token, nil
+}
+
+func (s *AccessTokenSource) refreshInBackground() {
+	token, err := s.auth.accessTokenForRoute(context.Background(), s.route)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshing = false
+	if err != nil {
+		s.nextRefreshAttempt = time.Now().Add(tokenRefreshRetryDelay)
+		if s.Logger != nil {
+			s.Logger.Printf("oauth background refresh failed source=%s action=keep-cached-token retry_after=%s error=%s", firstNonEmptyString(s.source, "cached"), tokenRefreshRetryDelay, errorSummary(err))
+		}
+		return
+	}
+	s.token = token.Token
+	s.expiresAt = token.ExpiresAt
+	s.source = token.Source
+	s.nextRefreshAttempt = time.Time{}
+	if s.Logger != nil {
+		if s.expiresAt.IsZero() {
+			s.Logger.Printf("oauth background refresh loaded source=%s expiry=unknown", firstNonEmptyString(s.source, "static"))
+		} else {
+			s.Logger.Printf("oauth background refresh loaded source=%s expires_in=%s refresh_margin=%s", firstNonEmptyString(s.source, "unknown"), time.Until(s.expiresAt).Round(time.Second), tokenRefreshMargin(s.route))
+		}
+	}
 }
 
 func (s *AccessTokenSource) Invalidate() {
@@ -268,6 +315,8 @@ func (s *AccessTokenSource) Invalidate() {
 	s.token = ""
 	s.expiresAt = time.Time{}
 	s.source = ""
+	s.refreshing = false
+	s.nextRefreshAttempt = time.Time{}
 }
 
 func (a AuthConfig) Token(ctx context.Context) (string, error) {
@@ -358,15 +407,10 @@ func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (
 		values.Set("client_secret", secret)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	if tokenURL == "https://oauth2.googleapis.com/token" {
-		headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
-		result, err := NewGoogleHTTPClient(route).Request(ctx, http.MethodPost, "oauth2.googleapis.com", "/token", headers, []byte(values.Encode()))
-		if err != nil {
-			return OAuthAccessToken{}, err
-		}
-		return parseOAuthTokenResponse(result.Status, result.Body)
+		return refreshAccessTokenViaGoogleEndpoints(ctx, route, values)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
@@ -383,6 +427,109 @@ func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (
 		return OAuthAccessToken{}, err
 	}
 	return parseOAuthTokenResponse(resp.StatusCode, body)
+}
+
+type oauthTokenAttempt struct {
+	source  string
+	route   RouteConfig
+	host    string
+	path    string
+	timeout time.Duration
+}
+
+func refreshAccessTokenViaGoogleEndpoints(ctx context.Context, route RouteConfig, values url.Values) (OAuthAccessToken, error) {
+	headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+	body := []byte(values.Encode())
+	var errs []string
+	for _, attempt := range oauthTokenAttempts(route) {
+		attemptCtx, cancel := context.WithTimeout(ctx, attempt.timeout)
+		result, err := NewGoogleHTTPClient(attempt.route).Request(attemptCtx, http.MethodPost, attempt.host, attempt.path, headers, body)
+		cancel()
+		if err != nil {
+			errs = append(errs, attempt.source+": "+errorSummary(err))
+			continue
+		}
+		token, err := parseOAuthTokenResponse(result.Status, result.Body)
+		if err == nil {
+			token.Source = attempt.source
+			return token, nil
+		}
+		if terminalOAuthTokenError(result.Status, result.Body) {
+			return OAuthAccessToken{}, err
+		}
+		errs = append(errs, attempt.source+": "+errorSummary(err))
+	}
+	return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed through all routes: %s", strings.Join(errs, "; "))
+}
+
+func oauthTokenAttempts(route RouteConfig) []oauthTokenAttempt {
+	baseTimeout := time.Duration(route.TimeoutSeconds) * time.Second
+	if baseTimeout <= 0 || baseTimeout > 30*time.Second {
+		baseTimeout = 30 * time.Second
+	}
+	if route.Proxy != "" && baseTimeout > 12*time.Second {
+		baseTimeout = 12 * time.Second
+	}
+	attempts := []oauthTokenAttempt{
+		{
+			source:  "refresh_token:oauth2",
+			route:   route,
+			host:    "oauth2.googleapis.com",
+			path:    "/token",
+			timeout: baseTimeout,
+		},
+	}
+	if route.Proxy != "" || isGoogleFrontRoute(route.Mode) {
+		frontRoute := route
+		if !isGoogleFrontRoute(frontRoute.Mode) {
+			frontRoute.Mode = "google_front"
+		}
+		directRoute := route
+		directRoute.Mode = "direct"
+		directRoute.GoogleIP = ""
+		attempts = append(attempts,
+			oauthTokenAttempt{
+				source:  "refresh_token:accounts_fronted",
+				route:   frontRoute,
+				host:    "accounts.google.com",
+				path:    "/o/oauth2/token",
+				timeout: 12 * time.Second,
+			},
+			oauthTokenAttempt{
+				source:  "refresh_token:accounts_legacy",
+				route:   directRoute,
+				host:    "accounts.google.com",
+				path:    "/o/oauth2/token",
+				timeout: 20 * time.Second,
+			},
+			oauthTokenAttempt{
+				source:  "refresh_token:oauth2_direct",
+				route:   directRoute,
+				host:    "oauth2.googleapis.com",
+				path:    "/token",
+				timeout: 12 * time.Second,
+			},
+		)
+	}
+	return attempts
+}
+
+func terminalOAuthTokenError(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return false
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Error == "" {
+		return false
+	}
+	switch payload.Error {
+	case "invalid_grant", "invalid_client", "unauthorized_client", "access_denied", "deleted_client":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) {
@@ -414,15 +561,37 @@ func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) 
 }
 
 func tokenNeedsRefresh(now time.Time, expiresAt time.Time) bool {
+	return tokenNeedsRefreshForRoute(now, expiresAt, RouteConfig{})
+}
+
+func tokenNeedsRefreshForRoute(now time.Time, expiresAt time.Time, route RouteConfig) bool {
 	if expiresAt.IsZero() {
 		return false
 	}
-	margin := proactiveTokenRefreshMargin
+	margin := tokenRefreshMargin(route)
 	lifetime := expiresAt.Sub(now)
 	if lifetime < margin {
 		return true
 	}
 	return !now.Before(expiresAt.Add(-margin))
+}
+
+func tokenRefreshMargin(route RouteConfig) time.Duration {
+	if staleSafeTokenRefresh(route) {
+		return hostileTokenRefreshMargin
+	}
+	return proactiveTokenRefreshMargin
+}
+
+func staleSafeTokenRefresh(route RouteConfig) bool {
+	return route.Proxy != "" || isGoogleFrontRoute(route.Mode)
+}
+
+func tokenUsableDuringRefresh(now time.Time, expiresAt time.Time) bool {
+	if expiresAt.IsZero() {
+		return false
+	}
+	return now.Add(staleTokenMinimumLifetime).Before(expiresAt)
 }
 
 func firstNonEmptyString(values ...string) string {

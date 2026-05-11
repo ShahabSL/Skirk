@@ -167,14 +167,35 @@ func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
 
 func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error) {
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
-	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
-	if err != nil {
+	var last *HTTPResult
+	for attempt := 0; attempt < 5; attempt++ {
+		result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		last = result
+		if result.Status != http.StatusNotFound {
+			if err := require2xx(result, "drive download by id"); err != nil {
+				return nil, err
+			}
+			return result.Body, nil
+		}
+		if attempt == 4 {
+			break
+		}
+		delay := time.Duration(150*(attempt+1)*(attempt+1)) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := require2xx(last, "drive download by id"); err != nil {
 		return nil, err
 	}
-	if err := require2xx(result, "drive download by id"); err != nil {
-		return nil, err
-	}
-	return result.Body, nil
+	return last.Body, nil
 }
 
 func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
