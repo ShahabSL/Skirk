@@ -171,12 +171,12 @@ func TestStreamDownloadWindowCapsPerConnectionReadAhead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := tunnel.streamDownloadWindow(); got != 4 {
-		t.Fatalf("direct stream window = %d, want 4", got)
+	if got := tunnel.streamDownloadWindow(); got != 16 {
+		t.Fatalf("direct stream window = %d, want 16", got)
 	}
 	tunnel.RouteProxy = "socks5h://127.0.0.1:11093"
-	if got := tunnel.streamDownloadWindow(); got != 2 {
-		t.Fatalf("proxy stream window = %d, want 2", got)
+	if got := tunnel.streamDownloadWindow(); got != 8 {
+		t.Fatalf("proxy stream window = %d, want 8", got)
 	}
 }
 

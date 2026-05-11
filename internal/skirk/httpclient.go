@@ -83,9 +83,9 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 	}
 	transport := &http.Transport{
 		DialContext:           dialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   16,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   64,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: time.Duration(route.TimeoutSeconds) * time.Second,

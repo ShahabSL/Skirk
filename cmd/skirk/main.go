@@ -605,6 +605,7 @@ func serveClient(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-client", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	listen := fs.String("listen", "", "SOCKS5 listen address")
+	httpProxyListen := fs.String("http-proxy-listen", "", "optional HTTP/HTTPS proxy listen address")
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
@@ -650,7 +651,13 @@ func serveClient(ctx context.Context, args []string) error {
 	}
 	addr := firstNonEmpty(*listen, cfg.Tunnel.Listen)
 	log.Printf("skirk client SOCKS5 listening on %s session=%s route=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Route.Mode, firstNonEmpty(cfg.Route.Proxy, "none"))
-	return tunnel.ServeClient(ctx, addr)
+	errCh := make(chan error, 2)
+	go func() { errCh <- tunnel.ServeClient(ctx, addr) }()
+	if strings.TrimSpace(*httpProxyListen) != "" {
+		log.Printf("skirk client HTTP proxy listening on %s session=%s", *httpProxyListen, skirk.SessionString(tunnel.SessionID))
+		go func() { errCh <- tunnel.ServeHTTPProxyClient(ctx, strings.TrimSpace(*httpProxyListen)) }()
+	}
+	return <-errCh
 }
 
 func serveExit(ctx context.Context, args []string) error {
@@ -735,7 +742,7 @@ func sampleConfig(args []string) error {
 		Auth:      skirk.AuthConfig{TokenCommand: "gcloud auth print-access-token"},
 		Route:     skirk.RouteConfig{Mode: *routeMode, Proxy: *proxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Sheets:    skirk.SheetsConfig{SpreadsheetID: *spreadsheetID, Range: "skirk!A:D"},
-		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", Profile: "auto", ChunkSize: 1024 * 1024, PollIntervalMS: 250, Concurrency: *concurrency, CleanupProcessed: true},
+		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", Profile: "auto", ChunkSize: 8 * 1024 * 1024, PollIntervalMS: 250, Concurrency: *concurrency, CleanupProcessed: true},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

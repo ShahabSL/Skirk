@@ -1227,9 +1227,9 @@ func (t *Tunnel) downloadWorkerCount() int {
 func (t *Tunnel) streamDownloadWindow() int {
 	workers := t.downloadWorkerCount()
 	if t.RouteProxy != "" {
-		return minInt(workers, 2)
+		return minInt(workers, 8)
 	}
-	return minInt(workers, 4)
+	return minInt(workers, 16)
 }
 
 func (t *Tunnel) autoProfile() bool {
