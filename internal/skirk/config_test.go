@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -53,6 +55,40 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 	if token != "access-token" {
 		t.Fatalf("token = %q, want access-token", token)
+	}
+}
+
+func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
+	var count int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := atomic.AddInt32(&count, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-token-" + strconv.Itoa(int(token)),
+			"expires_in":   300,
+			"token_type":   "Bearer",
+		})
+	}))
+	defer server.Close()
+
+	source := NewAccessTokenSource(AuthConfig{
+		ClientID:     "client-id",
+		RefreshToken: "refresh-token",
+		TokenURL:     server.URL,
+	}, RouteConfig{Mode: "direct"})
+
+	first, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("token was cached inside proactive refresh margin: first=%q second=%q", first, second)
+	}
+	if count != 2 {
+		t.Fatalf("refresh count = %d, want 2", count)
 	}
 }
 

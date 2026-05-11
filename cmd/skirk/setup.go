@@ -65,7 +65,7 @@ func setupInit(ctx context.Context, args []string) error {
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 1024*1024, "maximum tunnel chunk size")
-	pollMS := fs.Int("poll-ms", 250, "mailbox poll interval in milliseconds")
+	pollMS := fs.Int("poll-ms", 100, "mailbox poll interval in milliseconds")
 	clientConcurrency := fs.Int("client-concurrency", 0, "legacy client Drive upload/download concurrency; sets both split knobs")
 	exitConcurrency := fs.Int("exit-concurrency", 0, "legacy exit Drive upload/download concurrency; sets both split knobs")
 	clientUploadConcurrency := fs.Int("client-upload-concurrency", 0, "client Drive upload concurrency; 0 uses auto profile")
@@ -140,27 +140,8 @@ func setupInit(ctx context.Context, args []string) error {
 		creds.Account = "unknown"
 	}
 	auth := creds.AuthConfig()
-	useAppData := strings.TrimSpace(*oauthClientFile) != ""
-	var spreadsheetID, folderID string
-	if useAppData {
-		folderID = "appDataFolder"
-	} else {
-		adminCfg := skirk.Config{
-			Secret: "setup-only",
-			Auth:   auth,
-			Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: *googleIP, TimeoutSeconds: 240},
-			Tunnel: setupTunnelConfig("", *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency),
-		}
-		adminCfg.ApplyDefaults()
-		_, _, workspace, err := skirk.StoresFromConfig(ctx, &adminCfg)
-		if err != nil {
-			return err
-		}
-		folderID, err = workspace.CreateDriveFolder(ctx, *title+" data")
-		if err != nil {
-			return err
-		}
-	}
+	spreadsheetID := ""
+	folderID := "appDataFolder"
 
 	secret, err := skirk.RandomSecret()
 	if err != nil {
@@ -171,10 +152,7 @@ func setupInit(ctx context.Context, args []string) error {
 		return err
 	}
 	sessionID := skirk.SessionString(session)
-	baseDrive := skirk.DriveConfig{FolderID: folderID}
-	if useAppData {
-		baseDrive = skirk.DriveConfig{Space: "appDataFolder"}
-	}
+	baseDrive := skirk.DriveConfig{Space: "appDataFolder"}
 	baseSheets := skirk.SheetsConfig{SpreadsheetID: spreadsheetID, Range: *sheet + "!A:D"}
 	if err := validateDriveMailbox(ctx, auth, baseDrive, *googleIP, sessionID); err != nil {
 		return err

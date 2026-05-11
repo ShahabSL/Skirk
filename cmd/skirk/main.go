@@ -698,9 +698,6 @@ func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency, upl
 }
 
 func controlStore(drive *skirk.DriveStore, sheets *skirk.SheetsLog, cfg *skirk.Config) skirk.BlobStore {
-	if cfg != nil && cfg.Sheets.SpreadsheetID != "" {
-		return sheets
-	}
 	return drive
 }
 

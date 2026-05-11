@@ -9,15 +9,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 const ConfigTextPrefix = "skirk:"
+
+const proactiveTokenRefreshMargin = 10 * time.Minute
 
 type Config struct {
 	Secret    string       `json:"secret"`
@@ -36,6 +40,23 @@ type AuthConfig struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	TokenURL     string `json:"token_url,omitempty"`
+}
+
+type OAuthAccessToken struct {
+	Token     string
+	ExpiresAt time.Time
+	Source    string
+}
+
+type AccessTokenSource struct {
+	auth  AuthConfig
+	route RouteConfig
+
+	mu        sync.Mutex
+	token     string
+	expiresAt time.Time
+	source    string
+	Logger    *log.Logger
 }
 
 type RouteConfig struct {
@@ -182,7 +203,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.ChunkSize = 1024 * 1024
 	}
 	if c.Tunnel.PollIntervalMS == 0 {
-		c.Tunnel.PollIntervalMS = 250
+		c.Tunnel.PollIntervalMS = 100
 	}
 	if c.Tunnel.Concurrency == 0 {
 		c.Tunnel.Concurrency = 32
@@ -213,6 +234,42 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func NewAccessTokenSource(auth AuthConfig, route RouteConfig) *AccessTokenSource {
+	return &AccessTokenSource{auth: auth, route: route}
+}
+
+func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if s.token != "" && !tokenNeedsRefresh(now, s.expiresAt) {
+		return s.token, nil
+	}
+	token, err := s.auth.accessTokenForRoute(ctx, s.route)
+	if err != nil {
+		return "", err
+	}
+	s.token = token.Token
+	s.expiresAt = token.ExpiresAt
+	s.source = token.Source
+	if s.Logger != nil {
+		if s.expiresAt.IsZero() {
+			s.Logger.Printf("oauth token loaded source=%s expiry=unknown", firstNonEmptyString(s.source, "static"))
+		} else {
+			s.Logger.Printf("oauth token loaded source=%s expires_in=%s refresh_margin=%s", firstNonEmptyString(s.source, "unknown"), time.Until(s.expiresAt).Round(time.Second), proactiveTokenRefreshMargin)
+		}
+	}
+	return s.token, nil
+}
+
+func (s *AccessTokenSource) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = ""
+	s.expiresAt = time.Time{}
+	s.source = ""
+}
+
 func (a AuthConfig) Token(ctx context.Context) (string, error) {
 	return a.TokenForRoute(ctx, RouteConfig{Mode: "direct"})
 }
@@ -239,15 +296,27 @@ func (a AuthConfig) Revoke(ctx context.Context, route RouteConfig) error {
 }
 
 func (a AuthConfig) TokenForRoute(ctx context.Context, route RouteConfig) (string, error) {
+	return NewAccessTokenSource(a, route).Token(ctx)
+}
+
+func (a AuthConfig) accessTokenForRoute(ctx context.Context, route RouteConfig) (OAuthAccessToken, error) {
 	if token := strings.TrimSpace(os.Getenv("SKIRK_ACCESS_TOKEN")); token != "" {
-		return token, nil
+		return OAuthAccessToken{Token: token, Source: "env"}, nil
 	}
 	if token := strings.TrimSpace(a.AccessToken); token != "" {
-		return token, nil
+		return OAuthAccessToken{Token: token, Source: "config_access_token"}, nil
 	}
 	if strings.TrimSpace(a.RefreshToken) != "" {
 		return a.refreshAccessToken(ctx, route)
 	}
+	token, err := a.tokenFromCommand(ctx)
+	if err != nil {
+		return OAuthAccessToken{}, err
+	}
+	return OAuthAccessToken{Token: token, ExpiresAt: time.Now().Add(55 * time.Minute), Source: "token_command"}, nil
+}
+
+func (a AuthConfig) tokenFromCommand(ctx context.Context) (string, error) {
 	command := strings.TrimSpace(a.TokenCommand)
 	if command == "" {
 		return "", errors.New("no access token, refresh token, or token_command configured")
@@ -272,10 +341,10 @@ func (a AuthConfig) TokenForRoute(ctx context.Context, route RouteConfig) (strin
 	return token, nil
 }
 
-func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (string, error) {
+func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (OAuthAccessToken, error) {
 	clientID := strings.TrimSpace(a.ClientID)
 	if clientID == "" {
-		return "", errors.New("auth.client_id is required when auth.refresh_token is set")
+		return OAuthAccessToken{}, errors.New("auth.client_id is required when auth.refresh_token is set")
 	}
 	tokenURL := strings.TrimSpace(a.TokenURL)
 	if tokenURL == "" {
@@ -295,49 +364,82 @@ func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (
 		headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 		result, err := NewGoogleHTTPClient(route).Request(ctx, http.MethodPost, "oauth2.googleapis.com", "/token", headers, []byte(values.Encode()))
 		if err != nil {
-			return "", err
+			return OAuthAccessToken{}, err
 		}
 		return parseOAuthTokenResponse(result.Status, result.Body)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", err
+		return OAuthAccessToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return OAuthAccessToken{}, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return OAuthAccessToken{}, err
 	}
 	return parseOAuthTokenResponse(resp.StatusCode, body)
 }
 
-func parseOAuthTokenResponse(status int, body []byte) (string, error) {
+func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) {
 	var payload struct {
 		AccessToken      string `json:"access_token"`
 		TokenType        string `json:"token_type"`
+		ExpiresIn        int    `json:"expires_in"`
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", fmt.Errorf("oauth token response decode failed: %w", err)
+		return OAuthAccessToken{}, fmt.Errorf("oauth token response decode failed: %w", err)
 	}
 	if status < 200 || status >= 300 {
 		if payload.Error != "" {
-			return "", fmt.Errorf("oauth token refresh failed status=%d error=%s description=%s", status, payload.Error, payload.ErrorDescription)
+			return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d error=%s description=%s", status, payload.Error, payload.ErrorDescription)
 		}
-		return "", fmt.Errorf("oauth token refresh failed status=%d body=%q", status, string(body))
+		return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d body=%q", status, string(body))
 	}
 	if strings.TrimSpace(payload.AccessToken) == "" {
-		return "", errors.New("oauth token refresh returned an empty access_token")
+		return OAuthAccessToken{}, errors.New("oauth token refresh returned an empty access_token")
 	}
-	return strings.TrimSpace(payload.AccessToken), nil
+	token := OAuthAccessToken{Token: strings.TrimSpace(payload.AccessToken)}
+	if payload.ExpiresIn > 0 {
+		token.ExpiresAt = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second)
+	}
+	token.Source = "refresh_token"
+	return token, nil
+}
+
+func tokenNeedsRefresh(now time.Time, expiresAt time.Time) bool {
+	if expiresAt.IsZero() {
+		return false
+	}
+	margin := proactiveTokenRefreshMargin
+	lifetime := expiresAt.Sub(now)
+	if lifetime < margin {
+		return true
+	}
+	return !now.Before(expiresAt.Add(-margin))
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c Config) PollInterval() time.Duration {
-	return time.Duration(c.Tunnel.PollIntervalMS) * time.Millisecond
+	interval := c.Tunnel.PollIntervalMS
+	if strings.TrimSpace(c.Tunnel.Profile) == "" || strings.TrimSpace(c.Tunnel.Profile) == "auto" {
+		if interval <= 0 || interval > 100 {
+			interval = 100
+		}
+	}
+	return time.Duration(interval) * time.Millisecond
 }

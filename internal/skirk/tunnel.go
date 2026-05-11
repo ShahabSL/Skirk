@@ -14,17 +14,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	inlineDataThreshold           = 64 * 1024
-	readCoalesceDelay             = 25 * time.Millisecond
+	mediumDataThreshold           = 8 * 1024
+	nameInlineDataLimit           = 1400
+	interactiveCoalesceDelay      = 25 * time.Millisecond
+	mediumCoalesceDelay           = 120 * time.Millisecond
+	bulkCoalesceDelay             = 300 * time.Millisecond
 	controlBatchSize              = 8
 	controlBatchDelay             = 25 * time.Millisecond
-	deferredCleanupDelay          = 2 * time.Minute
+	deferredCleanupDelay          = 5 * time.Second
 	deferredCleanupFlushThreshold = 2048
-	idleOpenPollInterval          = 2 * time.Second
+	idleOpenPollInterval          = 1 * time.Second
+	openPollWarmWindow            = 45 * time.Second
 )
 
 type Tunnel struct {
@@ -44,6 +50,7 @@ type Tunnel struct {
 	downloadLimiter     *adaptiveLimiter
 	watcherMu           sync.Mutex
 	watchers            map[byte]*controlWatcher
+	lastActivityNS      int64
 	PollInterval        time.Duration
 	CleanupProcessed    bool
 	Logger              *log.Logger
@@ -54,7 +61,7 @@ func NewTunnel(data BlobStore, control BlobStore, cfg *Config) (*Tunnel, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &Tunnel{
+	t := &Tunnel{
 		Data:                data,
 		Control:             control,
 		Secret:              cfg.Secret,
@@ -68,7 +75,9 @@ func NewTunnel(data BlobStore, control BlobStore, cfg *Config) (*Tunnel, error) 
 		PollInterval:        cfg.PollInterval(),
 		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
 		Logger:              log.Default(),
-	}, nil
+	}
+	t.markActivity()
+	return t, nil
 }
 
 func (t *Tunnel) ServeClient(ctx context.Context, listen string) error {
@@ -115,6 +124,7 @@ func (t *Tunnel) handleClientConn(ctx context.Context, target string, local net.
 
 func (t *Tunnel) ServeExit(ctx context.Context) error {
 	t.role = "exit"
+	startedAt := time.Now().UTC().Add(-5 * time.Second)
 	type state struct {
 		conn net.Conn
 	}
@@ -135,16 +145,25 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 			if seen[info.Name] {
 				continue
 			}
-			raw, err := t.Control.Get(ctx, info.Name)
-			if err != nil {
-				continue
-			}
-			var event ControlPayload
-			if err := json.Unmarshal(raw, &event); err != nil {
+			if !controlIsFresh(info, startedAt) {
 				seen[info.Name] = true
 				continue
 			}
+			var event ControlPayload
+			if parsed, ok := t.parseOpenControlInfo(info.Name); ok {
+				event = parsed
+			} else {
+				raw, err := t.Control.Get(ctx, info.Name)
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(raw, &event); err != nil {
+					seen[info.Name] = true
+					continue
+				}
+			}
 			seen[info.Name] = true
+			t.markActivity()
 			if t.CleanupProcessed {
 				_ = t.deleteControl(ctx, info.Name, info.ID)
 			}
@@ -189,22 +208,31 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 			infos := poll()
 			sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 			for _, info := range infos {
-				if !strings.HasSuffix(info.Name, ".OPEN") {
+				if !controlNameIsOpen(info.Name) {
 					continue
 				}
 				if seen[info.Name] {
 					continue
 				}
-				raw, err := t.Control.Get(ctx, info.Name)
-				if err != nil {
-					continue
-				}
-				var event ControlPayload
-				if err := json.Unmarshal(raw, &event); err != nil {
+				if !controlIsFresh(info, startedAt) {
 					seen[info.Name] = true
 					continue
 				}
+				var event ControlPayload
+				if parsed, ok := t.parseOpenControlInfo(info.Name); ok {
+					event = parsed
+				} else {
+					raw, err := t.Control.Get(ctx, info.Name)
+					if err != nil {
+						continue
+					}
+					if err := json.Unmarshal(raw, &event); err != nil {
+						seen[info.Name] = true
+						continue
+					}
+				}
 				seen[info.Name] = true
+				t.markActivity()
 				if t.CleanupProcessed {
 					_ = t.deleteControl(ctx, info.Name, info.ID)
 				}
@@ -262,13 +290,60 @@ func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn
 }
 
 func (t *Tunnel) openPollInterval(activeConns int) time.Duration {
-	if activeConns > 0 || t.PollInterval >= idleOpenPollInterval {
+	if activeConns > 0 || t.recentActivity() || t.PollInterval >= idleOpenPollInterval {
 		return t.PollInterval
 	}
 	return idleOpenPollInterval
 }
 
-func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, direction byte, connID string, firstSeq uint64) error {
+func (t *Tunnel) logPumpSummary(label string, direction byte, connID string, chunks int, bytes int64, duration time.Duration, err error) {
+	if t.Logger == nil || (chunks == 0 && bytes == 0 && err == nil) {
+		return
+	}
+	status := "ok"
+	if err != nil {
+		status = "error"
+	}
+	t.Logger.Printf("%s direction=%s conn=%s status=%s chunks=%d bytes=%d duration=%s error=%s", label, directionName(direction), connID, status, chunks, bytes, duration.Round(time.Millisecond), errorSummary(err))
+}
+
+func errorSummary(err error) string {
+	if err == nil {
+		return "none"
+	}
+	text := err.Error()
+	if len(text) > 160 {
+		text = text[:160]
+	}
+	return text
+}
+
+func controlIsFresh(info ObjectInfo, startedAt time.Time) bool {
+	if strings.TrimSpace(info.Updated) == "" {
+		return true
+	}
+	updated, err := time.Parse(time.RFC3339Nano, info.Updated)
+	if err != nil {
+		return true
+	}
+	return !updated.Before(startedAt)
+}
+
+func controlNameIsOpen(name string) bool {
+	base := controlBaseName(name)
+	return strings.Contains(base, ".OPEN")
+}
+
+func (t *Tunnel) markActivity() {
+	atomic.StoreInt64(&t.lastActivityNS, time.Now().UnixNano())
+}
+
+func (t *Tunnel) recentActivity() bool {
+	last := atomic.LoadInt64(&t.lastActivityNS)
+	return last > 0 && time.Since(time.Unix(0, last)) <= openPollWarmWindow
+}
+
+func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, direction byte, connID string, firstSeq uint64) (err error) {
 	key, err := DeriveKey(t.Secret)
 	if err != nil {
 		return err
@@ -278,8 +353,9 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 		data []byte
 	}
 	type uploadResult struct {
-		event ControlPayload
-		err   error
+		event  ControlPayload
+		direct bool
+		err    error
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -293,7 +369,6 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				dataName := streamDataName(t.SessionID, direction, connID, job.seq)
 				sealed, err := Seal(key, t.SessionID, direction, job.seq, job.data, false)
 				if err != nil {
 					errCh <- err
@@ -306,14 +381,14 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 					cancel()
 					return
 				}
-				event, err := t.prepareDataEvent(workerCtx, direction, connID, job.seq, dataName, sealed, len(job.data))
+				event, direct, err := t.prepareDataEvent(workerCtx, direction, connID, job.seq, sealed, len(job.data))
 				release(err)
 				if err != nil {
 					errCh <- err
 					cancel()
 					return
 				}
-				results <- uploadResult{event: event}
+				results <- uploadResult{event: event, direct: direct}
 			}
 		}()
 	}
@@ -356,6 +431,9 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 					cancel()
 					return
 				}
+				if result.direct {
+					continue
+				}
 				batch = append(batch, result.event)
 				if len(batch) >= controlBatchSize {
 					if timerActive && !timer.Stop() {
@@ -389,6 +467,9 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 	chunks := 0
 	var bytesSent int64
 	started := time.Now()
+	defer func() {
+		t.logPumpSummary("mailbox upload", direction, connID, chunks, bytesSent, time.Since(started), err)
+	}()
 	for {
 		n, readErr := readChunk(reader, buffer)
 		if n > 0 {
@@ -413,9 +494,6 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 			wg.Wait()
 			close(results)
 			<-aggDone
-			if t.Logger != nil && bytesSent > 0 {
-				t.Logger.Printf("mailbox pump direction=%s conn=%s chunks=%d bytes=%d duration=%s", directionName(direction), connID, chunks, bytesSent, time.Since(started).Round(time.Millisecond))
-			}
 			select {
 			case err := <-errCh:
 				return err
@@ -435,17 +513,24 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 	}
 }
 
-func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, direction byte, connID string, firstSeq uint64) error {
+func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, direction byte, connID string, firstSeq uint64) (err error) {
 	key, err := DeriveKey(t.Secret)
 	if err != nil {
 		return err
 	}
+	started := time.Now()
+	chunksWritten := 0
+	var bytesWritten int64
+	defer func() {
+		t.logPumpSummary("mailbox download", direction, connID, chunksWritten, bytesWritten, time.Since(started), err)
+	}()
 	type dataResult struct {
-		seq       uint64
-		object    string
-		fileID    string
-		plaintext []byte
-		err       error
+		seq         uint64
+		object      string
+		fileID      string
+		controlFile bool
+		plaintext   []byte
+		err         error
 	}
 	cleanup := t.newDeferredCleanup()
 	defer cleanup.FlushAsync()
@@ -475,13 +560,13 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 				go func(event ControlPayload) {
 					release, err := t.acquireDownloadSlot(ctx)
 					if err != nil {
-						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
+						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, controlFile: event.ControlFile, err: err}
 						return
 					}
 					sealed, err := t.getEventData(ctx, event)
 					release(err)
 					if err != nil {
-						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
+						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, controlFile: event.ControlFile, err: err}
 						return
 					}
 					env, plaintext, err := OpenEnvelope(key, sealed)
@@ -489,10 +574,10 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 						if err == nil {
 							err = fmt.Errorf("envelope metadata mismatch for %s", event.DriveObject)
 						}
-						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, err: err}
+						results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, controlFile: event.ControlFile, err: err}
 						return
 					}
-					results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, plaintext: plaintext}
+					results <- dataResult{seq: event.Sequence, object: event.DriveObject, fileID: event.DriveFileID, controlFile: event.ControlFile, plaintext: plaintext}
 				}(event)
 				break
 			}
@@ -507,10 +592,14 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 			if !ok {
 				break
 			}
-			if _, err := writer.Write(result.plaintext); err != nil {
+			if err := writeAll(writer, result.plaintext); err != nil {
 				return false, err
 			}
-			if result.object != "" || result.fileID != "" {
+			chunksWritten++
+			bytesWritten += int64(len(result.plaintext))
+			if result.controlFile {
+				cleanup.Control(result.object, result.fileID)
+			} else if result.object != "" || result.fileID != "" {
 				cleanup.Data(result.object, result.fileID)
 			}
 			delete(ready, expected)
@@ -543,10 +632,12 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 		}
 		sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 		for _, info := range infos {
-			if event, ok := t.parseDataControlInfo(info.Name, direction); ok {
-				cleanup.Control(info.Name, info.ID)
+			if event, ok := t.parseListedControlInfo(info, direction); ok {
+				if !event.ControlFile {
+					cleanup.Control(info.Name, info.ID)
+				}
 				if event.Sequence >= expected {
-					pending[event.Sequence] = event
+					enqueue(event)
 				}
 				continue
 			}
@@ -611,6 +702,19 @@ func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, dire
 }
 
 func (t *Tunnel) sendEvent(ctx context.Context, direction byte, connID string, seq uint64, eventType, driveObject, target string, bytes int, final bool, errorText string) error {
+	t.markActivity()
+	if errorText == "" {
+		switch eventType {
+		case "OPEN":
+			if target != "" {
+				return t.Control.Put(ctx, streamOpenControlName(t.SessionID, direction, connID, seq, target), []byte("{}"))
+			}
+		case "FIN":
+			return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), []byte("{}"))
+		case "RST":
+			return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), []byte("{}"))
+		}
+	}
 	event := ControlPayload{
 		Version:     1,
 		Event:       eventType,
@@ -631,15 +735,16 @@ func (t *Tunnel) sendEvent(ctx context.Context, direction byte, connID string, s
 	return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), raw)
 }
 
-func (t *Tunnel) prepareDataEvent(ctx context.Context, direction byte, connID string, seq uint64, dataName string, sealed []byte, bytes int) (ControlPayload, error) {
+func (t *Tunnel) prepareDataEvent(ctx context.Context, direction byte, connID string, seq uint64, sealed []byte, bytes int) (ControlPayload, bool, error) {
 	if len(sealed) <= inlineDataThreshold {
-		return t.dataEvent(direction, connID, seq, "", "", base64.StdEncoding.EncodeToString(sealed), bytes), nil
+		return t.dataEvent(direction, connID, seq, "", "", base64.StdEncoding.EncodeToString(sealed), bytes), false, nil
 	}
-	info, err := t.putData(ctx, dataName, sealed)
+	name := streamFileDataControlName(t.SessionID, direction, connID, seq, bytes)
+	info, err := t.putControlData(ctx, name, sealed)
 	if err != nil {
-		return ControlPayload{}, err
+		return ControlPayload{}, false, err
 	}
-	return t.dataEvent(direction, connID, seq, dataName, info.ID, "", bytes), nil
+	return t.dataEvent(direction, connID, seq, info.Name, info.ID, "", bytes), true, nil
 }
 
 func (t *Tunnel) dataEvent(direction byte, connID string, seq uint64, driveObject, driveFileID, inlineData string, bytes int) ControlPayload {
@@ -661,6 +766,7 @@ func (t *Tunnel) sendDataBatchEvent(ctx context.Context, direction byte, connID 
 	if len(events) == 0 {
 		return nil
 	}
+	t.markActivity()
 	if len(events) == 1 {
 		return t.sendDataEvent(ctx, direction, connID, events[0])
 	}
@@ -687,6 +793,13 @@ func (t *Tunnel) sendDataEvent(ctx context.Context, direction byte, connID strin
 		return err
 	}
 	name := streamControlName(t.SessionID, direction, connID, event.Sequence, "DATA")
+	if event.InlineData != "" && len(event.InlineData) <= nameInlineDataLimit {
+		sealed, err := base64.StdEncoding.DecodeString(event.InlineData)
+		if err == nil {
+			name = streamInlineDataControlName(t.SessionID, direction, connID, event.Sequence, event.Bytes, sealed)
+			return t.Control.Put(ctx, name, []byte("{}"))
+		}
+	}
 	if event.DriveFileID != "" && event.InlineData == "" {
 		name = streamDataControlName(t.SessionID, direction, connID, event.Sequence, event.Bytes, event.DriveFileID)
 	}
@@ -701,14 +814,17 @@ func (t *Tunnel) getEventData(ctx context.Context, event ControlPayload) ([]byte
 		}
 		return data, nil
 	}
+	if event.ControlFile {
+		return t.getControlData(ctx, event.DriveObject, event.DriveFileID)
+	}
 	return t.getData(ctx, event.DriveObject, event.DriveFileID)
 }
 
-func (t *Tunnel) putData(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
-	if store, ok := t.Data.(ObjectPutStore); ok {
+func (t *Tunnel) putControlData(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
+	if store, ok := t.Control.(ObjectPutStore); ok {
 		return store.PutObject(ctx, name, data)
 	}
-	if err := t.Data.Put(ctx, name, data); err != nil {
+	if err := t.Control.Put(ctx, name, data); err != nil {
 		return ObjectInfo{}, err
 	}
 	return ObjectInfo{Name: name}, nil
@@ -721,6 +837,15 @@ func (t *Tunnel) getData(ctx context.Context, name, fileID string) ([]byte, erro
 		}
 	}
 	return t.Data.Get(ctx, name)
+}
+
+func (t *Tunnel) getControlData(ctx context.Context, name, fileID string) ([]byte, error) {
+	if fileID != "" {
+		if store, ok := t.Control.(ObjectIDStore); ok {
+			return store.GetByID(ctx, fileID)
+		}
+	}
+	return t.Control.Get(ctx, name)
 }
 
 func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
@@ -853,6 +978,7 @@ func (w *controlWatcher) poll() {
 }
 
 func (w *controlWatcher) deliver(connID string, info ObjectInfo) {
+	w.t.markActivity()
 	if ch := w.subscribers[connID]; ch != nil {
 		ch <- info
 		return
@@ -884,13 +1010,80 @@ func controlConnID(prefix, name string) string {
 	return rest[:slash]
 }
 
-func (t *Tunnel) parseDataControlInfo(name string, direction byte) (ControlPayload, bool) {
-	base := name
-	if slash := strings.LastIndex(base, "/"); slash >= 0 {
-		base = base[slash+1:]
-	}
+func (t *Tunnel) parseOpenControlInfo(name string) (ControlPayload, bool) {
+	base := controlBaseName(name)
 	parts := strings.Split(base, ".")
-	if len(parts) != 4 || parts[1] != "DATA" {
+	if len(parts) != 3 {
+		return ControlPayload{}, false
+	}
+	if parts[1] != "OPEN" {
+		return ControlPayload{}, false
+	}
+	seq, err := strconv.ParseUint(parts[0], 16, 64)
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	targetBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(targetBytes) == 0 {
+		return ControlPayload{}, false
+	}
+	connID := controlConnID(streamControlDirPrefix(t.SessionID, DirectionUp), name)
+	if connID == "" {
+		return ControlPayload{}, false
+	}
+	event := ControlPayload{
+		Version:   1,
+		Event:     "OPEN",
+		SessionID: SessionString(t.SessionID),
+		ConnID:    connID,
+		Direction: directionName(DirectionUp),
+		Sequence:  seq,
+		Target:    string(targetBytes),
+	}
+	return event, true
+}
+
+func (t *Tunnel) parseListedControlInfo(info ObjectInfo, direction byte) (ControlPayload, bool) {
+	if event, ok := t.parseDataControlInfo(info, direction); ok {
+		return event, true
+	}
+	base := controlBaseName(info.Name)
+	parts := strings.Split(base, ".")
+	if len(parts) != 2 {
+		return ControlPayload{}, false
+	}
+	seq, err := strconv.ParseUint(parts[0], 16, 64)
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	switch parts[1] {
+	case "FIN":
+		return ControlPayload{
+			Version:   1,
+			Event:     "FIN",
+			SessionID: SessionString(t.SessionID),
+			Direction: directionName(direction),
+			Sequence:  seq,
+			Final:     true,
+		}, true
+	case "RST":
+		return ControlPayload{
+			Version:   1,
+			Event:     "RST",
+			SessionID: SessionString(t.SessionID),
+			Direction: directionName(direction),
+			Sequence:  seq,
+			Final:     true,
+		}, true
+	default:
+		return ControlPayload{}, false
+	}
+}
+
+func (t *Tunnel) parseDataControlInfo(info ObjectInfo, direction byte) (ControlPayload, bool) {
+	base := controlBaseName(info.Name)
+	parts := strings.Split(base, ".")
+	if len(parts) != 4 && len(parts) != 3 {
 		return ControlPayload{}, false
 	}
 	seq, err := strconv.ParseUint(parts[0], 16, 64)
@@ -901,19 +1094,53 @@ func (t *Tunnel) parseDataControlInfo(name string, direction byte) (ControlPaylo
 	if err != nil {
 		return ControlPayload{}, false
 	}
-	idBytes, err := base64.RawURLEncoding.DecodeString(parts[3])
-	if err != nil {
+	event := ControlPayload{
+		Version:   1,
+		Event:     "DATA",
+		SessionID: SessionString(t.SessionID),
+		Direction: directionName(direction),
+		Sequence:  seq,
+		Bytes:     byteCount,
+	}
+	switch parts[1] {
+	case "DATA":
+		if len(parts) != 4 {
+			return ControlPayload{}, false
+		}
+		idBytes, err := base64.RawURLEncoding.DecodeString(parts[3])
+		if err != nil {
+			return ControlPayload{}, false
+		}
+		event.DriveFileID = string(idBytes)
+		return event, true
+	case "DATAI":
+		if len(parts) != 4 {
+			return ControlPayload{}, false
+		}
+		sealed, err := base64.RawURLEncoding.DecodeString(parts[3])
+		if err != nil {
+			return ControlPayload{}, false
+		}
+		event.InlineData = base64.StdEncoding.EncodeToString(sealed)
+		return event, true
+	case "DATAF":
+		if len(parts) != 3 {
+			return ControlPayload{}, false
+		}
+		event.DriveObject = info.Name
+		event.DriveFileID = info.ID
+		event.ControlFile = true
+		return event, true
+	default:
 		return ControlPayload{}, false
 	}
-	return ControlPayload{
-		Version:     1,
-		Event:       "DATA",
-		SessionID:   SessionString(t.SessionID),
-		Direction:   directionName(direction),
-		Sequence:    seq,
-		DriveFileID: string(idBytes),
-		Bytes:       byteCount,
-	}, true
+}
+
+func controlBaseName(name string) string {
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		return name[slash+1:]
+	}
+	return name
 }
 
 func (t *Tunnel) uploadWorkerCount() int {
@@ -988,7 +1215,7 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 	switch t.role {
 	case "client":
 		if t.RouteProxy != "" {
-			return 1
+			return minInt(4, max)
 		}
 		return max
 	case "exit":
@@ -1005,7 +1232,7 @@ func (t *Tunnel) initialDownloadWindow(max int) int {
 	switch t.role {
 	case "client":
 		if t.RouteProxy != "" {
-			return minInt(4, max)
+			return minInt(8, max)
 		}
 		return max
 	case "exit":
@@ -1191,9 +1418,15 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 	if !ok {
 		return n, err
 	}
-	deadline := time.Now().Add(readCoalesceDelay)
 	defer deadlineConn.SetReadDeadline(time.Time{})
 	for n < len(buffer) {
+		delay := interactiveCoalesceDelay
+		if n >= inlineDataThreshold {
+			delay = bulkCoalesceDelay
+		} else if n >= mediumDataThreshold {
+			delay = mediumCoalesceDelay
+		}
+		deadline := time.Now().Add(delay)
 		if err := deadlineConn.SetReadDeadline(deadline); err != nil {
 			return n, nil
 		}
@@ -1214,8 +1447,20 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 	return n, nil
 }
 
-func streamDataName(sid [16]byte, direction byte, connID string, sequence uint64) string {
-	return fmt.Sprintf("%s/%s/%s/%s/%016x.skb", dataPrefix, SessionString(sid), directionName(direction), connID, sequence)
+func writeAll(writer io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := writer.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func streamControlDirPrefix(sid [16]byte, direction byte) string {
@@ -1228,6 +1473,20 @@ func streamControlPrefix(sid [16]byte, direction byte, connID string) string {
 
 func streamControlName(sid [16]byte, direction byte, connID string, sequence uint64, eventType string) string {
 	return fmt.Sprintf("%s%016x.%s", streamControlPrefix(sid, direction, connID), sequence, eventType)
+}
+
+func streamOpenControlName(sid [16]byte, direction byte, connID string, sequence uint64, target string) string {
+	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
+	return fmt.Sprintf("%s%016x.OPEN.%s", streamControlPrefix(sid, direction, connID), sequence, encodedTarget)
+}
+
+func streamInlineDataControlName(sid [16]byte, direction byte, connID string, sequence uint64, bytes int, sealed []byte) string {
+	encodedData := base64.RawURLEncoding.EncodeToString(sealed)
+	return fmt.Sprintf("%s%016x.DATAI.%d.%s", streamControlPrefix(sid, direction, connID), sequence, bytes, encodedData)
+}
+
+func streamFileDataControlName(sid [16]byte, direction byte, connID string, sequence uint64, bytes int) string {
+	return fmt.Sprintf("%s%016x.DATAF.%d", streamControlPrefix(sid, direction, connID), sequence, bytes)
 }
 
 func streamDataControlName(sid [16]byte, direction byte, connID string, sequence uint64, bytes int, fileID string) string {

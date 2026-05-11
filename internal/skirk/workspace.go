@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 )
@@ -111,12 +112,15 @@ func (w *Workspace) authHeaders() map[string]string {
 }
 
 func StoresFromConfig(ctx context.Context, cfg *Config) (*DriveStore, *SheetsLog, *Workspace, error) {
-	token, err := cfg.Auth.TokenForRoute(ctx, cfg.Route)
+	tokenSource := NewAccessTokenSource(cfg.Auth, cfg.Route)
+	tokenSource.Logger = log.Default()
+	token, err := tokenSource.Token(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	httpClient := NewGoogleHTTPClient(cfg.Route)
-	drive := NewDriveStore(httpClient, token, cfg.Drive)
+	drive := NewDriveStoreWithTokenSource(httpClient, tokenSource, cfg.Drive)
+	drive.Logger = log.Default()
 	sheets := NewSheetsLog(httpClient, token, cfg.Sheets)
 	workspace := NewWorkspace(httpClient, token)
 	return drive, sheets, workspace, nil

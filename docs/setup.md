@@ -3,7 +3,7 @@
 This is the intended user flow:
 
 1. The operator runs Skirk on a machine with Google login available.
-2. Skirk creates app-private Google Drive storage when using the recommended OAuth flow, or a visible Drive folder in fallback mode.
+2. Skirk creates app-private Google Drive storage in `appDataFolder`.
 3. Skirk writes `exit.json`, `client.json`, and one-line `client.skirk`.
 4. The operator runs the exit on a VPS, laptop, or home server.
 5. Clients paste/import `client.skirk` and start a local SOCKS5 proxy.
@@ -113,7 +113,7 @@ With `--oauth-client-file`, Skirk uses Google's device authorization flow direct
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-`drive.appdata` is the default because Skirk's runtime data is encrypted app-private state, not user-visible files. The fallback Google Cloud CLI path still uses a visible Drive folder because that login path is broader and easier, but it is not the recommended high-reliability path.
+`drive.appdata` is the default because Skirk's runtime data is encrypted app-private state, not user-visible files. The fallback Google Cloud CLI path is convenient, but it can fail if the local ADC login did not grant Drive app-data access; the custom OAuth device-flow path is the recommended high-reliability path.
 
 ## Generated Files
 

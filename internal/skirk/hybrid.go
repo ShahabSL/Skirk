@@ -43,6 +43,7 @@ type ControlPayload struct {
 	Batch       []ControlPayload `json:"batch,omitempty"`
 	DriveObject string           `json:"drive_object,omitempty"`
 	DriveFileID string           `json:"drive_file_id,omitempty"`
+	ControlFile bool             `json:"control_file,omitempty"`
 	InlineData  string           `json:"inline_data,omitempty"`
 	Target      string           `json:"target,omitempty"`
 	Bytes       int              `json:"bytes,omitempty"`
