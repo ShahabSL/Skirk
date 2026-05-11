@@ -124,6 +124,33 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	var lastErr error
+	var lastResult *HTTPResult
+	for i, route := range googleHTTPRouteAttempts(c.route) {
+		client := c
+		if i > 0 {
+			client = NewGoogleHTTPClient(route)
+		}
+		result, err := client.requestWithRetries(ctx, method, host, path, headers, body)
+		if err == nil && !shouldRetryResult(result) {
+			return result, nil
+		}
+		if err == nil {
+			lastResult = result
+		} else {
+			lastErr = err
+		}
+		if !shouldTryNextGoogleRoute(result, err) {
+			break
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return lastResult, nil
+}
+
+func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
 	attempts := 4
 	if isGoogleFrontRoute(c.route.Mode) {
 		attempts = 5
@@ -154,6 +181,49 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 		return nil, lastErr
 	}
 	return lastResult, nil
+}
+
+func googleHTTPRouteAttempts(route RouteConfig) []RouteConfig {
+	routes := []RouteConfig{route}
+	if !needsGoogleFrontFallback(route) {
+		return routes
+	}
+	front := route
+	front.Mode = "google_front"
+	front.GoogleIP = ""
+	if !sameGoogleRoute(route, front) {
+		routes = append(routes, front)
+	}
+	return routes
+}
+
+func needsGoogleFrontFallback(route RouteConfig) bool {
+	if route.Proxy == "" && !isGoogleFrontRoute(route.Mode) {
+		return false
+	}
+	if route.Mode == "google_front" && route.GoogleIP == "" {
+		return false
+	}
+	return true
+}
+
+func sameGoogleRoute(a, b RouteConfig) bool {
+	return a.Mode == b.Mode && a.Proxy == b.Proxy && a.GoogleIP == b.GoogleIP && a.TimeoutSeconds == b.TimeoutSeconds
+}
+
+func shouldTryNextGoogleRoute(result *HTTPResult, err error) bool {
+	if err != nil {
+		return true
+	}
+	if result == nil {
+		return true
+	}
+	switch result.Status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusNotFound, http.StatusMisdirectedRequest:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
