@@ -54,10 +54,9 @@ class AndroidSkirkEngine(
             }
         }
         activeProfile = profile
-        ProfileStore(context).saveProfile(profile)
     }
 
-    fun waitUntilReady(host: String, port: Int, timeoutMs: Long = 15_000L) {
+    fun waitUntilReady(host: String, port: Int, timeoutMs: Long = 120_000L) {
         val deadline = System.currentTimeMillis() + timeoutMs
         var lastError: Throwable? = null
         while (System.currentTimeMillis() < deadline) {
@@ -106,10 +105,10 @@ class AndroidSkirkEngine(
 
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
         val routeMode = when (profile.routeMode) {
-            "google_front", "direct", "real_pinned" -> "google_front_pinned"
-            else -> profile.routeMode
+            "google_front", "google_front_h1", "google_front_pinned", "google_front_h1_pinned" -> profile.routeMode
+            else -> "google_front"
         }
-        return listOf(
+        val args = mutableListOf(
             engine.absolutePath,
             "client",
             "--config",
@@ -121,6 +120,10 @@ class AndroidSkirkEngine(
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )
+        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+            args += listOf("--http-proxy-listen", profile.httpProxyAddress)
+        }
+        return args
     }
 
     private fun writeRuntimeConfig(profile: ClientProfile): File {

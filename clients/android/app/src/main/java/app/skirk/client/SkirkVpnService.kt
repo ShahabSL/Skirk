@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
+import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -106,7 +107,9 @@ class SkirkVpnService : VpnService() {
             .setSession("Skirk")
             .setMtu(DEFAULT_MTU)
             .addAddress(TUN_IPV4_ADDRESS, 30)
+            .addAddress(TUN_IPV6_ADDRESS, 128)
             .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
             .addDnsServer(MAP_DNS_ADDRESS)
             .setConfigureIntent(configureIntent)
 
@@ -118,6 +121,7 @@ class SkirkVpnService : VpnService() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
+            builder.setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", localProfile.httpProxyPort))
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             builder.setBlocking(true)
@@ -159,11 +163,13 @@ class SkirkVpnService : VpnService() {
             tunnel:
               mtu: $DEFAULT_MTU
               ipv4: $TUN_IPV4_ADDRESS
+              ipv6: '$TUN_IPV6_ADDRESS'
 
             socks5:
               address: 127.0.0.1
               port: $socksPort
               udp: 'tcp'
+              pipeline: true
 
             mapdns:
               address: $MAP_DNS_ADDRESS
@@ -262,10 +268,10 @@ class SkirkVpnService : VpnService() {
         private const val EXTRA_PROFILE_JSON = "profileJson"
         private const val CHANNEL_ID = "skirk_vpn"
         private const val NOTIFICATION_ID = 1908
-        private const val DEFAULT_MTU = 1500
+        private const val DEFAULT_MTU = 1280
         private const val TUN_IPV4_ADDRESS = "198.18.0.1"
+        private const val TUN_IPV6_ADDRESS = "fd7a:736b:6972:6b::1"
         private const val MAP_DNS_ADDRESS = "198.18.0.2"
-
         fun prepare(context: Context): Intent? = VpnService.prepare(context)
 
         fun start(context: Context, profile: ClientProfile) {

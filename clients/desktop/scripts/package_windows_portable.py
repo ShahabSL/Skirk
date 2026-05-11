@@ -12,7 +12,16 @@ def main() -> int:
     desktop = repo / "clients" / "desktop"
     exe_candidates = [
         desktop / "src-tauri" / "target" / "release" / "skirk-desktop.exe",
+        desktop / "src-tauri" / "target" / "x86_64-pc-windows-gnu" / "release" / "skirk-desktop.exe",
         desktop / "src-tauri" / "target" / "release" / "bundle" / "nsis" / "Skirk.exe",
+        desktop
+        / "src-tauri"
+        / "target"
+        / "x86_64-pc-windows-gnu"
+        / "release"
+        / "bundle"
+        / "nsis"
+        / "Skirk.exe",
     ]
     app_exe = next((path for path in exe_candidates if path.exists()), None)
     if app_exe is None:

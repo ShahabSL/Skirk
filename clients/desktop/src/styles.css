@@ -1,14 +1,15 @@
 :root {
   color-scheme: light dark;
-  --background: #f7f7f4;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #09090b;
   --card: #ffffff;
-  --muted: #ededeb;
-  --muted-foreground: #666660;
-  --border: #deded8;
-  --primary: #111111;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --primary: #09090b;
   --primary-foreground: #ffffff;
-  --accent: #e8efe7;
+  --accent: #ecfeff;
+  --accent-border: #67e8f9;
   --danger: #b42318;
   --radius: 8px;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -17,14 +18,15 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #101010;
-    --foreground: #f4f4f0;
+    --foreground: #f4f4f5;
     --card: #181818;
-    --muted: #222222;
-    --muted-foreground: #a3a39b;
-    --border: #30302d;
-    --primary: #f3f3ef;
+    --muted: #27272a;
+    --muted-foreground: #a1a1aa;
+    --border: #303034;
+    --primary: #f4f4f5;
     --primary-foreground: #101010;
-    --accent: #1d2a22;
+    --accent: #083344;
+    --accent-border: #0891b2;
   }
 }
 
@@ -53,7 +55,7 @@ textarea {
 aside {
   border-right: 1px solid var(--border);
   padding: 24px;
-  background: color-mix(in srgb, var(--card) 74%, transparent);
+  background: color-mix(in srgb, var(--card) 82%, transparent);
 }
 
 main {
@@ -159,6 +161,7 @@ p {
   border-radius: var(--radius);
   background: var(--card);
   padding: 18px;
+  box-shadow: 0 1px 2px rgba(9, 9, 11, 0.04);
 }
 
 .alert {
@@ -284,6 +287,7 @@ button svg {
 
 .profile.selected > button:first-child {
   background: var(--accent);
+  border-color: var(--accent-border);
 }
 
 .icon {
@@ -331,6 +335,27 @@ button svg {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.mode-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+
+.mode-note svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex: 0 0 auto;
 }
 
 .badge {

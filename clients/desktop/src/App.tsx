@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Copy,
   FileJson,
+  Globe2,
   Network,
   LoaderCircle,
   Play,
@@ -91,8 +92,8 @@ function App() {
         <section className="page">
           <header>
             <div>
-              <h1>Portable Windows Client</h1>
-              <p>Import one config, connect, then point apps at the local SOCKS proxy.</p>
+              <h1>Skirk Desktop</h1>
+              <p>Import one profile, start the local proxy, then point apps at SOCKS5.</p>
             </div>
             <StatusBadge phase={snapshot?.connection.phase ?? "disconnected"} />
           </header>
@@ -104,7 +105,7 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h2>Import Config</h2>
-                  <p>Paste a one-line skirk config or client.json. The app stores it in portable data.</p>
+                  <p>Paste a one-line config. Profiles and logs stay in portable data beside the app.</p>
                 </div>
                 <FileJson />
               </div>
@@ -134,7 +135,7 @@ function App() {
                 />
                 <span>
                   <strong>Share SOCKS on LAN</strong>
-                  <small>Bind to 0.0.0.0 so other devices can use this machine as their proxy.</small>
+                  <small>Expose this Windows machine as a proxy for nearby devices.</small>
                 </span>
               </label>
               <button
@@ -153,7 +154,7 @@ function App() {
               <div className="panel-header">
                 <div>
                   <h2>Saved Profiles</h2>
-                  <p>Select one profile to connect.</p>
+                  <p>Select a profile, then connect in proxy mode.</p>
                 </div>
                 <Shield />
               </div>
@@ -180,17 +181,21 @@ function App() {
             <div className="panel-header">
               <div>
                 <h2>Runtime</h2>
-                <p>Skirk runs the Go client as a local sidecar and keeps state portable.</p>
+                <p>Windows currently runs Skirk as a local SOCKS5 sidecar.</p>
               </div>
               <button className="ghost" onClick={() => void refresh()}>
                 <RefreshCw />
               </button>
             </div>
             <div className="metrics">
+              <Metric label="Mode" value="Proxy" />
               <Metric label="SOCKS" value={snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile)} />
               <Metric label="LAN" value={snapshot?.connection.lanAddresses.join(", ") || "-"} />
               <Metric label="PID" value={snapshot?.connection.pid?.toString() ?? "-"} />
-              <Metric label="Platform" value={snapshot?.platform ?? "-"} />
+            </div>
+            <div className="mode-note">
+              <Globe2 />
+              <span>VPN mode is available in the Android client. The Windows desktop build is intentionally proxy-first until a proper Wintun driver flow is added.</span>
             </div>
             <div className="actions">
               <button

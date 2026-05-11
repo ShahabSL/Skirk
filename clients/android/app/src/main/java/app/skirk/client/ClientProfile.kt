@@ -21,8 +21,14 @@ data class ClientProfile(
     val socksAddress: String
         get() = "$socksHost:$socksPort"
 
+    val httpProxyPort: Int
+        get() = if (socksPort < 65535) socksPort + 1 else socksPort - 1
+
+    val httpProxyAddress: String
+        get() = "127.0.0.1:$httpProxyPort"
+
     val runtimeKey: String
-        get() = listOf(id, rawConfig, socksAddress, routeMode).joinToString("|")
+        get() = listOf(id, rawConfig, socksAddress, httpProxyAddress, routeMode, connectionMode).joinToString("|")
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
