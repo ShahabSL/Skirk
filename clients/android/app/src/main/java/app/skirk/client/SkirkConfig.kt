@@ -28,15 +28,7 @@ data class SkirkConfig(
         }
 
         fun decodeRaw(raw: String): String {
-            var text = raw.trim()
-            if (text.startsWith("SKIRK_CONFIG=")) {
-                text = text.removePrefix("SKIRK_CONFIG=").trim()
-            }
-            text = text.trim('"', '\'')
-            if (!text.startsWith(TEXT_PREFIX)) {
-                return text
-            }
-
+            val text = normalizeInlineConfig(raw) ?: return raw.trim()
             val encoded = text.removePrefix(TEXT_PREFIX)
             val compressed = Base64.decode(
                 encoded,
@@ -46,5 +38,75 @@ data class SkirkConfig(
                 stream.readBytes().toString(Charsets.UTF_8)
             }
         }
+
+        private fun normalizeInlineConfig(raw: String): String? {
+            var text = raw.trim()
+            if (text.startsWith("SKIRK_CONFIG=")) {
+                text = text.removePrefix("SKIRK_CONFIG=").trim()
+            }
+            text = text.trim('"', '\'', '`')
+            val start = if (text.startsWith(TEXT_PREFIX)) 0 else text.indexOf(TEXT_PREFIX)
+            if (start < 0) {
+                return null
+            }
+
+            val payload = text.substring(start + TEXT_PREFIX.length)
+            val encoded = StringBuilder()
+            var seenPayload = false
+            var i = 0
+            while (i < payload.length) {
+                val char = payload[i]
+                if (isRawUrlBase64Char(char)) {
+                    encoded.append(char)
+                    seenPayload = true
+                    i += 1
+                    continue
+                }
+                if (char.isWhitespace()) {
+                    if (!seenPayload) {
+                        i += 1
+                        continue
+                    }
+                    var next = i + 1
+                    while (next < payload.length && payload[next].isWhitespace()) {
+                        next += 1
+                    }
+                    if (next >= payload.length || payload.startsWith("--", next)) {
+                        break
+                    }
+                    val nextChar = payload[next]
+                    if (nextChar == '\'' || nextChar == '"' || nextChar == '`') {
+                        break
+                    }
+                    if (isRawUrlBase64Char(nextChar)) {
+                        i += 1
+                        continue
+                    }
+                    break
+                }
+                if (char == '\'' || char == '"' || char == '`') {
+                    if (seenPayload) {
+                        break
+                    }
+                    i += 1
+                    continue
+                }
+                if (seenPayload) {
+                    break
+                }
+                return null
+            }
+            if (encoded.isEmpty()) {
+                return null
+            }
+            return TEXT_PREFIX + encoded.toString()
+        }
+
+        private fun isRawUrlBase64Char(char: Char): Boolean =
+            char in 'A'..'Z' ||
+                char in 'a'..'z' ||
+                char in '0'..'9' ||
+                char == '-' ||
+                char == '_'
     }
 }

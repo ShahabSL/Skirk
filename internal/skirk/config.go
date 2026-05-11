@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const ConfigTextPrefix = "skirk:"
@@ -120,13 +122,11 @@ func ParseConfig(data []byte) (*Config, error) {
 }
 
 func ParseInlineConfig(text string) (*Config, bool, error) {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "SKIRK_CONFIG=")
-	text = strings.Trim(text, `"'`)
-	if !strings.HasPrefix(text, ConfigTextPrefix) {
+	normalized, ok := NormalizeConfigText(text)
+	if !ok {
 		return nil, false, nil
 	}
-	cfg, err := DecodeConfigText(text)
+	cfg, err := DecodeConfigText(normalized)
 	return cfg, true, err
 }
 
@@ -151,10 +151,8 @@ func EncodeConfigText(cfg *Config) (string, error) {
 }
 
 func DecodeConfigText(text string) (*Config, error) {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "SKIRK_CONFIG=")
-	text = strings.Trim(text, `"'`)
-	if !strings.HasPrefix(text, ConfigTextPrefix) {
+	text, ok := NormalizeConfigText(text)
+	if !ok {
 		return nil, fmt.Errorf("config text must start with %q", ConfigTextPrefix)
 	}
 	encoded := strings.TrimPrefix(text, ConfigTextPrefix)
@@ -180,6 +178,85 @@ func DecodeConfigText(text string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func NormalizeConfigText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "SKIRK_CONFIG=")
+	text = strings.TrimSpace(text)
+	text = strings.Trim(text, `"'`)
+	if !strings.HasPrefix(text, ConfigTextPrefix) {
+		idx := strings.Index(text, ConfigTextPrefix)
+		if idx < 0 {
+			return "", false
+		}
+		text = text[idx:]
+	}
+
+	payload := strings.TrimPrefix(text, ConfigTextPrefix)
+	var encoded strings.Builder
+	seenPayload := false
+	for i := 0; i < len(payload); {
+		r, size := utf8.DecodeRuneInString(payload[i:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		if isRawURLBase64Rune(r) {
+			encoded.WriteRune(r)
+			seenPayload = true
+			i += size
+			continue
+		}
+		if unicode.IsSpace(r) {
+			if !seenPayload {
+				i += size
+				continue
+			}
+			next := i + size
+			for next < len(payload) {
+				nextRune, nextSize := utf8.DecodeRuneInString(payload[next:])
+				if !unicode.IsSpace(nextRune) {
+					break
+				}
+				next += nextSize
+			}
+			if next >= len(payload) || strings.HasPrefix(payload[next:], "--") {
+				break
+			}
+			nextRune, _ := utf8.DecodeRuneInString(payload[next:])
+			if nextRune == '\'' || nextRune == '"' || nextRune == '`' {
+				break
+			}
+			if isRawURLBase64Rune(nextRune) {
+				i += size
+				continue
+			}
+			break
+		}
+		if r == '\'' || r == '"' || r == '`' {
+			if seenPayload {
+				break
+			}
+			i += size
+			continue
+		}
+		if seenPayload {
+			break
+		}
+		return "", false
+	}
+	if encoded.Len() == 0 {
+		return "", false
+	}
+	return ConfigTextPrefix + encoded.String(), true
+}
+
+func isRawURLBase64Rune(r rune) bool {
+	return (r >= 'A' && r <= 'Z') ||
+		(r >= 'a' && r <= 'z') ||
+		(r >= '0' && r <= '9') ||
+		r == '-' ||
+		r == '_'
 }
 
 func (c *Config) ApplyDefaults() {

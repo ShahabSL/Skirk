@@ -11,14 +11,18 @@ class DebugControlReceiver : BroadcastReceiver() {
         val store = ProfileStore(context.applicationContext)
         when (intent.action) {
             ACTION_IMPORT -> {
-                val rawConfig = intent.getStringExtra("config").orEmpty()
-                val name = intent.getStringExtra("name") ?: "ADB profile"
-                val port = intent.getIntExtra("port", 18080)
-                val shareLan = intent.getBooleanExtra("shareLan", false)
-                val mode = intent.getStringExtra("mode") ?: ClientProfile.CONNECTION_MODE_VPN
-                val profile = ClientProfile.fromRawConfig(name, rawConfig, port, shareLan, mode)
-                store.saveProfile(profile)
-                Log.i(TAG, "Imported ${profile.id} ${profile.socksAddress}")
+                try {
+                    val rawConfig = intent.getStringExtra("config").orEmpty()
+                    val name = intent.getStringExtra("name") ?: "ADB profile"
+                    val port = intent.getIntExtra("port", 18080)
+                    val shareLan = intent.getBooleanExtra("shareLan", false)
+                    val mode = intent.getStringExtra("mode") ?: ClientProfile.CONNECTION_MODE_VPN
+                    val profile = ClientProfile.fromRawConfig(name, rawConfig, port, shareLan, mode)
+                    store.saveProfile(profile)
+                    Log.i(TAG, "Imported ${profile.id} ${profile.socksAddress}")
+                } catch (error: Exception) {
+                    Log.e(TAG, "Import failed", error)
+                }
             }
 
             ACTION_START -> {

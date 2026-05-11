@@ -186,14 +186,19 @@ impl DesktopRuntime {
             .unwrap_or("")
             .to_string();
         if spreadsheet_id.is_empty() && drive_folder_id.is_empty() {
-            return Err("client config is missing both sheets.spreadsheet_id and drive.folder_id".into());
+            return Err(
+                "client config is missing both sheets.spreadsheet_id and drive.folder_id".into(),
+            );
         }
         let id = format!("profile-{}", epoch_millis());
-        let config_path = self.paths.config_dir.join(if raw_config.starts_with("skirk:") {
-            format!("{id}.skirk")
-        } else {
-            format!("{id}.json")
-        });
+        let config_path = self
+            .paths
+            .config_dir
+            .join(if looks_like_inline_config(raw_config) {
+                format!("{id}.skirk")
+            } else {
+                format!("{id}.json")
+            });
         fs::write(&config_path, raw_config)
             .map_err(|error| format!("failed to write config: {error}"))?;
 
@@ -205,7 +210,11 @@ impl DesktopRuntime {
                 name.trim().into()
             },
             config_path: config_path.display().to_string(),
-            socks_host: if share_lan { "0.0.0.0".into() } else { "127.0.0.1".into() },
+            socks_host: if share_lan {
+                "0.0.0.0".into()
+            } else {
+                "127.0.0.1".into()
+            },
             socks_port,
             share_lan,
             route_mode,
@@ -225,7 +234,7 @@ impl DesktopRuntime {
     }
 
     fn decode_config(&self, raw_config: &str) -> Result<Value, String> {
-        if raw_config.starts_with("skirk:") || raw_config.starts_with("SKIRK_CONFIG=") {
+        if looks_like_inline_config(raw_config) {
             let skirk = self.resolve_sidecar()?;
             let decoded_path = self
                 .paths
@@ -382,6 +391,11 @@ impl DesktopRuntime {
                     .into()
             })
     }
+}
+
+fn looks_like_inline_config(raw_config: &str) -> bool {
+    let text = raw_config.trim_start();
+    text.starts_with("skirk:") || text.starts_with("SKIRK_CONFIG=") || text.contains("skirk:")
 }
 
 fn refresh_state(state: &mut RuntimeState) {
@@ -618,4 +632,19 @@ fn epoch_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_inline_config_inside_pasted_text() {
+        assert!(looks_like_inline_config("skirk:abc"));
+        assert!(looks_like_inline_config("SKIRK_CONFIG=skirk:abc"));
+        assert!(looks_like_inline_config(
+            "skirk serve-client --config 'skirk:abc' --listen 127.0.0.1:18080"
+        ));
+        assert!(!looks_like_inline_config(r#"{"secret":"abc"}"#));
+    }
 }

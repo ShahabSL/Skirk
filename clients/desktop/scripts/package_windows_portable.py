@@ -35,6 +35,9 @@ def main() -> int:
     (out_dir / "portable-data").mkdir()
 
     shutil.copy2(app_exe, out_dir / "Skirk.exe")
+    webview_loader = app_exe.parent / "WebView2Loader.dll"
+    if webview_loader.exists():
+        shutil.copy2(webview_loader, out_dir / "WebView2Loader.dll")
     sidecar = desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "skirk.exe"
     if not sidecar.exists():
         sidecar = repo / "bin" / "skirk-windows-amd64.exe"

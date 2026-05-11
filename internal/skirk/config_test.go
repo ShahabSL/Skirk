@@ -227,4 +227,33 @@ func TestTextConfigRoundTrip(t *testing.T) {
 	if fromInline.Route.Mode != cfg.Route.Mode {
 		t.Fatalf("route mode = %q, want %q", fromInline.Route.Mode, cfg.Route.Mode)
 	}
+
+	wrapped := ConfigTextPrefix + wrapConfigPayload(strings.TrimPrefix(text, ConfigTextPrefix), 71)
+	fromWrapped, err := LoadConfig(wrapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromWrapped.SessionID != cfg.SessionID {
+		t.Fatalf("wrapped session id = %q, want %q", fromWrapped.SessionID, cfg.SessionID)
+	}
+
+	fullCommand := "skirk serve-client --config '" + wrapped + "' --listen 127.0.0.1:18080"
+	fromCommand, err := LoadConfig(fullCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromCommand.Drive.FolderID != cfg.Drive.FolderID {
+		t.Fatalf("command folder id = %q, want %q", fromCommand.Drive.FolderID, cfg.Drive.FolderID)
+	}
+}
+
+func wrapConfigPayload(payload string, width int) string {
+	var b strings.Builder
+	for len(payload) > width {
+		b.WriteString(payload[:width])
+		b.WriteString("\n  ")
+		payload = payload[width:]
+	}
+	b.WriteString(payload)
+	return b.String()
 }
