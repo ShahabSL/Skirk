@@ -7,6 +7,7 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class AndroidSkirkEngine(
     private val context: Context,
@@ -27,12 +28,16 @@ class AndroidSkirkEngine(
 
         val logsDir = File(context.filesDir, "logs").apply { mkdirs() }
         val logFile = File(logsDir, logFileName)
+        logFile.writeText("")
         Log.i(TAG, "Starting ${engine.absolutePath} on ${profile.socksAddress}")
         process = ProcessBuilder(buildProcessArgs(engine, configFile, profile))
             .directory(context.filesDir)
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
             .start()
+            .also { child ->
+                watchProcessExit(child, logFile)
+            }
 
         Thread.sleep(250)
         process?.let { child ->
@@ -70,14 +75,33 @@ class AndroidSkirkEngine(
     }
 
     fun stop() {
-        process?.destroy()
-        runCatching {
-            if (process?.waitFor(2, TimeUnit.SECONDS) == false) {
-                process?.destroyForcibly()
-            }
-        }
+        val child = process
         process = null
         activeProfile = null
+        child?.destroy()
+        runCatching {
+            if (child?.waitFor(2, TimeUnit.SECONDS) == false) {
+                child.destroyForcibly()
+            }
+        }
+    }
+
+    private fun watchProcessExit(child: Process, logFile: File) {
+        thread(name = "skirk-engine-watch", start = true) {
+            val code = runCatching { child.waitFor() }.getOrNull() ?: return@thread
+            if (process !== child) {
+                Log.i(TAG, "Skirk engine stopped code=$code")
+                return@thread
+            }
+            val tail = logFile.takeIf { it.exists() }
+                ?.readLines()
+                ?.takeLast(12)
+                ?.joinToString("\n")
+                .orEmpty()
+            Log.w(TAG, "Skirk engine exited unexpectedly code=$code\n$tail")
+            process = null
+            activeProfile = null
+        }
     }
 
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
@@ -94,6 +118,8 @@ class AndroidSkirkEngine(
             profile.socksAddress,
             "--route-mode",
             routeMode,
+            "--watch-parent-pid",
+            android.os.Process.myPid().toString(),
         )
     }
 

@@ -12,10 +12,12 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 class SkirkProxyService : Service() {
     private val engine by lazy { AndroidSkirkEngine(this, "skirk-client.log") }
-    private var activeProfile: ClientProfile? = null
+    private val startInProgress = AtomicBoolean(false)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -36,35 +38,37 @@ class SkirkProxyService : Service() {
         }
 
         startForegroundCompat(profile)
-        try {
-            startProxy(profile)
-        } catch (error: Exception) {
-            Log.e(TAG, "Failed to start Skirk", error)
-            stopProxy()
-            stopSelf()
-            return START_NOT_STICKY
+        if (startInProgress.compareAndSet(false, true)) {
+            thread(name = "skirk-proxy-start", start = true) {
+                runCatching { startProxy(profile) }
+                    .onFailure { error ->
+                        Log.e(TAG, "Failed to start Skirk", error)
+                        stopProxy()
+                        stopSelf()
+                    }
+                startInProgress.set(false)
+            }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "Proxy service destroyed")
         stopProxy()
         super.onDestroy()
     }
 
     private fun startProxy(profile: ClientProfile) {
-        if (activeProfile?.runtimeKey == profile.runtimeKey) {
-            return
-        }
+        Log.i(TAG, "Starting proxy on ${profile.socksAddress}")
         stopProxy()
         engine.start(profile)
         engine.waitUntilReady(profile.socksHost, profile.socksPort)
-        activeProfile = profile
+        Log.i(TAG, "Proxy ready on ${profile.socksAddress}")
     }
 
     private fun stopProxy() {
+        Log.i(TAG, "Stopping proxy")
         engine.stop()
-        activeProfile = null
     }
 
     private fun startForegroundCompat(profile: ClientProfile) {

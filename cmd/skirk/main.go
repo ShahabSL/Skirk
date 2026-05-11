@@ -613,8 +613,15 @@ func serveClient(ctx context.Context, args []string) error {
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	watchParentPID := fs.Int("watch-parent-pid", 0, "exit when this parent process disappears")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if *watchParentPID > 0 {
+		enableParentDeathSignal()
+		watchParentProcess(ctx, *watchParentPID, cancel)
 	}
 	cfg, err := skirk.LoadConfig(*configPath)
 	if err != nil {

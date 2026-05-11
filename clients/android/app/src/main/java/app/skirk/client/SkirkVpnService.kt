@@ -86,8 +86,10 @@ class SkirkVpnService : VpnService() {
     private fun startTunnel(profile: ClientProfile) {
         val localProfile = profile.copy(shareLan = false, connectionMode = ClientProfile.CONNECTION_MODE_VPN)
         val underlyingNetworks = currentUnderlyingNetworks()
+        Log.i(TAG, "Starting VPN engine on 127.0.0.1:${localProfile.socksPort}")
         engine.start(localProfile)
         engine.waitUntilReady("127.0.0.1", localProfile.socksPort)
+        Log.i(TAG, "VPN engine ready on 127.0.0.1:${localProfile.socksPort}")
 
         if (stopRequested) {
             stopTunnel("start cancelled")
