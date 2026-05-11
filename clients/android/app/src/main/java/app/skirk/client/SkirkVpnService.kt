@@ -10,7 +10,6 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
-import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
@@ -121,7 +120,6 @@ class SkirkVpnService : VpnService() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", localProfile.httpProxyPort))
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             builder.setBlocking(true)

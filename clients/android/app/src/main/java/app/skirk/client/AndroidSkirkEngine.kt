@@ -105,8 +105,8 @@ class AndroidSkirkEngine(
 
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
         val routeMode = when (profile.routeMode) {
-            "google_front", "google_front_h1", "google_front_pinned", "google_front_h1_pinned" -> profile.routeMode
-            else -> "google_front"
+            "google_front_h1", "google_front_h1_pinned" -> "google_front_h1_pinned"
+            else -> "google_front_pinned"
         }
         val args = mutableListOf(
             engine.absolutePath,
@@ -120,9 +120,6 @@ class AndroidSkirkEngine(
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )
-        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
-            args += listOf("--http-proxy-listen", profile.httpProxyAddress)
-        }
         return args
     }
 
