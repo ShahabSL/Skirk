@@ -3,6 +3,7 @@ package skirk
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,8 +23,8 @@ const (
 	inlineDataThreshold           = 64 * 1024
 	mediumDataThreshold           = 8 * 1024
 	nameInlineDataLimit           = 1400
-	interactiveCoalesceDelay      = 25 * time.Millisecond
-	mediumCoalesceDelay           = 120 * time.Millisecond
+	interactiveCoalesceDelay      = 5 * time.Millisecond
+	mediumCoalesceDelay           = 50 * time.Millisecond
 	bulkCoalesceDelay             = 300 * time.Millisecond
 	controlBatchSize              = 8
 	controlBatchDelay             = 25 * time.Millisecond
@@ -87,7 +88,7 @@ func (t *Tunnel) ServeClient(ctx context.Context, listen string) error {
 		Logger: t.Logger,
 		Handler: func(connCtx context.Context, target string, conn net.Conn) {
 			if err := t.handleClientConn(connCtx, target, conn); err != nil && t.Logger != nil {
-				t.Logger.Printf("client connection %s failed: %v", target, err)
+				t.Logger.Printf("client connection target=%s failed: %s", targetFingerprint(target), errorSummary(err))
 			}
 		},
 	}
@@ -134,7 +135,7 @@ func (t *Tunnel) ServeExit(ctx context.Context) error {
 	prefix := streamControlDirPrefix(t.SessionID, DirectionUp)
 	listOpenControls := func(ctx context.Context) ([]ObjectInfo, error) {
 		if store, ok := t.Control.(ContainsListStore); ok {
-			return store.ListContains(ctx, []string{prefix, ".OPEN"})
+			return store.ListContains(ctx, []string{prefix, ".OPENI."})
 		}
 		return t.Control.List(ctx, prefix)
 	}
@@ -267,7 +268,7 @@ func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn
 	go func() {
 		defer markDone()
 		if err := t.pumpReaderToMailbox(ctx, conn, DirectionDown, connID, 1); err != nil && t.Logger != nil {
-			t.Logger.Printf("exit downstream pump %s: %v", connID, err)
+			t.Logger.Printf("exit downstream pump %s: %s", connID, errorSummary(err))
 		}
 		_ = conn.Close()
 	}()
@@ -276,7 +277,7 @@ func (t *Tunnel) serveExitConn(ctx context.Context, connID string, conn net.Conn
 		err := t.pumpMailboxToWriter(ctx, conn, DirectionUp, connID, 1)
 		if err != nil {
 			if t.Logger != nil {
-				t.Logger.Printf("exit upstream pump %s: %v", connID, err)
+				t.Logger.Printf("exit upstream pump %s: %s", connID, errorSummary(err))
 			}
 			_ = conn.Close()
 			return
@@ -311,11 +312,40 @@ func errorSummary(err error) string {
 	if err == nil {
 		return "none"
 	}
-	text := err.Error()
-	if len(text) > 160 {
-		text = text[:160]
+	return sanitizeTransportErrorText(err.Error())
+}
+
+func sanitizeTransportErrorText(text string) string {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	switch {
+	case lower == "":
+		return ""
+	case strings.Contains(lower, "context canceled"):
+		return "context_canceled"
+	case strings.Contains(lower, "deadline exceeded") || strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "timeout"):
+		return "timeout"
+	case strings.Contains(lower, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(lower, "connection reset"):
+		return "connection_reset"
+	case strings.Contains(lower, "broken pipe"):
+		return "broken_pipe"
+	case strings.Contains(lower, "no such host"):
+		return "dns_failure"
+	case strings.Contains(lower, "network is unreachable"):
+		return "network_unreachable"
+	case strings.Contains(lower, "use of closed network connection"):
+		return "closed"
+	case strings.Contains(lower, "remote reset"):
+		return "remote_reset"
+	default:
+		return "transport_error"
 	}
-	return text
+}
+
+func targetFingerprint(target string) string {
+	sum := sha256.Sum256([]byte(target))
+	return hex.EncodeToString(sum[:6])
 }
 
 func controlIsFresh(info ObjectInfo, startedAt time.Time) bool {
@@ -331,7 +361,7 @@ func controlIsFresh(info ObjectInfo, startedAt time.Time) bool {
 
 func controlNameIsOpen(name string) bool {
 	base := controlBaseName(name)
-	return strings.Contains(base, ".OPEN")
+	return strings.Contains(base, ".OPENI.")
 }
 
 func (t *Tunnel) markActivity() {
@@ -344,7 +374,7 @@ func (t *Tunnel) recentActivity() bool {
 }
 
 func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, direction byte, connID string, firstSeq uint64) (err error) {
-	key, err := DeriveKey(t.Secret)
+	key, err := DeriveStreamKey(t.Secret, t.SessionID, direction, connID)
 	if err != nil {
 		return err
 	}
@@ -514,7 +544,7 @@ func (t *Tunnel) pumpReaderToMailbox(ctx context.Context, reader io.Reader, dire
 }
 
 func (t *Tunnel) pumpMailboxToWriter(ctx context.Context, writer io.Writer, direction byte, connID string, firstSeq uint64) (err error) {
-	key, err := DeriveKey(t.Secret)
+	key, err := DeriveStreamKey(t.Secret, t.SessionID, direction, connID)
 	if err != nil {
 		return err
 	}
@@ -707,7 +737,11 @@ func (t *Tunnel) sendEvent(ctx context.Context, direction byte, connID string, s
 		switch eventType {
 		case "OPEN":
 			if target != "" {
-				return t.Control.Put(ctx, streamOpenControlName(t.SessionID, direction, connID, seq, target), []byte("{}"))
+				name, err := t.openControlName(direction, connID, seq, target)
+				if err != nil {
+					return err
+				}
+				return t.Control.Put(ctx, name, []byte("{}"))
 			}
 		case "FIN":
 			return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), []byte("{}"))
@@ -715,6 +749,7 @@ func (t *Tunnel) sendEvent(ctx context.Context, direction byte, connID string, s
 			return t.Control.Put(ctx, streamControlName(t.SessionID, direction, connID, seq, eventType), []byte("{}"))
 		}
 	}
+	errorText = sanitizeTransportErrorText(errorText)
 	event := ControlPayload{
 		Version:     1,
 		Event:       eventType,
@@ -1016,19 +1051,27 @@ func (t *Tunnel) parseOpenControlInfo(name string) (ControlPayload, bool) {
 	if len(parts) != 3 {
 		return ControlPayload{}, false
 	}
-	if parts[1] != "OPEN" {
+	if parts[1] != "OPENI" {
 		return ControlPayload{}, false
 	}
 	seq, err := strconv.ParseUint(parts[0], 16, 64)
 	if err != nil {
 		return ControlPayload{}, false
 	}
-	targetBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || len(targetBytes) == 0 {
-		return ControlPayload{}, false
-	}
 	connID := controlConnID(streamControlDirPrefix(t.SessionID, DirectionUp), name)
 	if connID == "" {
+		return ControlPayload{}, false
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sealed) == 0 {
+		return ControlPayload{}, false
+	}
+	key, err := DeriveStreamKey(t.Secret, t.SessionID, DirectionUp, connID)
+	if err != nil {
+		return ControlPayload{}, false
+	}
+	env, targetBytes, err := OpenEnvelope(key, sealed)
+	if err != nil || env.Direction != DirectionUp || env.Sequence != seq || SessionString(env.SessionID) != SessionString(t.SessionID) || len(targetBytes) == 0 {
 		return ControlPayload{}, false
 	}
 	event := ControlPayload{
@@ -1475,9 +1518,21 @@ func streamControlName(sid [16]byte, direction byte, connID string, sequence uin
 	return fmt.Sprintf("%s%016x.%s", streamControlPrefix(sid, direction, connID), sequence, eventType)
 }
 
-func streamOpenControlName(sid [16]byte, direction byte, connID string, sequence uint64, target string) string {
-	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
-	return fmt.Sprintf("%s%016x.OPEN.%s", streamControlPrefix(sid, direction, connID), sequence, encodedTarget)
+func (t *Tunnel) openControlName(direction byte, connID string, sequence uint64, target string) (string, error) {
+	key, err := DeriveStreamKey(t.Secret, t.SessionID, direction, connID)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := Seal(key, t.SessionID, direction, sequence, []byte(target), false)
+	if err != nil {
+		return "", err
+	}
+	return streamOpenControlName(t.SessionID, direction, connID, sequence, sealed), nil
+}
+
+func streamOpenControlName(sid [16]byte, direction byte, connID string, sequence uint64, sealed []byte) string {
+	encodedTarget := base64.RawURLEncoding.EncodeToString(sealed)
+	return fmt.Sprintf("%s%016x.OPENI.%s", streamControlPrefix(sid, direction, connID), sequence, encodedTarget)
 }
 
 func streamInlineDataControlName(sid [16]byte, direction byte, connID string, sequence uint64, bytes int, sealed []byte) string {

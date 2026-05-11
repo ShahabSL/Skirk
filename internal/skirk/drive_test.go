@@ -82,10 +82,10 @@ func TestDriveStoreCreatesFastControlMarkersAsMetadataOnly(t *testing.T) {
 		if req.Header.Get("Content-Type") != "application/json; charset=UTF-8" {
 			t.Fatalf("content-type = %q, want metadata JSON", req.Header.Get("Content-Type"))
 		}
-		return stringResponse(http.StatusOK, `{"id":"file-id","name":"control/session/up/conn/0000000000000000.OPEN.dGFyZ2V0","size":"0"}`), nil
+		return stringResponse(http.StatusOK, `{"id":"file-id","name":"control/session/up/conn/0000000000000000.OPENI.c2VhbGVk","size":"0"}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
-	_, err := store.PutObject(context.Background(), "control/session/up/conn/0000000000000000.OPEN.dGFyZ2V0", []byte("{}"))
+	_, err := store.PutObject(context.Background(), "control/session/up/conn/0000000000000000.OPENI.c2VhbGVk", []byte("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +94,21 @@ func TestDriveStoreCreatesFastControlMarkersAsMetadataOnly(t *testing.T) {
 	}
 	if strings.Contains(gotPath, "/upload/") {
 		t.Fatalf("path = %q, should not use media upload endpoint", gotPath)
+	}
+}
+
+func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
+	var gotQuery string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotQuery = req.URL.RawQuery
+		return stringResponse(http.StatusOK, `{"files":[]}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	if _, err := store.List(context.Background(), "control/session/"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotQuery, "pageSize=100") {
+		t.Fatalf("query = %q, want documented pageSize=100", gotQuery)
 	}
 }
 

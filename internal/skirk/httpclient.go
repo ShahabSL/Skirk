@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	stdtls "crypto/tls"
 	"fmt"
@@ -153,6 +154,14 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "gzip")
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "skirk/1.0 (gzip)")
+	} else if !strings.Contains(strings.ToLower(req.Header.Get("User-Agent")), "gzip") {
+		req.Header.Set("User-Agent", req.Header.Get("User-Agent")+" (gzip)")
+	}
 	if body != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
@@ -161,7 +170,17 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		return nil, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	bodyReader := resp.Body
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		defer gzipReader.Close()
+		bodyReader = gzipReader
+		resp.Header.Del("Content-Encoding")
+	}
+	responseBody, err := io.ReadAll(bodyReader)
 	if err != nil {
 		return nil, err
 	}

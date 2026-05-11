@@ -2,8 +2,10 @@ package skirk
 
 import (
 	"context"
+	"encoding/base64"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -88,6 +90,57 @@ func TestControlConnIDParsesStreamPrefix(t *testing.T) {
 	}
 	if got := controlConnID(prefix, "control/other/down/abc123/0000000000000001.DATA"); got != "" {
 		t.Fatalf("controlConnID() for wrong prefix = %q, want empty", got)
+	}
+}
+
+func TestOpenControlEncryptsTargetInFilename(t *testing.T) {
+	data := NewMemoryStore()
+	control := NewMemoryStore()
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel: TunnelConfig{
+			PollIntervalMS: 10,
+		},
+	}
+	cfg.ApplyDefaults()
+	tunnel, err := NewTunnel(data, control, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "secret-target.example:443"
+	if err := tunnel.sendEvent(context.Background(), DirectionUp, "abc123", 0, "OPEN", "", target, 0, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	control.mu.Lock()
+	var name string
+	for key := range control.objects {
+		name = key
+	}
+	control.mu.Unlock()
+	if name == "" {
+		t.Fatal("expected one OPEN control object")
+	}
+	if !strings.Contains(name, ".OPENI.") {
+		t.Fatalf("open control name = %q, want OPENI", name)
+	}
+	if strings.Contains(name, target) || strings.Contains(name, base64.RawURLEncoding.EncodeToString([]byte(target))) {
+		t.Fatalf("open control name leaks target: %s", name)
+	}
+	event, ok := tunnel.parseOpenControlInfo(name)
+	if !ok {
+		t.Fatalf("failed to parse encrypted OPENI control: %s", name)
+	}
+	if event.Target != target || event.ConnID != "abc123" || event.Sequence != 0 {
+		t.Fatalf("parsed event = %+v", event)
+	}
+	legacy := streamControlPrefix(tunnel.SessionID, DirectionUp, "abc123") + "0000000000000000.OPEN." + base64.RawURLEncoding.EncodeToString([]byte(target))
+	if _, ok := tunnel.parseOpenControlInfo(legacy); ok {
+		t.Fatal("legacy plaintext OPEN controls should not be accepted")
 	}
 }
 

@@ -97,6 +97,19 @@ func DeriveKey(secret string) ([]byte, error) {
 	}
 }
 
+func DeriveStreamKey(secret string, sid [16]byte, direction byte, connID string) ([]byte, error) {
+	base, err := DeriveKey(secret)
+	if err != nil {
+		return nil, err
+	}
+	info := make([]byte, 0, len("skirk-stream-aead-v1")+sessionIDLen+1+len(connID))
+	info = append(info, []byte("skirk-stream-aead-v1")...)
+	info = append(info, sid[:]...)
+	info = append(info, direction)
+	info = append(info, []byte(connID)...)
+	return hkdfSHA256(base, []byte("skirk-v1-stream-salt"), info, keyLen), nil
+}
+
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 	extract := hmac.New(sha256.New, salt)
 	extract.Write(ikm)

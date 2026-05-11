@@ -1,7 +1,12 @@
 package skirk
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -35,5 +40,39 @@ func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
 	}
 	if !shouldRetryResult(&HTTPResult{Status: http.StatusTooManyRequests}) {
 		t.Fatal("expected 429 response to be retried")
+	}
+}
+
+func TestGoogleHTTPClientRequestsAndDecodesGzip(t *testing.T) {
+	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("Accept-Encoding") != "gzip" {
+			t.Fatalf("Accept-Encoding = %q, want gzip", req.Header.Get("Accept-Encoding"))
+		}
+		if !strings.Contains(strings.ToLower(req.Header.Get("User-Agent")), "gzip") {
+			t.Fatalf("User-Agent = %q, want gzip marker", req.Header.Get("User-Agent"))
+		}
+		var body bytes.Buffer
+		writer := gzip.NewWriter(&body)
+		if _, err := writer.Write([]byte(`{"ok":true}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Encoding": []string{"gzip"}},
+			Body:       io.NopCloser(bytes.NewReader(body.Bytes())),
+		}, nil
+	})}}
+	result, err := client.Request(context.Background(), http.MethodGet, "www.googleapis.com", "/drive/v3/files", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.Body) != `{"ok":true}` {
+		t.Fatalf("body = %q", result.Body)
+	}
+	if result.Header.Get("Content-Encoding") != "" {
+		t.Fatalf("Content-Encoding should be cleared after decompression, got %q", result.Header.Get("Content-Encoding"))
 	}
 }

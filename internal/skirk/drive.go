@@ -26,6 +26,7 @@ type DriveStore struct {
 	Logger      *log.Logger
 }
 
+const driveListPageSize = "100"
 const driveListMaxPages = 4
 const driveSlowRequestThreshold = 4 * time.Second
 
@@ -198,7 +199,7 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
-	values.Set("pageSize", "1000")
+	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime desc")
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
@@ -308,7 +309,7 @@ func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, 
 	values.Set("q", d.query(name, true))
 	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
 	values.Set("orderBy", "modifiedTime desc")
-	values.Set("pageSize", "1000")
+	values.Set("pageSize", driveListPageSize)
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
 	}
@@ -524,7 +525,7 @@ func isMetadataOnlyMarker(name string, data []byte) bool {
 		return false
 	}
 	base := controlBaseName(name)
-	if strings.Contains(base, ".OPEN.") || strings.Contains(base, ".DATAI.") {
+	if strings.Contains(base, ".OPENI.") || strings.Contains(base, ".DATAI.") {
 		return true
 	}
 	return strings.HasSuffix(base, ".FIN") || strings.HasSuffix(base, ".RST")
