@@ -80,6 +80,7 @@ type DriveConfig struct {
 type TunnelConfig struct {
 	Listen              string `json:"listen,omitempty"`
 	Profile             string `json:"profile,omitempty"`
+	ExitProxy           string `json:"exit_proxy,omitempty"`
 	ChunkSize           int    `json:"chunk_size,omitempty"`
 	PollIntervalMS      int    `json:"poll_interval_ms,omitempty"`
 	Concurrency         int    `json:"concurrency,omitempty"`
@@ -303,6 +304,17 @@ func (c *Config) Validate() error {
 	}
 	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
 		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
+	}
+	if strings.TrimSpace(c.Tunnel.ExitProxy) != "" {
+		u, err := url.Parse(c.Tunnel.ExitProxy)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("config.tunnel.exit_proxy must be a valid proxy URL")
+		}
+		switch u.Scheme {
+		case "socks5", "socks5h", "http", "https":
+		default:
+			return fmt.Errorf("config.tunnel.exit_proxy scheme must be socks5, socks5h, http, or https")
+		}
 	}
 	return nil
 }

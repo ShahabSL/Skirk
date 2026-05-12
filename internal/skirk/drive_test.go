@@ -200,9 +200,9 @@ func TestDriveStoreCleanupDryRunDoesNotDelete(t *testing.T) {
 func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	stats := newDriveQuotaStats(time.Minute)
 	stats.since = time.Now().Add(-time.Second)
-	stats.Record("upload", http.StatusOK, 10, nil)
+	stats.Record("upload", http.StatusOK, 10, 100*time.Millisecond, nil)
 	stats.since = time.Now().Add(-time.Minute)
-	report, ok := stats.Record("download", http.StatusTooManyRequests, 20, nil)
+	report, ok := stats.Record("download", http.StatusTooManyRequests, 20, 250*time.Millisecond, nil)
 	if !ok {
 		t.Fatal("expected report")
 	}
@@ -215,6 +215,9 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	snapshot := stats.Snapshot()
 	if snapshot.Calls != 2 || snapshot.Units != 250 || snapshot.Errors != 1 || snapshot.ResponseBytes != 30 {
 		t.Fatalf("snapshot = %+v, want lifetime totals after window reset", snapshot)
+	}
+	if snapshot.Ops["download"].P50DurationMS != 250 || snapshot.Ops["upload"].P95DurationMS != 100 {
+		t.Fatalf("snapshot ops = %+v, want duration percentiles", snapshot.Ops)
 	}
 }
 

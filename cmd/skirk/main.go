@@ -105,7 +105,7 @@ func usage() {
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
-  serve-exit --config skirk.json
+  serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
   serve-client --config skirk.json [--listen 127.0.0.1:18080]
   client-ui --config skirk.json [--socks 127.0.0.1:18080] [--ui 127.0.0.1:18280]`)
 }
@@ -290,12 +290,16 @@ func serveExit(ctx context.Context, args []string) error {
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy for exit traffic, for example socks5h://127.0.0.1:40000")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	cfg, drive, err := load(*configPath)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(*exitProxy) != "" {
+		cfg.Tunnel.ExitProxy = strings.TrimSpace(*exitProxy)
 	}
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
@@ -305,7 +309,7 @@ func serveExit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("skirk exit polling session=%s", skirk.SessionString(tunnel.SessionID))
+	log.Printf("skirk exit polling session=%s exit_proxy=%s", skirk.SessionString(tunnel.SessionID), firstNonEmpty(tunnel.ExitProxy, "none"))
 	return tunnel.ServeExit(ctx)
 }
 
@@ -383,18 +387,27 @@ type benchHTTPSummary struct {
 }
 
 type benchLiveResult struct {
-	Listen          string                   `json:"listen"`
-	RouteMode       string                   `json:"route_mode"`
-	UpstreamProxy   string                   `json:"upstream_proxy,omitempty"`
-	DurationSeconds float64                  `json:"duration_seconds"`
-	Small           benchHTTPSummary         `json:"small"`
-	Bulk            *benchHTTPSummary        `json:"bulk,omitempty"`
-	Quota           skirk.DriveQuotaSnapshot `json:"quota"`
-	QuotaPerMinute  benchQuotaMinuteSummary  `json:"quota_per_minute"`
-	QuotaOps        string                   `json:"quota_ops"`
+	Listen          string                                `json:"listen"`
+	RouteMode       string                                `json:"route_mode"`
+	UpstreamProxy   string                                `json:"upstream_proxy,omitempty"`
+	DurationSeconds float64                               `json:"duration_seconds"`
+	Small           benchHTTPSummary                      `json:"small"`
+	Bulk            *benchHTTPSummary                     `json:"bulk,omitempty"`
+	Quota           skirk.DriveQuotaSnapshot              `json:"quota"`
+	QuotaPerMinute  benchQuotaMinuteSummary               `json:"quota_per_minute"`
+	QuotaPerRequest benchQuotaRequestSummary              `json:"quota_per_request"`
+	DriveOps        map[string]skirk.DriveQuotaOpSnapshot `json:"drive_ops"`
+	QuotaOps        string                                `json:"quota_ops"`
 }
 
 type benchQuotaMinuteSummary struct {
+	Calls         float64 `json:"calls"`
+	Units         float64 `json:"units"`
+	Errors        float64 `json:"errors"`
+	ResponseBytes float64 `json:"response_bytes"`
+}
+
+type benchQuotaRequestSummary struct {
 	Calls         float64 `json:"calls"`
 	Units         float64 `json:"units"`
 	Errors        float64 `json:"errors"`
@@ -458,7 +471,7 @@ func benchLive(ctx context.Context, args []string) error {
 	if err := waitForTCP(ctx, addr, errCh); err != nil {
 		return err
 	}
-	startQuota := drive.QuotaSnapshot()
+	drive.ResetTelemetry()
 	started := time.Now()
 	smallSamples, err := runHTTPSamples(ctx, addr, strings.TrimSpace(*smallURL), *samples, *timeout)
 	if err != nil {
@@ -474,7 +487,11 @@ func benchLive(ctx context.Context, args []string) error {
 		bulkSummary = &summary
 	}
 	duration := time.Since(started)
-	quota := drive.QuotaSnapshot().Delta(startQuota)
+	quota := drive.QuotaSnapshot()
+	totalRequests := len(smallSamples)
+	if bulkSummary != nil {
+		totalRequests++
+	}
 	return printJSON(benchLiveResult{
 		Listen:          addr,
 		RouteMode:       cfg.Route.Mode,
@@ -484,6 +501,8 @@ func benchLive(ctx context.Context, args []string) error {
 		Bulk:            bulkSummary,
 		Quota:           quota,
 		QuotaPerMinute:  quotaPerMinute(quota, duration),
+		QuotaPerRequest: quotaPerRequest(quota, totalRequests),
+		DriveOps:        quota.Ops,
 		QuotaOps:        quota.OpSummary(),
 	})
 }
@@ -746,6 +765,19 @@ func quotaPerMinute(snapshot skirk.DriveQuotaSnapshot, duration time.Duration) b
 		Units:         float64(snapshot.Units) * scale,
 		Errors:        float64(snapshot.Errors) * scale,
 		ResponseBytes: float64(snapshot.ResponseBytes) * scale,
+	}
+}
+
+func quotaPerRequest(snapshot skirk.DriveQuotaSnapshot, requests int) benchQuotaRequestSummary {
+	if requests <= 0 {
+		return benchQuotaRequestSummary{}
+	}
+	scale := float64(requests)
+	return benchQuotaRequestSummary{
+		Calls:         float64(snapshot.Calls) / scale,
+		Units:         float64(snapshot.Units) / scale,
+		Errors:        float64(snapshot.Errors) / scale,
+		ResponseBytes: float64(snapshot.ResponseBytes) / scale,
 	}
 }
 

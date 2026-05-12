@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -75,6 +76,111 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}
 	if string(buf) != "hello" {
 		t.Fatalf("got %q", buf)
+	}
+}
+
+func TestTunnelExitProxyWithMemoryStores(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	proxyTargets := make(chan string, 1)
+	proxy := SOCKSServer{
+		Listen: freeTCPAddr(t),
+		Handler: func(ctx context.Context, target string, client net.Conn) {
+			proxyTargets <- target
+			remote, err := net.DialTimeout("tcp", target, 2*time.Second)
+			if err != nil {
+				_ = client.Close()
+				return
+			}
+			defer remote.Close()
+			defer client.Close()
+			done := make(chan struct{}, 2)
+			go func() {
+				_, _ = io.Copy(remote, client)
+				done <- struct{}{}
+			}()
+			go func() {
+				_, _ = io.Copy(client, remote)
+				done <- struct{}{}
+			}()
+			select {
+			case <-ctx.Done():
+			case <-done:
+			}
+		},
+	}
+
+	data := NewMemoryStore()
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel: TunnelConfig{
+			Listen:           freeTCPAddr(t),
+			ExitProxy:        "socks5h://" + proxy.Listen,
+			ChunkSize:        64,
+			PollIntervalMS:   10,
+			CleanupProcessed: true,
+		},
+	}
+	cfg.ApplyDefaults()
+	clientTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = proxy.Serve(ctx) }()
+	go func() { _ = exitTunnel.ServeExit(ctx) }()
+	go func() { _ = clientTunnel.ServeClient(ctx, cfg.Tunnel.Listen) }()
+	time.Sleep(75 * time.Millisecond)
+
+	conn, err := dialViaSOCKS5(context.Background(), "socks5h://"+cfg.Tunnel.Listen, echo.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("proxy")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "proxy" {
+		t.Fatalf("got %q", buf)
+	}
+	select {
+	case target := <-proxyTargets:
+		if target != echo.Addr().String() {
+			t.Fatalf("proxy target = %q, want %q", target, echo.Addr().String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy did not receive target")
 	}
 }
 
@@ -285,6 +391,26 @@ func TestStreamDownloadWindowCapsPerConnectionReadAhead(t *testing.T) {
 	tunnel.RouteProxy = "socks5h://127.0.0.1:11093"
 	if got := tunnel.streamDownloadWindow(); got != 8 {
 		t.Fatalf("proxy stream window = %d, want 8", got)
+	}
+}
+
+func TestCleanupForegroundBusyState(t *testing.T) {
+	tunnel := &Tunnel{}
+	if tunnel.foregroundBusy() {
+		t.Fatal("new tunnel should not be foreground busy")
+	}
+	tunnel.activeStreams.Add(1)
+	if !tunnel.foregroundBusy() {
+		t.Fatal("active stream should make cleanup wait")
+	}
+	tunnel.activeStreams.Add(-1)
+	tunnel.markActivity()
+	if !tunnel.foregroundBusy() {
+		t.Fatal("recent activity should make cleanup wait")
+	}
+	atomic.StoreInt64(&tunnel.lastActivityNS, time.Now().Add(-cleanupQuietWindow-time.Second).UnixNano())
+	if tunnel.foregroundBusy() {
+		t.Fatal("old activity should allow cleanup")
 	}
 }
 

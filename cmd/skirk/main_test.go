@@ -44,6 +44,13 @@ func TestQuotaPerMinute(t *testing.T) {
 	}
 }
 
+func TestQuotaPerRequest(t *testing.T) {
+	got := quotaPerRequest(skirk.DriveQuotaSnapshot{Calls: 10, Units: 500, Errors: 1, ResponseBytes: 2000}, 2)
+	if got.Calls != 5 || got.Units != 250 || got.Errors != 0.5 || got.ResponseBytes != 1000 {
+		t.Fatalf("quotaPerRequest = %+v", got)
+	}
+}
+
 func TestBenchListenAddressRejectsInvalidAddress(t *testing.T) {
 	_, err := benchListenAddress("not-a-host-port")
 	if err == nil || !strings.Contains(err.Error(), "missing port") {

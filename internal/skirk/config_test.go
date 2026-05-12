@@ -59,6 +59,23 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 }
 
+func TestConfigValidatesExitProxy(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+		Tunnel: TunnelConfig{
+			ExitProxy: "socks5h://127.0.0.1:40000",
+		},
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Tunnel.ExitProxy = "ftp://127.0.0.1:21"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "exit_proxy scheme") {
+		t.Fatalf("err = %v, want exit_proxy scheme error", err)
+	}
+}
+
 func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
 	var count int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -26,6 +26,9 @@ const (
 	openPollWarmWindow            = 45 * time.Second
 	directDriveSlowThreshold      = 20 * time.Second
 	proxyDriveSlowThreshold       = 35 * time.Second
+	cleanupQuietWindow            = 10 * time.Second
+	cleanupMaxForegroundDelay     = 2 * time.Minute
+	exitDialTimeout               = 30 * time.Second
 )
 
 type Tunnel struct {
@@ -38,7 +41,9 @@ type Tunnel struct {
 	DownloadConcurrency int
 	Profile             string
 	RouteProxy          string
+	ExitProxy           string
 	role                string
+	activeStreams       atomic.Int64
 	limiterMu           sync.Mutex
 	uploadLimiter       *adaptiveLimiter
 	downloadLimiter     *adaptiveLimiter
@@ -65,6 +70,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
 		Profile:             cfg.Tunnel.Profile,
 		RouteProxy:          cfg.Route.Proxy,
+		ExitProxy:           strings.TrimSpace(cfg.Tunnel.ExitProxy),
 		PollInterval:        cfg.PollInterval(),
 		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
 		Logger:              log.Default(),
@@ -157,6 +163,16 @@ func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
 		}
 	}
 	return t.Data.Delete(ctx, name)
+}
+
+func (t *Tunnel) dialExitTarget(ctx context.Context, target string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, exitDialTimeout)
+	defer cancel()
+	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" {
+		return DialViaProxy(ctx, proxy, target)
+	}
+	dialer := &net.Dialer{Timeout: exitDialTimeout, KeepAlive: 30 * time.Second}
+	return dialer.DialContext(ctx, "tcp", target)
 }
 
 func (t *Tunnel) uploadWorkerCount() int {
@@ -450,6 +466,7 @@ func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
+		tunnel.waitForCleanupQuiet(context.Background(), cleanupMaxForegroundDelay)
 		workers := clampWorkers(tunnel.Concurrency)
 		if workers > 4 {
 			workers = 4
@@ -473,6 +490,36 @@ func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 		close(jobs)
 		wg.Wait()
 	}()
+}
+
+func (t *Tunnel) waitForCleanupQuiet(ctx context.Context, maxWait time.Duration) {
+	if t == nil || maxWait <= 0 {
+		return
+	}
+	deadline := time.NewTimer(maxWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for t.foregroundBusy() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (t *Tunnel) foregroundBusy() bool {
+	if t == nil {
+		return false
+	}
+	if t.activeStreams.Load() > 0 {
+		return true
+	}
+	last := atomic.LoadInt64(&t.lastActivityNS)
+	return last > 0 && time.Since(time.Unix(0, last)) < cleanupQuietWindow
 }
 
 func readChunk(reader io.Reader, buffer []byte) (int, error) {

@@ -31,6 +31,7 @@ type DriveStore struct {
 const driveListPageSize = "100"
 const driveListMaxPages = 16
 const defaultDriveCleanupMaxPages = 256
+const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 4 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
 
@@ -592,7 +593,7 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 
 func (d *DriveStore) logDriveRequest(label string, attempts int, status int, body []byte, duration time.Duration, err error) {
 	if d.quota != nil {
-		if report, ok := d.quota.Record(label, status, len(body), err); ok && d.Logger != nil {
+		if report, ok := d.quota.Record(label, status, len(body), duration, err); ok && d.Logger != nil {
 			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",
 				report.Duration.Round(time.Second), report.Calls, report.Units, report.Errors, report.ResponseBytes, report.OpSummary())
 		}
@@ -636,9 +637,12 @@ type driveQuotaStats struct {
 }
 
 type driveQuotaOpStats struct {
-	Calls  int64
-	Units  int64
-	Errors int64
+	Calls           int64
+	Units           int64
+	Errors          int64
+	TotalDurationMS int64
+	MaxDurationMS   int64
+	SamplesMS       []int64
 }
 
 type driveQuotaReport struct {
@@ -651,9 +655,14 @@ type driveQuotaReport struct {
 }
 
 type DriveQuotaOpSnapshot struct {
-	Calls  int64 `json:"calls"`
-	Units  int64 `json:"units"`
-	Errors int64 `json:"errors"`
+	Calls           int64 `json:"calls"`
+	Units           int64 `json:"units"`
+	Errors          int64 `json:"errors"`
+	TotalDurationMS int64 `json:"total_duration_ms"`
+	AvgDurationMS   int64 `json:"avg_duration_ms"`
+	P50DurationMS   int64 `json:"p50_duration_ms"`
+	P95DurationMS   int64 `json:"p95_duration_ms"`
+	MaxDurationMS   int64 `json:"max_duration_ms"`
 }
 
 type DriveQuotaSnapshot struct {
@@ -676,7 +685,7 @@ func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 	}
 }
 
-func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err error) (driveQuotaReport, bool) {
+func (s *driveQuotaStats) Record(op string, status int, responseBytes int, duration time.Duration, err error) (driveQuotaReport, bool) {
 	if s == nil {
 		return driveQuotaReport{}, false
 	}
@@ -686,6 +695,10 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 		s.since = time.Now()
 	}
 	units := int64(driveQuotaUnits(op))
+	durationMS := duration.Milliseconds()
+	if durationMS < 0 {
+		durationMS = 0
+	}
 	failed := err != nil || status >= 400
 	s.calls++
 	s.units += units
@@ -700,6 +713,7 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 	current := s.ops[op]
 	current.Calls++
 	current.Units += units
+	addDriveQuotaDuration(&current, durationMS)
 	if failed {
 		current.Errors++
 	}
@@ -707,6 +721,7 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 	totalCurrent := s.totalOps[op]
 	totalCurrent.Calls++
 	totalCurrent.Units += units
+	addDriveQuotaDuration(&totalCurrent, durationMS)
 	if failed {
 		totalCurrent.Errors++
 	}
@@ -731,11 +746,36 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 	return report, true
 }
 
+func (s *driveQuotaStats) Reset() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.since = time.Now()
+	s.calls = 0
+	s.units = 0
+	s.errors = 0
+	s.bytes = 0
+	clear(s.ops)
+	s.totalCalls = 0
+	s.totalUnits = 0
+	s.totalError = 0
+	s.totalBytes = 0
+	clear(s.totalOps)
+}
+
 func (d *DriveStore) QuotaSnapshot() DriveQuotaSnapshot {
 	if d == nil || d.quota == nil {
 		return DriveQuotaSnapshot{Ops: map[string]DriveQuotaOpSnapshot{}}
 	}
 	return d.quota.Snapshot()
+}
+
+func (d *DriveStore) ResetTelemetry() {
+	if d != nil && d.quota != nil {
+		d.quota.Reset()
+	}
 }
 
 func (s *driveQuotaStats) Snapshot() DriveQuotaSnapshot {
@@ -764,9 +804,14 @@ func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot 
 	for key, after := range s.Ops {
 		prev := before.Ops[key]
 		out.Ops[key] = DriveQuotaOpSnapshot{
-			Calls:  after.Calls - prev.Calls,
-			Units:  after.Units - prev.Units,
-			Errors: after.Errors - prev.Errors,
+			Calls:           after.Calls - prev.Calls,
+			Units:           after.Units - prev.Units,
+			Errors:          after.Errors - prev.Errors,
+			TotalDurationMS: after.TotalDurationMS - prev.TotalDurationMS,
+			MaxDurationMS:   after.MaxDurationMS,
+			AvgDurationMS:   after.AvgDurationMS,
+			P50DurationMS:   after.P50DurationMS,
+			P95DurationMS:   after.P95DurationMS,
 		}
 	}
 	return out
@@ -783,9 +828,56 @@ func cloneDriveQuotaOps(in map[string]driveQuotaOpStats) map[string]driveQuotaOp
 func exportedDriveQuotaOps(in map[string]driveQuotaOpStats) map[string]DriveQuotaOpSnapshot {
 	out := make(map[string]DriveQuotaOpSnapshot, len(in))
 	for key, value := range in {
-		out[key] = DriveQuotaOpSnapshot{Calls: value.Calls, Units: value.Units, Errors: value.Errors}
+		out[key] = driveQuotaOpSnapshot(value)
 	}
 	return out
+}
+
+func addDriveQuotaDuration(stats *driveQuotaOpStats, durationMS int64) {
+	stats.TotalDurationMS += durationMS
+	if durationMS > stats.MaxDurationMS {
+		stats.MaxDurationMS = durationMS
+	}
+	stats.SamplesMS = append(stats.SamplesMS, durationMS)
+	if len(stats.SamplesMS) > driveQuotaMaxSamplesPerOp {
+		copy(stats.SamplesMS, stats.SamplesMS[len(stats.SamplesMS)-driveQuotaMaxSamplesPerOp:])
+		stats.SamplesMS = stats.SamplesMS[:driveQuotaMaxSamplesPerOp]
+	}
+}
+
+func driveQuotaOpSnapshot(stats driveQuotaOpStats) DriveQuotaOpSnapshot {
+	out := DriveQuotaOpSnapshot{
+		Calls:           stats.Calls,
+		Units:           stats.Units,
+		Errors:          stats.Errors,
+		TotalDurationMS: stats.TotalDurationMS,
+		MaxDurationMS:   stats.MaxDurationMS,
+	}
+	if stats.Calls > 0 {
+		out.AvgDurationMS = stats.TotalDurationMS / stats.Calls
+	}
+	samples := append([]int64(nil), stats.SamplesMS...)
+	out.P50DurationMS = durationPercentileMS(samples, 0.50)
+	out.P95DurationMS = durationPercentileMS(samples, 0.95)
+	return out
+}
+
+func durationPercentileMS(samples []int64, p float64) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	if p <= 0 {
+		return samples[0]
+	}
+	if p >= 1 {
+		return samples[len(samples)-1]
+	}
+	index := int(p * float64(len(samples)))
+	if index >= len(samples) {
+		index = len(samples) - 1
+	}
+	return samples[index]
 }
 
 func (s DriveQuotaSnapshot) OpSummary() string {

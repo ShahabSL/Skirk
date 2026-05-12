@@ -1,16 +1,35 @@
 package skirk
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
+
+func DialViaProxy(ctx context.Context, proxyURL, target string) (net.Conn, error) {
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	switch u.Scheme {
+	case "socks5", "socks5h":
+		return dialViaSOCKS5(ctx, proxyURL, target)
+	case "http", "https":
+		return dialViaHTTPConnect(ctx, u, target)
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
+	}
+}
 
 func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, error) {
 	u, err := url.Parse(proxyURL)
@@ -123,4 +142,68 @@ func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, erro
 
 func DialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, error) {
 	return dialViaSOCKS5(ctx, proxyURL, target)
+}
+
+func dialViaHTTPConnect(ctx context.Context, u *url.URL, target string) (net.Conn, error) {
+	proxyAddr := u.Host
+	if !strings.Contains(proxyAddr, ":") {
+		if u.Scheme == "https" {
+			proxyAddr += ":443"
+		} else {
+			proxyAddr += ":80"
+		}
+	}
+	dialer := &net.Dialer{Timeout: 25 * time.Second, KeepAlive: 30 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme == "https" {
+		host := u.Hostname()
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = tlsConn.SetDeadline(deadline)
+		}
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		conn = tlsConn
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(45 * time.Second))
+	}
+	var request strings.Builder
+	request.WriteString("CONNECT ")
+	request.WriteString(target)
+	request.WriteString(" HTTP/1.1\r\nHost: ")
+	request.WriteString(target)
+	request.WriteString("\r\nProxy-Connection: Keep-Alive\r\n")
+	if u.User != nil {
+		password, _ := u.User.Password()
+		credential := u.User.Username() + ":" + password
+		request.WriteString("Proxy-Authorization: Basic ")
+		request.WriteString(base64.StdEncoding.EncodeToString([]byte(credential)))
+		request.WriteString("\r\n")
+	}
+	request.WriteString("\r\n")
+	if _, err := io.WriteString(conn, request.String()); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		conn.Close()
+		return nil, fmt.Errorf("http proxy CONNECT failed status=%d", resp.StatusCode)
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return conn, nil
 }

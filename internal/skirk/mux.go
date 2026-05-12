@@ -213,7 +213,14 @@ func (m *driveMux) openExitStream(ctx context.Context, streamID uint64, payload 
 		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: streamID, Payload: []byte("bad_open")})
 		return
 	}
-	remote, err := net.DialTimeout("tcp", target, 30*time.Second)
+	started := time.Now()
+	remote, err := m.t.dialExitTarget(ctx, target)
+	dialDuration := time.Since(started)
+	if m.t.Logger != nil {
+		if err != nil || dialDuration >= time.Second {
+			m.t.Logger.Printf("exit dial target=%s proxy=%s duration=%s error=%s", targetFingerprint(target), firstNonEmptyString(m.t.ExitProxy, "none"), dialDuration.Round(time.Millisecond), errorSummary(err))
+		}
+	}
 	if err != nil {
 		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: streamID, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 		return
@@ -245,6 +252,7 @@ func (m *driveMux) registerStream(id uint64, conn net.Conn) *muxStream {
 	m.streams[id] = stream
 	m.streamsMu.Unlock()
 	m.active.Add(1)
+	m.t.activeStreams.Add(1)
 	return stream
 }
 
@@ -253,6 +261,7 @@ func (m *driveMux) unregisterStream(id uint64) {
 	delete(m.streams, id)
 	m.streamsMu.Unlock()
 	m.active.Add(-1)
+	m.t.activeStreams.Add(-1)
 }
 
 func (m *driveMux) uploadWorkersPerLane() int {
@@ -608,6 +617,10 @@ func (m *driveMux) processMuxObjects(ctx context.Context, metas []muxObjectMeta)
 	close(results)
 
 	processed := false
+	var cleanup *deferredCleanup
+	if m.t.CleanupProcessed {
+		cleanup = m.t.newDeferredCleanup()
+	}
 	for res := range results {
 		if res.err != nil {
 			if m.t.Logger != nil && ctx.Err() == nil {
@@ -620,11 +633,12 @@ func (m *driveMux) processMuxObjects(ctx context.Context, metas []muxObjectMeta)
 		}
 		m.markSeen(res.meta.Name)
 		processed = true
-		if m.t.CleanupProcessed {
-			cleanup := m.t.newDeferredCleanup()
+		if cleanup != nil {
 			cleanup.Data(res.meta.Name, res.meta.ID)
-			cleanup.FlushAsync()
 		}
+	}
+	if cleanup != nil {
+		cleanup.FlushAsync()
 	}
 	return processed
 }
