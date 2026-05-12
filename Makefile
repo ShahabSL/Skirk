@@ -7,7 +7,6 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.dat
 
 test:
 	go test ./...
-	pytest -q
 
 build:
 	mkdir -p bin

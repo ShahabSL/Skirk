@@ -47,7 +47,7 @@ Generated `client.json` and `exit.json` files contain a Google refresh token and
 - Keep Windows and Android clients as wrappers around the same config model.
 - Avoid local TLS MITM in the default path.
 - Do not add unauthenticated public relay behavior.
-- Keep Drive/Sheets cleanup and revocation paths working when config format changes.
+- Keep Drive appData cleanup and OAuth revocation paths working when config format changes.
 
 ## Testing External Services
 

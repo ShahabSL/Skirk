@@ -4,18 +4,16 @@ Skirk's production client is implemented in Go under `cmd/skirk` and `internal/s
 
 ## Current Modes
 
-- `hybrid-send` and `hybrid-recv`: encrypted file/object round trips over Drive appData/folder storage, with legacy Sheets control support.
-- `e2e`: creates a random payload, sends it through the hybrid transport, receives it back, compares bytes, and optionally cleans up data/control rows.
-- `serve-client`: local SOCKS5 listener that sends CONNECT streams through the Drive mailbox.
-- `serve-exit`: exit poller that reads client stream events, dials target TCP, and writes downstream events back.
-- `workspace create/delete`: deletes visible Drive fallback workspaces; appData kits are disconnected by revoking OAuth access.
+- `serve-client`: local SOCKS5 listener that sends CONNECT streams through Drive Mux v3.
+- `serve-exit`: exit poller that reads muxed client stream frames, dials target TCP, and writes downstream frames back.
+- `revoke`: revokes the OAuth refresh token embedded in a generated kit.
 
 ## Config
 
 Generate a starter config:
 
 ```sh
-go run ./cmd/skirk sample-config --out skirk.json --spreadsheet-id SHEET_ID
+go run ./cmd/skirk sample-config --out skirk.json
 ```
 
 The important fields are:
@@ -30,20 +28,20 @@ The important fields are:
 - `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.
 - `tunnel.concurrency`: legacy shared cap for Drive workers.
 - `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps for experiments. Leave unset for `profile=auto`.
-- `tunnel.cleanup_processed`: removes Drive chunks and tombstones processed control rows.
+- `tunnel.cleanup_processed`: removes processed Drive mux objects.
 
 ## Why Drive appData
 
-Drive appDataFolder keeps Skirk's encrypted mailbox private to the OAuth application and lets the runtime use one Google API and one narrow OAuth scope. Legacy Drive+Sheets configs still work, but new custom-OAuth kits use Drive-only control and data objects.
+Drive appDataFolder keeps Skirk's encrypted mailbox private to the OAuth application and lets the runtime use one Google API and one narrow OAuth scope. New setup kits use Drive-only mux objects for control and data.
 
 This does not make Google Drive a low-latency stream substrate; polling and API quotas still define the ceiling.
 
 ## Operational Notes
 
-- Use a dedicated Google account or workspace for testing.
+- Use a dedicated Google account for testing.
 - Use a dedicated OAuth client/project per operator where practical.
 - Keep `chunk_size` within a measured range; larger chunks improve bulk throughput but hurt latency and retries.
-- Runtime control polling is shared per tunnel direction. This avoids one Drive list loop per TCP stream, which matters once browsers open many parallel connections.
+- Runtime polling is shared per tunnel direction. Active TCP streams are batched into four mux lanes, and bulk frames are striped with per-stream ordered reassembly, so browser fanout does not create one Drive list loop per TCP stream.
 - `cleanup_processed` should stay enabled. Runtime cleanup is delayed out of the foreground byte path so active streams get priority.
 - The access token can come from `SKIRK_ACCESS_TOKEN`, `auth.access_token`, or `auth.token_command`.
 
@@ -53,23 +51,18 @@ Local:
 
 ```sh
 go test ./...
-pytest -q
 ```
 
 Restricted network substrate:
 
 ```sh
-go run ./cmd/skirk e2e --config skirk.json --bytes 2048 --delete-after
-```
-
-Throughput:
-
-```sh
-go run ./cmd/skirk bench \
+go run ./cmd/skirk serve-client \
   --config skirk.json \
-  --sizes 1048576,33554432 \
-  --chunk-sizes 1048576,4194304 \
-  --concurrency 16
+  --listen 127.0.0.1:18080 \
+  --route-mode google_front \
+  --upstream-proxy socks5h://127.0.0.1:11093
+
+curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```
 
 SOCKS path:
@@ -90,7 +83,7 @@ Then point an app at `socks5h://127.0.0.1:18080`.
 
 ## Learning Notes
 
-This follows a split-lane design common in real transports: small ordered control messages are kept separate from heavier data frames. It gives the scheduler room to improve retries, ACKs, adaptive chunking, and cleanup without changing the encrypted data envelope.
+This follows a mux-lane design common in real transports: independent streams share a bounded number of ordered physical lanes. It preserves per-stream ordering while avoiding the pathological one-object-per-stream-event behavior that makes browsers unusable over Drive.
 
 ## Why This Matters
 

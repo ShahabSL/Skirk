@@ -34,7 +34,7 @@ func menu(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			title, err := prompt(ctx, reader, "Workspace title", "")
+			title, err := prompt(ctx, reader, "Kit title", "")
 			if err != nil {
 				return err
 			}

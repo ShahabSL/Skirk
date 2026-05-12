@@ -5,11 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDriveStoreAppDataQuery(t *testing.T) {
@@ -72,31 +74,6 @@ func TestDriveStoreRefreshesTokenAfterUnauthorized(t *testing.T) {
 	}
 }
 
-func TestDriveStoreCreatesFastControlMarkersAsMetadataOnly(t *testing.T) {
-	var gotPath string
-	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		gotPath = req.URL.EscapedPath()
-		if req.URL.RawQuery != "" {
-			gotPath += "?" + req.URL.RawQuery
-		}
-		if req.Header.Get("Content-Type") != "application/json; charset=UTF-8" {
-			t.Fatalf("content-type = %q, want metadata JSON", req.Header.Get("Content-Type"))
-		}
-		return stringResponse(http.StatusOK, `{"id":"file-id","name":"control/session/up/conn/0000000000000000.OPENI.c2VhbGVk","size":"0"}`), nil
-	})}}
-	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
-	_, err := store.PutObject(context.Background(), "control/session/up/conn/0000000000000000.OPENI.c2VhbGVk", []byte("{}"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(gotPath, "/drive/v3/files?") {
-		t.Fatalf("path = %q, want metadata files.create endpoint", gotPath)
-	}
-	if strings.Contains(gotPath, "/upload/") {
-		t.Fatalf("path = %q, should not use media upload endpoint", gotPath)
-	}
-}
-
 func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
 	var gotQuery string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -109,6 +86,39 @@ func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
 	}
 	if !strings.Contains(gotQuery, "pageSize=100") {
 		t.Fatalf("query = %q, want documented pageSize=100", gotQuery)
+	}
+}
+
+func TestDriveStoreListFreshStopsAtOlderObjects(t *testing.T) {
+	since := time.Date(2026, 5, 11, 15, 0, 0, 0, time.UTC)
+	pages := 0
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		pages++
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if query.Get("pageToken") == "" {
+			return stringResponse(http.StatusOK, `{
+				"nextPageToken":"next",
+				"files":[
+					{"id":"fresh","name":"muxv3/session/down/l00/0000000000000001.f1.b32","size":"32","modifiedTime":"2026-05-11T15:00:01Z"},
+					{"id":"old","name":"muxv3/session/down/l00/0000000000000000.f1.b32","size":"32","modifiedTime":"2026-05-11T14:59:59Z"}
+				]
+			}`), nil
+		}
+		return stringResponse(http.StatusOK, `{"files":[{"id":"too-old","name":"muxv3/session/down/l00/ffffffffffffffff.f1.b32","size":"32","modifiedTime":"2026-05-11T14:00:00Z"}]}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	infos, err := store.ListFresh(context.Background(), "muxv3/session/down/", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != 1 {
+		t.Fatalf("pages = %d, want 1", pages)
+	}
+	if len(infos) != 1 || infos[0].ID != "fresh" {
+		t.Fatalf("infos = %#v, want only fresh object", infos)
 	}
 }
 

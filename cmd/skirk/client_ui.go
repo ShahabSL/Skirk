@@ -30,11 +30,11 @@ func clientUI(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, drive, sheets, _, err := load(*configPath)
+	cfg, drive, err := load(*configPath)
 	if err != nil {
 		return err
 	}
-	tunnel, err := skirk.NewTunnel(drive, controlStore(drive, sheets, cfg), cfg)
+	tunnel, err := skirk.NewTunnel(drive, cfg)
 	if err != nil {
 		return err
 	}

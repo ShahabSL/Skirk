@@ -1,6 +1,9 @@
 package skirk
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type ObjectInfo struct {
 	Name    string
@@ -27,4 +30,8 @@ type ObjectIDStore interface {
 
 type ContainsListStore interface {
 	ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error)
+}
+
+type FreshListStore interface {
+	ListFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error)
 }

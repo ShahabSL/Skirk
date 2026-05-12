@@ -83,7 +83,7 @@ gcloud auth application-default revoke --quiet
 gcloud auth revoke --all --quiet
 ```
 
-This only changes credentials on the machine running setup. Existing generated Skirk configs keep using the refresh token embedded in those config files until you delete the workspace or revoke the Google app access for that account.
+This only changes credentials on the machine running setup. Existing generated Skirk configs keep using the refresh token embedded in those config files until you revoke the Google app access for that account.
 
 ## Avoid Shared Google CLI Quota
 
@@ -142,7 +142,7 @@ On the VPS, laptop, or server:
 ./bin/skirk serve-exit --config skirk-kit/exit.json
 ```
 
-Generated kits use `profile=auto`. In that mode Skirk uses the fastest known direct-route windows, starts lower only when the client is using a restricted upstream proxy, and backs off when Google returns rate-limit pressure. Control polling is shared per tunnel direction, so many application connections do not create many independent Drive list loops. The exit also slows its new-connection polling while idle. You can still override the caps for experiments:
+Generated kits use `profile=auto`. In that mode Skirk uses measured Drive operation windows and backs off when Google returns rate-limit pressure. The live tunnel uses Drive Mux v3: many application TCP connections share four mux lanes, and bulk frames are striped across lanes with ordered reassembly instead of many independent Drive polling loops. You can still override the caps for experiments:
 
 ```bash
 ./bin/skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 32 --download-concurrency 16
@@ -200,16 +200,10 @@ For normal-network clients where speed matters more than reachability, generate 
 
 ## Disconnect A Config
 
-To clean up the workspace:
+To revoke the OAuth token embedded in the generated kit:
 
 ```bash
-./bin/skirk workspace delete --config skirk-kit/exit.json --delete-drive-folder
-```
-
-Or use the higher-level revoke command:
-
-```bash
-./bin/skirk revoke --config skirk-kit/exit.json
+./bin/skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
 To also revoke the Google OAuth refresh token in that config:
@@ -218,7 +212,7 @@ To also revoke the Google OAuth refresh token in that config:
 ./bin/skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
-To revoke every config generated from the same OAuth login, remove the app access from Google Account security settings. Workspace deletion removes Skirk's current mailbox; OAuth revocation prevents old configs from creating or using another mailbox.
+To revoke every config generated from the same OAuth login, remove the app access from Google Account security settings. OAuth revocation prevents old configs from creating or using another mailbox.
 
 ## Operational Notes
 

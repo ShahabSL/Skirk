@@ -28,7 +28,6 @@ fi
 git diff --check
 go test ./...
 go vet ./...
-python3 -m pytest -q
 
 if [ "${SKIRK_FULL_PREFLIGHT:-0}" = "1" ]; then
   (cd clients/desktop && npm ci && npm run build)

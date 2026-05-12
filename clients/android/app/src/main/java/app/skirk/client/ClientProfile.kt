@@ -12,7 +12,7 @@ data class ClientProfile(
     val connectionMode: String,
     val routeMode: String,
     val sessionId: String,
-    val spreadsheetId: String,
+    val driveSpace: String,
     val driveFolderId: String,
 ) {
     val socksHost: String
@@ -33,7 +33,7 @@ data class ClientProfile(
         .put("connectionMode", connectionMode)
         .put("routeMode", routeMode)
         .put("sessionId", sessionId)
-        .put("spreadsheetId", spreadsheetId)
+        .put("driveSpace", driveSpace)
         .put("driveFolderId", driveFolderId)
 
     companion object {
@@ -46,8 +46,8 @@ data class ClientProfile(
             id: String = "profile-${UUID.randomUUID()}",
         ): ClientProfile {
             val parsed = SkirkConfig.parse(rawConfig)
-            require(parsed.spreadsheetId.isNotBlank() || parsed.driveFolderId.isNotBlank()) {
-                "Config is missing Drive/Sheets workspace IDs"
+            require(parsed.driveSpace == "appDataFolder" || parsed.driveFolderId.isNotBlank()) {
+                "Config is missing a Drive mailbox"
             }
             return ClientProfile(
                 id = id,
@@ -58,7 +58,7 @@ data class ClientProfile(
                 connectionMode = normalizeConnectionMode(connectionMode),
                 routeMode = parsed.routeMode,
                 sessionId = parsed.sessionId,
-                spreadsheetId = parsed.spreadsheetId,
+                driveSpace = parsed.driveSpace,
                 driveFolderId = parsed.driveFolderId,
             )
         }
@@ -72,7 +72,7 @@ data class ClientProfile(
             connectionMode = normalizeConnectionMode(json.optString("connectionMode", CONNECTION_MODE_VPN)),
             routeMode = json.optString("routeMode", "real_pinned"),
             sessionId = json.optString("sessionId"),
-            spreadsheetId = json.optString("spreadsheetId"),
+            driveSpace = json.optString("driveSpace", json.optString("space")),
             driveFolderId = json.optString("driveFolderId"),
         )
 

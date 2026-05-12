@@ -7,7 +7,7 @@ Generated Skirk configs are credentials. `client.json` and `exit.json` can conta
 - a Google OAuth refresh token;
 - a Google OAuth client ID and client secret;
 - the Skirk tunnel encryption secret;
-- the Drive folder and Sheets workspace IDs.
+- the Drive appData mailbox settings.
 
 Do not commit generated configs, paste them into logs, or share them outside the intended client/exit devices.
 
@@ -16,23 +16,17 @@ Do not commit generated configs, paste them into logs, or share them outside the
 If a config leaks:
 
 1. Stop the exit.
-2. Delete the Skirk workspace:
+2. Revoke the Google OAuth access:
 
    ```bash
-   skirk workspace delete --config skirk-kit/exit.json --delete-drive-folder
-   ```
-
-3. Revoke the Google OAuth access:
-
-   ```bash
-   skirk revoke --config skirk-kit/exit.json --revoke-oauth --keep-workspace
+   skirk revoke --config skirk-kit/exit.json --revoke-oauth
    ```
 
    If the config is unavailable, revoke the app access from the Google account security page.
 
-4. Generate a new kit.
+3. Generate a new kit.
 
-Workspace deletion removes the current mailbox. OAuth revocation invalidates refresh tokens so leaked configs cannot mint new Google access tokens.
+OAuth revocation invalidates refresh tokens so leaked configs cannot mint new Google access tokens.
 
 ## Trust Boundary
 

@@ -1,121 +1,63 @@
 # Skirk Modes
 
-Date: 2026-05-01
+Date: 2026-05-11
 
-Skirk now has a shared encrypted BlobQ core and selectable transports.
+Skirk has one production transport for browsing:
 
-## Implemented Selectable Transports
-
-### `local`
-
-Deterministic filesystem backend for E2E tests.
-
-```bash
-python3 -m skirk e2e-local
+```text
+local SOCKS/HTTP proxy or Android VPN
+-> encrypted mux batches
+-> Google Drive appDataFolder mailbox
+-> Skirk exit
+-> target TCP
 ```
 
-### `gcs`
+## Production Transport
 
-Cloud Storage encrypted object queue.
+### Drive Mux v3
 
-Best for high-throughput bulk transfer when latency is not important.
+Drive Mux v3 is the default and only live tunnel transport. It uses Drive
+`appDataFolder` for both control and data, so setup needs only Drive API access
+and the `drive.appdata` OAuth scope.
 
-```bash
-SECRET="$(python3 -m skirk keygen)"
-python3 -m skirk blobq-send \
-  --transport gcs \
-  --bucket YOUR_BUCKET \
-  --secret "$SECRET" \
-  ./input.bin
+The runtime no longer creates independent Drive objects for every TCP connection
+event. It groups active TCP streams into four mux lanes:
 
-python3 -m skirk blobq-recv \
-  --transport gcs \
-  --bucket YOUR_BUCKET \
-  --secret "$SECRET" \
-  --session SESSION_FROM_SEND \
-  ./output.bin
-```
+- `OPEN` stays on a stable lane so new streams are cheap to discover;
+- data and `FIN` frames carry per-stream sequence numbers;
+- bulk frames are striped across lanes and reassembled in order at the receiver;
+- each lane has bounded upload workers, so Drive create latency is overlapped
+  without making unbounded local queues;
+- object downloads are processed concurrently, so one slow Drive object does not
+  block every other ready object;
+- `OPEN` can carry the first client bytes, avoiding a separate object for the
+  first request payload;
+- all mux objects are AEAD-encrypted with lane-specific keys.
 
-Routing options:
+This is the best Drive shape for browsing because it minimizes object count
+without turning every browser connection into head-of-line blocking.
 
-```bash
---route-mode real-pinned
---route-mode google-front-pinned
---proxy socks5h://127.0.0.1:1080
---google-ip 216.239.38.120
-```
+## Supported Local Frontends
 
-### `drive`
+- `serve-client`: SOCKS5 listener for Linux, macOS, Windows, and desktop apps.
+- `serve-client --http-proxy-listen`: optional HTTP proxy listener sharing the
+  same mux instance as SOCKS.
+- Android app: VPN mode for whole-device routing and optional SOCKS/LAN sharing.
+- Windows desktop app: profile import and local proxy control.
 
-Drive encrypted file queue.
+## Constraints
 
-Best as a fallback when Cloud Storage writes fail but Drive API works. It uses Drive files as chunks and can optionally place them in a configured folder.
-
-```bash
-python3 -m skirk blobq-send \
-  --transport drive \
-  --drive-folder-id YOUR_FOLDER_ID \
-  --secret "$SECRET" \
-  ./input.bin
-```
-
-### `sheets`
-
-Sheets append-only encrypted row log.
-
-Best as a tiny control channel or low-rate mailbox. Use a small chunk size because Sheets cells are not a binary object store.
-
-```bash
-python3 -m skirk blobq-send \
-  --transport sheets \
-  --spreadsheet-id YOUR_SHEET_ID \
-  --sheet-range 'skirk!A:D' \
-  --chunk-size 32768 \
-  --secret "$SECRET" \
-  ./small-input.bin
-```
-
-## Template / Probe Modes
-
-### `apps-script-goose2`
-
-Template:
-
-`skirk/templates/apps_script/Code.gs`
-
-This is the interactive TCP candidate: client sends encrypted frames to Apps Script, Apps Script forwards ciphertext to an owned exit. It is not a general object queue, and it needs an exit service before live E2E.
-
-### `app-engine-stream`
-
-Template:
-
-`skirk/templates/app_engine`
-
-This is the next streaming candidate to test if you approve App Engine creation. Creating App Engine permanently selects the project's App Engine region, so the probe did not create it automatically.
-
-### `cloudrun-stream`
-
-Probe:
-
-`cloud_resources/skirk-probe-20260501-results.md`
-
-This failed in the tested restricted network. The service works on normal internet, but `run.app` is not reachable through the SOCKS path and Google-SNI mismatch does not route to the service.
-
-## Operational Notes
-
-- BlobQ is encrypted end-to-end at the object/chunk layer.
-- Object names expose session id, direction, and sequence, but not plaintext payload.
-- Cloud Storage is the best high-throughput bulk substrate.
-- Drive and Sheets are slower fallbacks.
-- Apps Script is the likely interactive fallback but must be quota-governed.
-- None of these modes should be operated as an unauthenticated public proxy.
+Drive is an object API, not a stream API. Even in the best protocol shape, a new
+small request/response needs object upload, object discovery, exit processing,
+response upload, and response discovery. Skirk reduces avoidable extra objects
+and avoids per-stream polling, but it cannot remove Drive's object visibility
+latency.
 
 ## Verification
 
-Run:
-
 ```bash
-pytest -q
-python3 -m skirk e2e-local
-python3 -m skirk modes
+go test ./...
+skirk serve-exit --config skirk-kit/exit.json
+skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
+curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```

@@ -20,15 +20,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install Python test dependencies
-        run: python -m pip install -e . pytest
-
       - name: Run release preflight
         run: scripts/preflight.sh
 

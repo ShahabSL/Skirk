@@ -189,7 +189,6 @@ func TestTextConfigRoundTrip(t *testing.T) {
 		},
 		Route:  RouteConfig{Mode: "google_front_pinned", GoogleIP: "216.239.38.120"},
 		Drive:  DriveConfig{FolderID: "drive-folder"},
-		Sheets: SheetsConfig{SpreadsheetID: "sheet-id", Range: "skirk!A:D"},
 		Tunnel: TunnelConfig{Listen: "127.0.0.1:18080", ChunkSize: 1024 * 1024, PollIntervalMS: 1200, Concurrency: 4, CleanupProcessed: true},
 	}
 
@@ -217,8 +216,8 @@ func TestTextConfigRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fromFile.Sheets.SpreadsheetID != cfg.Sheets.SpreadsheetID {
-		t.Fatalf("spreadsheet id = %q, want %q", fromFile.Sheets.SpreadsheetID, cfg.Sheets.SpreadsheetID)
+	if fromFile.Secret != cfg.Secret {
+		t.Fatalf("file config secret = %q, want %q", fromFile.Secret, cfg.Secret)
 	}
 	fromInline, err := LoadConfig("SKIRK_CONFIG=" + text)
 	if err != nil {

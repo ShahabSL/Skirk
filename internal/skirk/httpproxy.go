@@ -126,11 +126,15 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 
 func (t *Tunnel) ServeHTTPProxyClient(ctx context.Context, listen string) error {
 	t.role = "client"
+	mux, err := t.getClientMux(ctx)
+	if err != nil {
+		return err
+	}
 	server := HTTPProxyServer{
 		Listen: listen,
 		Logger: t.Logger,
 		Handler: func(connCtx context.Context, target string, conn net.Conn) {
-			if err := t.handleClientConn(connCtx, target, conn); err != nil && t.Logger != nil {
+			if err := mux.openClientStream(connCtx, target, conn); err != nil && t.Logger != nil {
 				t.Logger.Printf("http proxy client target=%s failed: %s", targetFingerprint(target), errorSummary(err))
 			}
 		},

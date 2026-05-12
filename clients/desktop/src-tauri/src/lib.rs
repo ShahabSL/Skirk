@@ -26,7 +26,7 @@ struct ClientProfile {
     #[serde(default)]
     share_lan: bool,
     route_mode: String,
-    spreadsheet_id: String,
+    drive_space: String,
     drive_folder_id: String,
 }
 
@@ -175,8 +175,8 @@ impl DesktopRuntime {
             .and_then(Value::as_str)
             .unwrap_or("direct")
             .to_string();
-        let spreadsheet_id = parsed
-            .pointer("/sheets/spreadsheet_id")
+        let drive_space = parsed
+            .pointer("/drive/space")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
@@ -185,10 +185,8 @@ impl DesktopRuntime {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        if spreadsheet_id.is_empty() && drive_folder_id.is_empty() {
-            return Err(
-                "client config is missing both sheets.spreadsheet_id and drive.folder_id".into(),
-            );
+        if drive_space != "appDataFolder" && drive_folder_id.is_empty() {
+            return Err("client config is missing a Drive mailbox".into());
         }
         let id = format!("profile-{}", epoch_millis());
         let config_path = self
@@ -218,7 +216,7 @@ impl DesktopRuntime {
             socks_port,
             share_lan,
             route_mode,
-            spreadsheet_id,
+            drive_space,
             drive_folder_id,
         };
         let mut profiles = load_profiles(&self.paths)?;

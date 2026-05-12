@@ -34,7 +34,6 @@ type Config struct {
 	Auth      AuthConfig   `json:"auth"`
 	Route     RouteConfig  `json:"route"`
 	Drive     DriveConfig  `json:"drive"`
-	Sheets    SheetsConfig `json:"sheets"`
 	Tunnel    TunnelConfig `json:"tunnel"`
 }
 
@@ -76,11 +75,6 @@ type RouteConfig struct {
 type DriveConfig struct {
 	FolderID string `json:"folder_id,omitempty"`
 	Space    string `json:"space,omitempty"`
-}
-
-type SheetsConfig struct {
-	SpreadsheetID string `json:"spreadsheet_id"`
-	Range         string `json:"range,omitempty"`
 }
 
 type TunnelConfig struct {
@@ -271,9 +265,6 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Auth.TokenCommand == "" {
 		c.Auth.TokenCommand = "gcloud auth print-access-token"
-	}
-	if c.Sheets.Range == "" {
-		c.Sheets.Range = "skirk!A:D"
 	}
 	if c.Tunnel.Listen == "" {
 		c.Tunnel.Listen = "127.0.0.1:18080"

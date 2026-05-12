@@ -11,17 +11,14 @@
     "timeout_seconds": 240
   },
   "drive": {
-    "folder_id": ""
-  },
-  "sheets": {
-    "spreadsheet_id": "REPLACE_WITH_WORKSPACE_SPREADSHEET_ID",
-    "range": "skirk!A:D"
+    "space": "appDataFolder"
   },
   "tunnel": {
     "listen": "127.0.0.1:18080",
-    "chunk_size": 1048576,
-    "poll_interval_ms": 1200,
-    "concurrency": 8,
+    "profile": "auto",
+    "chunk_size": 8388608,
+    "poll_interval_ms": 100,
+    "concurrency": 32,
     "cleanup_processed": true
   }
 }

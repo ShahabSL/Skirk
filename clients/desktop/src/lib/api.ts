@@ -10,7 +10,7 @@ export type ClientProfile = {
   socksPort: number;
   shareLan: boolean;
   routeMode: string;
-  spreadsheetId: string;
+  driveSpace: string;
   driveFolderId: string;
 };
 

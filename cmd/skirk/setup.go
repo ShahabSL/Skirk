@@ -50,8 +50,7 @@ func setupInit(ctx context.Context, args []string) error {
 	defaultTitle := "skirk-" + time.Now().UTC().Format("20060102-150405")
 	fs := flag.NewFlagSet("setup init", flag.ExitOnError)
 	outDir := fs.String("out", "skirk-kit", "directory for generated configs")
-	title := fs.String("title", defaultTitle, "Google workspace title prefix")
-	sheet := fs.String("sheet", "skirk", "Google Sheet tab name")
+	title := fs.String("title", defaultTitle, "kit title used in generated docs")
 	adcPath := fs.String("adc", "", "Application Default Credentials JSON path")
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of launching gcloud login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
@@ -140,7 +139,6 @@ func setupInit(ctx context.Context, args []string) error {
 		creds.Account = "unknown"
 	}
 	auth := creds.AuthConfig()
-	spreadsheetID := ""
 	folderID := "appDataFolder"
 
 	secret, err := skirk.RandomSecret()
@@ -153,7 +151,6 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	sessionID := skirk.SessionString(session)
 	baseDrive := skirk.DriveConfig{Space: "appDataFolder"}
-	baseSheets := skirk.SheetsConfig{SpreadsheetID: spreadsheetID, Range: *sheet + "!A:D"}
 	if err := validateDriveMailbox(ctx, auth, baseDrive, *googleIP, sessionID); err != nil {
 		return err
 	}
@@ -163,7 +160,6 @@ func setupInit(ctx context.Context, args []string) error {
 		Auth:      auth,
 		Route:     skirk.RouteConfig{Mode: *clientRoute, Proxy: *clientProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     baseDrive,
-		Sheets:    baseSheets,
 		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *clientUploadConcurrency, *clientDownloadConcurrency),
 	}
 	exitCfg := skirk.Config{
@@ -172,7 +168,6 @@ func setupInit(ctx context.Context, args []string) error {
 		Auth:      auth,
 		Route:     skirk.RouteConfig{Mode: *exitRoute, Proxy: *exitProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     baseDrive,
-		Sheets:    baseSheets,
 		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency),
 	}
 	if err := os.MkdirAll(*outDir, 0700); err != nil {
@@ -208,9 +203,8 @@ func setupInit(ctx context.Context, args []string) error {
 		ClientTextPath:    clientTextPath,
 		ClientCommandPath: clientCommandPath,
 		ExitPath:          exitPath,
-		SpreadsheetID:     spreadsheetID,
 		DriveFolderID:     folderID,
-		Transport:         driveTransportName(baseDrive, baseSheets),
+		Transport:         driveTransportName(baseDrive),
 		Listen:            *listen,
 		ClientRoute:       *clientRoute,
 		ExitRoute:         *exitRoute,
@@ -227,9 +221,8 @@ func setupInit(ctx context.Context, args []string) error {
 		ClientCommand:     strings.TrimSpace(clientCommand),
 		ExitPath:          exitPath,
 		ReadmePath:        readmePath,
-		SpreadsheetID:     spreadsheetID,
 		DriveFolderID:     folderID,
-		Transport:         driveTransportName(baseDrive, baseSheets),
+		Transport:         driveTransportName(baseDrive),
 		ClientRoute:       *clientRoute,
 		ExitRoute:         *exitRoute,
 		Listen:            *listen,
@@ -245,12 +238,11 @@ func setupInit(ctx context.Context, args []string) error {
 			"client_command":      result.ClientCommand,
 			"exit_config":         result.ExitPath,
 			"readme":              result.ReadmePath,
-			"spreadsheet_id":      result.SpreadsheetID,
 			"drive_folder_id":     result.DriveFolderID,
 			"client_route":        result.ClientRoute,
 			"exit_route":          result.ExitRoute,
 			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
-			"transport":           driveTransportName(baseDrive, baseSheets),
+			"transport":           driveTransportName(baseDrive),
 		})
 	}
 	printSetupResult(result)
@@ -266,7 +258,7 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
 	cfg.ApplyDefaults()
-	drive, _, _, err := skirk.StoresFromConfig(ctx, &cfg)
+	drive, err := skirk.StoresFromConfig(ctx, &cfg)
 	if err != nil {
 		return err
 	}
@@ -707,7 +699,6 @@ type setupSummary struct {
 	ClientTextPath    string
 	ClientCommandPath string
 	ExitPath          string
-	SpreadsheetID     string
 	DriveFolderID     string
 	Transport         string
 	Listen            string
@@ -724,7 +715,6 @@ type setupResult struct {
 	ClientCommand     string
 	ExitPath          string
 	ReadmePath        string
-	SpreadsheetID     string
 	DriveFolderID     string
 	Transport         string
 	ClientRoute       string
@@ -741,9 +731,6 @@ func printSetupResult(result setupResult) {
 	fmt.Printf("Client text config: %s\n", result.ClientTextPath)
 	fmt.Printf("Ready client command: %s\n", result.ClientCommandPath)
 	fmt.Printf("Transport: %s\n", result.Transport)
-	if result.SpreadsheetID != "" {
-		fmt.Printf("Control spreadsheet: %s\n", result.SpreadsheetID)
-	}
 	if result.DriveFolderID != "" {
 		fmt.Printf("Data folder: %s\n", result.DriveFolderID)
 	}
@@ -767,7 +754,7 @@ func printSetupResult(result setupResult) {
 func writeSetupReadme(path string, summary setupSummary) error {
 	content := fmt.Sprintf(`# Skirk Generated Kit
 
-Created workspace: %s
+Created kit: %s
 
 Google account: %s
 ADC path: %s
@@ -817,10 +804,10 @@ All generated client and exit configs contain Google refresh credentials and the
 
 ## Cleanup / Disconnect
 
-To delete the Google workspace created by this kit:
+To disconnect this kit locally and revoke the embedded OAuth token:
 
 `+"```bash"+`
-skirk workspace delete --config %s --delete-drive-folder
+skirk revoke --config %s --revoke-oauth
 `+"```"+`
 
 To immediately invalidate every config generated from this OAuth login, revoke the app token from the Google account security page or run Google's OAuth revocation endpoint against the refresh token.
@@ -832,12 +819,9 @@ The exit can be a VPS, a home server, or a laptop. It does not need an inbound p
 	return os.WriteFile(path, []byte(content), 0600)
 }
 
-func driveTransportName(drive skirk.DriveConfig, sheets skirk.SheetsConfig) string {
+func driveTransportName(drive skirk.DriveConfig) string {
 	if drive.Space == "appDataFolder" {
 		return "drive_appdata"
-	}
-	if sheets.SpreadsheetID != "" {
-		return "drive_folder+sheets"
 	}
 	return "drive_folder"
 }

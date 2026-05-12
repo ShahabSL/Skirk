@@ -50,9 +50,6 @@ func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
 }
 
 func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
-	if isMetadataOnlyMarker(name, data) {
-		return d.createMetadataObject(ctx, name)
-	}
 	var body bytes.Buffer
 	boundary := fmt.Sprintf("skirk-%d", time.Now().UnixNano())
 	writer := multipart.NewWriter(&body)
@@ -113,40 +110,6 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 	}
 	size, _ := strconv.ParseInt(payload.Size, 10, 64)
 	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size}, nil
-}
-
-func (d *DriveStore) createMetadataObject(ctx context.Context, name string) (ObjectInfo, error) {
-	metadata := map[string]any{
-		"name":     name,
-		"mimeType": "application/octet-stream",
-	}
-	if d.isAppData() {
-		metadata["parents"] = []string{"appDataFolder"}
-	} else if d.folderID != "" {
-		metadata["parents"] = []string{d.folderID}
-	}
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return ObjectInfo{}, err
-	}
-	result, err := d.request(ctx, http.MethodPost, "/drive/v3/files?fields=id,name,size,modifiedTime", map[string]string{"Content-Type": "application/json; charset=UTF-8"}, raw)
-	if err != nil {
-		return ObjectInfo{}, err
-	}
-	if err := require2xx(result, "drive metadata create"); err != nil {
-		return ObjectInfo{}, err
-	}
-	var payload struct {
-		ID           string `json:"id"`
-		Name         string `json:"name"`
-		Size         string `json:"size"`
-		ModifiedTime string `json:"modifiedTime"`
-	}
-	if err := json.Unmarshal(result.Body, &payload); err != nil {
-		return ObjectInfo{}, err
-	}
-	size, _ := strconv.ParseInt(payload.Size, 10, 64)
-	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size, Updated: payload.ModifiedTime}, nil
 }
 
 func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
@@ -212,6 +175,20 @@ func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 	return filtered, nil
 }
 
+func (d *DriveStore) ListFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error) {
+	infos, err := d.listContainsFresh(ctx, prefix, since)
+	if err != nil {
+		return nil, err
+	}
+	filtered := infos[:0]
+	for _, info := range infos {
+		if strings.HasPrefix(info.Name, prefix) {
+			filtered = append(filtered, info)
+		}
+	}
+	return filtered, nil
+}
+
 func (d *DriveStore) ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
 	return d.listContains(ctx, contains)
 }
@@ -242,6 +219,39 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime})
 		}
 		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	return infos, nil
+}
+
+func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error) {
+	values := url.Values{}
+	values.Set("q", d.containsQuery([]string{prefix}))
+	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("pageSize", driveListPageSize)
+	values.Set("orderBy", "modifiedTime desc")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	var infos []ObjectInfo
+	err := d.eachFilesPageUntil(ctx, values, "drive list", func(payload driveListPayload) (bool, error) {
+		for _, item := range payload.Files {
+			if !strings.Contains(item.Name, prefix) {
+				continue
+			}
+			if !since.IsZero() && item.ModifiedTime != "" {
+				updated, err := time.Parse(time.RFC3339Nano, item.ModifiedTime)
+				if err == nil && updated.Before(since) {
+					return false, nil
+				}
+			}
+			size, _ := strconv.ParseInt(item.Size, 10, 64)
+			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime})
+		}
+		return true, nil
 	})
 	if err != nil {
 		return nil, err
@@ -362,6 +372,15 @@ type driveListPayload struct {
 }
 
 func (d *DriveStore) eachFilesPage(ctx context.Context, values url.Values, op string, fn func(driveListPayload) error) error {
+	return d.eachFilesPageUntil(ctx, values, op, func(payload driveListPayload) (bool, error) {
+		if err := fn(payload); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+func (d *DriveStore) eachFilesPageUntil(ctx context.Context, values url.Values, op string, fn func(driveListPayload) (bool, error)) error {
 	pageValues := cloneValues(values)
 	for page := 0; page < driveListMaxPages; page++ {
 		result, err := d.request(ctx, http.MethodGet, "/drive/v3/files?"+pageValues.Encode(), nil, nil)
@@ -375,8 +394,12 @@ func (d *DriveStore) eachFilesPage(ctx context.Context, values url.Values, op st
 		if err := json.Unmarshal(result.Body, &payload); err != nil {
 			return err
 		}
-		if err := fn(payload); err != nil {
+		keepGoing, err := fn(payload)
+		if err != nil {
 			return err
+		}
+		if !keepGoing {
+			return nil
 		}
 		if payload.NextPageToken == "" {
 			return nil
@@ -539,17 +562,6 @@ func driveRequestLabel(method, path string) string {
 	default:
 		return strings.ToLower(method)
 	}
-}
-
-func isMetadataOnlyMarker(name string, data []byte) bool {
-	if !bytes.Equal(data, []byte("{}")) {
-		return false
-	}
-	base := controlBaseName(name)
-	if strings.Contains(base, ".OPENI.") || strings.Contains(base, ".DATAI.") {
-		return true
-	}
-	return strings.HasSuffix(base, ".FIN") || strings.HasSuffix(base, ".RST")
 }
 
 func escapeDriveQuery(value string) string {

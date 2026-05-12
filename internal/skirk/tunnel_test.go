@@ -2,10 +2,11 @@ package skirk
 
 import (
 	"context"
-	"encoding/base64"
+	"fmt"
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -30,7 +31,6 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}()
 
 	data := NewMemoryStore()
-	control := NewMemoryStore()
 	secret, err := RandomSecret()
 	if err != nil {
 		t.Fatal(err)
@@ -46,11 +46,11 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 		},
 	}
 	cfg.ApplyDefaults()
-	clientTunnel, err := NewTunnel(data, control, cfg)
+	clientTunnel, err := NewTunnel(data, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exitTunnel, err := NewTunnel(data, control, cfg)
+	exitTunnel, err := NewTunnel(data, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,24 +78,26 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}
 }
 
-func TestControlConnIDParsesStreamPrefix(t *testing.T) {
-	sid, err := ParseSessionID("00112233445566778899aabbccddeeff")
+func TestTunnelMultiplexesConcurrentSOCKSStreams(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	prefix := streamControlDirPrefix(sid, DirectionDown)
-	name := streamBatchControlName(sid, DirectionDown, "abc123", 1, 8)
-	if got := controlConnID(prefix, name); got != "abc123" {
-		t.Fatalf("controlConnID() = %q, want abc123", got)
-	}
-	if got := controlConnID(prefix, "control/other/down/abc123/0000000000000001.DATA"); got != "" {
-		t.Fatalf("controlConnID() for wrong prefix = %q, want empty", got)
-	}
-}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
 
-func TestOpenControlEncryptsTargetInFilename(t *testing.T) {
 	data := NewMemoryStore()
-	control := NewMemoryStore()
 	secret, err := RandomSecret()
 	if err != nil {
 		t.Fatal(err)
@@ -104,64 +106,72 @@ func TestOpenControlEncryptsTargetInFilename(t *testing.T) {
 		Secret:    secret,
 		SessionID: "00112233445566778899aabbccddeeff",
 		Tunnel: TunnelConfig{
-			PollIntervalMS: 10,
+			Listen:           freeTCPAddr(t),
+			ChunkSize:        4096,
+			PollIntervalMS:   5,
+			CleanupProcessed: true,
 		},
 	}
 	cfg.ApplyDefaults()
-	tunnel, err := NewTunnel(data, control, cfg)
+	clientTunnel, err := NewTunnel(data, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := "secret-target.example:443"
-	if err := tunnel.sendEvent(context.Background(), DirectionUp, "abc123", 0, "OPEN", "", target, 0, false, ""); err != nil {
+	exitTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
 		t.Fatal(err)
 	}
-	control.mu.Lock()
-	var name string
-	for key := range control.objects {
-		name = key
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = exitTunnel.ServeExit(ctx) }()
+	go func() { _ = clientTunnel.ServeClient(ctx, cfg.Tunnel.Listen) }()
+	time.Sleep(75 * time.Millisecond)
+
+	const streams = 24
+	var wg sync.WaitGroup
+	errCh := make(chan error, streams)
+	for i := 0; i < streams; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			conn, err := dialViaSOCKS5(context.Background(), "socks5h://"+cfg.Tunnel.Listen, echo.Addr().String())
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			msg := []byte(fmt.Sprintf("stream-%02d", i))
+			if _, err := conn.Write(msg); err != nil {
+				errCh <- err
+				return
+			}
+			buf := make([]byte, len(msg))
+			if _, err := io.ReadFull(conn, buf); err != nil {
+				errCh <- err
+				return
+			}
+			if string(buf) != string(msg) {
+				errCh <- fmt.Errorf("stream %d got %q, want %q", i, buf, msg)
+			}
+		}(i)
 	}
-	control.mu.Unlock()
-	if name == "" {
-		t.Fatal("expected one OPEN control object")
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("concurrent streams timed out")
 	}
-	if !strings.Contains(name, ".OPENI.") {
-		t.Fatalf("open control name = %q, want OPENI", name)
-	}
-	if strings.Contains(name, target) || strings.Contains(name, base64.RawURLEncoding.EncodeToString([]byte(target))) {
-		t.Fatalf("open control name leaks target: %s", name)
-	}
-	event, ok := tunnel.parseOpenControlInfo(name)
-	if !ok {
-		t.Fatalf("failed to parse encrypted OPENI control: %s", name)
-	}
-	if event.Target != target || event.ConnID != "abc123" || event.Sequence != 0 {
-		t.Fatalf("parsed event = %+v", event)
-	}
-	if err := tunnel.sendOpenEvent(context.Background(), DirectionUp, "def456", 0, target, []byte("GET / HTTP/1.1\r\n")); err != nil {
-		t.Fatal(err)
-	}
-	control.mu.Lock()
-	for key := range control.objects {
-		if strings.Contains(key, "/def456/") {
-			name = key
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	control.mu.Unlock()
-	event, ok = tunnel.parseOpenControlInfo(name)
-	if !ok {
-		t.Fatalf("failed to parse encrypted fused OPEN control: %s", name)
-	}
-	initial, err := base64.StdEncoding.DecodeString(event.InitialData)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Target != target || string(initial) != "GET / HTTP/1.1\r\n" || event.Bytes != len(initial) {
-		t.Fatalf("parsed fused event = %+v initial=%q", event, initial)
-	}
-	legacy := streamControlPrefix(tunnel.SessionID, DirectionUp, "abc123") + "0000000000000000.OPEN." + base64.RawURLEncoding.EncodeToString([]byte(target))
-	if _, ok := tunnel.parseOpenControlInfo(legacy); ok {
-		t.Fatal("legacy plaintext OPEN controls should not be accepted")
 	}
 }
 
@@ -179,6 +189,83 @@ func TestAdaptiveLimiterBacksOffOnSlowSuccess(t *testing.T) {
 	}
 }
 
+func TestMuxBatchAndOpenPayloadRoundTrip(t *testing.T) {
+	open := encodeMuxOpenPayload("example.com:443", []byte("hello"))
+	target, initial, err := decodeMuxOpenPayload(open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "example.com:443" || string(initial) != "hello" {
+		t.Fatalf("open payload target=%q initial=%q", target, initial)
+	}
+
+	raw, err := encodeMuxBatch([]muxFrame{
+		{Kind: muxFrameOpen, StreamID: 7, Payload: open},
+		{Kind: muxFrameData, StreamID: 7, Seq: 1, Payload: []byte("payload")},
+		{Kind: muxFrameFIN, StreamID: 7, Seq: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, err := decodeMuxBatch(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 3 || frames[0].Kind != muxFrameOpen || frames[1].Kind != muxFrameData || frames[1].Seq != 1 || string(frames[1].Payload) != "payload" {
+		t.Fatalf("frames = %+v", frames)
+	}
+}
+
+func TestMuxObjectNameIncludesEpoch(t *testing.T) {
+	sid, err := ParseSessionID("00112233445566778899aabbccddeeff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := muxObjectName(sid, DirectionDown, "cafebabedeadbeef", 3, 9, 2, 1234)
+	if !strings.Contains(name, "/cafebabedeadbeef/l03/") {
+		t.Fatalf("name = %q, want epoch segment", name)
+	}
+	meta, ok := parseMuxObjectInfo(ObjectInfo{Name: name, ID: "file-id"})
+	if !ok {
+		t.Fatalf("parse failed for %q", name)
+	}
+	if meta.ID != "file-id" || meta.Lane != 3 || meta.Seq != 9 {
+		t.Fatalf("meta = %+v, want lane=3 seq=9 id=file-id", meta)
+	}
+}
+
+func TestMuxStreamReordersStripedFrames(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	mux := &driveMux{
+		t:       &Tunnel{},
+		streams: map[uint64]*muxStream{},
+		pending: map[uint64][]muxFrame{},
+	}
+	stream := mux.registerStream(42, left)
+	mux.startWriter(stream)
+	defer stream.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, StreamID: 42, Seq: 2, Payload: []byte("b")})
+	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, StreamID: 42, Seq: 1, Payload: []byte("a")})
+
+	if err := right.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(right, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "ab" {
+		t.Fatalf("got %q, want ab", buf)
+	}
+}
+
 func TestStreamDownloadWindowCapsPerConnectionReadAhead(t *testing.T) {
 	cfg := &Config{
 		Secret:    strings.Repeat("a", 64),
@@ -188,7 +275,7 @@ func TestStreamDownloadWindowCapsPerConnectionReadAhead(t *testing.T) {
 		},
 	}
 	cfg.ApplyDefaults()
-	tunnel, err := NewTunnel(NewMemoryStore(), NewMemoryStore(), cfg)
+	tunnel, err := NewTunnel(NewMemoryStore(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ Skirk is a Go-first restricted-network transport that uses Google Drive as an en
 ## Current Status
 
 - Production path: Go CLI in `cmd/skirk`.
-- Transport: encrypted Drive appDataFolder mailbox with Drive-folder fallback.
+- Transport: encrypted Drive appDataFolder mailbox using Drive Mux v3.
 - Tuning: adaptive Drive profile by default; direct routes start at full measured windows, restricted/proxied routes ramp up and back off on Google API pressure.
 - Client UX: one generated `skirk:...` text config; no client-side Google login required.
 - Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
@@ -84,7 +84,7 @@ skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
 curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```
 
-The default `profile=auto` keeps the user-facing config simple. It uses full windows on direct routes, starts safer on restricted/proxied routes, and automatically backs off when Google returns rate-limit pressure. Control polling is shared per tunnel direction so many app connections do not multiply into many independent Drive list loops, and the exit slows its new-connection polling while idle.
+The default `profile=auto` keeps the user-facing config simple. It uses measured Drive operation windows, automatically backs off when Google returns rate-limit pressure, and batches active TCP streams into ordered mux lanes. Bulk stream frames are striped across lanes and reassembled in order, so Firefox, Telegram, and other apps can open many TCP connections without turning each one into a separate Drive polling loop.
 
 For sharing without file transfer, send the one-line text inside `skirk-kit/client.skirk`. The client can paste it into the menu or use it directly:
 
@@ -129,19 +129,11 @@ SOCKS5 proxy.
 
 ## Cleanup
 
-Delete the visible Drive folder created by the fallback setup path:
-
-```bash
-skirk workspace delete --config skirk-kit/exit.json --delete-drive-folder
-```
-
-To invalidate all configs generated from the same OAuth login, revoke the Google app access from the account security page.
-
-Or use Skirk's revoke command:
-
 ```bash
 skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
+
+That invalidates the OAuth credential embedded in the generated configs. You can also revoke app access from the Google account security page.
 
 ## Security Model
 
@@ -157,6 +149,4 @@ Generated configs contain a Google refresh token and the Skirk tunnel secret. Tr
 - [Client Guide](docs/clients.md)
 - [Release Guide](docs/release.md)
 - [Go CLI Notes](docs/go_skirk.md)
-- [Drive Architecture](docs/skirk_drive_sheets_architecture.md)
 - [Modes](docs/skirk_modes.md)
-- [Latest Throughput Notes](docs/optimized_throughput_2026_05_02.md)
