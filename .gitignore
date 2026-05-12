@@ -15,6 +15,7 @@ skirk-kit/
 skirk-config/
 client.json
 exit.json
+*.skirk
 *.secret
 *.token
 *.pem

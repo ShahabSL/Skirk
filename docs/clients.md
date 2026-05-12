@@ -1,26 +1,78 @@
 # Skirk Clients
 
-## Linux
+Every client consumes the same generated profile:
 
-Linux uses the Go binary directly:
-
-```bash
-./bin/skirk client --config client.skirk --listen 127.0.0.1:18080
+```text
+skirk:...
 ```
 
-This is the correct path for headless Linux servers, terminal-only desktops, and SSH sessions.
+Clients do not need Google login or `gcloud`. Treat the profile like a password.
 
-For a desktop Linux machine with a browser, an optional local dashboard is available:
+## Linux CLI
+
+Install:
 
 ```bash
-./bin/skirk client-ui --config client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Open `http://127.0.0.1:18280`.
+Run:
 
-## Windows
+```bash
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+```
 
-Preferred Windows UX is the portable desktop app under `clients/desktop`. It imports the one-line `client.skirk` text config, stores profiles in portable data, and starts/stops the Go Skirk SOCKS sidecar.
+Or paste the one-line profile:
+
+```bash
+read -r SKIRK_CLIENT_CONFIG
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
+```
+
+Test:
+
+```bash
+curl --socks5-hostname 127.0.0.1:18080 http://example.com/
+```
+
+For apps, configure SOCKS5 `127.0.0.1:18080`. Prefer `socks5h` behavior when
+the app exposes that choice.
+
+Optional HTTP/HTTPS proxy:
+
+```bash
+skirk serve-client \
+  --config client.skirk \
+  --listen 127.0.0.1:18080 \
+  --http-proxy-listen 127.0.0.1:18081
+```
+
+## Windows Desktop
+
+The preferred Windows UX is the portable desktop app from release assets. It:
+
+- imports one-line `skirk:` profiles or `client.json`;
+- stores profiles in portable data;
+- starts and stops the Go Skirk SOCKS sidecar;
+- can bind the SOCKS listener to `0.0.0.0` for LAN sharing;
+- shows connection status and logs.
+
+Windows is currently proxy-first. It does not install a system VPN/TUN driver.
+Configure the browser or application proxy settings to SOCKS5
+`127.0.0.1:18080`.
+
+Command-line fallback:
+
+```powershell
+.\skirk-windows-amd64.exe serve-client --config .\client.skirk --listen 127.0.0.1:18080
+```
+
+Optional local browser dashboard:
+
+```powershell
+.\skirk-windows-amd64.exe client-ui --config .\client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+```
 
 Development run:
 
@@ -32,57 +84,62 @@ npm install
 npm run tauri dev
 ```
 
-Portable release layout:
-
-```text
-Skirk.exe
-skirk-portable
-portable-data/
-sidecars/windows/skirk.exe
-```
-
-The command-line Windows client is still available:
-
-```bash
-make build-windows
-```
-
-Run it from PowerShell:
-
-```powershell
-.\skirk-windows-amd64.exe client-ui --config .\client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
-```
-
-Configure browser or application proxy settings to SOCKS5 `127.0.0.1:18080`.
-
-The dashboard is optional on Windows too. The non-GUI command also works:
-
-```powershell
-.\skirk-windows-amd64.exe client --config .\client.skirk --listen 127.0.0.1:18080
-```
-
 ## Android
 
-Android ships as a native VPN and proxy client. It packages the Go `skirk`
-engine inside the APK, imports the same one-line `skirk:` config, and runs a
-foreground Android `VpnService` by default.
+The Android app packages the Go Skirk engine and starts it as a foreground
+service. The default UX is whole-device VPN mode.
 
-Build:
+Manual build:
 
 ```bash
 cd clients/android
 ./gradlew :app:assembleDebug --console=plain
 ```
 
-Install `app/build/outputs/apk/debug/app-debug.apk`, paste the generated
-one-line config, keep **Use VPN mode** enabled, import it, then tap Connect.
-Android will ask for VPN consent the first time. After approval, normal app
-traffic routes through Skirk without per-app proxy settings.
+Install:
 
-Proxy mode is still available for apps or LAN devices that explicitly support
-SOCKS5. Disable **Use VPN mode** and enable LAN sharing to bind
-`0.0.0.0:18080` so another device can use the phone as a SOCKS5 proxy.
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Use:
+
+1. Open Skirk.
+2. Import or paste the one-line `skirk:` profile.
+3. Select `VPN` for all-app routing, or `Proxy` for SOCKS-only mode.
+4. Tap `Connect`.
+5. Approve Android's VPN permission prompt the first time.
+
+Proxy/LAN sharing is explicit. In `Proxy` mode, enable LAN sharing only when
+another device should use the phone as a SOCKS5 proxy.
 
 Telegram note: when Skirk VPN mode is connected, Telegram's built-in proxy
 setting should be off. If Telegram's internal proxy remains enabled, Telegram
-will continue testing that proxy entry even though Android VPN routing is active.
+keeps testing that internal proxy entry instead of relying on Android VPN
+routing.
+
+## Debug E2E On Android
+
+```bash
+adb install -r clients/android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n app.skirk.client/.MainActivity
+
+CONFIG="$(cat skirk-kit/client.skirk)"
+adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
+  -a app.skirk.client.debug.IMPORT \
+  --es name Android-E2E \
+  --es config "$CONFIG" \
+  --ei port 18080 \
+  --ez shareLan false \
+  --es mode vpn
+adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
+  -a app.skirk.client.debug.START
+
+adb shell am start -a android.intent.action.VIEW -d http://example.com/
+
+adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
+  -a app.skirk.client.debug.STOP
+```
+
+For SOCKS/LAN sharing tests, import with `--es mode proxy --ez shareLan true`
+and connect another device to `PHONE_LAN_IP:18080`.

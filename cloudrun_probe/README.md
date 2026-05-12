@@ -1,6 +1,9 @@
-# Skirk Cloud Run Probe
+# Archived Cloud Run Probe
 
-Temporary Cloud Run service for measuring whether a real `*.run.app` endpoint works through the restricted network.
+This was a temporary research probe for measuring whether a real `*.run.app`
+endpoint worked through the restricted network. It is not part of the current
+Skirk production setup, which uses the Drive `appDataFolder` transport described
+in the root README and `docs/`.
 
 Endpoints:
 
@@ -9,4 +12,6 @@ Endpoints:
 - `/stream` - emits delayed chunks.
 - `/ws` - WebSocket echo.
 
-Cleanup is tracked in `cloud_resources/skirk-probe-20260501.json` after deployment.
+If you deploy this historical probe manually, track and delete the cloud
+resources yourself. The normal Skirk install/setup flow does not create Cloud Run
+services.

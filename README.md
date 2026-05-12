@@ -4,149 +4,215 @@
   <img src="assets/logo.png" alt="Skirk logo" width="160">
 </p>
 
-Skirk is a Go-first restricted-network transport that uses Google Drive as an encrypted mailbox. It is designed for the case where ordinary endpoints fail but Google APIs can still be reached, including through Google-fronted TLS routing.
+Skirk is a Go-first transport for restricted-network testing. It exposes a local
+SOCKS5 proxy, optional HTTP proxy, or Android VPN frontend, then moves encrypted
+TCP stream frames through a Google Drive `appDataFolder` mailbox to an exit
+machine with normal internet egress.
 
-## Current Status
+Skirk is for lawful, authorized, owned-account and owned-network use only. It is
+not affiliated with or endorsed by Google, Google Cloud, Google Drive,
+Cloudflare, GitHub, Microsoft, Android, or any other provider. Read
+[DISCLAIMER.md](DISCLAIMER.md) before using or redistributing it.
 
-- Production path: Go CLI in `cmd/skirk`.
-- Transport: encrypted Drive appDataFolder mailbox using Drive Mux v3.
-- Tuning: adaptive Drive profile by default; direct routes start at full measured windows, restricted/proxied routes ramp up and back off on Google API pressure.
-- Client UX: one generated `skirk:...` text config; no client-side Google login required.
-- Exit UX: run `skirk serve-exit` anywhere with normal internet egress.
-- Client mode: local SOCKS5 proxy on Linux, portable desktop client on Windows, and native Android VPN client with optional SOCKS/LAN sharing.
+## What You Need
 
-Skirk does not require a VPS for protocol reasons. It requires an exit machine with working internet egress. A VPS is the most reliable exit because it stays online, but a laptop or home server also works while it is awake and connected.
+- One exit machine with working internet egress. A VPS is best for uptime, but a
+  laptop or home server works while it stays online.
+- One Google account for the Drive mailbox.
+- One generated `skirk:...` client profile for each client device.
 
-## Legal Notice
-
-Skirk is for lawful, authorized, owned-account and owned-network use only. It is not affiliated with or endorsed by Google, Cloudflare, GitHub, Microsoft, Android, or any other provider. Read [DISCLAIMER.md](DISCLAIMER.md) before using or redistributing this project.
+Clients do not need Google login, `gcloud`, or a Google Cloud project. The exit
+setup creates the Google-backed kit once and prints a one-line client profile.
 
 ## Quick Start
 
-Install on a Linux exit/client machine:
+Install Skirk on the exit machine:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Then open the operator menu:
-
-```bash
-skirk
-```
-
-Or build locally from a clone:
-
-```bash
-make build
-./bin/skirk
-```
-
-Create a Google-backed kit:
+Create a kit:
 
 ```bash
 skirk setup init --out skirk-kit
 ```
 
-If Google login is needed, Skirk runs `gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force` and prints the browser URL/code flow.
-If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` first.
-
-To switch to a different Google account, force a new login:
-
-```bash
-skirk setup init --out skirk-kit-new --google-login
-```
-
-To start from a clean local Google login state first:
-
-```bash
-skirk setup init --out skirk-kit-new --reset-google-login
-```
-
-Recommended setup: create a `TVs and Limited Input devices` OAuth client in your own Google Cloud project and run:
+If Google login is needed, setup starts a browser-code login. On Linux, Skirk can
+install Google Cloud CLI under `~/google-cloud-sdk` when it is missing. For the
+most reliable quota ownership, use your own Google OAuth client:
 
 ```bash
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-That path uses Google's device login flow and Drive `appDataFolder` with the narrow `drive.appdata` scope. The plain `skirk setup init` path remains as an easy fallback through Google Cloud CLI, but it can hit shared OAuth quota.
-
-Run the exit on a VPS, laptop, or server with normal internet:
+Run the exit:
 
 ```bash
 skirk serve-exit --config skirk-kit/exit.json
 ```
 
-Run the client SOCKS5 proxy:
+Copy the one-line text from `skirk-kit/client.skirk` and use it on a client.
+From a Linux client:
 
 ```bash
-skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
-curl --socks5-hostname 127.0.0.1:18080 http://example.com/
-```
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 
-The default `profile=auto` keeps the user-facing config simple. It uses measured Drive operation windows, automatically backs off when Google returns rate-limit pressure, and batches active TCP streams into ordered mux lanes. Bulk stream frames are striped across lanes and reassembled in order, so Firefox, Telegram, and other apps can open many TCP connections without turning each one into a separate Drive polling loop.
-
-For sharing without file transfer, send the one-line text inside `skirk-kit/client.skirk`. The client can paste it into the menu or use it directly:
-
-```bash
 read -r SKIRK_CLIENT_CONFIG
+# paste the skirk:... profile, press Enter, then run:
 skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
-For local reachability tests where the restricted network is exposed as another SOCKS proxy:
+Test the local SOCKS proxy:
 
 ```bash
-skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
+curl --socks5-hostname 127.0.0.1:18080 http://example.com/
+```
+
+Use `socks5h` behavior in apps that support it so DNS resolution happens through
+the Skirk exit path.
+
+## Client Options
+
+Linux and headless servers use the Go CLI:
+
+```bash
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+```
+
+Windows users should use the portable desktop app from the release assets. It
+imports the same one-line `skirk:` profile and starts the Skirk SOCKS sidecar.
+The Windows build is proxy-first; configure the browser or app to use SOCKS5
+`127.0.0.1:18080`.
+
+Android users should use the Android app. Import the same one-line profile,
+select `VPN`, and tap `Connect`. Android asks for VPN consent on first use.
+`Proxy` mode is available when an app or another LAN device explicitly supports
+SOCKS5.
+
+See [docs/clients.md](docs/clients.md) for build and release details.
+
+## Restricted-Network Testing
+
+Generated client profiles default to `google_front`, which uses a
+Google-looking TLS route for Google API traffic. The exit defaults to `direct`
+because it normally has ordinary internet access.
+
+If the restricted network is exposed locally as another SOCKS proxy:
+
+```bash
+skirk serve-client \
+  --config "$SKIRK_CLIENT_CONFIG" \
+  --listen 127.0.0.1:18080 \
   --route-mode google_front \
   --upstream-proxy socks5h://127.0.0.1:11093
 ```
 
-Optional: run the desktop dashboard on Windows or a desktop Linux machine with a browser:
+For normal-network throughput checks, omit `--upstream-proxy`. You can also
+force direct Google API routing:
 
 ```bash
-skirk client-ui --config skirk-kit/client.skirk --socks 127.0.0.1:18080 --ui 127.0.0.1:18280
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 --route-mode direct
 ```
 
-Preferred Windows app:
+## Benchmark And Logs
+
+With the exit running, measure live latency, throughput, and estimated Drive API
+use:
 
 ```bash
-cd clients/desktop
-npm install
-npm run tauri dev
+skirk bench-live --config skirk-kit/client.skirk --samples 5
 ```
 
-Android app:
+Measure a hostile path:
 
 ```bash
-cd clients/android
-./gradlew :app:assembleDebug --console=plain
+skirk bench-live \
+  --config skirk-kit/client.skirk \
+  --upstream-proxy socks5h://127.0.0.1:11093 \
+  --route-mode google_front \
+  --samples 3
 ```
 
-Install the APK from `clients/android/app/build/outputs/apk/debug/app-debug.apk`,
-paste the one-line `skirk:` config, keep **Use VPN mode** enabled, and tap
-Connect. Enable LAN sharing only if other devices should use the phone as a
-SOCKS5 proxy.
+Add a bulk URL when you want throughput:
 
-## Cleanup
+```bash
+skirk bench-live --config skirk-kit/client.skirk --bulk-url http://example.com/big.bin
+```
+
+Runtime logs include per-minute Drive operation counts, estimated quota units,
+errors, response bytes, and operation timing. Google Cloud Console metrics are
+the project-level source of truth when using your own OAuth client/project.
+
+## Cleanup And Disconnect
+
+Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
+automatic janitor that deletes stale `muxv3/`, `control/`, and `data/` objects
+older than 24 hours.
+
+Manual cleanup is dry-run by default:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h
+```
+
+Actually delete matching stale objects:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+```
+
+Revoke the OAuth token embedded in a generated config:
 
 ```bash
 skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
-That invalidates the OAuth credential embedded in the generated configs. You can also revoke app access from the Google account security page.
+Then delete local generated files:
 
-## Security Model
+```bash
+rm -rf skirk-kit
+```
 
-The Google account sees encrypted chunks and control metadata. The exit sees target addresses and plaintext for non-TLS application traffic, like any proxy or VPN exit. HTTPS payloads remain protected by the target site's TLS.
+If a client profile leaks, revoke OAuth access and generate a new kit. Treat
+`client.skirk`, `client.json`, and `exit.json` like passwords.
 
-Generated configs contain a Google refresh token and the Skirk tunnel secret. Treat `client.skirk`, `client.json`, and `exit.json` like passwords.
+## Advanced
+
+Forward exit traffic through another proxy, such as a local WARP/wireproxy
+SOCKS listener:
+
+```bash
+skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:40000
+```
+
+Expose an HTTP/HTTPS proxy on the client in addition to SOCKS5:
+
+```bash
+skirk serve-client \
+  --config skirk-kit/client.skirk \
+  --listen 127.0.0.1:18080 \
+  --http-proxy-listen 127.0.0.1:18081
+```
+
+Bounded burst polling exists as an experiment and is disabled by default:
+
+```bash
+skirk serve-client --config skirk-kit/client.skirk --burst-poll --burst-poll-ms 25
+```
+
+Early measurements showed only modest, noisy latency gains, so the stable
+default remains the normal adaptive polling path.
 
 ## Documentation
 
-- [Legal Disclaimer](DISCLAIMER.md)
 - [Install Guide](docs/install.md)
 - [Setup Guide](docs/setup.md)
 - [Client Guide](docs/clients.md)
-- [Release Guide](docs/release.md)
+- [Transport Modes](docs/skirk_modes.md)
 - [Go CLI Notes](docs/go_skirk.md)
-- [Modes](docs/skirk_modes.md)
+- [Release Guide](docs/release.md)
+- [Security Policy](SECURITY.md)
+- [Legal Disclaimer](DISCLAIMER.md)

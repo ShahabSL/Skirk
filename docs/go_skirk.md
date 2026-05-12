@@ -1,102 +1,160 @@
-# Go Skirk
+# Go CLI Notes
 
-Skirk's production client is implemented in Go under `cmd/skirk` and `internal/skirk`.
+Skirk's core transport lives in `cmd/skirk` and `internal/skirk`.
 
-## Current Modes
+## Commands
 
-- `serve-client`: local SOCKS5 listener that sends CONNECT streams through Drive Mux v3.
-- `serve-exit`: exit poller that reads muxed client stream frames, dials target TCP, and writes downstream frames back.
-- `revoke`: revokes the OAuth refresh token embedded in a generated kit.
+```bash
+skirk help
+skirk version
+skirk keygen
+skirk setup init --out skirk-kit
+skirk serve-exit --config skirk-kit/exit.json
+skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
+skirk bench-live --config skirk-kit/client.skirk
+skirk cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
+skirk revoke --config skirk-kit/exit.json --revoke-oauth
+```
+
+`client` and `exit` are compatibility aliases for `serve-client` and
+`serve-exit`; user-facing docs should use the explicit `serve-*` names.
 
 ## Config
 
-Generate a starter config:
+Generate a sample config:
 
-```sh
+```bash
 go run ./cmd/skirk sample-config --out skirk.json
 ```
 
-The important fields are:
+Generate a production kit:
 
-- `secret`: shared AEAD secret. Use `skirk keygen`.
-- `session_id`: optional fixed 32-hex session for a paired client and exit.
-- `route.proxy`: restricted-network SOCKS proxy, usually `socks5h://127.0.0.1:1080`.
-- `route.google_ip`: known Google edge IP for pinned routing. The default setup path uses hostname fronting (`google_front`) because some SOCKS relays allow `www.google.com` but reject IP-literal Google edge targets; use `google_front_pinned` only when a specific Google edge IP is measured to work.
-- `drive.space`: set to `appDataFolder` for the recommended app-private mailbox.
-- `drive.folder_id`: visible Drive folder ID for the fallback mailbox.
-- `tunnel.profile`: `auto` by default. Direct routes start at the full measured Drive windows. Restricted/proxied routes start lower, then grow and back off based on Google API success or rate-limit pressure.
-- `tunnel.chunk_size`: Drive object payload size. Start conservative, then benchmark.
-- `tunnel.concurrency`: legacy shared cap for Drive workers.
-- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual caps for experiments. Leave unset for `profile=auto`.
-- `tunnel.cleanup_processed`: removes processed Drive mux objects.
+```bash
+go run ./cmd/skirk setup init --out skirk-kit
+```
 
-## Why Drive appData
+Important fields:
 
-Drive appDataFolder keeps Skirk's encrypted mailbox private to the OAuth application and lets the runtime use one Google API and one narrow OAuth scope. New setup kits use Drive-only mux objects for control and data.
+- `secret`: shared tunnel secret.
+- `session_id`: paired client/exit mailbox session.
+- `auth`: Google OAuth credentials or a token command.
+- `route.mode`: Google API route mode.
+- `route.proxy`: optional upstream proxy for the client Google API path.
+- `route.google_ip`: Google edge IP for pinned route modes.
+- `drive.space`: `appDataFolder` for the production mailbox.
+- `tunnel.profile`: `auto` by default.
+- `tunnel.chunk_size`: maximum mux object payload size.
+- `tunnel.poll_interval_ms`: baseline mailbox poll interval.
+- `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual
+  caps; leave unset for auto profile.
+- `tunnel.exit_proxy`: optional proxy for target traffic from the exit.
+- `tunnel.cleanup_processed`: deletes processed mux objects.
+- `tunnel.burst_poll`: opt-in latency experiment; disabled by default.
 
-This does not make Google Drive a low-latency stream substrate; polling and API quotas still define the ceiling.
+## Drive AppData
 
-## Operational Notes
+Skirk uses Drive `appDataFolder` for encrypted runtime objects. That keeps data
+out of the user's visible Drive files and lets the recommended setup path use
+the narrow `drive.appdata` OAuth scope.
 
-- Use a dedicated Google account for testing.
-- Use a dedicated OAuth client/project per operator where practical.
-- Keep `chunk_size` within a measured range; larger chunks improve bulk throughput but hurt latency and retries.
-- Runtime polling is shared per tunnel direction. Active TCP streams are batched into four mux lanes, and bulk frames are striped with per-stream ordered reassembly, so browser fanout does not create one Drive list loop per TCP stream.
-- `cleanup_processed` should stay enabled. Runtime cleanup is delayed out of the foreground byte path so active streams get priority.
-- The access token can come from `SKIRK_ACCESS_TOKEN`, `auth.access_token`, or `auth.token_command`.
+Drive is still an object API. Latency comes from upload, list/discovery,
+download, and cleanup operations. The mux design reduces object count and
+browser fanout overhead; it does not make Drive a low-latency stream.
 
 ## Quota Accounting
 
-Skirk logs an estimated Drive quota window every minute while traffic is active:
+Skirk logs an estimated Drive quota window:
 
 ```text
-drive quota window=60s calls=42 est_units=5100 errors=0 response_bytes=123456 ops=download:12/2400u,list:18/1800u,upload:12/600u
+drive quota window=1m0s calls=42 est_units=5100 errors=0 response_bytes=123456 ops=download:12/2400u,list:18/1800u,upload:12/600u
 ```
 
-Set `SKIRK_QUOTA_LOG_INTERVAL=10s` for short tests, or `SKIRK_QUOTA_LOG_INTERVAL=0` to disable the periodic line. The estimate follows the current Drive API quota-unit table: list requests are 100 units, downloads are 200 units, and upload/delete/create requests are counted as 50 units.
+The estimate follows Skirk's internal unit table:
 
-For project-level truth, use Google Cloud Console: APIs & Services -> Enabled APIs & services -> Google Drive API -> Metrics. Those charts are project-scoped, so they are useful only when the kit was generated with your own OAuth client/project.
+- `list`: 100 units
+- `download`: 200 units
+- `upload`, `delete`, and object create operations: 50 units
+
+Set:
+
+```bash
+SKIRK_QUOTA_LOG_INTERVAL=10s
+```
+
+to log more frequently during short tests, or:
+
+```bash
+SKIRK_QUOTA_LOG_INTERVAL=0
+```
+
+to disable the periodic quota line.
+
+For project-level truth, use Google Cloud Console metrics for the Google Drive
+API. Those charts are useful when the kit was generated with your own OAuth
+client/project.
+
+## Cleanup
+
+Generated configs enable runtime cleanup. Processed objects are deleted after
+they are consumed. Cleanup yields to foreground traffic, so active browsing gets
+priority over deleting old objects.
+
+`serve-exit` also starts a janitor:
+
+- default age: 24 hours;
+- default interval: 6 hours;
+- prefixes: `muxv3/`, `control/`, `data/`.
+
+Environment controls:
+
+```bash
+SKIRK_DISABLE_JANITOR=1
+SKIRK_JANITOR_OLDER_THAN=6h
+SKIRK_JANITOR_INTERVAL=1h
+```
+
+Manual cleanup:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h
+skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+```
 
 ## Validation
 
-Local:
+Local tests:
 
-```sh
+```bash
 go test ./...
 ```
 
-Restricted network substrate:
+Direct live test:
 
-```sh
-go run ./cmd/skirk serve-client \
-  --config skirk.json \
-  --listen 127.0.0.1:18080 \
+```bash
+skirk serve-exit --config skirk-kit/exit.json
+skirk bench-live --config skirk-kit/client.skirk --samples 5
+```
+
+Restricted path:
+
+```bash
+skirk bench-live \
+  --config skirk-kit/client.skirk \
+  --upstream-proxy socks5h://127.0.0.1:11093 \
   --route-mode google_front \
-  --upstream-proxy socks5h://127.0.0.1:11093
-
-curl --socks5-hostname 127.0.0.1:18080 http://example.com/
+  --samples 3
 ```
-
-SOCKS path:
-
-Run an exit:
-
-```sh
-go run ./cmd/skirk serve-exit --config skirk.json
-```
-
-Run a client:
-
-```sh
-go run ./cmd/skirk serve-client --config skirk.json --listen 127.0.0.1:18080
-```
-
-Then point an app at `socks5h://127.0.0.1:18080`.
 
 ## Learning Notes
 
-This follows a mux-lane design common in real transports: independent streams share a bounded number of ordered physical lanes. It preserves per-stream ordering while avoiding the pathological one-object-per-stream-event behavior that makes browsers unusable over Drive.
+The production path is a bounded mux over object storage. That is the same
+high-level pattern used by real transports when they separate logical streams
+from physical lanes, but the underlying carrier here is Drive object creation
+and discovery rather than a socket.
 
 ## Why This Matters
 
-The hard part is not AES or SOCKS; it is making a brittle, quota-limited substrate fail predictably. The current implementation keeps the core binary envelope independent from Google APIs so future carriers can reuse the same protocol.
+Most failure modes are operational: quota pressure, stale objects, leaked
+profiles, token expiry, and hostile-path variance. Keeping the CLI surface small
+and measurable makes those failures visible instead of hiding them behind many
+unmaintained modes.

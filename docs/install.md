@@ -1,75 +1,97 @@
 # Install Skirk
 
-## Linux One-Command Install
+## Linux Installer
 
-For a Linux exit machine, client machine, VPS, laptop, or home server:
+Use this on a Linux exit machine, Linux client, VPS, laptop, or home server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-```
-
-Then run the operator menu:
-
-```bash
-skirk
-```
-
-The installer puts `skirk` in `$HOME/.local/bin` by default. If that directory is not on `PATH`, add:
-
-```bash
 export PATH="$HOME/.local/bin:$PATH"
+skirk version
 ```
 
-## Install Options
+The installer puts `skirk` in `$HOME/.local/bin` by default.
+
+## Installer Options
 
 Install a specific release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=v0.1.3 sh
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
 ```
 
-Install to a different directory:
+Install to another directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_INSTALL_DIR=/usr/local/bin sh
 ```
 
-Use a fork or temporary repository path:
+Install from a fork:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OWNER/Skirk/main/install.sh | SKIRK_REPO=OWNER/Skirk sh
 ```
 
-## What The Installer Does
-
-1. Detects Linux CPU architecture: `amd64` or `arm64`.
-2. Downloads the matching GitHub release archive when available.
-3. Falls back to building from source when no release archive exists.
-4. Installs one binary: `skirk`.
-5. Prints `skirk version` and the next setup command.
-
-The source-build fallback requires Go. Release-archive installs do not.
-
-Google Cloud CLI is only needed for server-side kit creation. `skirk setup init` checks for `gcloud` and installs it under `~/google-cloud-sdk` when it is missing.
-
-## Exit Machine Flow
-
-On the machine that will act as the exit:
-
-```bash
-skirk
-```
-
-Choose `Create Google kit`, complete the Google login flow if prompted, then choose `Run exit`.
-
-The generated `client.skirk` is a one-line text config that can be pasted or sent to clients. Clients do not need Google login or `gcloud`.
-
-## Safer Manual Install
-
-If you do not want to pipe a script into `sh`:
+Review before running:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh
 less install.sh
 sh install.sh
+```
+
+## What The Installer Does
+
+1. Detects Linux `amd64` or `arm64`.
+2. Downloads the matching GitHub release archive when available.
+3. Falls back to building from source if no release archive exists.
+4. Installs one binary: `skirk`.
+5. Prints the installed version and next setup command.
+
+Release archive installs do not require Go. Source fallback requires Go.
+
+## Google Cloud CLI
+
+Client machines do not need Google Cloud CLI.
+
+The exit/setup machine may need it only for the easy `skirk setup init` login
+path. When missing on Linux, setup installs Google Cloud CLI under
+`~/google-cloud-sdk` and uses it to create Application Default Credentials with
+Drive access. Automatic Google Cloud CLI install is Linux-only.
+
+The recommended quota-owned setup path uses your OAuth client file and Google's
+device authorization flow directly:
+
+```bash
+skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+```
+
+That path does not require `gcloud` to create the Skirk token.
+
+## Exit Machine Flow
+
+```bash
+skirk setup init --out skirk-kit
+skirk serve-exit --config skirk-kit/exit.json
+```
+
+Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
+
+## Local Build
+
+```bash
+make build
+./bin/skirk version
+```
+
+Run all normal checks:
+
+```bash
+make preflight
+```
+
+Include desktop and Android checks:
+
+```bash
+SKIRK_FULL_PREFLIGHT=1 make preflight
 ```

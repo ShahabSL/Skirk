@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -60,5 +62,44 @@ func TestNormalizeOAuthScopes(t *testing.T) {
 	}
 	if strings.Count(got, "openid") != 1 {
 		t.Fatalf("normalizeOAuthScopes did not deduplicate: %q", got)
+	}
+}
+
+func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	err := writeSetupReadme(path, setupSummary{
+		Title:             "test-kit",
+		ADCPath:           "/tmp/adc.json",
+		Account:           "user@example.com",
+		ClientPath:        "skirk-kit/client.json",
+		ClientTextPath:    "skirk-kit/client.skirk",
+		ClientCommandPath: "skirk-kit/client-command.txt",
+		ExitPath:          "skirk-kit/exit.json",
+		DriveFolderID:     "appDataFolder",
+		Transport:         "drive_appdata",
+		ClientRoute:       "google_front",
+		ExitRoute:         "direct",
+		Listen:            "127.0.0.1:18080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"skirk serve-exit --config skirk-kit/exit.json",
+		"skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080",
+		"skirk cleanup --config skirk-kit/exit.json --older-than 2h",
+		"skirk revoke --config skirk-kit/exit.json --revoke-oauth",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated README missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "%!") {
+		t.Fatalf("generated README has fmt mismatch:\n%s", text)
 	}
 }

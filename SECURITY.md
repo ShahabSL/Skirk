@@ -2,7 +2,8 @@
 
 ## Sensitive Files
 
-Generated Skirk configs are credentials. `client.json` and `exit.json` can contain:
+Generated Skirk configs are credentials. `client.skirk`, `client.json`, and
+`exit.json` can contain:
 
 - a Google OAuth refresh token;
 - a Google OAuth client ID and client secret;

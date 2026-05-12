@@ -8,7 +8,7 @@ Run:
 make preflight
 ```
 
-For client UI checks too:
+Include desktop and Android checks:
 
 ```bash
 SKIRK_FULL_PREFLIGHT=1 make preflight
@@ -18,15 +18,17 @@ Confirm no local runtime artifacts are tracked:
 
 ```bash
 git status --short
-git ls-files probe_results cloud_resources sources zips skirk-kit skirk-config
+git ls-files probe_results cloud_resources sources zips skirk-kit skirk-config private
 ```
 
 The second command should print nothing.
 
-## Build Release Archives
+## Version
+
+Choose the release version explicitly:
 
 ```bash
-VERSION=v0.1.3 make package-release
+VERSION=vX.Y.Z make package-release
 ```
 
 This writes:
@@ -38,22 +40,18 @@ This writes:
 
 Client release assets are built by GitHub Actions:
 
-- `skirk-android-arm64-preview.apk`
-- `Skirk_windows_x64_portable.zip`
-- `skirk-desktop-windows-x64-installer.exe`
+- Android preview APK
+- Windows portable desktop zip
+- Windows desktop installer
 
-## Publish A GitHub Release
+## Publish
 
-The included GitHub Actions release workflow publishes these artifacts when a `v*` tag is pushed:
+The release workflow publishes artifacts when a `v*` tag is pushed:
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
-
-The Android APK is a debug-signed preview build so it can be sideloaded without
-release-signing secrets. A production Android release should add a signing
-keystore through GitHub Actions secrets and publish a signed release APK or AAB.
 
 After the release exists, Linux users can install with:
 
@@ -61,12 +59,49 @@ After the release exists, Linux users can install with:
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
 ```
 
-## Operational Cleanup
+Or pin the version:
 
-Skirk-created Google resources can be deleted with:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
+```
+
+## Android Signing
+
+The preview APK can be debug-signed for sideload testing. A production Android
+release should use a release keystore through GitHub Actions secrets and publish
+a signed APK or AAB.
+
+## Operational Validation
+
+Before tagging, validate the public setup flow from a clean Linux machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
+export PATH="$HOME/.local/bin:$PATH"
+skirk version
+skirk setup init --out skirk-kit
+skirk serve-exit --config skirk-kit/exit.json
+```
+
+In another terminal with the generated client profile:
+
+```bash
+skirk bench-live --config skirk-kit/client.skirk --samples 3
+```
+
+## Cleanup Validation
+
+Manual cleanup dry-run:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h
+```
+
+OAuth revocation:
 
 ```bash
 skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
-This deletes the Sheet and Drive folder by default, then revokes the refresh token when `--revoke-oauth` is provided.
+`revoke` invalidates the embedded OAuth token. It does not delete a visible
+Drive folder because the production mailbox uses Drive `appDataFolder`.

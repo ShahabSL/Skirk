@@ -804,18 +804,32 @@ All generated client and exit configs contain Google refresh credentials and the
 
 ## Cleanup / Disconnect
 
-To disconnect this kit locally and revoke the embedded OAuth token:
+Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. To inspect old mailbox objects manually:
+
+`+"```bash"+`
+skirk cleanup --config %s --older-than 2h
+`+"```"+`
+
+To delete those matched stale objects:
+
+`+"```bash"+`
+skirk cleanup --config %s --older-than 2h --delete
+`+"```"+`
+
+To revoke the embedded OAuth token:
 
 `+"```bash"+`
 skirk revoke --config %s --revoke-oauth
 `+"```"+`
+
+Then delete the local kit directory when you no longer need it.
 
 To immediately invalidate every config generated from this OAuth login, revoke the app token from the Google account security page or run Google's OAuth revocation endpoint against the refresh token.
 
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath)
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath)
 	return os.WriteFile(path, []byte(content), 0600)
 }
 

@@ -1,105 +1,78 @@
 # Skirk Setup Guide
 
-This is the intended user flow:
+This is the operator flow:
 
-1. The operator runs Skirk on a machine with Google login available.
-2. Skirk creates app-private Google Drive storage in `appDataFolder`.
-3. Skirk writes `exit.json`, `client.json`, and one-line `client.skirk`.
-4. The operator runs the exit on a VPS, laptop, or home server.
-5. Clients paste/import `client.skirk` and start a local SOCKS5 proxy.
+1. Install `skirk` on the exit/setup machine.
+2. Run `skirk setup init --out skirk-kit`.
+3. Complete Google login when prompted.
+4. Start `skirk serve-exit --config skirk-kit/exit.json`.
+5. Send only `skirk-kit/client.skirk` or its one-line text to clients.
 
-## Does Skirk Need A VPS?
+The exit machine needs outbound internet access. It does not need an inbound
+port because both sides exchange encrypted objects through Google Drive.
 
-No. Skirk does not need an inbound server port because both sides exchange encrypted messages through Google Drive.
-
-It does need an exit machine. The exit is the machine that dials the real internet targets. A VPS is best for uptime and stable egress, but a laptop works while it is awake and online.
-
-## First-Time Setup
-
-Install Skirk on Linux:
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+skirk version
 ```
 
-Or build the binary from a clone:
+From a source checkout:
 
 ```bash
 make build
+./bin/skirk version
 ```
 
-Recommended: create the Google-backed kit with your own OAuth `TVs and Limited Input devices` client:
+## Create A Kit
+
+Easy path:
 
 ```bash
-./bin/skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+skirk setup init --out skirk-kit
 ```
 
-This uses Google's device authorization flow and Drive `appDataFolder`, so Skirk only requests:
-
-```text
-openid email https://www.googleapis.com/auth/drive.appdata
-```
-
-Easy fallback: create a kit through Google Cloud CLI:
-
-```bash
-./bin/skirk setup init --out skirk-kit
-```
-
-You can also run the interactive operator menu:
-
-```bash
-./bin/skirk
-```
-
-If Application Default Credentials are missing, setup runs:
+If Application Default Credentials are missing, setup runs Google Cloud CLI with
+Drive access enabled:
 
 ```bash
 gcloud auth login --no-launch-browser --enable-gdrive-access --update-adc --force
 ```
 
-That command prints a browser URL and code. Open the URL, approve the Google account, paste the code back into the terminal, then setup continues.
+That prints a browser login flow. Open the URL, approve the Google account, and
+paste the code back into the terminal. On Linux, setup can install Google Cloud
+CLI under `~/google-cloud-sdk` if `gcloud` is missing.
 
-If `gcloud` is not installed, setup installs Google Cloud CLI under `~/google-cloud-sdk` before starting the login flow.
-
-## Switch Google Accounts
-
-By default, setup reuses the existing local Application Default Credentials. To create a kit with a different Google account, force a new login:
+Recommended quota-owned path:
 
 ```bash
-skirk setup init --out skirk-kit-new --google-login
+skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-If the old account is blocked, banned, expired, or just wrong, reset local Google credentials first:
-
-```bash
-skirk setup init --out skirk-kit-new --reset-google-login
-```
-
-That reset runs the documented local credential cleanup commands before opening the login flow:
-
-```bash
-gcloud auth application-default revoke --quiet
-gcloud auth revoke --all --quiet
-```
-
-This only changes credentials on the machine running setup. Existing generated Skirk configs keep using the refresh token embedded in those config files until you revoke the Google app access for that account.
-
-## Avoid Shared Google CLI Quota
-
-The easiest setup path uses Google Cloud CLI's built-in OAuth client. That is convenient, but Drive API quota can be charged to Google Cloud CLI's shared OAuth project. If you see an error like:
+This uses Google's device authorization flow directly with your OAuth client and
+requests only:
 
 ```text
-Quota exceeded for quota metric 'Queries' ... drive.googleapis.com ... project_number:32555940559
+openid email https://www.googleapis.com/auth/drive.appdata
 ```
 
-use an OAuth `TVs and Limited Input devices` client from your own Google Cloud project:
+Drive `appDataFolder` is the default because Skirk stores encrypted app-private
+mailbox objects, not user-visible files. Official Drive docs require the
+`drive.appdata` scope and `spaces=appDataFolder` for this storage area.
+
+## Creating `oauth-client.json`
+
+Use this when you want Drive API quota associated with your own Google Cloud
+project instead of the shared Google Cloud CLI OAuth client:
 
 1. Create or select a Google Cloud project.
 2. Enable Google Drive API.
-3. Configure the OAuth consent screen for your account. In testing mode, add your Gmail as a test user.
-4. Create an OAuth client ID with application type `TVs and Limited Input devices`.
-5. Download the client JSON and copy it to the exit/setup machine as `oauth-client.json`.
+3. Configure the OAuth consent screen.
+4. Add your Google account as a test user if the app is in testing mode.
+5. Create an OAuth client ID for `TVs and Limited Input devices`.
+6. Download the client JSON as `oauth-client.json`.
 
 Then run:
 
@@ -107,116 +80,204 @@ Then run:
 skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-With `--oauth-client-file`, Skirk uses Google's device authorization flow directly. It does not use gcloud for token creation and does not request `cloud-platform`.
-
-```bash
-skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
-```
-
-`drive.appdata` is the default because Skirk's runtime data is encrypted app-private state, not user-visible files. The fallback Google Cloud CLI path is convenient, but it can fail if the local ADC login did not grant Drive app-data access; the custom OAuth device-flow path is the recommended high-reliability path.
+If Google blocks an OAuth client, use your own OAuth project/client and keep the
+consent screen/test-user setup aligned with Google policy. Skirk cannot bypass a
+Google account or OAuth enforcement decision.
 
 ## Generated Files
 
 `skirk-kit/exit.json`:
-Use this on the exit machine.
-
-`skirk-kit/client.json`:
-JSON form of the client config.
+Keep this on the exit machine. It contains credentials.
 
 `skirk-kit/client.skirk`:
-One-line text form of the same client config. This is the easiest thing to send or paste. Clients do not need Google login, OAuth, or `gcloud`.
+One-line profile for client devices. This is the easiest thing to paste into
+Linux, Windows, or Android clients.
+
+`skirk-kit/client.json`:
+JSON form of the same client profile.
 
 `skirk-kit/client-command.txt`:
-A ready-to-copy client command containing the one-line config.
+Ready-to-copy Linux client command with the one-line profile embedded.
 
 `skirk-kit/README.md`:
-Per-kit run and cleanup commands.
+Per-kit commands generated at setup time.
 
-All generated config files contain a Google refresh token and the Skirk tunnel secret. Do not commit them.
+All generated profiles contain a Google refresh token and the Skirk tunnel
+secret. Do not commit them or paste them into public logs.
 
 ## Run The Exit
 
-On the VPS, laptop, or server:
-
 ```bash
-./bin/skirk serve-exit --config skirk-kit/exit.json
+skirk serve-exit --config skirk-kit/exit.json
 ```
 
-Generated kits use `profile=auto`. In that mode Skirk uses measured Drive operation windows and backs off when Google returns rate-limit pressure. The live tunnel uses Drive Mux v3: many application TCP connections share four mux lanes, and bulk frames are striped across lanes with ordered reassembly instead of many independent Drive polling loops. You can still override the caps for experiments:
+Useful exit options:
 
 ```bash
-./bin/skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 32 --download-concurrency 16
+# Send exit traffic through another local proxy.
+skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:40000
+
+# Override Drive worker windows for experiments.
+skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 16 --download-concurrency 32
+```
+
+`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv3/`,
+`control/`, and `data/` objects older than 24 hours. Override with:
+
+```bash
+SKIRK_JANITOR_OLDER_THAN=6h skirk serve-exit --config skirk-kit/exit.json
+SKIRK_DISABLE_JANITOR=1 skirk serve-exit --config skirk-kit/exit.json
 ```
 
 ## Run A Linux Client
 
-On the client:
+With a file:
 
 ```bash
-./bin/skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080
 ```
 
-This is the default Linux path. No GUI is required.
+With pasted text:
 
-Point apps at SOCKS5:
+```bash
+read -r SKIRK_CLIENT_CONFIG
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
+```
+
+Test:
 
 ```bash
 curl --socks5-hostname 127.0.0.1:18080 http://example.com/
 ```
 
-Use `socks5h` semantics in apps that support it so DNS resolution happens through the exit path.
+Use `socks5h` semantics in apps that support it so DNS resolution happens
+through the exit.
 
-Without copying any file, paste the one-line text config:
-
-```bash
-read -r SKIRK_CLIENT_CONFIG
-./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
-```
-
-When testing from a machine where the restricted network is represented by another local SOCKS proxy, override the upstream route at runtime instead of regenerating the shared config:
+Optional HTTP/HTTPS proxy listener:
 
 ```bash
-./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
-  --route-mode google_front \
-  --upstream-proxy socks5h://127.0.0.1:11093
-```
-
-For throughput experiments on a normal network, remove `--upstream-proxy` and optionally force direct Google APIs:
-
-```bash
-./bin/skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 \
-  --route-mode direct
+skirk serve-client \
+  --config "$SKIRK_CLIENT_CONFIG" \
+  --listen 127.0.0.1:18080 \
+  --http-proxy-listen 127.0.0.1:18081
 ```
 
 ## Restricted Networks
 
-The default generated client route is `google_front`, which connects to the hostname `www.google.com` with Google-looking SNI while sending the real Google API Host header after TLS. This is more compatible with SOCKS relays that allow Google hostnames but reject IP-literal Google edge targets. `google_front_pinned` is still available when a specific Google edge IP is known to work. The default exit route is `direct`, because the exit normally has ordinary internet.
+Generated client profiles default to `google_front`. That route uses a
+Google-looking TLS/SNI path for Google API traffic, which is the current default
+for the tested hostile network. The exit route defaults to `direct`.
 
-For normal-network clients where speed matters more than reachability, generate direct configs:
-
-```bash
-./bin/skirk setup init --out skirk-kit-direct --client-route direct
-```
-
-## Disconnect A Config
-
-To revoke the OAuth token embedded in the generated kit:
+When the hostile network is available through a local SOCKS proxy:
 
 ```bash
-./bin/skirk revoke --config skirk-kit/exit.json --revoke-oauth
+skirk serve-client \
+  --config "$SKIRK_CLIENT_CONFIG" \
+  --listen 127.0.0.1:18080 \
+  --route-mode google_front \
+  --upstream-proxy socks5h://127.0.0.1:11093
 ```
 
-To also revoke the Google OAuth refresh token in that config:
+For direct Google API routing on a normal network:
 
 ```bash
-./bin/skirk revoke --config skirk-kit/exit.json --revoke-oauth
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080 --route-mode direct
 ```
 
-To revoke every config generated from the same OAuth login, remove the app access from Google Account security settings. OAuth revocation prevents old configs from creating or using another mailbox.
+Available route modes:
 
-## Operational Notes
+- `direct`
+- `real_pinned`
+- `google_front`
+- `google_front_pinned`
+- `google_front_h1`
+- `google_front_h1_pinned`
 
-- One Google account can create multiple kits, but each kit should use its own OAuth client/project where practical, secret, and session.
-- The current protocol is TCP-over-mailbox. It is reliable enough for proof and selected use, but latency is higher than a streaming endpoint.
-- Drive rate limits still apply. Use this as an owned-user transport, not as an anonymous public relay.
-- If a client config leaks, revoke OAuth access and generate a new kit.
+Pinned modes use the configured `--google-ip` value.
+
+## Benchmarks
+
+The exit must be running before client-side benchmarks.
+
+```bash
+skirk bench-live --config skirk-kit/client.skirk --samples 5
+```
+
+Hostile path:
+
+```bash
+skirk bench-live \
+  --config skirk-kit/client.skirk \
+  --upstream-proxy socks5h://127.0.0.1:11093 \
+  --route-mode google_front \
+  --samples 3
+```
+
+Bulk throughput:
+
+```bash
+skirk bench-live --config skirk-kit/client.skirk --bulk-url http://example.com/big.bin --timeout 5m
+```
+
+The JSON result includes p50/p95 latency, Mbps, Drive operation timings, and
+estimated quota calls/units per request and per minute.
+
+## Cleanup
+
+Runtime cleanup is enabled in generated configs. Processed mux objects are
+deleted after use, with foreground traffic prioritized over cleanup. The exit
+janitor removes stale leftovers from crashed clients or interrupted exits.
+
+Dry-run stale object cleanup:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h
+```
+
+Delete stale objects:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+```
+
+Clean a specific legacy prefix:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --prefix data/ --older-than 1s --delete
+skirk cleanup --config skirk-kit/exit.json --prefix control/ --older-than 1s --delete
+skirk cleanup --config skirk-kit/exit.json --prefix muxv3/ --older-than 1s --delete
+```
+
+## Disconnect Or Revoke
+
+Stop the client and exit processes first.
+
+Revoke the OAuth refresh token embedded in the generated config:
+
+```bash
+skirk revoke --config skirk-kit/exit.json --revoke-oauth
+```
+
+Then remove local generated files:
+
+```bash
+rm -rf skirk-kit
+```
+
+OAuth revocation invalidates configs generated from that token. If you no longer
+have the config, revoke the app from the Google account security page.
+
+## Learning Notes
+
+Skirk uses Google Drive as an object mailbox, not as a stream. The production
+shape is a bounded mux: many TCP streams are encoded into encrypted Drive mux
+objects, then reassembled by the exit. This avoids one polling loop per browser
+connection, which is the failure mode that makes naive Drive proxy designs
+collapse under real browsing.
+
+## Why This Matters
+
+The operational risk is not just speed. Leftover mailbox objects consume Google
+Drive storage, leaked profiles are credentials, and excessive API calls can hit
+Drive rate limits. The setup, cleanup, janitor, and benchmark commands are part
+of the production surface, not side utilities.

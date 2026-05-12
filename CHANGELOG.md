@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Added Drive Mux v3 documentation as the single production transport.
+- Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
+  benchmarks, quota telemetry, and bounded burst polling as an opt-in
+  experiment.
+- Updated setup docs around one-line `skirk:` profiles, `serve-client`,
+  `serve-exit`, custom OAuth device-flow setup, and Drive `appDataFolder`.
+- Removed stale references to alternate runtime control lanes and visible Drive
+  folder cleanup from user-facing docs.
+
 ## v0.1.3 - 2026-05-02
 
 - Replaced noisy Google Cloud CLI setup with quiet archive installation.

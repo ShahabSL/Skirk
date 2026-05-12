@@ -35,6 +35,7 @@ Never commit generated Skirk configs or Google credentials. These files are igno
 - `skirk-kit/`
 - `skirk-config/`
 - `skirk.json`
+- `*.skirk`
 - `probe_results/`
 - `cloud_resources/`
 
