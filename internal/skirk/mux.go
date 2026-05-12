@@ -66,6 +66,7 @@ type driveMux struct {
 	seenMu sync.Mutex
 	seen   map[string]struct{}
 
+	recvWake  chan struct{}
 	startedAt time.Time
 }
 
@@ -109,6 +110,7 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		streams:   map[uint64]*muxStream{},
 		pending:   map[uint64][]muxFrame{},
 		seen:      map[string]struct{}{},
+		recvWake:  make(chan struct{}, 1),
 		startedAt: time.Now().UTC().Add(-5 * time.Second),
 	}
 	for i := 0; i < muxLaneCount; i++ {
@@ -497,6 +499,12 @@ func (l *muxLane) uploadBatch(ctx context.Context, frames []muxFrame) error {
 	if l.mux.t.Logger != nil && (err != nil || time.Since(started) >= l.mux.t.slowDriveThreshold()) {
 		l.mux.t.Logger.Printf("mux upload lane=%d seq=%d frames=%d plain_bytes=%d sealed_bytes=%d duration=%s error=%s", l.idx, seq, len(frames), len(raw), len(sealed), time.Since(started).Round(time.Millisecond), errorSummary(err))
 	}
+	if err == nil {
+		l.mux.t.markUpload()
+		if l.mux.t.BurstPoll {
+			l.mux.wakeReceiver()
+		}
+	}
 	return err
 }
 
@@ -516,6 +524,7 @@ func (m *driveMux) runReceiveLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-m.recvWake:
 		case <-ticker.C:
 			if delay != m.t.PollInterval {
 				ticker.Reset(m.t.PollInterval)
@@ -524,7 +533,17 @@ func (m *driveMux) runReceiveLoop(ctx context.Context) {
 	}
 }
 
+func (m *driveMux) wakeReceiver() {
+	select {
+	case m.recvWake <- struct{}{}:
+	default:
+	}
+}
+
 func (m *driveMux) pollDelay() time.Duration {
+	if m.t.burstPollActive(time.Now()) {
+		return m.t.BurstPollInterval
+	}
 	if m.role == "client" && m.active.Load() == 0 {
 		return idleOpenPollInterval
 	}
@@ -536,7 +555,9 @@ func (m *driveMux) pollDelay() time.Duration {
 
 func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 	prefix := muxDirPrefix(m.t.SessionID, m.recvDir)
+	started := time.Now()
 	infos, err := m.listFreshMuxObjects(ctx, prefix)
+	m.t.markSlowList(time.Since(started))
 	if err != nil {
 		if m.t.Logger != nil && ctx.Err() == nil {
 			m.t.Logger.Printf("mux list direction=%s failed: %v", directionName(m.recvDir), err)

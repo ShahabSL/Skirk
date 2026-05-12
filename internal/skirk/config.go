@@ -81,6 +81,9 @@ type TunnelConfig struct {
 	Listen              string `json:"listen,omitempty"`
 	Profile             string `json:"profile,omitempty"`
 	ExitProxy           string `json:"exit_proxy,omitempty"`
+	BurstPoll           bool   `json:"burst_poll,omitempty"`
+	BurstPollMS         int    `json:"burst_poll_ms,omitempty"`
+	BurstPollWindowMS   int    `json:"burst_poll_window_ms,omitempty"`
 	ChunkSize           int    `json:"chunk_size,omitempty"`
 	PollIntervalMS      int    `json:"poll_interval_ms,omitempty"`
 	Concurrency         int    `json:"concurrency,omitempty"`
@@ -279,6 +282,12 @@ func (c *Config) ApplyDefaults() {
 	if c.Tunnel.PollIntervalMS == 0 {
 		c.Tunnel.PollIntervalMS = 100
 	}
+	if c.Tunnel.BurstPollMS == 0 {
+		c.Tunnel.BurstPollMS = 75
+	}
+	if c.Tunnel.BurstPollWindowMS == 0 {
+		c.Tunnel.BurstPollWindowMS = 5000
+	}
 	if c.Tunnel.Concurrency == 0 {
 		c.Tunnel.Concurrency = 32
 	}
@@ -304,6 +313,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
 		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
+	}
+	if c.Tunnel.BurstPollMS < 25 || c.Tunnel.BurstPollMS > 1000 {
+		return fmt.Errorf("config.tunnel.burst_poll_ms must be between 25 and 1000")
+	}
+	if c.Tunnel.BurstPollWindowMS < 1000 || c.Tunnel.BurstPollWindowMS > 30000 {
+		return fmt.Errorf("config.tunnel.burst_poll_window_ms must be between 1000 and 30000")
 	}
 	if strings.TrimSpace(c.Tunnel.ExitProxy) != "" {
 		u, err := url.Parse(c.Tunnel.ExitProxy)

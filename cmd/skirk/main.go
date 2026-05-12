@@ -232,6 +232,9 @@ func serveClient(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
+	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling experiment")
+	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
+	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
@@ -259,6 +262,15 @@ func serveClient(ctx context.Context, args []string) error {
 	}
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if *burstPoll {
+		cfg.Tunnel.BurstPoll = true
+	}
+	if *burstPollMS > 0 {
+		cfg.Tunnel.BurstPollMS = *burstPollMS
+	}
+	if *burstPollWindowMS > 0 {
+		cfg.Tunnel.BurstPollWindowMS = *burstPollWindowMS
 	}
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
@@ -425,6 +437,9 @@ func benchLive(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
+	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling experiment")
+	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
+	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
@@ -448,6 +463,15 @@ func benchLive(ctx context.Context, args []string) error {
 	}
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if *burstPoll {
+		cfg.Tunnel.BurstPoll = true
+	}
+	if *burstPollMS > 0 {
+		cfg.Tunnel.BurstPollMS = *burstPollMS
+	}
+	if *burstPollWindowMS > 0 {
+		cfg.Tunnel.BurstPollWindowMS = *burstPollWindowMS
 	}
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err

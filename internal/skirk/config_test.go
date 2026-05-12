@@ -76,6 +76,30 @@ func TestConfigValidatesExitProxy(t *testing.T) {
 	}
 }
 
+func TestConfigValidatesBurstPolling(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+		Tunnel: TunnelConfig{
+			BurstPoll:         true,
+			BurstPollMS:       75,
+			BurstPollWindowMS: 5000,
+		},
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Tunnel.BurstPollMS = 10
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "burst_poll_ms") {
+		t.Fatalf("err = %v, want burst_poll_ms validation error", err)
+	}
+	cfg.Tunnel.BurstPollMS = 75
+	cfg.Tunnel.BurstPollWindowMS = 500
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "burst_poll_window_ms") {
+		t.Fatalf("err = %v, want burst_poll_window_ms validation error", err)
+	}
+}
+
 func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
 	var count int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

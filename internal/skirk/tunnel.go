@@ -29,30 +29,37 @@ const (
 	cleanupQuietWindow            = 10 * time.Second
 	cleanupMaxForegroundDelay     = 2 * time.Minute
 	exitDialTimeout               = 30 * time.Second
+	burstSlowListThreshold        = 3 * time.Second
+	burstCooldownAfterSlow        = 20 * time.Second
 )
 
 type Tunnel struct {
-	Data                BlobStore
-	Secret              string
-	SessionID           [16]byte
-	ChunkSize           int
-	Concurrency         int
-	UploadConcurrency   int
-	DownloadConcurrency int
-	Profile             string
-	RouteProxy          string
-	ExitProxy           string
-	role                string
-	activeStreams       atomic.Int64
-	limiterMu           sync.Mutex
-	uploadLimiter       *adaptiveLimiter
-	downloadLimiter     *adaptiveLimiter
-	muxMu               sync.Mutex
-	clientMux           *driveMux
-	lastActivityNS      int64
-	PollInterval        time.Duration
-	CleanupProcessed    bool
-	Logger              *log.Logger
+	Data                 BlobStore
+	Secret               string
+	SessionID            [16]byte
+	ChunkSize            int
+	Concurrency          int
+	UploadConcurrency    int
+	DownloadConcurrency  int
+	Profile              string
+	RouteProxy           string
+	ExitProxy            string
+	BurstPoll            bool
+	BurstPollInterval    time.Duration
+	BurstPollWindow      time.Duration
+	role                 string
+	activeStreams        atomic.Int64
+	limiterMu            sync.Mutex
+	uploadLimiter        *adaptiveLimiter
+	downloadLimiter      *adaptiveLimiter
+	muxMu                sync.Mutex
+	clientMux            *driveMux
+	lastActivityNS       int64
+	lastUploadNS         int64
+	burstDisabledUntilNS int64
+	PollInterval         time.Duration
+	CleanupProcessed     bool
+	Logger               *log.Logger
 }
 
 func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
@@ -71,6 +78,9 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		Profile:             cfg.Tunnel.Profile,
 		RouteProxy:          cfg.Route.Proxy,
 		ExitProxy:           strings.TrimSpace(cfg.Tunnel.ExitProxy),
+		BurstPoll:           cfg.Tunnel.BurstPoll,
+		BurstPollInterval:   time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
+		BurstPollWindow:     time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
 		PollInterval:        cfg.PollInterval(),
 		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
 		Logger:              log.Default(),
@@ -140,6 +150,36 @@ func controlIsFresh(info ObjectInfo, startedAt time.Time) bool {
 
 func (t *Tunnel) markActivity() {
 	atomic.StoreInt64(&t.lastActivityNS, time.Now().UnixNano())
+}
+
+func (t *Tunnel) markUpload() {
+	now := time.Now()
+	atomic.StoreInt64(&t.lastUploadNS, now.UnixNano())
+	atomic.StoreInt64(&t.lastActivityNS, now.UnixNano())
+}
+
+func (t *Tunnel) markSlowList(duration time.Duration) {
+	if !t.BurstPoll || duration < burstSlowListThreshold {
+		return
+	}
+	atomic.StoreInt64(&t.burstDisabledUntilNS, time.Now().Add(burstCooldownAfterSlow).UnixNano())
+}
+
+func (t *Tunnel) burstPollActive(now time.Time) bool {
+	if t == nil || !t.BurstPoll || t.BurstPollInterval <= 0 || t.BurstPollWindow <= 0 {
+		return false
+	}
+	if disabledUntil := atomic.LoadInt64(&t.burstDisabledUntilNS); disabledUntil > 0 && now.Before(time.Unix(0, disabledUntil)) {
+		return false
+	}
+	lastUpload := atomic.LoadInt64(&t.lastUploadNS)
+	if lastUpload <= 0 {
+		return false
+	}
+	if now.Sub(time.Unix(0, lastUpload)) > t.BurstPollWindow {
+		return false
+	}
+	return t.activeStreams.Load() > 0 || t.recentActivity()
 }
 
 func (t *Tunnel) recentActivity() bool {

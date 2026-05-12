@@ -414,6 +414,58 @@ func TestCleanupForegroundBusyState(t *testing.T) {
 	}
 }
 
+func TestBurstPollState(t *testing.T) {
+	tunnel := &Tunnel{
+		BurstPoll:         true,
+		BurstPollInterval: 75 * time.Millisecond,
+		BurstPollWindow:   5 * time.Second,
+	}
+	now := time.Now()
+	if tunnel.burstPollActive(now) {
+		t.Fatal("burst should be inactive before uploads")
+	}
+	tunnel.activeStreams.Add(1)
+	atomic.StoreInt64(&tunnel.lastUploadNS, now.Add(-time.Second).UnixNano())
+	atomic.StoreInt64(&tunnel.lastActivityNS, now.UnixNano())
+	if !tunnel.burstPollActive(now) {
+		t.Fatal("recent upload with active stream should enable burst")
+	}
+	atomic.StoreInt64(&tunnel.burstDisabledUntilNS, now.Add(time.Minute).UnixNano())
+	if tunnel.burstPollActive(now) {
+		t.Fatal("cooldown should disable burst")
+	}
+	atomic.StoreInt64(&tunnel.burstDisabledUntilNS, 0)
+	atomic.StoreInt64(&tunnel.lastUploadNS, now.Add(-10*time.Second).UnixNano())
+	if tunnel.burstPollActive(now) {
+		t.Fatal("old upload should not enable burst")
+	}
+}
+
+func TestMarkSlowListDisablesBurstTemporarily(t *testing.T) {
+	tunnel := &Tunnel{BurstPoll: true}
+	tunnel.markSlowList(burstSlowListThreshold + time.Millisecond)
+	disabledUntil := atomic.LoadInt64(&tunnel.burstDisabledUntilNS)
+	if disabledUntil == 0 || !time.Unix(0, disabledUntil).After(time.Now()) {
+		t.Fatal("slow list should set a future cooldown")
+	}
+}
+
+func TestWakeReceiverIsNonBlocking(t *testing.T) {
+	mux := &driveMux{recvWake: make(chan struct{}, 1)}
+	mux.wakeReceiver()
+	mux.wakeReceiver()
+	select {
+	case <-mux.recvWake:
+	default:
+		t.Fatal("wakeReceiver did not queue wake signal")
+	}
+	select {
+	case <-mux.recvWake:
+		t.Fatal("wakeReceiver should coalesce duplicate wake signals")
+	default:
+	}
+}
+
 func freeTCPAddr(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
