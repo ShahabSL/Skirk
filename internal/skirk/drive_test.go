@@ -122,6 +122,23 @@ func TestDriveStoreListFreshStopsAtOlderObjects(t *testing.T) {
 	}
 }
 
+func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
+	stats := newDriveQuotaStats(time.Minute)
+	stats.since = time.Now().Add(-time.Second)
+	stats.Record("upload", http.StatusOK, 10, nil)
+	stats.since = time.Now().Add(-time.Minute)
+	report, ok := stats.Record("download", http.StatusTooManyRequests, 20, nil)
+	if !ok {
+		t.Fatal("expected report")
+	}
+	if report.Calls != 2 || report.Units != 250 || report.Errors != 1 || report.ResponseBytes != 30 {
+		t.Fatalf("report = %+v, want 2 calls, 250 units, 1 error, 30 bytes", report)
+	}
+	if report.Ops["upload"].Units != 50 || report.Ops["download"].Units != 200 {
+		t.Fatalf("ops = %#v, want upload=50 and download=200 units", report.Ops)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

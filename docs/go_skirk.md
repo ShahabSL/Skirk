@@ -45,6 +45,18 @@ This does not make Google Drive a low-latency stream substrate; polling and API 
 - `cleanup_processed` should stay enabled. Runtime cleanup is delayed out of the foreground byte path so active streams get priority.
 - The access token can come from `SKIRK_ACCESS_TOKEN`, `auth.access_token`, or `auth.token_command`.
 
+## Quota Accounting
+
+Skirk logs an estimated Drive quota window every minute while traffic is active:
+
+```text
+drive quota window=60s calls=42 est_units=5100 errors=0 response_bytes=123456 ops=download:12/2400u,list:18/1800u,upload:12/600u
+```
+
+Set `SKIRK_QUOTA_LOG_INTERVAL=10s` for short tests, or `SKIRK_QUOTA_LOG_INTERVAL=0` to disable the periodic line. The estimate follows the current Drive API quota-unit table: list requests are 100 units, downloads are 200 units, and upload/delete/create requests are counted as 50 units.
+
+For project-level truth, use Google Cloud Console: APIs & Services -> Enabled APIs & services -> Google Drive API -> Metrics. Those charts are project-scoped, so they are useful only when the kit was generated with your own OAuth client/project.
+
 ## Validation
 
 Local:

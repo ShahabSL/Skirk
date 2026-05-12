@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,12 +24,14 @@ type DriveStore struct {
 	tokenSource *AccessTokenSource
 	folderID    string
 	space       string
+	quota       *driveQuotaStats
 	Logger      *log.Logger
 }
 
 const driveListPageSize = "100"
 const driveListMaxPages = 16
 const driveSlowRequestThreshold = 4 * time.Second
+const defaultDriveQuotaLogInterval = time.Minute
 
 func NewDriveStore(httpClient *GoogleHTTPClient, token string, cfg DriveConfig) *DriveStore {
 	return NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: token}, RouteConfig{Mode: "direct"}), cfg)
@@ -41,7 +44,7 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 		space = "appDataFolder"
 		folderID = ""
 	}
-	return &DriveStore{http: httpClient, tokenSource: tokenSource, folderID: folderID, space: space}
+	return &DriveStore{http: httpClient, tokenSource: tokenSource, folderID: folderID, space: space, quota: newDriveQuotaStats(driveQuotaLogInterval())}
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -455,6 +458,12 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 }
 
 func (d *DriveStore) logDriveRequest(label string, attempts int, status int, body []byte, duration time.Duration, err error) {
+	if d.quota != nil {
+		if report, ok := d.quota.Record(label, status, len(body), err); ok && d.Logger != nil {
+			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",
+				report.Duration.Round(time.Second), report.Calls, report.Units, report.Errors, report.ResponseBytes, report.OpSummary())
+		}
+	}
 	if d.Logger == nil {
 		return
 	}
@@ -474,6 +483,144 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 		d.Logger.Printf("drive request server_error op=%s attempts=%d status=%d duration=%s reason=%s", label, attempts, status, duration, driveErrorReason(body))
 	case duration >= driveSlowRequestThreshold:
 		d.Logger.Printf("drive request slow op=%s attempts=%d status=%d duration=%s", label, attempts, status, duration)
+	}
+}
+
+type driveQuotaStats struct {
+	mu       sync.Mutex
+	interval time.Duration
+	since    time.Time
+	calls    int64
+	units    int64
+	errors   int64
+	bytes    int64
+	ops      map[string]driveQuotaOpStats
+}
+
+type driveQuotaOpStats struct {
+	Calls  int64
+	Units  int64
+	Errors int64
+}
+
+type driveQuotaReport struct {
+	Duration      time.Duration
+	Calls         int64
+	Units         int64
+	Errors        int64
+	ResponseBytes int64
+	Ops           map[string]driveQuotaOpStats
+}
+
+func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
+	if interval < 0 {
+		interval = 0
+	}
+	return &driveQuotaStats{
+		interval: interval,
+		since:    time.Now(),
+		ops:      map[string]driveQuotaOpStats{},
+	}
+}
+
+func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err error) (driveQuotaReport, bool) {
+	if s == nil {
+		return driveQuotaReport{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.since.IsZero() {
+		s.since = time.Now()
+	}
+	units := int64(driveQuotaUnits(op))
+	failed := err != nil || status >= 400
+	s.calls++
+	s.units += units
+	s.bytes += int64(responseBytes)
+	if failed {
+		s.errors++
+	}
+	current := s.ops[op]
+	current.Calls++
+	current.Units += units
+	if failed {
+		current.Errors++
+	}
+	s.ops[op] = current
+	if s.interval == 0 || time.Since(s.since) < s.interval {
+		return driveQuotaReport{}, false
+	}
+	report := driveQuotaReport{
+		Duration:      time.Since(s.since),
+		Calls:         s.calls,
+		Units:         s.units,
+		Errors:        s.errors,
+		ResponseBytes: s.bytes,
+		Ops:           cloneDriveQuotaOps(s.ops),
+	}
+	s.since = time.Now()
+	s.calls = 0
+	s.units = 0
+	s.errors = 0
+	s.bytes = 0
+	clear(s.ops)
+	return report, true
+}
+
+func cloneDriveQuotaOps(in map[string]driveQuotaOpStats) map[string]driveQuotaOpStats {
+	out := make(map[string]driveQuotaOpStats, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func (r driveQuotaReport) OpSummary() string {
+	if len(r.Ops) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(r.Ops))
+	for key := range r.Ops {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		stats := r.Ops[key]
+		if stats.Errors > 0 {
+			parts = append(parts, fmt.Sprintf("%s:%d/%du/%de", key, stats.Calls, stats.Units, stats.Errors))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d/%du", key, stats.Calls, stats.Units))
+	}
+	return strings.Join(parts, ",")
+}
+
+func driveQuotaLogInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("SKIRK_QUOTA_LOG_INTERVAL"))
+	if raw == "" {
+		return defaultDriveQuotaLogInterval
+	}
+	if raw == "0" || strings.EqualFold(raw, "off") || strings.EqualFold(raw, "false") {
+		return 0
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval < time.Second {
+		return defaultDriveQuotaLogInterval
+	}
+	return interval
+}
+
+func driveQuotaUnits(op string) int {
+	switch op {
+	case "list":
+		return 100
+	case "download":
+		return 200
+	case "upload", "delete", "create":
+		return 50
+	default:
+		return 5
 	}
 }
 
