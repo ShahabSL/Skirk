@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Android sidecar startup validation so stale local listeners are not
+  accepted as a healthy new engine, without using an Android parent-death signal
+  that can terminate valid app-launched sidecars.
 - Added Drive Mux v4 client/run namespacing so the same copied `skirk:` profile
   can run on multiple devices at the same time without response races.
 - Updated Android and Windows clients to pass stable per-profile client IDs to
