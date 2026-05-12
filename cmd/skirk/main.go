@@ -300,12 +300,63 @@ func serveExit(ctx context.Context, args []string) error {
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
 	}
+	startMailboxJanitor(ctx, drive)
 	tunnel, err := skirk.NewTunnel(drive, cfg)
 	if err != nil {
 		return err
 	}
 	log.Printf("skirk exit polling session=%s", skirk.SessionString(tunnel.SessionID))
 	return tunnel.ServeExit(ctx)
+}
+
+const mailboxJanitorDefaultOlderThan = 24 * time.Hour
+const mailboxJanitorDefaultInterval = 6 * time.Hour
+
+var mailboxJanitorPrefixes = []string{"muxv3/", "control/", "data/"}
+
+func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
+	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
+		return
+	}
+	olderThan := envDuration("SKIRK_JANITOR_OLDER_THAN", mailboxJanitorDefaultOlderThan)
+	interval := envDuration("SKIRK_JANITOR_INTERVAL", mailboxJanitorDefaultInterval)
+	go func() {
+		runMailboxJanitor(ctx, drive, olderThan)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runMailboxJanitor(ctx, drive, olderThan)
+			}
+		}
+	}()
+}
+
+func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan time.Duration) {
+	if drive == nil || olderThan <= 0 {
+		return
+	}
+	for _, prefix := range mailboxJanitorPrefixes {
+		cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
+			Prefix:            prefix,
+			OlderThan:         olderThan,
+			DeleteConcurrency: 4,
+			MaxPages:          1000,
+		})
+		cancel()
+		if err != nil {
+			log.Printf("mailbox janitor prefix=%s older_than=%s error=%s", prefix, olderThan, err)
+			continue
+		}
+		if result.Matched > 0 || result.Deleted > 0 || result.Failed > 0 {
+			log.Printf("mailbox janitor prefix=%s older_than=%s scanned=%d matched=%d deleted=%d failed=%d bytes=%d",
+				prefix, olderThan, result.Scanned, result.Matched, result.Deleted, result.Failed, result.MatchedSize)
+		}
+	}
 }
 
 type benchHTTPResult struct {
@@ -695,5 +746,26 @@ func quotaPerMinute(snapshot skirk.DriveQuotaSnapshot, duration time.Duration) b
 		Units:         float64(snapshot.Units) * scale,
 		Errors:        float64(snapshot.Errors) * scale,
 		ResponseBytes: float64(snapshot.ResponseBytes) * scale,
+	}
+}
+
+func envDuration(name string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }

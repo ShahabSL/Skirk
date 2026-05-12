@@ -50,3 +50,25 @@ func TestBenchListenAddressRejectsInvalidAddress(t *testing.T) {
 		t.Fatalf("err = %v, want missing port error", err)
 	}
 }
+
+func TestEnvDuration(t *testing.T) {
+	t.Setenv("SKIRK_TEST_DURATION", "15m")
+	if got := envDuration("SKIRK_TEST_DURATION", time.Hour); got != 15*time.Minute {
+		t.Fatalf("envDuration = %s, want 15m", got)
+	}
+	t.Setenv("SKIRK_TEST_DURATION", "bad")
+	if got := envDuration("SKIRK_TEST_DURATION", time.Hour); got != time.Hour {
+		t.Fatalf("envDuration fallback = %s, want 1h", got)
+	}
+}
+
+func TestEnvBool(t *testing.T) {
+	t.Setenv("SKIRK_TEST_BOOL", "yes")
+	if !envBool("SKIRK_TEST_BOOL") {
+		t.Fatal("envBool should accept yes")
+	}
+	t.Setenv("SKIRK_TEST_BOOL", "no")
+	if envBool("SKIRK_TEST_BOOL") {
+		t.Fatal("envBool should reject no")
+	}
+}
