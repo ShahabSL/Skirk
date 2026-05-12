@@ -110,7 +110,7 @@ class AndroidSkirkEngine(
         }
         val args = mutableListOf(
             engine.absolutePath,
-            "client",
+            "serve-client",
             "--config",
             configFile.absolutePath,
             "--listen",

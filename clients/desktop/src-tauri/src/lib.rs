@@ -169,7 +169,9 @@ impl DesktopRuntime {
         if raw_config.is_empty() {
             return Err("client config is empty".into());
         }
-        let parsed = self.decode_config(raw_config)?;
+        let stored_config =
+            extract_inline_config(raw_config).unwrap_or_else(|| raw_config.to_string());
+        let parsed = self.decode_config(&stored_config)?;
         let route_mode = parsed
             .pointer("/route/mode")
             .and_then(Value::as_str)
@@ -192,12 +194,12 @@ impl DesktopRuntime {
         let config_path = self
             .paths
             .config_dir
-            .join(if looks_like_inline_config(raw_config) {
+            .join(if looks_like_inline_config(&stored_config) {
                 format!("{id}.skirk")
             } else {
                 format!("{id}.json")
             });
-        fs::write(&config_path, raw_config)
+        fs::write(&config_path, &stored_config)
             .map_err(|error| format!("failed to write config: {error}"))?;
 
         let profile = ClientProfile {
@@ -232,24 +234,37 @@ impl DesktopRuntime {
     }
 
     fn decode_config(&self, raw_config: &str) -> Result<Value, String> {
-        if looks_like_inline_config(raw_config) {
+        if let Some(inline_config) = extract_inline_config(raw_config) {
             let skirk = self.resolve_sidecar()?;
             let decoded_path = self
                 .paths
                 .config_dir
                 .join(format!("decode-{}.json", epoch_millis()));
-            let status = Command::new(skirk)
+            let output = Command::new(skirk)
                 .arg("config")
                 .arg("decode")
                 .arg("--config")
-                .arg(raw_config)
+                .arg(inline_config)
                 .arg("--out")
                 .arg(&decoded_path)
-                .status()
+                .output()
                 .map_err(|error| format!("failed to decode one-line config: {error}"))?;
-            if !status.success() {
+            if !output.status.success() {
                 let _ = fs::remove_file(&decoded_path);
-                return Err(format!("one-line config decode failed: {status}"));
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = stderr.trim();
+                let stdout = stdout.trim();
+                let detail = if stderr.is_empty() { stdout } else { stderr };
+                return Err(format!(
+                    "one-line config decode failed: {}{}",
+                    output.status,
+                    if detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {detail}")
+                    }
+                ));
             }
             let content = fs::read_to_string(&decoded_path)
                 .map_err(|error| format!("failed to read decoded config: {error}"))?;
@@ -317,7 +332,7 @@ impl DesktopRuntime {
             .map_err(|error| format!("failed to clone log: {error}"))?;
         let mut command = Command::new(skirk);
         command
-            .arg("client")
+            .arg("serve-client")
             .arg("--config")
             .arg(&profile.config_path)
             .arg("--listen")
@@ -392,8 +407,73 @@ impl DesktopRuntime {
 }
 
 fn looks_like_inline_config(raw_config: &str) -> bool {
-    let text = raw_config.trim_start();
-    text.starts_with("skirk:") || text.starts_with("SKIRK_CONFIG=") || text.contains("skirk:")
+    extract_inline_config(raw_config).is_some()
+}
+
+fn extract_inline_config(raw_config: &str) -> Option<String> {
+    let mut text = raw_config.trim();
+    if let Some(rest) = text.strip_prefix("SKIRK_CONFIG=") {
+        text = rest.trim();
+    }
+    text = text.trim_matches(|ch| ch == '"' || ch == '\'' || ch == '`');
+
+    let start = text.find("skirk:")?;
+    let payload = &text[start + "skirk:".len()..];
+    let mut encoded = String::new();
+    let mut seen_payload = false;
+    let mut chars = payload.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if is_raw_url_base64_char(ch) {
+            encoded.push(ch);
+            seen_payload = true;
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !seen_payload {
+                continue;
+            }
+            while matches!(chars.peek(), Some((_, next)) if next.is_whitespace()) {
+                let _ = chars.next();
+            }
+            let remaining = chars
+                .peek()
+                .and_then(|(idx, _)| payload.get(*idx..))
+                .unwrap_or_default();
+            if remaining.is_empty() || remaining.starts_with("--") {
+                break;
+            }
+            let Some((_, next)) = chars.peek().copied() else {
+                break;
+            };
+            if matches!(next, '\'' | '"' | '`') {
+                break;
+            }
+            if is_raw_url_base64_char(next) {
+                continue;
+            }
+            break;
+        }
+        if matches!(ch, '\'' | '"' | '`') {
+            if seen_payload {
+                break;
+            }
+            continue;
+        }
+        if seen_payload {
+            break;
+        }
+        return None;
+    }
+
+    if encoded.is_empty() {
+        None
+    } else {
+        Some(format!("skirk:{encoded}"))
+    }
+}
+
+fn is_raw_url_base64_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
 }
 
 fn refresh_state(state: &mut RuntimeState) {
@@ -644,5 +724,24 @@ mod tests {
             "skirk serve-client --config 'skirk:abc' --listen 127.0.0.1:18080"
         ));
         assert!(!looks_like_inline_config(r#"{"secret":"abc"}"#));
+    }
+
+    #[test]
+    fn extracts_inline_config_from_full_client_command() {
+        assert_eq!(
+            extract_inline_config(
+                "skirk serve-client --config 'skirk:abc_DEF-123' --listen 127.0.0.1:18080"
+            )
+            .as_deref(),
+            Some("skirk:abc_DEF-123")
+        );
+    }
+
+    #[test]
+    fn extracts_inline_config_from_env_assignment() {
+        assert_eq!(
+            extract_inline_config("SKIRK_CONFIG=\"skirk:abc_DEF-123\"").as_deref(),
+            Some("skirk:abc_DEF-123")
+        );
     }
 }
