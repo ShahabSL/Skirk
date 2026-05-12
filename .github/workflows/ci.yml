@@ -53,6 +53,11 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      - name: Install Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+
       - name: Build debug APK
         working-directory: clients/android
         run: ./gradlew :app:assembleDebug --console=plain
