@@ -37,6 +37,8 @@ type Tunnel struct {
 	Data                 BlobStore
 	Secret               string
 	SessionID            [16]byte
+	ClientID             string
+	RunID                string
 	ChunkSize            int
 	Concurrency          int
 	UploadConcurrency    int
@@ -71,6 +73,8 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		Data:                data,
 		Secret:              cfg.Secret,
 		SessionID:           sid,
+		ClientID:            strings.TrimSpace(cfg.Client.ID),
+		RunID:               strings.TrimSpace(cfg.Client.RunID),
 		ChunkSize:           cfg.Tunnel.ChunkSize,
 		Concurrency:         cfg.Tunnel.Concurrency,
 		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,

@@ -106,7 +106,7 @@ func usage() {
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
-  serve-client --config skirk.json [--listen 127.0.0.1:18080]
+  serve-client --config skirk.json [--listen 127.0.0.1:18080] [--client-id my-device]
   client-ui --config skirk.json [--socks 127.0.0.1:18080] [--ui 127.0.0.1:18280]`)
 }
 
@@ -188,7 +188,7 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv3/<session>/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")
@@ -209,7 +209,7 @@ func cleanup(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		cleanupPrefix = "muxv3/" + skirk.SessionString(sid) + "/"
+		cleanupPrefix = "muxv4/" + skirk.SessionString(sid) + "/"
 	}
 	result, err := drive.Cleanup(ctx, skirk.DriveCleanupOptions{
 		Prefix:            cleanupPrefix,
@@ -240,6 +240,7 @@ func serveClient(ctx context.Context, args []string) error {
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	clientID := fs.String("client-id", "", "stable per-device client id; generated automatically when omitted")
 	watchParentPID := fs.Int("watch-parent-pid", 0, "exit when this parent process disappears")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -263,6 +264,21 @@ func serveClient(ctx context.Context, args []string) error {
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
 	}
+	if strings.TrimSpace(*clientID) != "" {
+		cfg.Client.ID = strings.TrimSpace(*clientID)
+	}
+	if strings.TrimSpace(cfg.Client.ID) == "" {
+		generated, err := skirk.RandomClientID()
+		if err != nil {
+			return err
+		}
+		cfg.Client.ID = generated
+	}
+	runID, err := skirk.RandomRunID()
+	if err != nil {
+		return err
+	}
+	cfg.Client.RunID = runID
 	if *burstPoll {
 		cfg.Tunnel.BurstPoll = true
 	}
@@ -275,6 +291,9 @@ func serveClient(ctx context.Context, args []string) error {
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
 	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	drive, err := skirk.StoresFromConfig(ctx, cfg)
 	if err != nil {
 		return err
@@ -284,11 +303,11 @@ func serveClient(ctx context.Context, args []string) error {
 		return err
 	}
 	addr := firstNonEmpty(*listen, cfg.Tunnel.Listen)
-	log.Printf("skirk client SOCKS5 listening on %s session=%s route=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Route.Mode, firstNonEmpty(cfg.Route.Proxy, "none"))
+	log.Printf("skirk client SOCKS5 listening on %s session=%s client=%s run=%s route=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Client.ID, cfg.Client.RunID, cfg.Route.Mode, firstNonEmpty(cfg.Route.Proxy, "none"))
 	errCh := make(chan error, 2)
 	go func() { errCh <- tunnel.ServeClient(ctx, addr) }()
 	if strings.TrimSpace(*httpProxyListen) != "" {
-		log.Printf("skirk client HTTP proxy listening on %s session=%s", *httpProxyListen, skirk.SessionString(tunnel.SessionID))
+		log.Printf("skirk client HTTP proxy listening on %s session=%s client=%s run=%s", *httpProxyListen, skirk.SessionString(tunnel.SessionID), cfg.Client.ID, cfg.Client.RunID)
 		go func() { errCh <- tunnel.ServeHTTPProxyClient(ctx, strings.TrimSpace(*httpProxyListen)) }()
 	}
 	return <-errCh
@@ -328,7 +347,7 @@ func serveExit(ctx context.Context, args []string) error {
 const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 6 * time.Hour
 
-var mailboxJanitorPrefixes = []string{"muxv3/", "control/", "data/"}
+var mailboxJanitorPrefixes = []string{"muxv4/", "muxv3/", "control/", "data/"}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {

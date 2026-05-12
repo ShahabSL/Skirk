@@ -31,10 +31,16 @@ const tokenRefreshRetryDelay = 1 * time.Minute
 type Config struct {
 	Secret    string       `json:"secret"`
 	SessionID string       `json:"session_id,omitempty"`
+	Client    ClientConfig `json:"client,omitempty"`
 	Auth      AuthConfig   `json:"auth"`
 	Route     RouteConfig  `json:"route"`
 	Drive     DriveConfig  `json:"drive"`
 	Tunnel    TunnelConfig `json:"tunnel"`
+}
+
+type ClientConfig struct {
+	ID    string `json:"id,omitempty"`
+	RunID string `json:"run_id,omitempty"`
 }
 
 type AuthConfig struct {
@@ -297,6 +303,12 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Secret) == "" {
 		return errors.New("config.secret is required")
 	}
+	if strings.TrimSpace(c.Client.ID) != "" && !isSafeObjectSegment(c.Client.ID) {
+		return fmt.Errorf("config.client.id may contain only letters, digits, underscore, hyphen, and dot")
+	}
+	if strings.TrimSpace(c.Client.RunID) != "" && !isSafeObjectSegment(c.Client.RunID) {
+		return fmt.Errorf("config.client.run_id may contain only letters, digits, underscore, hyphen, and dot")
+	}
 	if c.Tunnel.ChunkSize < 512 || c.Tunnel.ChunkSize > 16*1024*1024 {
 		return fmt.Errorf("config.tunnel.chunk_size must be between 512 and 16777216 bytes")
 	}
@@ -332,6 +344,25 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func isSafeObjectSegment(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 3 || len(value) > 96 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '_' ||
+			r == '-' ||
+			r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func NewAccessTokenSource(auth AuthConfig, route RouteConfig) *AccessTokenSource {

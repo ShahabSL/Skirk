@@ -75,3 +75,33 @@ func TestDeriveStreamKeySeparatesConnectionsAndDirections(t *testing.T) {
 		t.Fatal("different directions must derive different stream keys")
 	}
 }
+
+func TestDeriveMuxLaneKeyV4SeparatesClientsRunsAndDirections(t *testing.T) {
+	sid, _ := ParseSessionID("00112233445566778899aabbccddeeff")
+	upA, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionUp, "client-a", "run-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upA2, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionUp, "client-a", "run-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upB, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionUp, "client-b", "run-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upRunB, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionUp, "client-a", "run-b", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downA, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionDown, "client-a", "run-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(upA, upA2) {
+		t.Fatal("same mux v4 inputs must derive the same key")
+	}
+	if bytes.Equal(upA, upB) || bytes.Equal(upA, upRunB) || bytes.Equal(upA, downA) {
+		t.Fatal("mux v4 keys must differ by client id, run id, and direction")
+	}
+}

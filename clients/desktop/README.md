@@ -14,6 +14,8 @@ What it does:
 
 - imports a one-line `skirk:` config or generated `client.json`;
 - stores profiles in app-local or portable data;
+- gives each imported profile a stable local client identity, so the same
+  copied profile can run on multiple devices at the same time;
 - starts/stops the Go Skirk SOCKS client;
 - shows the SOCKS address, process status, and logs;
 - can bind the SOCKS listener to `0.0.0.0` for LAN proxy sharing;
@@ -76,3 +78,6 @@ For command-line testing without the desktop app:
 ```powershell
 .\skirk-windows-amd64.exe serve-client --config .\client.skirk --listen 127.0.0.1:18080
 ```
+
+Add `--client-id my-windows-pc` for a stable CLI identity. The desktop app
+passes its saved profile identity automatically.

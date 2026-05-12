@@ -37,6 +37,10 @@ Important fields:
 
 - `secret`: shared tunnel secret.
 - `session_id`: paired client/exit mailbox session.
+- `client.id`: optional local client identity. Desktop and Android create this
+  automatically per imported profile; CLI users can pass `--client-id`.
+- `client.run_id`: generated on every client start. It is not stored in normal
+  shared profiles.
 - `auth`: Google OAuth credentials or a token command.
 - `route.mode`: Google API route mode.
 - `route.proxy`: optional upstream proxy for the client Google API path.
@@ -103,7 +107,7 @@ priority over deleting old objects.
 
 - default age: 24 hours;
 - default interval: 6 hours;
-- prefixes: `muxv3/`, `control/`, `data/`.
+- prefixes: `muxv4/`, legacy `muxv3/`, `control/`, `data/`.
 
 Environment controls:
 

@@ -60,10 +60,13 @@ class AndroidSkirkEngine(
         val deadline = System.currentTimeMillis() + timeoutMs
         var lastError: Throwable? = null
         while (System.currentTimeMillis() < deadline) {
+            ensureProcessAlive()
             try {
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress(host, port), 300)
                 }
+                Thread.sleep(300L)
+                ensureProcessAlive()
                 return
             } catch (error: Throwable) {
                 lastError = error
@@ -71,6 +74,23 @@ class AndroidSkirkEngine(
             }
         }
         error("local SOCKS proxy did not start on $host:$port: ${lastError?.message ?: "timeout"}")
+    }
+
+    private fun ensureProcessAlive() {
+        val child = process ?: error("Skirk engine is not running")
+        if (child.isAlive) {
+            return
+        }
+        val code = runCatching { child.exitValue() }.getOrDefault(-1)
+        val logFile = File(File(context.filesDir, "logs"), logFileName)
+        val tail = logFile.takeIf { it.exists() }
+            ?.readLines()
+            ?.takeLast(8)
+            ?.joinToString("\n")
+            .orEmpty()
+        process = null
+        activeProfile = null
+        error("Skirk engine exited with code $code\n$tail")
     }
 
     fun stop() {
@@ -115,6 +135,8 @@ class AndroidSkirkEngine(
             configFile.absolutePath,
             "--listen",
             profile.socksAddress,
+            "--client-id",
+            profile.id,
             "--route-mode",
             routeMode,
             "--watch-parent-pid",

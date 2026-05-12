@@ -6,7 +6,7 @@ Skirk has one production transport:
 
 ```text
 local SOCKS5 / HTTP proxy / Android VPN
--> encrypted Drive Mux v3 objects
+-> encrypted Drive Mux v4 objects
 -> Google Drive appDataFolder mailbox
 -> Skirk exit
 -> target TCP
@@ -14,9 +14,9 @@ local SOCKS5 / HTTP proxy / Android VPN
 
 Older alternate-carrier experiments are not part of the production path.
 
-## Drive Mux v3
+## Drive Mux v4
 
-Drive Mux v3 is the default live tunnel transport. It uses Drive
+Drive Mux v4 is the default live tunnel transport. It uses Drive
 `appDataFolder`, so setup needs only Drive API access and the
 `https://www.googleapis.com/auth/drive.appdata` OAuth scope when using the
 recommended custom OAuth path.
@@ -26,6 +26,8 @@ The transport groups active TCP streams into bounded mux lanes:
 - many application streams share a small number of Drive lanes;
 - `OPEN` can carry the first client bytes;
 - each frame carries stream and sequence metadata inside the encrypted payload;
+- each Drive object path includes a local client ID and per-run ID, so the same
+  copied `skirk:` profile can be active on multiple devices at once;
 - bulk frames are striped across lanes and reassembled in order;
 - upload and download worker windows adapt to Drive health;
 - processed objects are cleaned up outside the foreground byte path;

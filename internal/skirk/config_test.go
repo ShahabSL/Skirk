@@ -100,6 +100,26 @@ func TestConfigValidatesBurstPolling(t *testing.T) {
 	}
 }
 
+func TestConfigValidatesClientNamespace(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+		Client: ClientConfig{ID: "client-a", RunID: "run-a"},
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Client.ID = "bad/client"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.client.id") {
+		t.Fatalf("err = %v, want client id validation error", err)
+	}
+	cfg.Client.ID = "client-a"
+	cfg.Client.RunID = "x"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.client.run_id") {
+		t.Fatalf("err = %v, want run id validation error", err)
+	}
+}
+
 func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
 	var count int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

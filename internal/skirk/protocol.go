@@ -51,6 +51,25 @@ func NewSessionID() ([16]byte, error) {
 	return sid, err
 }
 
+func RandomClientID() (string, error) {
+	return randomHexLabel("c", 16)
+}
+
+func RandomRunID() (string, error) {
+	return randomHexLabel("r", 12)
+}
+
+func randomHexLabel(prefix string, n int) (string, error) {
+	if n < 4 {
+		n = 4
+	}
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(raw), nil
+}
+
 func ParseSessionID(value string) ([16]byte, error) {
 	if value == "" {
 		return NewSessionID()
@@ -134,6 +153,30 @@ func DeriveMuxLaneKey(secret string, sid [16]byte, direction byte, lane int) ([]
 	info = append(info, sid[:]...)
 	info = append(info, direction, byte(lane))
 	return hkdfSHA256(base, []byte("skirk-v2-mux-lane-salt"), info, keyLen), nil
+}
+
+func DeriveMuxLaneKeyV4(secret string, sid [16]byte, direction byte, clientID, runID string, lane int) ([]byte, error) {
+	base, err := DeriveKey(secret)
+	if err != nil {
+		return nil, err
+	}
+	if lane < 0 || lane > 255 {
+		return nil, fmt.Errorf("mux lane out of range: %d", lane)
+	}
+	clientID = strings.TrimSpace(clientID)
+	runID = strings.TrimSpace(runID)
+	if clientID == "" || runID == "" {
+		return nil, fmt.Errorf("client id and run id are required")
+	}
+	info := make([]byte, 0, len("skirk-mux-lane-aead-v4")+sessionIDLen+len(clientID)+len(runID)+4)
+	info = append(info, []byte("skirk-mux-lane-aead-v4")...)
+	info = append(info, sid[:]...)
+	info = append(info, direction)
+	info = append(info, []byte(clientID)...)
+	info = append(info, 0)
+	info = append(info, []byte(runID)...)
+	info = append(info, 0, byte(lane))
+	return hkdfSHA256(base, []byte("skirk-v4-mux-lane-salt"), info, keyLen), nil
 }
 
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {

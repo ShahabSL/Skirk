@@ -338,6 +338,8 @@ impl DesktopRuntime {
             .arg(&profile.config_path)
             .arg("--listen")
             .arg(&socks_address)
+            .arg("--client-id")
+            .arg(&profile.id)
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
         #[cfg(windows)]

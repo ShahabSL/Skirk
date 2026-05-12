@@ -91,7 +91,10 @@ Keep this on the exit machine. It contains credentials.
 
 `skirk-kit/client.skirk`:
 One-line profile for client devices. This is the easiest thing to paste into
-Linux, Windows, or Android clients.
+Linux, Windows, or Android clients. You can import the same profile on more
+than one device. Skirk gives each imported profile a local client identity, and
+each connection run gets a fresh run identity, so simultaneous devices do not
+claim each other's Drive responses.
 
 `skirk-kit/client.json`:
 JSON form of the same client profile.
@@ -121,8 +124,9 @@ skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:4
 skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 16 --download-concurrency 32
 ```
 
-`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv3/`,
-`control/`, and `data/` objects older than 24 hours. Override with:
+`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv4/`,
+legacy `muxv3/`, `control/`, and `data/` objects older than 24 hours. Override
+with:
 
 ```bash
 SKIRK_JANITOR_OLDER_THAN=6h skirk serve-exit --config skirk-kit/exit.json
@@ -135,6 +139,13 @@ With a file:
 
 ```bash
 skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+```
+
+For repeated CLI use on the same machine, set a stable client ID. Desktop and
+Android apps do this automatically when importing a profile:
+
+```bash
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080 --client-id my-laptop
 ```
 
 With pasted text:
@@ -245,6 +256,7 @@ Clean a specific legacy prefix:
 ```bash
 skirk cleanup --config skirk-kit/exit.json --prefix data/ --older-than 1s --delete
 skirk cleanup --config skirk-kit/exit.json --prefix control/ --older-than 1s --delete
+skirk cleanup --config skirk-kit/exit.json --prefix muxv4/ --older-than 1s --delete
 skirk cleanup --config skirk-kit/exit.json --prefix muxv3/ --older-than 1s --delete
 ```
 
@@ -271,9 +283,12 @@ have the config, revoke the app from the Google account security page.
 
 Skirk uses Google Drive as an object mailbox, not as a stream. The production
 shape is a bounded mux: many TCP streams are encoded into encrypted Drive mux
-objects, then reassembled by the exit. This avoids one polling loop per browser
-connection, which is the failure mode that makes naive Drive proxy designs
-collapse under real browsing.
+objects, then reassembled by the exit. Mux v4 also namespaces objects by local
+client ID and per-run ID, which is the normal distributed-systems pattern for
+sharing one credential/profile across multiple independent devices without
+cross-delivery. This avoids one polling loop per browser connection, which is
+the failure mode that makes naive Drive proxy designs collapse under real
+browsing.
 
 ## Why This Matters
 

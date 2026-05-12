@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	muxMagic             = "SKM3"
-	muxVersion           = byte(3)
+	muxMagic             = "SKM4"
+	muxVersion           = byte(4)
 	muxFrameHeaderSize   = 21
 	muxFrameOpen         = byte(1)
 	muxFrameData         = byte(2)
@@ -36,16 +36,26 @@ const (
 
 type muxFrame struct {
 	Kind     byte
+	ClientID string
+	RunID    string
 	StreamID uint64
 	Seq      uint64
 	Payload  []byte
 }
 
 type muxObjectMeta struct {
-	Name string
-	ID   string
-	Lane int
-	Seq  uint64
+	Name     string
+	ID       string
+	ClientID string
+	RunID    string
+	Lane     int
+	Seq      uint64
+}
+
+type muxStreamKey struct {
+	ClientID string
+	RunID    string
+	StreamID uint64
 }
 
 type driveMux struct {
@@ -58,9 +68,9 @@ type driveMux struct {
 	lanes []*muxLane
 
 	streamsMu sync.Mutex
-	streams   map[uint64]*muxStream
+	streams   map[muxStreamKey]*muxStream
 	pendingMu sync.Mutex
-	pending   map[uint64][]muxFrame
+	pending   map[muxStreamKey][]muxFrame
 	active    atomic.Int64
 
 	seenMu sync.Mutex
@@ -73,16 +83,17 @@ type driveMux struct {
 type muxLane struct {
 	mux    *driveMux
 	idx    int
-	key    []byte
 	send   chan muxFrame
 	upload chan []muxFrame
 	seq    uint64
 }
 
 type muxStream struct {
-	id   uint64
-	mux  *driveMux
-	conn net.Conn
+	id       uint64
+	clientID string
+	runID    string
+	mux      *driveMux
+	conn     net.Conn
 
 	inbound chan []byte
 	done    chan struct{}
@@ -107,21 +118,16 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		sendDir:   sendDir,
 		recvDir:   recvDir,
 		epoch:     epoch,
-		streams:   map[uint64]*muxStream{},
-		pending:   map[uint64][]muxFrame{},
+		streams:   map[muxStreamKey]*muxStream{},
+		pending:   map[muxStreamKey][]muxFrame{},
 		seen:      map[string]struct{}{},
 		recvWake:  make(chan struct{}, 1),
 		startedAt: time.Now().UTC().Add(-5 * time.Second),
 	}
 	for i := 0; i < muxLaneCount; i++ {
-		key, err := DeriveMuxLaneKey(t.Secret, t.SessionID, sendDir, i)
-		if err != nil {
-			return nil, err
-		}
 		m.lanes = append(m.lanes, &muxLane{
 			mux:    m,
 			idx:    i,
-			key:    key,
 			send:   make(chan muxFrame, 4096),
 			upload: make(chan []muxFrame, 16),
 		})
@@ -131,6 +137,9 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 
 func (t *Tunnel) serveMuxClient(ctx context.Context, listen string) error {
 	t.role = "client"
+	if strings.TrimSpace(t.ClientID) == "" || strings.TrimSpace(t.RunID) == "" {
+		return errors.New("client id and run id are required for client transport")
+	}
 	mux, err := t.getClientMux(ctx)
 	if err != nil {
 		return err
@@ -193,9 +202,9 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 	if err != nil {
 		return err
 	}
-	stream := m.registerStream(streamID, local)
+	stream := m.registerStream(streamID, m.t.ClientID, m.t.RunID, local)
 	m.startWriter(stream)
-	if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameOpen, StreamID: streamID, Payload: encodeMuxOpenPayload(target, initial)}); err != nil {
+	if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameOpen, ClientID: stream.clientID, RunID: stream.runID, StreamID: streamID, Payload: encodeMuxOpenPayload(target, initial)}); err != nil {
 		stream.close()
 		return err
 	}
@@ -209,10 +218,10 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 	}
 }
 
-func (m *driveMux) openExitStream(ctx context.Context, streamID uint64, payload []byte) {
-	target, initial, err := decodeMuxOpenPayload(payload)
+func (m *driveMux) openExitStream(ctx context.Context, frame muxFrame) {
+	target, initial, err := decodeMuxOpenPayload(frame.Payload)
 	if err != nil {
-		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: streamID, Payload: []byte("bad_open")})
+		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: frame.ClientID, RunID: frame.RunID, StreamID: frame.StreamID, Payload: []byte("bad_open")})
 		return
 	}
 	started := time.Now()
@@ -224,14 +233,14 @@ func (m *driveMux) openExitStream(ctx context.Context, streamID uint64, payload 
 		}
 	}
 	if err != nil {
-		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: streamID, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
+		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: frame.ClientID, RunID: frame.RunID, StreamID: frame.StreamID, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 		return
 	}
-	stream := m.registerStream(streamID, remote)
+	stream := m.registerStream(frame.StreamID, frame.ClientID, frame.RunID, remote)
 	m.startWriter(stream)
 	if len(initial) > 0 {
 		if err := writeAll(remote, initial); err != nil {
-			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: streamID, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
+			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: frame.ClientID, RunID: frame.RunID, StreamID: frame.StreamID, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 			stream.close()
 			return
 		}
@@ -240,9 +249,11 @@ func (m *driveMux) openExitStream(ctx context.Context, streamID uint64, payload 
 	go m.readLoop(ctx, stream)
 }
 
-func (m *driveMux) registerStream(id uint64, conn net.Conn) *muxStream {
+func (m *driveMux) registerStream(id uint64, clientID, runID string, conn net.Conn) *muxStream {
 	stream := &muxStream{
 		id:           id,
+		clientID:     clientID,
+		runID:        runID,
 		mux:          m,
 		conn:         conn,
 		inbound:      make(chan []byte, 256),
@@ -251,16 +262,24 @@ func (m *driveMux) registerStream(id uint64, conn net.Conn) *muxStream {
 		recvPending:  map[uint64]muxFrame{},
 	}
 	m.streamsMu.Lock()
-	m.streams[id] = stream
+	m.streams[stream.key()] = stream
 	m.streamsMu.Unlock()
 	m.active.Add(1)
 	m.t.activeStreams.Add(1)
 	return stream
 }
 
-func (m *driveMux) unregisterStream(id uint64) {
+func (s *muxStream) key() muxStreamKey {
+	return muxStreamKey{ClientID: s.clientID, RunID: s.runID, StreamID: s.id}
+}
+
+func (f muxFrame) key() muxStreamKey {
+	return muxStreamKey{ClientID: f.ClientID, RunID: f.RunID, StreamID: f.StreamID}
+}
+
+func (m *driveMux) unregisterStream(stream *muxStream) {
 	m.streamsMu.Lock()
-	delete(m.streams, id)
+	delete(m.streams, stream.key())
 	m.streamsMu.Unlock()
 	m.active.Add(-1)
 	m.t.activeStreams.Add(-1)
@@ -281,10 +300,10 @@ func (m *driveMux) uploadWorkersPerLane() int {
 	return perLane
 }
 
-func (m *driveMux) stream(id uint64) *muxStream {
+func (m *driveMux) stream(frame muxFrame) *muxStream {
 	m.streamsMu.Lock()
 	defer m.streamsMu.Unlock()
-	return m.streams[id]
+	return m.streams[frame.key()]
 }
 
 func (m *driveMux) closeAll() {
@@ -305,7 +324,7 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 		n, err := readChunk(stream.conn, buffer)
 		if n > 0 {
 			payload := append([]byte(nil), buffer[:n]...)
-			if sendErr := m.sendFrame(ctx, muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: stream.nextSendSeq(), Payload: payload}); sendErr != nil {
+			if sendErr := m.sendFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Payload: payload}); sendErr != nil {
 				stream.close()
 				return
 			}
@@ -314,11 +333,11 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 			continue
 		}
 		if err == io.EOF || strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") {
-			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, StreamID: stream.id, Seq: stream.nextSendSeq()})
+			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq()})
 			stream.markLocalReadDone()
 			return
 		}
-		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, StreamID: stream.id, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
+		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 		stream.close()
 		return
 	}
@@ -338,7 +357,7 @@ func (m *driveMux) startWriter(stream *muxStream) {
 					return
 				}
 				if err := writeAll(stream.conn, data); err != nil {
-					_ = m.sendFrame(context.Background(), muxFrame{Kind: muxFrameRST, StreamID: stream.id, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
+					_ = m.sendFrame(context.Background(), muxFrame{Kind: muxFrameRST, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 					stream.close()
 					return
 				}
@@ -376,13 +395,17 @@ func (s *muxStream) close() {
 	s.once.Do(func() {
 		_ = s.conn.Close()
 		close(s.done)
-		s.mux.unregisterStream(s.id)
+		s.mux.unregisterStream(s)
 	})
 }
 
 func (m *driveMux) sendFrame(ctx context.Context, frame muxFrame) error {
 	if len(m.lanes) == 0 {
 		return errors.New("mux has no lanes")
+	}
+	frame = m.normalizeFrameNamespace(frame)
+	if frame.ClientID == "" || frame.RunID == "" {
+		return errors.New("mux frame client id and run id are required")
 	}
 	lane := m.lanes[m.frameLane(frame)]
 	select {
@@ -392,6 +415,16 @@ func (m *driveMux) sendFrame(ctx context.Context, frame muxFrame) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (m *driveMux) normalizeFrameNamespace(frame muxFrame) muxFrame {
+	if frame.ClientID == "" {
+		frame.ClientID = strings.TrimSpace(m.t.ClientID)
+	}
+	if frame.RunID == "" {
+		frame.RunID = strings.TrimSpace(m.t.RunID)
+	}
+	return frame
 }
 
 func (m *driveMux) frameLane(frame muxFrame) int {
@@ -406,12 +439,18 @@ func (m *driveMux) frameLane(frame muxFrame) int {
 }
 
 func (l *muxLane) runBatchLoop(ctx context.Context) {
+	var pending []muxFrame
 	for {
 		var first muxFrame
-		select {
-		case <-ctx.Done():
-			return
-		case first = <-l.send:
+		if len(pending) > 0 {
+			first = pending[0]
+			pending = pending[1:]
+		} else {
+			select {
+			case <-ctx.Done():
+				return
+			case first = <-l.send:
+			}
 		}
 		frames := []muxFrame{first}
 		bytes := encodedMuxFrameSize(first)
@@ -420,6 +459,11 @@ func (l *muxLane) runBatchLoop(ctx context.Context) {
 		for !flush && len(frames) < muxMaxFrames && bytes < l.mux.maxBatchBytes() {
 			select {
 			case frame := <-l.send:
+				if !sameMuxNamespace(first, frame) {
+					pending = append(pending, frame)
+					flush = true
+					continue
+				}
 				frameSize := encodedMuxFrameSize(frame)
 				frames = append(frames, frame)
 				bytes += frameSize
@@ -442,6 +486,10 @@ func (l *muxLane) runBatchLoop(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func sameMuxNamespace(a, b muxFrame) bool {
+	return a.ClientID == b.ClientID && a.RunID == b.RunID
 }
 
 func (l *muxLane) runUploadLoop(ctx context.Context) {
@@ -475,16 +523,25 @@ func (l *muxLane) uploadBatch(ctx context.Context, frames []muxFrame) error {
 	if len(frames) == 0 {
 		return nil
 	}
+	clientID := frames[0].ClientID
+	runID := frames[0].RunID
+	if clientID == "" || runID == "" {
+		return errors.New("mux upload batch missing client namespace")
+	}
 	raw, err := encodeMuxBatch(frames)
 	if err != nil {
 		return err
 	}
 	seq := atomic.AddUint64(&l.seq, 1)
-	sealed, err := Seal(l.key, l.mux.t.SessionID, l.mux.sendDir, seq, raw, false)
+	key, err := DeriveMuxLaneKeyV4(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.idx)
 	if err != nil {
 		return err
 	}
-	name := muxObjectName(l.mux.t.SessionID, l.mux.sendDir, l.mux.epoch, l.idx, seq, len(frames), len(raw))
+	sealed, err := Seal(key, l.mux.t.SessionID, l.mux.sendDir, seq, raw, false)
+	if err != nil {
+		return err
+	}
+	name := muxObjectName(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, l.idx, seq, len(frames), len(raw))
 	release, err := l.mux.t.acquireUploadSlot(ctx)
 	if err != nil {
 		return err
@@ -554,7 +611,7 @@ func (m *driveMux) pollDelay() time.Duration {
 }
 
 func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
-	prefix := muxDirPrefix(m.t.SessionID, m.recvDir)
+	prefix := m.recvPrefix()
 	started := time.Now()
 	infos, err := m.listFreshMuxObjects(ctx, prefix)
 	m.t.markSlowList(time.Since(started))
@@ -589,6 +646,13 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 		return false
 	}
 	return m.processMuxObjects(ctx, metas)
+}
+
+func (m *driveMux) recvPrefix() string {
+	if m.role == "exit" {
+		return muxDirPrefix(m.t.SessionID, m.recvDir, "", "")
+	}
+	return muxDirPrefix(m.t.SessionID, m.recvDir, m.t.ClientID, m.t.RunID)
 }
 
 func (m *driveMux) listFreshMuxObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -668,7 +732,7 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 	if meta.Lane < 0 || meta.Lane >= muxLaneCount {
 		return fmt.Errorf("invalid mux lane %d", meta.Lane)
 	}
-	key, err := DeriveMuxLaneKey(m.t.Secret, m.t.SessionID, m.recvDir, meta.Lane)
+	key, err := DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Lane)
 	if err != nil {
 		return err
 	}
@@ -702,6 +766,8 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 		return err
 	}
 	for _, frame := range frames {
+		frame.ClientID = meta.ClientID
+		frame.RunID = meta.RunID
 		m.handleFrame(ctx, frame)
 	}
 	m.t.markActivity()
@@ -712,23 +778,23 @@ func (m *driveMux) handleFrame(ctx context.Context, frame muxFrame) {
 	switch frame.Kind {
 	case muxFrameOpen:
 		if m.role == "exit" {
-			m.openExitStream(ctx, frame.StreamID, frame.Payload)
+			m.openExitStream(ctx, frame)
 		}
 	case muxFrameData:
-		stream := m.stream(frame.StreamID)
+		stream := m.stream(frame)
 		if stream == nil {
 			m.queuePendingFrame(frame)
 			return
 		}
 		stream.acceptFrame(ctx, frame)
 	case muxFrameFIN:
-		if stream := m.stream(frame.StreamID); stream != nil {
+		if stream := m.stream(frame); stream != nil {
 			stream.acceptFrame(ctx, frame)
 		} else {
 			m.queuePendingFrame(frame)
 		}
 	case muxFrameRST:
-		if stream := m.stream(frame.StreamID); stream != nil {
+		if stream := m.stream(frame); stream != nil {
 			stream.close()
 		}
 	case muxFramePing:
@@ -741,17 +807,18 @@ func (m *driveMux) queuePendingFrame(frame muxFrame) {
 	}
 	m.pendingMu.Lock()
 	defer m.pendingMu.Unlock()
-	frames := m.pending[frame.StreamID]
+	key := frame.key()
+	frames := m.pending[key]
 	if len(frames) >= muxPendingFrameLimit {
 		return
 	}
-	m.pending[frame.StreamID] = append(frames, frame)
+	m.pending[key] = append(frames, frame)
 }
 
 func (m *driveMux) flushPendingFrames(ctx context.Context, stream *muxStream) {
 	m.pendingMu.Lock()
-	frames := m.pending[stream.id]
-	delete(m.pending, stream.id)
+	frames := m.pending[stream.key()]
+	delete(m.pending, stream.key())
 	m.pendingMu.Unlock()
 	if len(frames) == 0 {
 		return
@@ -947,22 +1014,36 @@ func decodeMuxOpenPayload(payload []byte) (string, []byte, error) {
 	return target, initial, nil
 }
 
-func muxDirPrefix(sid [16]byte, direction byte) string {
-	return fmt.Sprintf("muxv3/%s/%s/", SessionString(sid), directionName(direction))
+func muxDirPrefix(sid [16]byte, direction byte, clientID, runID string) string {
+	base := fmt.Sprintf("muxv4/%s/%s/", SessionString(sid), directionName(direction))
+	clientID = strings.TrimSpace(clientID)
+	runID = strings.TrimSpace(runID)
+	if clientID == "" {
+		return base
+	}
+	if runID == "" {
+		return fmt.Sprintf("%s%s/", base, clientID)
+	}
+	return fmt.Sprintf("%s%s/%s/", base, clientID, runID)
 }
 
-func muxObjectName(sid [16]byte, direction byte, epoch string, lane int, seq uint64, frames int, bytes int) string {
+func muxObjectName(sid [16]byte, direction byte, clientID, runID, epoch string, lane int, seq uint64, frames int, bytes int) string {
 	epoch = strings.TrimSpace(epoch)
 	if epoch == "" {
 		epoch = "0000000000000000"
 	}
-	return fmt.Sprintf("%s%s/l%02d/%016x.f%d.b%d", muxDirPrefix(sid, direction), epoch, lane, seq, frames, bytes)
+	return fmt.Sprintf("%s%s/l%02d/%016x.f%d.b%d", muxDirPrefix(sid, direction, clientID, runID), epoch, lane, seq, frames, bytes)
 }
 
 func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	name := info.Name
 	parts := strings.Split(name, "/")
-	if len(parts) < 5 || !strings.HasPrefix(parts[len(parts)-2], "l") {
+	if len(parts) < 8 || parts[0] != "muxv4" || !strings.HasPrefix(parts[len(parts)-2], "l") {
+		return muxObjectMeta{}, false
+	}
+	clientID := parts[3]
+	runID := parts[4]
+	if clientID == "" || runID == "" {
 		return muxObjectMeta{}, false
 	}
 	lane, err := strconv.Atoi(strings.TrimPrefix(parts[len(parts)-2], "l"))
@@ -978,7 +1059,7 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	if err != nil {
 		return muxObjectMeta{}, false
 	}
-	return muxObjectMeta{Name: name, ID: info.ID, Lane: lane, Seq: seq}, true
+	return muxObjectMeta{Name: name, ID: info.ID, ClientID: clientID, RunID: runID, Lane: lane, Seq: seq}, true
 }
 
 func muxShortName(name string) string {

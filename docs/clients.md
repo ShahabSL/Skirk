@@ -7,6 +7,11 @@ skirk:...
 ```
 
 Clients do not need Google login or `gcloud`. Treat the profile like a password.
+The same profile can be copied to multiple devices. Windows and Android create a
+stable local identity for each imported profile; the CLI can generate one
+automatically or accept `--client-id my-device`. Every client start also gets a
+fresh run identity, so simultaneous devices using the same copied profile do not
+consume each other's responses.
 
 ## Linux CLI
 
@@ -21,6 +26,12 @@ Run:
 
 ```bash
 skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+```
+
+Stable identity for repeated use on the same Linux machine:
+
+```bash
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080 --client-id my-laptop
 ```
 
 Or paste the one-line profile:
@@ -54,6 +65,7 @@ The preferred Windows UX is the portable desktop app from release assets. It:
 
 - imports one-line `skirk:` profiles or `client.json`;
 - stores profiles in portable data;
+- assigns each imported profile a local client identity;
 - starts and stops the Go Skirk SOCKS sidecar;
 - can bind the SOCKS listener to `0.0.0.0` for LAN sharing;
 - shows connection status and logs.
@@ -87,7 +99,8 @@ npm run tauri dev
 ## Android
 
 The Android app packages the Go Skirk engine and starts it as a foreground
-service. The default UX is whole-device VPN mode.
+service. Each imported Android profile gets a UUID-backed local client identity.
+The default UX is whole-device VPN mode.
 
 Manual build:
 

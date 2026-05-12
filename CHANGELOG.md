@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Added Drive Mux v3 documentation as the single production transport.
+- Added Drive Mux v4 client/run namespacing so the same copied `skirk:` profile
+  can run on multiple devices at the same time without response races.
+- Updated Android and Windows clients to pass stable per-profile client IDs to
+  the Skirk sidecar.
+- Added Drive Mux v4 documentation as the single production transport.
 - Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
   benchmarks, quota telemetry, and bounded burst polling as an opt-in
   experiment.

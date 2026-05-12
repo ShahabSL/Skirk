@@ -21,10 +21,13 @@ Cloudflare, GitHub, Microsoft, Android, or any other provider. Read
 - One exit machine with working internet egress. A VPS is best for uptime, but a
   laptop or home server works while it stays online.
 - One Google account for the Drive mailbox.
-- One generated `skirk:...` client profile for each client device.
+- One generated `skirk:...` client profile to share with client devices.
 
 Clients do not need Google login, `gcloud`, or a Google Cloud project. The exit
 setup creates the Google-backed kit once and prints a one-line client profile.
+The same profile can be imported on multiple devices. Each client app creates a
+local profile identity, and each connection run gets a fresh run identity, so
+Drive replies are routed back to the correct device.
 
 ## Quick Start
 
@@ -82,6 +85,14 @@ Linux and headless servers use the Go CLI:
 
 ```bash
 skirk serve-client --config client.skirk --listen 127.0.0.1:18080
+```
+
+For a long-lived Linux install, set a stable local client ID once. This is not a
+secret; it only separates this device from other devices using the same copied
+profile:
+
+```bash
+skirk serve-client --config client.skirk --listen 127.0.0.1:18080 --client-id my-laptop
 ```
 
 Windows users should use the portable desktop app from the release assets. It
@@ -151,8 +162,8 @@ the project-level source of truth when using your own OAuth client/project.
 ## Cleanup And Disconnect
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
-automatic janitor that deletes stale `muxv3/`, `control/`, and `data/` objects
-older than 24 hours.
+automatic janitor that deletes stale `muxv4/`, legacy `muxv3/`, `control/`, and
+`data/` objects older than 24 hours.
 
 Manual cleanup is dry-run by default:
 

@@ -39,6 +39,7 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	cfg := &Config{
 		Secret:    secret,
 		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
 		Tunnel: TunnelConfig{
 			Listen:           freeTCPAddr(t),
 			ChunkSize:        64,
@@ -134,6 +135,7 @@ func TestTunnelExitProxyWithMemoryStores(t *testing.T) {
 	cfg := &Config{
 		Secret:    secret,
 		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
 		Tunnel: TunnelConfig{
 			Listen:           freeTCPAddr(t),
 			ExitProxy:        "socks5h://" + proxy.Listen,
@@ -211,6 +213,7 @@ func TestTunnelMultiplexesConcurrentSOCKSStreams(t *testing.T) {
 	cfg := &Config{
 		Secret:    secret,
 		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
 		Tunnel: TunnelConfig{
 			Listen:           freeTCPAddr(t),
 			ChunkSize:        4096,
@@ -281,6 +284,112 @@ func TestTunnelMultiplexesConcurrentSOCKSStreams(t *testing.T) {
 	}
 }
 
+func TestTunnelSupportsTwoClientNamespacesOnOneExit(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	data := NewMemoryStore()
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel: TunnelConfig{
+			ChunkSize:        4096,
+			PollIntervalMS:   5,
+			CleanupProcessed: true,
+		},
+	}
+	base.ApplyDefaults()
+	exitTunnel, err := NewTunnel(data, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientA := *base
+	clientA.Client = ClientConfig{ID: "client-a", RunID: "run-a"}
+	clientA.Tunnel.Listen = freeTCPAddr(t)
+	clientB := *base
+	clientB.Client = ClientConfig{ID: "client-b", RunID: "run-b"}
+	clientB.Tunnel.Listen = freeTCPAddr(t)
+	clientTunnelA, err := NewTunnel(data, &clientA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTunnelB, err := NewTunnel(data, &clientB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = exitTunnel.ServeExit(ctx) }()
+	go func() { _ = clientTunnelA.ServeClient(ctx, clientA.Tunnel.Listen) }()
+	go func() { _ = clientTunnelB.ServeClient(ctx, clientB.Tunnel.Listen) }()
+	time.Sleep(75 * time.Millisecond)
+
+	type clientCase struct {
+		name string
+		addr string
+		msg  string
+	}
+	cases := []clientCase{
+		{name: "a", addr: clientA.Tunnel.Listen, msg: "from-client-a"},
+		{name: "b", addr: clientB.Tunnel.Listen, msg: "from-client-b"},
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(cases))
+	for _, tc := range cases {
+		tc := tc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := dialViaSOCKS5(context.Background(), "socks5h://"+tc.addr, echo.Addr().String())
+			if err != nil {
+				errCh <- fmt.Errorf("%s dial: %w", tc.name, err)
+				return
+			}
+			defer conn.Close()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := conn.Write([]byte(tc.msg)); err != nil {
+				errCh <- fmt.Errorf("%s write: %w", tc.name, err)
+				return
+			}
+			buf := make([]byte, len(tc.msg))
+			if _, err := io.ReadFull(conn, buf); err != nil {
+				errCh <- fmt.Errorf("%s read: %w", tc.name, err)
+				return
+			}
+			if string(buf) != tc.msg {
+				errCh <- fmt.Errorf("%s got %q, want %q", tc.name, buf, tc.msg)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestAdaptiveLimiterBacksOffOnSlowSuccess(t *testing.T) {
 	limiter := newAdaptiveLimiter(4, 8, 100*time.Millisecond, "test", nil)
 	limiter.inFlight = 1
@@ -327,16 +436,16 @@ func TestMuxObjectNameIncludesEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := muxObjectName(sid, DirectionDown, "cafebabedeadbeef", 3, 9, 2, 1234)
-	if !strings.Contains(name, "/cafebabedeadbeef/l03/") {
-		t.Fatalf("name = %q, want epoch segment", name)
+	name := muxObjectName(sid, DirectionDown, "client-a", "run-a", "cafebabedeadbeef", 3, 9, 2, 1234)
+	if !strings.Contains(name, "/down/client-a/run-a/cafebabedeadbeef/l03/") {
+		t.Fatalf("name = %q, want client/run/epoch segment", name)
 	}
 	meta, ok := parseMuxObjectInfo(ObjectInfo{Name: name, ID: "file-id"})
 	if !ok {
 		t.Fatalf("parse failed for %q", name)
 	}
-	if meta.ID != "file-id" || meta.Lane != 3 || meta.Seq != 9 {
-		t.Fatalf("meta = %+v, want lane=3 seq=9 id=file-id", meta)
+	if meta.ID != "file-id" || meta.ClientID != "client-a" || meta.RunID != "run-a" || meta.Lane != 3 || meta.Seq != 9 {
+		t.Fatalf("meta = %+v, want client/run lane=3 seq=9 id=file-id", meta)
 	}
 }
 
@@ -347,18 +456,18 @@ func TestMuxStreamReordersStripedFrames(t *testing.T) {
 
 	mux := &driveMux{
 		t:       &Tunnel{},
-		streams: map[uint64]*muxStream{},
-		pending: map[uint64][]muxFrame{},
+		streams: map[muxStreamKey]*muxStream{},
+		pending: map[muxStreamKey][]muxFrame{},
 	}
-	stream := mux.registerStream(42, left)
+	stream := mux.registerStream(42, "client-a", "run-a", left)
 	mux.startWriter(stream)
 	defer stream.close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, StreamID: 42, Seq: 2, Payload: []byte("b")})
-	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, StreamID: 42, Seq: 1, Payload: []byte("a")})
+	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 42, Seq: 2, Payload: []byte("b")})
+	stream.acceptFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 42, Seq: 1, Payload: []byte("a")})
 
 	if err := right.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
