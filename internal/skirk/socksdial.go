@@ -120,3 +120,7 @@ func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, erro
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
+
+func DialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, error) {
+	return dialViaSOCKS5(ctx, proxyURL, target)
+}

@@ -6,10 +6,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
+	"net/http/httptrace"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
+	"time"
 
 	"skirk/internal/skirk"
 )
@@ -63,8 +69,12 @@ func run(args []string) error {
 		return setup(ctx, args[2:])
 	case "revoke":
 		return revoke(ctx, args[2:])
+	case "cleanup":
+		return cleanup(ctx, args[2:])
 	case "config":
 		return configCommand(args[2:])
+	case "bench-live":
+		return benchLive(ctx, args[2:])
 	case "serve-client":
 		return serveClient(ctx, args[2:])
 	case "client":
@@ -92,6 +102,8 @@ func usage() {
   setup init --out skirk-kit
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode --config client.skirk --out client.json
+  cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
+  bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json
   serve-client --config skirk.json [--listen 127.0.0.1:18080]
@@ -169,6 +181,45 @@ func revoke(ctx context.Context, args []string) error {
 			return err
 		}
 		result["oauth_revoked"] = true
+	}
+	return printJSON(result)
+}
+
+func cleanup(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
+	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv3/<session>/")
+	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
+	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
+	concurrency := fs.Int("concurrency", 4, "delete concurrency")
+	maxPages := fs.Int("max-pages", 256, "maximum Drive list pages to scan")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, drive, err := load(*configPath)
+	if err != nil {
+		return err
+	}
+	cleanupPrefix := strings.TrimSpace(*prefix)
+	if cleanupPrefix == "" {
+		if strings.TrimSpace(cfg.SessionID) == "" {
+			return fmt.Errorf("config session_id is required when --prefix is not set")
+		}
+		sid, err := skirk.ParseSessionID(cfg.SessionID)
+		if err != nil {
+			return err
+		}
+		cleanupPrefix = "muxv3/" + skirk.SessionString(sid) + "/"
+	}
+	result, err := drive.Cleanup(ctx, skirk.DriveCleanupOptions{
+		Prefix:            cleanupPrefix,
+		OlderThan:         *olderThan,
+		DryRun:            !*deleteObjects,
+		DeleteConcurrency: *concurrency,
+		MaxPages:          *maxPages,
+	})
+	if err != nil {
+		return err
 	}
 	return printJSON(result)
 }
@@ -257,6 +308,135 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
+type benchHTTPResult struct {
+	URL         string  `json:"url"`
+	Status      int     `json:"status"`
+	Bytes       int64   `json:"bytes"`
+	TTFBMS      int64   `json:"ttfb_ms"`
+	TotalMS     int64   `json:"total_ms"`
+	Mbps        float64 `json:"mbps"`
+	ContentType string  `json:"content_type,omitempty"`
+}
+
+type benchHTTPSummary struct {
+	Samples      int     `json:"samples"`
+	Successes    int     `json:"successes"`
+	Bytes        int64   `json:"bytes"`
+	P50TTFBMS    int64   `json:"p50_ttfb_ms"`
+	P95TTFBMS    int64   `json:"p95_ttfb_ms"`
+	P50TotalMS   int64   `json:"p50_total_ms"`
+	P95TotalMS   int64   `json:"p95_total_ms"`
+	MeanMbps     float64 `json:"mean_mbps"`
+	PeakMbps     float64 `json:"peak_mbps"`
+	LastHTTPCode int     `json:"last_http_code"`
+}
+
+type benchLiveResult struct {
+	Listen          string                   `json:"listen"`
+	RouteMode       string                   `json:"route_mode"`
+	UpstreamProxy   string                   `json:"upstream_proxy,omitempty"`
+	DurationSeconds float64                  `json:"duration_seconds"`
+	Small           benchHTTPSummary         `json:"small"`
+	Bulk            *benchHTTPSummary        `json:"bulk,omitempty"`
+	Quota           skirk.DriveQuotaSnapshot `json:"quota"`
+	QuotaPerMinute  benchQuotaMinuteSummary  `json:"quota_per_minute"`
+	QuotaOps        string                   `json:"quota_ops"`
+}
+
+type benchQuotaMinuteSummary struct {
+	Calls         float64 `json:"calls"`
+	Units         float64 `json:"units"`
+	Errors        float64 `json:"errors"`
+	ResponseBytes float64 `json:"response_bytes"`
+}
+
+func benchLive(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("bench-live", flag.ExitOnError)
+	configPath := fs.String("config", "skirk-kit/client.skirk", "config path or inline config text")
+	listen := fs.String("listen", "127.0.0.1:0", "temporary SOCKS5 listen address")
+	smallURL := fs.String("small-url", "http://example.com/", "small request URL")
+	bulkURL := fs.String("bulk-url", "", "optional bulk request URL")
+	samples := fs.Int("samples", 3, "small request samples")
+	timeout := fs.Duration("timeout", 180*time.Second, "per-request timeout")
+	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
+	routeMode := fs.String("route-mode", "", "override config route mode")
+	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
+	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
+	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
+	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
+	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *samples < 1 {
+		return fmt.Errorf("--samples must be at least 1")
+	}
+	cfg, err := skirk.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(*upstreamProxy) != "" {
+		cfg.Route.Proxy = strings.TrimSpace(*upstreamProxy)
+	}
+	if strings.TrimSpace(*routeMode) != "" {
+		cfg.Route.Mode = strings.TrimSpace(*routeMode)
+	}
+	if strings.TrimSpace(*googleIP) != "" {
+		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
+		return err
+	}
+	addr, err := benchListenAddress(*listen)
+	if err != nil {
+		return err
+	}
+	drive, err := skirk.StoresFromConfig(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	tunnel, err := skirk.NewTunnel(drive, cfg)
+	if err != nil {
+		return err
+	}
+	benchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- tunnel.ServeClient(benchCtx, addr) }()
+	if err := waitForTCP(ctx, addr, errCh); err != nil {
+		return err
+	}
+	startQuota := drive.QuotaSnapshot()
+	started := time.Now()
+	smallSamples, err := runHTTPSamples(ctx, addr, strings.TrimSpace(*smallURL), *samples, *timeout)
+	if err != nil {
+		return err
+	}
+	var bulkSummary *benchHTTPSummary
+	if strings.TrimSpace(*bulkURL) != "" {
+		bulkSamples, err := runHTTPSamples(ctx, addr, strings.TrimSpace(*bulkURL), 1, *timeout)
+		if err != nil {
+			return err
+		}
+		summary := summarizeHTTPSamples(bulkSamples)
+		bulkSummary = &summary
+	}
+	duration := time.Since(started)
+	quota := drive.QuotaSnapshot().Delta(startQuota)
+	return printJSON(benchLiveResult{
+		Listen:          addr,
+		RouteMode:       cfg.Route.Mode,
+		UpstreamProxy:   cfg.Route.Proxy,
+		DurationSeconds: duration.Seconds(),
+		Small:           summarizeHTTPSamples(smallSamples),
+		Bulk:            bulkSummary,
+		Quota:           quota,
+		QuotaPerMinute:  quotaPerMinute(quota, duration),
+		QuotaOps:        quota.OpSummary(),
+	})
+}
+
 func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency, uploadConcurrency, downloadConcurrency int) error {
 	if cfg == nil {
 		return nil
@@ -330,4 +510,190 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func benchListenAddress(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "127.0.0.1:0"
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		return "", err
+	}
+	if port != "0" {
+		return value, nil
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return "", err
+	}
+	defer listener.Close()
+	return listener.Addr().String(), nil
+}
+
+func waitForTCP(ctx context.Context, addr string, errCh <-chan error) error {
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errCh:
+			if err == nil {
+				return fmt.Errorf("client listener exited before accepting connections")
+			}
+			return fmt.Errorf("client listener exited before accepting connections: %w", err)
+		case <-deadline.C:
+			return fmt.Errorf("client listener did not become ready on %s", addr)
+		case <-ticker.C:
+		}
+	}
+}
+
+func runHTTPSamples(ctx context.Context, socksAddr, rawURL string, samples int, timeout time.Duration) ([]benchHTTPResult, error) {
+	if strings.TrimSpace(rawURL) == "" {
+		return nil, fmt.Errorf("benchmark URL is required")
+	}
+	results := make([]benchHTTPResult, 0, samples)
+	for i := 0; i < samples; i++ {
+		sample, err := runHTTPSample(ctx, socksAddr, rawURL, timeout)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, sample)
+	}
+	return results, nil
+}
+
+func runHTTPSample(ctx context.Context, socksAddr, rawURL string, timeout time.Duration) (benchHTTPResult, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if network != "tcp" {
+				return nil, fmt.Errorf("unsupported network %q", network)
+			}
+			return skirk.DialViaSOCKS5(ctx, "socks5h://"+socksAddr, addr)
+		},
+		ForceAttemptHTTP2:     false,
+		TLSHandshakeTimeout:   45 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		IdleConnTimeout:       10 * time.Second,
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return benchHTTPResult{}, err
+	}
+	started := time.Now()
+	var firstByte time.Time
+	trace := &httptrace.ClientTrace{
+		GotFirstResponseByte: func() {
+			firstByte = time.Now()
+		},
+	}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	resp, err := client.Do(req)
+	if err != nil {
+		return benchHTTPResult{URL: rawURL, TotalMS: time.Since(started).Milliseconds()}, err
+	}
+	defer resp.Body.Close()
+	n, err := io.Copy(io.Discard, resp.Body)
+	total := time.Since(started)
+	if err != nil {
+		return benchHTTPResult{URL: rawURL, Status: resp.StatusCode, Bytes: n, TotalMS: total.Milliseconds()}, err
+	}
+	ttfb := total
+	if !firstByte.IsZero() {
+		ttfb = firstByte.Sub(started)
+	}
+	return benchHTTPResult{
+		URL:         rawURL,
+		Status:      resp.StatusCode,
+		Bytes:       n,
+		TTFBMS:      ttfb.Milliseconds(),
+		TotalMS:     total.Milliseconds(),
+		Mbps:        mbps(n, total),
+		ContentType: resp.Header.Get("Content-Type"),
+	}, nil
+}
+
+func summarizeHTTPSamples(samples []benchHTTPResult) benchHTTPSummary {
+	summary := benchHTTPSummary{Samples: len(samples)}
+	if len(samples) == 0 {
+		return summary
+	}
+	ttfb := make([]int64, 0, len(samples))
+	total := make([]int64, 0, len(samples))
+	var mbpsSum float64
+	for _, sample := range samples {
+		summary.Bytes += sample.Bytes
+		if sample.Status >= 200 && sample.Status < 400 {
+			summary.Successes++
+		}
+		ttfb = append(ttfb, sample.TTFBMS)
+		total = append(total, sample.TotalMS)
+		mbpsSum += sample.Mbps
+		if sample.Mbps > summary.PeakMbps {
+			summary.PeakMbps = sample.Mbps
+		}
+		summary.LastHTTPCode = sample.Status
+	}
+	summary.P50TTFBMS = percentileMS(ttfb, 0.50)
+	summary.P95TTFBMS = percentileMS(ttfb, 0.95)
+	summary.P50TotalMS = percentileMS(total, 0.50)
+	summary.P95TotalMS = percentileMS(total, 0.95)
+	summary.MeanMbps = mbpsSum / float64(len(samples))
+	return summary
+}
+
+func percentileMS(values []int64, p float64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	if len(values) == 1 {
+		return values[0]
+	}
+	if p <= 0 {
+		return values[0]
+	}
+	if p >= 1 {
+		return values[len(values)-1]
+	}
+	index := int(p * float64(len(values)))
+	if index >= len(values) {
+		index = len(values) - 1
+	}
+	return values[index]
+}
+
+func mbps(bytes int64, duration time.Duration) float64 {
+	if bytes <= 0 || duration <= 0 {
+		return 0
+	}
+	return (float64(bytes) * 8) / duration.Seconds() / 1_000_000
+}
+
+func quotaPerMinute(snapshot skirk.DriveQuotaSnapshot, duration time.Duration) benchQuotaMinuteSummary {
+	if duration <= 0 {
+		return benchQuotaMinuteSummary{}
+	}
+	scale := 60 / duration.Seconds()
+	return benchQuotaMinuteSummary{
+		Calls:         float64(snapshot.Calls) * scale,
+		Units:         float64(snapshot.Units) * scale,
+		Errors:        float64(snapshot.Errors) * scale,
+		ResponseBytes: float64(snapshot.ResponseBytes) * scale,
+	}
 }

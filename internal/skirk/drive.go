@@ -30,8 +30,30 @@ type DriveStore struct {
 
 const driveListPageSize = "100"
 const driveListMaxPages = 16
+const defaultDriveCleanupMaxPages = 256
 const driveSlowRequestThreshold = 4 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
+
+type DriveCleanupOptions struct {
+	Prefix            string
+	OlderThan         time.Duration
+	Now               time.Time
+	DryRun            bool
+	DeleteConcurrency int
+	MaxPages          int
+}
+
+type DriveCleanupResult struct {
+	Prefix      string    `json:"prefix"`
+	Cutoff      time.Time `json:"cutoff"`
+	DryRun      bool      `json:"dry_run"`
+	Scanned     int       `json:"scanned"`
+	Matched     int       `json:"matched"`
+	Deleted     int       `json:"deleted"`
+	Failed      int       `json:"failed"`
+	MatchedSize int64     `json:"matched_size"`
+	Errors      []string  `json:"errors,omitempty"`
+}
 
 func NewDriveStore(httpClient *GoogleHTTPClient, token string, cfg DriveConfig) *DriveStore {
 	return NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: token}, RouteConfig{Mode: "direct"}), cfg)
@@ -326,6 +348,110 @@ func (d *DriveStore) DeleteIDs(ctx context.Context, fileIDs []string, concurrenc
 	return nil
 }
 
+func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
+	prefix := strings.TrimSpace(opts.Prefix)
+	if prefix == "" {
+		return DriveCleanupResult{}, fmt.Errorf("cleanup prefix is required")
+	}
+	if opts.OlderThan <= 0 {
+		return DriveCleanupResult{}, fmt.Errorf("cleanup older-than must be positive")
+	}
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-opts.OlderThan)
+	maxPages := opts.MaxPages
+	if maxPages <= 0 {
+		maxPages = defaultDriveCleanupMaxPages
+	}
+	result := DriveCleanupResult{
+		Prefix: prefix,
+		Cutoff: cutoff.UTC(),
+		DryRun: opts.DryRun,
+	}
+	type candidate struct {
+		id string
+	}
+	var candidates []candidate
+	values := url.Values{}
+	values.Set("q", d.containsQuery([]string{prefix}))
+	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("pageSize", driveListPageSize)
+	values.Set("orderBy", "modifiedTime asc")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	err := d.eachFilesPageUntilLimit(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
+		for _, item := range payload.Files {
+			result.Scanned++
+			if !strings.HasPrefix(item.Name, prefix) {
+				continue
+			}
+			updated, err := time.Parse(time.RFC3339Nano, item.ModifiedTime)
+			if err != nil {
+				continue
+			}
+			if !updated.Before(cutoff) {
+				return false, nil
+			}
+			size, _ := strconv.ParseInt(item.Size, 10, 64)
+			result.Matched++
+			result.MatchedSize += size
+			candidates = append(candidates, candidate{id: item.ID})
+		}
+		return true, nil
+	})
+	if err != nil {
+		return result, err
+	}
+	if opts.DryRun || len(candidates) == 0 {
+		return result, nil
+	}
+	concurrency := opts.DeleteConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > 32 {
+		concurrency = 32
+	}
+	jobs := make(chan candidate)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				if err := d.DeleteID(ctx, item.id); err != nil {
+					mu.Lock()
+					result.Failed++
+					if len(result.Errors) < 8 {
+						result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", item.id, err))
+					}
+					mu.Unlock()
+					continue
+				}
+				mu.Lock()
+				result.Deleted++
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, item := range candidates {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return result, ctx.Err()
+		case jobs <- item:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return result, nil
+}
+
 func (d *DriveStore) latest(ctx context.Context, name string) (ObjectInfo, error) {
 	infos, err := d.listExact(ctx, name)
 	if err != nil {
@@ -384,8 +510,15 @@ func (d *DriveStore) eachFilesPage(ctx context.Context, values url.Values, op st
 }
 
 func (d *DriveStore) eachFilesPageUntil(ctx context.Context, values url.Values, op string, fn func(driveListPayload) (bool, error)) error {
+	return d.eachFilesPageUntilLimit(ctx, values, op, driveListMaxPages, fn)
+}
+
+func (d *DriveStore) eachFilesPageUntilLimit(ctx context.Context, values url.Values, op string, maxPages int, fn func(driveListPayload) (bool, error)) error {
+	if maxPages <= 0 {
+		maxPages = driveListMaxPages
+	}
 	pageValues := cloneValues(values)
-	for page := 0; page < driveListMaxPages; page++ {
+	for page := 0; page < maxPages; page++ {
 		result, err := d.request(ctx, http.MethodGet, "/drive/v3/files?"+pageValues.Encode(), nil, nil)
 		if err != nil {
 			return err
@@ -487,14 +620,19 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 }
 
 type driveQuotaStats struct {
-	mu       sync.Mutex
-	interval time.Duration
-	since    time.Time
-	calls    int64
-	units    int64
-	errors   int64
-	bytes    int64
-	ops      map[string]driveQuotaOpStats
+	mu         sync.Mutex
+	interval   time.Duration
+	since      time.Time
+	calls      int64
+	units      int64
+	errors     int64
+	bytes      int64
+	ops        map[string]driveQuotaOpStats
+	totalCalls int64
+	totalUnits int64
+	totalError int64
+	totalBytes int64
+	totalOps   map[string]driveQuotaOpStats
 }
 
 type driveQuotaOpStats struct {
@@ -512,6 +650,20 @@ type driveQuotaReport struct {
 	Ops           map[string]driveQuotaOpStats
 }
 
+type DriveQuotaOpSnapshot struct {
+	Calls  int64 `json:"calls"`
+	Units  int64 `json:"units"`
+	Errors int64 `json:"errors"`
+}
+
+type DriveQuotaSnapshot struct {
+	Calls         int64                           `json:"calls"`
+	Units         int64                           `json:"units"`
+	Errors        int64                           `json:"errors"`
+	ResponseBytes int64                           `json:"response_bytes"`
+	Ops           map[string]DriveQuotaOpSnapshot `json:"ops"`
+}
+
 func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 	if interval < 0 {
 		interval = 0
@@ -520,6 +672,7 @@ func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 		interval: interval,
 		since:    time.Now(),
 		ops:      map[string]driveQuotaOpStats{},
+		totalOps: map[string]driveQuotaOpStats{},
 	}
 }
 
@@ -537,8 +690,12 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 	s.calls++
 	s.units += units
 	s.bytes += int64(responseBytes)
+	s.totalCalls++
+	s.totalUnits += units
+	s.totalBytes += int64(responseBytes)
 	if failed {
 		s.errors++
+		s.totalError++
 	}
 	current := s.ops[op]
 	current.Calls++
@@ -547,6 +704,13 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 		current.Errors++
 	}
 	s.ops[op] = current
+	totalCurrent := s.totalOps[op]
+	totalCurrent.Calls++
+	totalCurrent.Units += units
+	if failed {
+		totalCurrent.Errors++
+	}
+	s.totalOps[op] = totalCurrent
 	if s.interval == 0 || time.Since(s.since) < s.interval {
 		return driveQuotaReport{}, false
 	}
@@ -567,12 +731,82 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, err e
 	return report, true
 }
 
+func (d *DriveStore) QuotaSnapshot() DriveQuotaSnapshot {
+	if d == nil || d.quota == nil {
+		return DriveQuotaSnapshot{Ops: map[string]DriveQuotaOpSnapshot{}}
+	}
+	return d.quota.Snapshot()
+}
+
+func (s *driveQuotaStats) Snapshot() DriveQuotaSnapshot {
+	if s == nil {
+		return DriveQuotaSnapshot{Ops: map[string]DriveQuotaOpSnapshot{}}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return DriveQuotaSnapshot{
+		Calls:         s.totalCalls,
+		Units:         s.totalUnits,
+		Errors:        s.totalError,
+		ResponseBytes: s.totalBytes,
+		Ops:           exportedDriveQuotaOps(s.totalOps),
+	}
+}
+
+func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot {
+	out := DriveQuotaSnapshot{
+		Calls:         s.Calls - before.Calls,
+		Units:         s.Units - before.Units,
+		Errors:        s.Errors - before.Errors,
+		ResponseBytes: s.ResponseBytes - before.ResponseBytes,
+		Ops:           map[string]DriveQuotaOpSnapshot{},
+	}
+	for key, after := range s.Ops {
+		prev := before.Ops[key]
+		out.Ops[key] = DriveQuotaOpSnapshot{
+			Calls:  after.Calls - prev.Calls,
+			Units:  after.Units - prev.Units,
+			Errors: after.Errors - prev.Errors,
+		}
+	}
+	return out
+}
+
 func cloneDriveQuotaOps(in map[string]driveQuotaOpStats) map[string]driveQuotaOpStats {
 	out := make(map[string]driveQuotaOpStats, len(in))
 	for key, value := range in {
 		out[key] = value
 	}
 	return out
+}
+
+func exportedDriveQuotaOps(in map[string]driveQuotaOpStats) map[string]DriveQuotaOpSnapshot {
+	out := make(map[string]DriveQuotaOpSnapshot, len(in))
+	for key, value := range in {
+		out[key] = DriveQuotaOpSnapshot{Calls: value.Calls, Units: value.Units, Errors: value.Errors}
+	}
+	return out
+}
+
+func (s DriveQuotaSnapshot) OpSummary() string {
+	if len(s.Ops) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(s.Ops))
+	for key := range s.Ops {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		stats := s.Ops[key]
+		if stats.Errors > 0 {
+			parts = append(parts, fmt.Sprintf("%s:%d/%du/%de", key, stats.Calls, stats.Units, stats.Errors))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d/%du", key, stats.Calls, stats.Units))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (r driveQuotaReport) OpSummary() string {
