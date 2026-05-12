@@ -3,6 +3,7 @@ package app.skirk.client
 import android.util.Base64
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.lang.IllegalArgumentException
 import java.util.zip.GZIPInputStream
 
 data class SkirkConfig(
@@ -15,7 +16,14 @@ data class SkirkConfig(
         private const val TEXT_PREFIX = "skirk:"
 
         fun parse(raw: String): SkirkConfig {
-            val root = JSONObject(decodeRaw(raw))
+            val root = try {
+                JSONObject(decodeRaw(raw))
+            } catch (error: Exception) {
+                throw IllegalArgumentException(
+                    "Invalid Skirk profile. Copy the full one-line skirk: config again.",
+                    error,
+                )
+            }
             val route = root.optJSONObject("route") ?: JSONObject()
             val drive = root.optJSONObject("drive") ?: JSONObject()
             return SkirkConfig(
@@ -29,12 +37,19 @@ data class SkirkConfig(
         fun decodeRaw(raw: String): String {
             val text = normalizeInlineConfig(raw) ?: return raw.trim()
             val encoded = text.removePrefix(TEXT_PREFIX)
-            val compressed = Base64.decode(
-                encoded,
-                Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
-            )
-            return GZIPInputStream(ByteArrayInputStream(compressed)).use { stream ->
-                stream.readBytes().toString(Charsets.UTF_8)
+            try {
+                val compressed = Base64.decode(
+                    encoded,
+                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+                )
+                return GZIPInputStream(ByteArrayInputStream(compressed)).use { stream ->
+                    stream.readBytes().toString(Charsets.UTF_8)
+                }
+            } catch (error: Exception) {
+                throw IllegalArgumentException(
+                    "Invalid Skirk profile. The pasted skirk: text is incomplete or changed.",
+                    error,
+                )
             }
         }
 

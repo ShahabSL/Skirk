@@ -31,7 +31,12 @@ def main() -> int:
     out_dir = repo / "dist" / "windows-portable" / "Skirk"
     if out_dir.exists():
         shutil.rmtree(out_dir)
-    (out_dir / "sidecars" / "windows").mkdir(parents=True)
+    sidecar_dirs = [
+        out_dir / "sidecars" / "windows",
+        out_dir / "resources" / "sidecars" / "windows",
+    ]
+    for sidecar_dir in sidecar_dirs:
+        sidecar_dir.mkdir(parents=True)
     (out_dir / "portable-data").mkdir()
 
     shutil.copy2(app_exe, out_dir / "Skirk.exe")
@@ -44,7 +49,8 @@ def main() -> int:
     if not sidecar.exists():
         print("skirk.exe sidecar not found. Run `make build-windows` first.", file=sys.stderr)
         return 1
-    shutil.copy2(sidecar, out_dir / "sidecars" / "windows" / "skirk.exe")
+    for sidecar_dir in sidecar_dirs:
+        shutil.copy2(sidecar, sidecar_dir / "skirk.exe")
     (out_dir / "skirk-portable").write_text("portable mode marker\n", encoding="utf-8")
     (out_dir / "portable-data" / "README.txt").write_text(
         "Skirk portable data lives here. Imported profiles, configs, and logs stay beside Skirk.exe.\n",

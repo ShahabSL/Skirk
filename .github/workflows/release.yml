@@ -55,7 +55,7 @@ jobs:
 
       - name: Build installable preview APK
         working-directory: clients/android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:assembleDebug -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
 
       - name: Prepare Android release assets
         run: |
@@ -91,7 +91,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force clients/desktop/src-tauri/resources/sidecars/windows | Out-Null
-          go build -trimpath -o clients/desktop/src-tauri/resources/sidecars/windows/skirk.exe ./cmd/skirk
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $commit = "${env:GITHUB_SHA}".Substring(0, 7)
+          $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
+          go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk.exe ./cmd/skirk
 
       - name: Build Tauri desktop app
         working-directory: clients/desktop

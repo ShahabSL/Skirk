@@ -8,6 +8,7 @@ val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.20").get()
 
 val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     group = "build"
@@ -32,7 +33,7 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
                     "-trimpath",
                     "-buildmode=pie",
                     "-ldflags",
-                    "-s -w -X main.version=android-debug",
+                    "-s -w -X main.version=android-$skirkAppVersion",
                     "-o",
                     outputDir.resolve(fileName).absolutePath,
                     "./cmd/skirk",
@@ -108,8 +109,8 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 20
+        versionName = skirkAppVersion
     }
 
     buildFeatures {

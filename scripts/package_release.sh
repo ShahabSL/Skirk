@@ -25,7 +25,7 @@ build_one() {
   mkdir -p "$dist/$name"
   echo "Building $name"
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/skirk
-  cp README.md LICENSE "$dist/$name/"
+  cp README.md README.fa.md LICENSE "$dist/$name/"
   if [ "$os" = "windows" ]; then
     (cd "$dist/$name" && python3 -c 'import pathlib, zipfile; z=zipfile.ZipFile("../skirk-windows-amd64.zip", "w", zipfile.ZIP_DEFLATED); [z.write(p, p.name) for p in pathlib.Path(".").iterdir()]; z.close()')
   else

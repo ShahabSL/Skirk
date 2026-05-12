@@ -1,5 +1,7 @@
 # Skirk
 
+[فارسی](README.fa.md)
+
 <p align="center">
   <img src="assets/logo.png" alt="Skirk logo" width="160">
 </p>

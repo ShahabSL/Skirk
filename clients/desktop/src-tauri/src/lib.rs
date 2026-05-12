@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     net::TcpListener,
     path::{Path, PathBuf},
@@ -369,41 +370,121 @@ impl DesktopRuntime {
     }
 
     fn resolve_sidecar(&self) -> Result<PathBuf, String> {
-        let names: &[&str] = if cfg!(windows) {
-            &["skirk.exe", "skirk-windows-amd64.exe"]
-        } else {
-            &["skirk", "skirk-linux-amd64"]
-        };
-        let os_dir = if cfg!(windows) { "windows" } else { "linux" };
-        let mut candidates = Vec::new();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                for name in names {
-                    candidates.push(dir.join("sidecars").join(os_dir).join(name));
-                    candidates.push(dir.join(name));
-                }
-            }
-        }
-        if let Some(resource_dir) = self.resource_dir.as_ref() {
-            for name in names {
-                candidates.push(resource_dir.join("sidecars").join(os_dir).join(name));
-            }
-        }
-        if let Ok(current) = std::env::current_dir() {
-            for name in names {
-                candidates.push(current.join("../../bin").join(name));
-                candidates.push(current.join("../bin").join(name));
-                candidates.push(current.join("bin").join(name));
-            }
-        }
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+        let current_dir = std::env::current_dir().ok();
+        let candidates = sidecar_candidate_paths(
+            exe_dir.as_deref(),
+            self.resource_dir.as_deref(),
+            current_dir.as_deref(),
+        );
         candidates
-            .into_iter()
-            .find(|path| path.exists())
-            .ok_or_else(|| {
-                "skirk sidecar not found; place skirk.exe beside the app or under sidecars/windows/"
-                    .into()
-            })
+            .iter()
+            .find(|path| path.is_file())
+            .cloned()
+            .ok_or_else(|| sidecar_not_found_message(&candidates))
     }
+}
+
+fn sidecar_candidate_paths(
+    exe_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
+    current_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["skirk.exe", "skirk-windows-amd64.exe"]
+    } else {
+        &["skirk", "skirk-linux-amd64"]
+    };
+    let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+    let mut candidates = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for var in ["SKIRK_DESKTOP_SIDECAR", "SKIRK_SIDECAR"] {
+        if let Ok(path) = std::env::var(var) {
+            if !path.trim().is_empty() {
+                push_sidecar_candidate(&mut candidates, &mut seen, PathBuf::from(path));
+            }
+        }
+    }
+
+    if let Some(dir) = exe_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("sidecars").join(os_dir).join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("resources")
+                    .join("sidecars")
+                    .join(os_dir)
+                    .join(name),
+            );
+            push_sidecar_candidate(&mut candidates, &mut seen, dir.join(name));
+        }
+    }
+
+    if let Some(dir) = resource_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("sidecars").join(os_dir).join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("resources")
+                    .join("sidecars")
+                    .join(os_dir)
+                    .join(name),
+            );
+        }
+    }
+
+    if let Some(current) = current_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                current.join("../../bin").join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                current.join("../bin").join(name),
+            );
+            push_sidecar_candidate(&mut candidates, &mut seen, current.join("bin").join(name));
+        }
+    }
+
+    candidates
+}
+
+fn push_sidecar_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut BTreeSet<PathBuf>,
+    path: PathBuf,
+) {
+    if seen.insert(path.clone()) {
+        candidates.push(path);
+    }
+}
+
+fn sidecar_not_found_message(candidates: &[PathBuf]) -> String {
+    let searched = candidates
+        .iter()
+        .take(12)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join("; ");
+    "skirk sidecar not found; place skirk.exe beside Skirk.exe, under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
+        .to_string()
+        + &searched
 }
 
 fn looks_like_inline_config(raw_config: &str) -> bool {
@@ -743,5 +824,30 @@ mod tests {
             extract_inline_config("SKIRK_CONFIG=\"skirk:abc_DEF-123\"").as_deref(),
             Some("skirk:abc_DEF-123")
         );
+    }
+
+    #[test]
+    fn sidecar_candidates_cover_portable_and_tauri_resource_layouts() {
+        let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+        let sidecar_name = if cfg!(windows) { "skirk.exe" } else { "skirk" };
+        let exe_dir = PathBuf::from("/opt/skirk");
+        let resource_dir = exe_dir.join("resources");
+        let candidates =
+            sidecar_candidate_paths(Some(&exe_dir), Some(&resource_dir), Some(Path::new("/tmp")));
+
+        assert!(candidates.contains(&exe_dir.join("sidecars").join(os_dir).join(sidecar_name)));
+        assert!(candidates.contains(
+            &exe_dir
+                .join("resources")
+                .join("sidecars")
+                .join(os_dir)
+                .join(sidecar_name)
+        ));
+        assert!(candidates.contains(
+            &resource_dir
+                .join("sidecars")
+                .join(os_dir)
+                .join(sidecar_name)
+        ));
     }
 }

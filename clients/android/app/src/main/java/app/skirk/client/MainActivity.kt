@@ -7,6 +7,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -133,6 +134,7 @@ fun ConfigScreen() {
     var profiles by remember { mutableStateOf(store.listProfiles()) }
     var selectedId by remember { mutableStateOf(store.selectedProfileId()) }
     var rawConfig by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf("") }
     var profileName by remember { mutableStateOf("Skirk profile") }
     var socksPort by remember { mutableStateOf("18080") }
     var selectedMode by remember { mutableStateOf(ClientProfile.CONNECTION_MODE_VPN) }
@@ -276,12 +278,17 @@ fun ConfigScreen() {
                     profileName = profileName,
                     socksPort = socksPort,
                     rawConfig = rawConfig,
+                    importError = importError,
                     onProfileNameChange = { profileName = it },
                     onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
-                    onRawConfigChange = { rawConfig = it },
+                    onRawConfigChange = {
+                        rawConfig = it
+                        importError = ""
+                    },
                     onPaste = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
                         rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        importError = ""
                     },
                     onImport = {
                         try {
@@ -295,12 +302,16 @@ fun ConfigScreen() {
                             )
                             store.saveProfile(profile)
                             rawConfig = ""
+                            importError = ""
                             selectedMode = profile.connectionMode
                             proxyShareLan = false
                             message = "Imported ${profile.name}"
                             refresh()
                         } catch (error: Exception) {
-                            message = error.message ?: "Import failed"
+                            val nextError = error.message ?: "Import failed"
+                            importError = nextError
+                            message = nextError
+                            Toast.makeText(context, nextError, Toast.LENGTH_LONG).show()
                         }
                     },
                 )
@@ -390,6 +401,7 @@ private fun ImportPanel(
     profileName: String,
     socksPort: String,
     rawConfig: String,
+    importError: String,
     onProfileNameChange: (String) -> Unit,
     onSocksPortChange: (String) -> Unit,
     onRawConfigChange: (String) -> Unit,
@@ -419,6 +431,14 @@ private fun ImportPanel(
             modifier = Modifier.fillMaxWidth(),
             minLines = 5,
             label = { Text("skirk profile") },
+            isError = importError.isNotBlank(),
+            supportingText = {
+                if (importError.isNotBlank()) {
+                    Text(importError)
+                } else {
+                    Text("Paste the full one-line skirk: profile.")
+                }
+            },
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
