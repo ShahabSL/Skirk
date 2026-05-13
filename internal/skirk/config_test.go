@@ -76,30 +76,6 @@ func TestConfigValidatesExitProxy(t *testing.T) {
 	}
 }
 
-func TestConfigValidatesBurstPolling(t *testing.T) {
-	cfg := &Config{
-		Secret: strings.Repeat("a", 64),
-		Tunnel: TunnelConfig{
-			BurstPoll:         true,
-			BurstPollMS:       75,
-			BurstPollWindowMS: 5000,
-		},
-	}
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Tunnel.BurstPollMS = 10
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "burst_poll_ms") {
-		t.Fatalf("err = %v, want burst_poll_ms validation error", err)
-	}
-	cfg.Tunnel.BurstPollMS = 75
-	cfg.Tunnel.BurstPollWindowMS = 500
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "burst_poll_window_ms") {
-		t.Fatalf("err = %v, want burst_poll_window_ms validation error", err)
-	}
-}
-
 func TestConfigValidatesClientNamespace(t *testing.T) {
 	cfg := &Config{
 		Secret: strings.Repeat("a", 64),
@@ -117,6 +93,18 @@ func TestConfigValidatesClientNamespace(t *testing.T) {
 	cfg.Client.RunID = "x"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.client.run_id") {
 		t.Fatalf("err = %v, want run id validation error", err)
+	}
+}
+
+func TestConfigRejectsNonPositiveFixedPollInterval(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+	}
+	cfg.ApplyDefaults()
+	cfg.Tunnel.Profile = "fixed"
+	cfg.Tunnel.PollIntervalMS = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "poll_interval_ms") {
+		t.Fatalf("err = %v, want poll_interval_ms validation error", err)
 	}
 }
 
@@ -204,7 +192,7 @@ func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
 	}
 }
 
-func TestOAuthTokenAttemptsIncludeHostileFallbacks(t *testing.T) {
+func TestOAuthTokenAttemptsIncludeHostileRoutes(t *testing.T) {
 	route := RouteConfig{
 		Mode:           "google_front",
 		Proxy:          "socks5h://127.0.0.1:11093",
@@ -219,13 +207,13 @@ func TestOAuthTokenAttemptsIncludeHostileFallbacks(t *testing.T) {
 		t.Fatalf("primary attempt = %+v", attempts[0])
 	}
 	if attempts[1].host != "accounts.google.com" || attempts[1].path != "/o/oauth2/token" || attempts[1].route.Mode != "google_front" || attempts[1].route.Proxy == "" {
-		t.Fatalf("fronted accounts fallback = %+v", attempts[1])
+		t.Fatalf("fronted accounts attempt = %+v", attempts[1])
 	}
 	if attempts[2].host != "accounts.google.com" || attempts[2].path != "/o/oauth2/token" || attempts[2].route.Mode != "direct" || attempts[2].route.Proxy == "" {
-		t.Fatalf("direct accounts fallback = %+v", attempts[2])
+		t.Fatalf("direct accounts attempt = %+v", attempts[2])
 	}
 	if attempts[3].host != "oauth2.googleapis.com" || attempts[3].route.Mode != "direct" || attempts[3].route.Proxy == "" {
-		t.Fatalf("direct oauth2 fallback = %+v", attempts[3])
+		t.Fatalf("direct oauth2 attempt = %+v", attempts[3])
 	}
 }
 
@@ -234,7 +222,7 @@ func TestTerminalOAuthTokenError(t *testing.T) {
 		t.Fatal("invalid_grant should be terminal")
 	}
 	if terminalOAuthTokenError(http.StatusNotFound, []byte(`<html>wrong edge</html>`)) {
-		t.Fatal("wrong-edge response should allow fallback")
+		t.Fatal("wrong-edge response should allow another token attempt")
 	}
 }
 

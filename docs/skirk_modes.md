@@ -36,6 +36,16 @@ The transport groups active TCP streams into bounded mux lanes:
 This is the current best shape for Drive because it minimizes object count and
 avoids one Drive polling loop per browser connection.
 
+## Discovery
+
+```text
+exit:   fresh prefix list on muxv4/<session>/up/
+client: fresh prefix list on muxv4/<session>/down/<client>/<run>/
+```
+
+Runtime discovery stays prefix-scoped because that keeps the hot path narrow and
+predictable under mixed browsing and downloads.
+
 ## Route Modes
 
 Client profiles default to:
@@ -52,8 +62,6 @@ Available route modes:
   real Google API TLS name.
 - `google_front`: use a Google-looking TLS/SNI path for Google API traffic.
 - `google_front_pinned`: same idea pinned to `--google-ip`.
-- `google_front_h1`: force HTTP/1.1 on the Google-looking route.
-- `google_front_h1_pinned`: force HTTP/1.1 and a pinned Google edge IP.
 
 Use fronted routes only on networks where you are authorized to test and where
 normal Google API hostnames are blocked or unreliable.
@@ -66,17 +74,11 @@ normal Google API hostnames are blocked or unreliable.
 - Android app: whole-device VPN mode and optional SOCKS/LAN sharing.
 - Windows desktop app: profile import and local SOCKS proxy control.
 
-## Experimental Features
+## Discovery
 
-Bounded burst polling is available but disabled by default:
-
-```bash
-skirk serve-client --config client.skirk --burst-poll --burst-poll-ms 25
-```
-
-It temporarily polls faster after uploads, then backs off if Drive list calls are
-slow. Current measurements showed only modest, noisy latency improvement, so it
-is intentionally opt-in.
+Skirk uses fresh prefix listing for runtime discovery. Client/run namespacing
+keeps each client's downlink prefix separate while the exit watches the shared
+uplink prefix.
 
 ## Constraints
 

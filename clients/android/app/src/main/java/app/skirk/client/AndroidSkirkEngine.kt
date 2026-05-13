@@ -6,6 +6,7 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -30,6 +31,7 @@ class AndroidSkirkEngine(
         val logFile = File(logsDir, logFileName)
         logFile.writeText("")
         Log.i(TAG, "Starting ${engine.absolutePath} on ${profile.socksAddress}")
+        appendLogLine(logFile, "android starting mode=${profile.connectionMode} listen=${profile.socksAddress}")
         process = ProcessBuilder(buildProcessArgs(engine, configFile, profile))
             .directory(context.filesDir)
             .redirectErrorStream(true)
@@ -109,6 +111,7 @@ class AndroidSkirkEngine(
         thread(name = "skirk-engine-watch", start = true) {
             val code = runCatching { child.waitFor() }.getOrNull() ?: return@thread
             if (process !== child) {
+                appendLogLine(logFile, "android stopped code=$code")
                 Log.i(TAG, "Skirk engine stopped code=$code")
                 return@thread
             }
@@ -117,6 +120,7 @@ class AndroidSkirkEngine(
                 ?.takeLast(12)
                 ?.joinToString("\n")
                 .orEmpty()
+            appendLogLine(logFile, "android exited unexpectedly code=$code")
             Log.w(TAG, "Skirk engine exited unexpectedly code=$code\n$tail")
             process = null
             activeProfile = null
@@ -124,10 +128,7 @@ class AndroidSkirkEngine(
     }
 
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
-        val routeMode = when (profile.routeMode) {
-            "google_front_h1", "google_front_h1_pinned" -> "google_front_h1_pinned"
-            else -> "google_front_pinned"
-        }
+        val routeMode = "google_front_pinned"
         val args = mutableListOf(
             engine.absolutePath,
             "serve-client",
@@ -139,6 +140,8 @@ class AndroidSkirkEngine(
             profile.id,
             "--route-mode",
             routeMode,
+            "--poll-ms",
+            "100",
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )
@@ -156,6 +159,12 @@ class AndroidSkirkEngine(
     companion object {
         private const val TAG = "SkirkEngine"
         private const val ENGINE_NAME = "libskirk.so"
+
+        private fun appendLogLine(logFile: File, message: String) {
+            runCatching {
+                logFile.appendText("${Instant.now()} $message\n")
+            }
+        }
 
         fun lanAddresses(port: Int): List<String> =
             NetworkInterface.getNetworkInterfaces().toList()

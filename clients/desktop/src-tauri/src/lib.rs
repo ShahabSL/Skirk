@@ -320,6 +320,7 @@ impl DesktopRuntime {
             .ok_or_else(|| "no profile selected".to_string())?
             .clone();
         let socks_address = format!("{}:{}", profile.socks_host, profile.socks_port);
+        let route_mode = "google_front_pinned";
         ensure_port_free(&socks_address)?;
         let skirk = self.resolve_sidecar()?;
         let log_path = client_log_path(&self.paths);
@@ -340,6 +341,10 @@ impl DesktopRuntime {
             .arg(&socks_address)
             .arg("--client-id")
             .arg(&profile.id)
+            .arg("--route-mode")
+            .arg(route_mode)
+            .arg("--poll-ms")
+            .arg("100")
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
         #[cfg(windows)]

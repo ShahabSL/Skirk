@@ -96,6 +96,7 @@ type TunnelConfig struct {
 	UploadConcurrency   int    `json:"upload_concurrency,omitempty"`
 	DownloadConcurrency int    `json:"download_concurrency,omitempty"`
 	CleanupProcessed    bool   `json:"cleanup_processed,omitempty"`
+	Observe             bool   `json:"observe,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -283,7 +284,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.Profile = "auto"
 	}
 	if c.Tunnel.ChunkSize == 0 {
-		c.Tunnel.ChunkSize = 1024 * 1024
+		c.Tunnel.ChunkSize = 8 * 1024 * 1024
 	}
 	if c.Tunnel.PollIntervalMS == 0 {
 		c.Tunnel.PollIntervalMS = 100
@@ -303,6 +304,11 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Secret) == "" {
 		return errors.New("config.secret is required")
 	}
+	switch strings.TrimSpace(c.Route.Mode) {
+	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned":
+	default:
+		return fmt.Errorf("config.route.mode must be direct, real_pinned, google_front, google_front_pinned, google_front_h1, or google_front_h1_pinned")
+	}
 	if strings.TrimSpace(c.Client.ID) != "" && !isSafeObjectSegment(c.Client.ID) {
 		return fmt.Errorf("config.client.id may contain only letters, digits, underscore, hyphen, and dot")
 	}
@@ -320,17 +326,20 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
-	if c.Tunnel.UploadConcurrency < 0 || c.Tunnel.UploadConcurrency > 64 {
-		return fmt.Errorf("config.tunnel.upload_concurrency must be between 0 and 64")
-	}
-	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
-		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
+	if c.Tunnel.PollIntervalMS <= 0 || c.Tunnel.PollIntervalMS > 60000 {
+		return fmt.Errorf("config.tunnel.poll_interval_ms must be between 1 and 60000")
 	}
 	if c.Tunnel.BurstPollMS < 25 || c.Tunnel.BurstPollMS > 1000 {
 		return fmt.Errorf("config.tunnel.burst_poll_ms must be between 25 and 1000")
 	}
 	if c.Tunnel.BurstPollWindowMS < 1000 || c.Tunnel.BurstPollWindowMS > 30000 {
 		return fmt.Errorf("config.tunnel.burst_poll_window_ms must be between 1000 and 30000")
+	}
+	if c.Tunnel.UploadConcurrency < 0 || c.Tunnel.UploadConcurrency > 64 {
+		return fmt.Errorf("config.tunnel.upload_concurrency must be between 0 and 64")
+	}
+	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
+		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
 	}
 	if strings.TrimSpace(c.Tunnel.ExitProxy) != "" {
 		u, err := url.Parse(c.Tunnel.ExitProxy)
@@ -622,7 +631,7 @@ func oauthTokenAttempts(route RouteConfig) []oauthTokenAttempt {
 				timeout: 12 * time.Second,
 			},
 			oauthTokenAttempt{
-				source:  "refresh_token:accounts_legacy",
+				source:  "refresh_token:accounts_direct",
 				route:   directRoute,
 				host:    "accounts.google.com",
 				path:    "/o/oauth2/token",

@@ -232,7 +232,7 @@ func serveClient(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
-	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling experiment")
+	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling after local uploads")
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
@@ -240,6 +240,7 @@ func serveClient(ctx context.Context, args []string) error {
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
 	clientID := fs.String("client-id", "", "stable per-device client id; generated automatically when omitted")
 	watchParentPID := fs.Int("watch-parent-pid", 0, "exit when this parent process disappears")
 	if err := fs.Parse(args); err != nil {
@@ -279,6 +280,9 @@ func serveClient(ctx context.Context, args []string) error {
 		return err
 	}
 	cfg.Client.RunID = runID
+	if *observe {
+		cfg.Tunnel.Observe = true
+	}
 	if *burstPoll {
 		cfg.Tunnel.BurstPoll = true
 	}
@@ -322,6 +326,7 @@ func serveExit(ctx context.Context, args []string) error {
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy for exit traffic, for example socks5h://127.0.0.1:40000")
+	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -332,14 +337,22 @@ func serveExit(ctx context.Context, args []string) error {
 	if strings.TrimSpace(*exitProxy) != "" {
 		cfg.Tunnel.ExitProxy = strings.TrimSpace(*exitProxy)
 	}
+	if *observe {
+		cfg.Tunnel.Observe = true
+	}
 	if err := applyTunnelOverrides(cfg, *chunkSize, *pollMS, *concurrency, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
 	}
-	startMailboxJanitor(ctx, drive)
 	tunnel, err := skirk.NewTunnel(drive, cfg)
 	if err != nil {
 		return err
 	}
+	lock, err := acquireExitLock(tunnel.SessionID)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	startMailboxJanitor(ctx, drive)
 	log.Printf("skirk exit polling session=%s exit_proxy=%s", skirk.SessionString(tunnel.SessionID), firstNonEmpty(tunnel.ExitProxy, "none"))
 	return tunnel.ServeExit(ctx)
 }
@@ -347,7 +360,7 @@ func serveExit(ctx context.Context, args []string) error {
 const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 6 * time.Hour
 
-var mailboxJanitorPrefixes = []string{"muxv4/", "muxv3/", "control/", "data/"}
+var mailboxJanitorPrefixes = []string{"muxv4/"}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
@@ -456,7 +469,7 @@ func benchLive(ctx context.Context, args []string) error {
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
 	routeMode := fs.String("route-mode", "", "override config route mode")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
-	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling experiment")
+	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling after local uploads")
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
@@ -464,6 +477,7 @@ func benchLive(ctx context.Context, args []string) error {
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
+	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -482,6 +496,21 @@ func benchLive(ctx context.Context, args []string) error {
 	}
 	if strings.TrimSpace(*googleIP) != "" {
 		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if strings.TrimSpace(cfg.Client.ID) == "" {
+		generated, err := skirk.RandomClientID()
+		if err != nil {
+			return err
+		}
+		cfg.Client.ID = generated
+	}
+	runID, err := skirk.RandomRunID()
+	if err != nil {
+		return err
+	}
+	cfg.Client.RunID = runID
+	if *observe {
+		cfg.Tunnel.Observe = true
 	}
 	if *burstPoll {
 		cfg.Tunnel.BurstPoll = true

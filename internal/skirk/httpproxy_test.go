@@ -11,6 +11,45 @@ import (
 	"time"
 )
 
+type closeWriteRecorder struct {
+	net.Conn
+	closeWriteCalled bool
+}
+
+func (c *closeWriteRecorder) CloseWrite() error {
+	c.closeWriteCalled = true
+	return nil
+}
+
+func TestMuxRemoteFINUsesCloseWrite(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	recorder := &closeWriteRecorder{Conn: left}
+	stream := &muxStream{conn: recorder}
+
+	stream.markRemoteReadDone()
+
+	if !recorder.closeWriteCalled {
+		t.Fatal("remote FIN should call CloseWrite on wrapped client connection")
+	}
+}
+
+func TestHTTPProxyConnectPropagatesRemoteFINViaBufferedConn(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	recorder := &closeWriteRecorder{Conn: left}
+	conn := bufferedConn{Conn: recorder}
+
+	if err := conn.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if !recorder.closeWriteCalled {
+		t.Fatal("buffered CONNECT connection should forward CloseWrite")
+	}
+}
+
 func TestHTTPProxyConnectTunnelsBytes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

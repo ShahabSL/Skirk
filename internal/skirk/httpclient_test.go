@@ -11,12 +11,12 @@ import (
 )
 
 func TestIsGoogleFrontRoute(t *testing.T) {
-	for _, mode := range []string{"google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned"} {
+	for _, mode := range []string{"google_front", "google_front_pinned"} {
 		if !isGoogleFrontRoute(mode) {
 			t.Fatalf("expected %s to be a Google-fronted route", mode)
 		}
 	}
-	for _, mode := range []string{"", "direct", "real_pinned"} {
+	for _, mode := range []string{"", "direct", "real_pinned", "legacy_front"} {
 		if isGoogleFrontRoute(mode) {
 			t.Fatalf("expected %s not to be a Google-fronted route", mode)
 		}
@@ -27,17 +27,6 @@ func TestGoogleFrontRouteProtocolSelection(t *testing.T) {
 	for _, mode := range []string{"google_front", "google_front_pinned"} {
 		if !isGoogleFrontHTTP2Route(mode) {
 			t.Fatalf("expected %s to use HTTP/2 fronting", mode)
-		}
-		if isGoogleFrontHTTP1Route(mode) {
-			t.Fatalf("expected %s not to use HTTP/1.1 fronting", mode)
-		}
-	}
-	for _, mode := range []string{"google_front_h1", "google_front_h1_pinned"} {
-		if !isGoogleFrontHTTP1Route(mode) {
-			t.Fatalf("expected %s to use HTTP/1.1 fronting", mode)
-		}
-		if isGoogleFrontHTTP2Route(mode) {
-			t.Fatalf("expected %s not to use HTTP/2 fronting", mode)
 		}
 	}
 }
@@ -59,7 +48,7 @@ func TestGoogleHTTPRouteAttemptsAddGoogleSNIFallback(t *testing.T) {
 
 	pinned := RouteConfig{Mode: "google_front_pinned", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: "216.239.38.120"}
 	attempts = googleHTTPRouteAttempts(pinned)
-	if len(attempts) != 2 || attempts[1].Mode != "google_front" || attempts[1].GoogleIP != "" {
+	if len(attempts) != 1 || attempts[0].Mode != "google_front_pinned" || attempts[0].GoogleIP != pinned.GoogleIP {
 		t.Fatalf("pinned route attempts = %+v", attempts)
 	}
 }

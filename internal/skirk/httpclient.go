@@ -198,6 +198,9 @@ func googleHTTPRouteAttempts(route RouteConfig) []RouteConfig {
 }
 
 func needsGoogleFrontFallback(route RouteConfig) bool {
+	if route.GoogleIP != "" && shouldPinGoogleIP(route.Mode) {
+		return false
+	}
 	if route.Proxy == "" && !isGoogleFrontRoute(route.Mode) {
 		return false
 	}
@@ -296,10 +299,10 @@ func isGoogleFrontHTTP1Route(mode string) bool {
 
 func shouldPinGoogleIP(mode string) bool {
 	switch mode {
-	case "", "direct", "google_front", "google_front_h1":
-		return false
-	default:
+	case "real_pinned", "google_front_pinned", "google_front_h1_pinned":
 		return true
+	default:
+		return false
 	}
 }
 

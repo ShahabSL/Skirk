@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,13 +22,13 @@ const (
 	mediumCoalesceDelay           = 50 * time.Millisecond
 	bulkCoalesceDelay             = 300 * time.Millisecond
 	deferredCleanupDelay          = 5 * time.Second
-	deferredCleanupFlushThreshold = 2048
+	deferredCleanupFlushThreshold = 128
 	idleOpenPollInterval          = 1 * time.Second
 	openPollWarmWindow            = 45 * time.Second
-	directDriveSlowThreshold      = 20 * time.Second
-	proxyDriveSlowThreshold       = 35 * time.Second
-	cleanupQuietWindow            = 10 * time.Second
-	cleanupMaxForegroundDelay     = 2 * time.Minute
+	directDriveSlowThreshold      = 5 * time.Second
+	proxyDriveSlowThreshold       = 10 * time.Second
+	cleanupQuietWindow            = 2 * time.Second
+	cleanupMaxForegroundDelay     = 5 * time.Second
 	exitDialTimeout               = 30 * time.Second
 	burstSlowListThreshold        = 3 * time.Second
 	burstCooldownAfterSlow        = 20 * time.Second
@@ -49,6 +50,7 @@ type Tunnel struct {
 	BurstPoll            bool
 	BurstPollInterval    time.Duration
 	BurstPollWindow      time.Duration
+	Observe              bool
 	role                 string
 	activeStreams        atomic.Int64
 	limiterMu            sync.Mutex
@@ -85,6 +87,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		BurstPoll:           cfg.Tunnel.BurstPoll,
 		BurstPollInterval:   time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
 		BurstPollWindow:     time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
+		Observe:             cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
 		PollInterval:        cfg.PollInterval(),
 		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
 		Logger:              log.Default(),
@@ -99,6 +102,15 @@ func (t *Tunnel) ServeClient(ctx context.Context, listen string) error {
 
 func (t *Tunnel) ServeExit(ctx context.Context) error {
 	return t.serveMuxExit(ctx)
+}
+
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func errorSummary(err error) string {
@@ -191,32 +203,50 @@ func (t *Tunnel) recentActivity() bool {
 	return last > 0 && time.Since(time.Unix(0, last)) <= openPollWarmWindow
 }
 
-func (t *Tunnel) getData(ctx context.Context, name, fileID string) ([]byte, error) {
-	if fileID != "" {
-		if store, ok := t.Data.(ObjectIDStore); ok {
-			return store.GetByID(ctx, fileID)
-		}
-	}
-	return t.Data.Get(ctx, name)
-}
-
 func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
+	release, err := t.acquireUploadSlot(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if release != nil {
+			release(nil)
+		}
+	}()
 	if fileID != "" {
 		if store, ok := t.Data.(ObjectIDStore); ok {
-			return store.DeleteID(ctx, fileID)
+			err = store.DeleteID(ctx, fileID)
+			release(err)
+			release = nil
+			return err
 		}
 	}
-	return t.Data.Delete(ctx, name)
+	err = t.Data.Delete(ctx, name)
+	release(err)
+	release = nil
+	return err
 }
 
 func (t *Tunnel) dialExitTarget(ctx context.Context, target string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, exitDialTimeout)
 	defer cancel()
-	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" {
+	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" && !bypassExitProxy(target) {
 		return DialViaProxy(ctx, proxy, target)
 	}
 	dialer := &net.Dialer{Timeout: exitDialTimeout, KeepAlive: 30 * time.Second}
 	return dialer.DialContext(ctx, "tcp", target)
+}
+
+func bypassExitProxy(target string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(target))
+	if err != nil {
+		host = strings.TrimSpace(target)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (t *Tunnel) uploadWorkerCount() int {
@@ -255,24 +285,16 @@ func (t *Tunnel) downloadWorkerCount() int {
 	return clampWorkers(t.Concurrency)
 }
 
-func (t *Tunnel) streamDownloadWindow() int {
-	workers := t.downloadWorkerCount()
-	if t.RouteProxy != "" {
-		return minInt(workers, 8)
-	}
-	return minInt(workers, 16)
-}
-
 func (t *Tunnel) autoProfile() bool {
 	return strings.TrimSpace(t.Profile) == "" || strings.TrimSpace(t.Profile) == "auto"
 }
 
-func (t *Tunnel) acquireUploadSlot(ctx context.Context) (func(error), error) {
-	return t.limiter(true).Acquire(ctx)
+func (t *Tunnel) acquireUploadSlot(ctx context.Context, priority bool) (func(error), error) {
+	return t.limiter(true).Acquire(ctx, priority)
 }
 
-func (t *Tunnel) acquireDownloadSlot(ctx context.Context) (func(error), error) {
-	return t.limiter(false).Acquire(ctx)
+func (t *Tunnel) acquireDownloadSlot(ctx context.Context, priority bool) (func(error), error) {
+	return t.limiter(false).Acquire(ctx, priority)
 }
 
 func (t *Tunnel) limiter(upload bool) *adaptiveLimiter {
@@ -321,7 +343,7 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 		}
 		return minInt(8, max)
 	case "exit":
-		return minInt(16, max)
+		return max
 	default:
 		return minInt(8, max)
 	}
@@ -338,7 +360,7 @@ func (t *Tunnel) initialDownloadWindow(max int) int {
 		}
 		return minInt(8, max)
 	case "exit":
-		return minInt(8, max)
+		return max
 	default:
 		return minInt(8, max)
 	}
@@ -365,7 +387,10 @@ type adaptiveLimiter struct {
 	mu            sync.Mutex
 	limit         int
 	max           int
+	reserve       int
+	priorityWait  int
 	inFlight      int
+	priorityBusy  int
 	successes     int
 	slowThreshold time.Duration
 	name          string
@@ -384,45 +409,117 @@ func newAdaptiveLimiter(initial, max int, slowThreshold time.Duration, name stri
 	if slowThreshold <= 0 {
 		slowThreshold = directDriveSlowThreshold
 	}
-	return &adaptiveLimiter{limit: initial, max: max, slowThreshold: slowThreshold, name: name, logger: logger}
+	return &adaptiveLimiter{limit: initial, max: max, reserve: priorityReserve(max), slowThreshold: slowThreshold, name: name, logger: logger}
 }
 
-func (l *adaptiveLimiter) Acquire(ctx context.Context) (func(error), error) {
+func priorityReserve(max int) int {
+	if max <= 1 {
+		return 0
+	}
+	reserve := max / 8
+	if reserve < 1 {
+		reserve = 1
+	}
+	if reserve > 4 {
+		reserve = 4
+	}
+	return reserve
+}
+
+func (l *adaptiveLimiter) Acquire(ctx context.Context, priority bool) (func(error), error) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	registeredPriority := false
 	for {
 		l.mu.Lock()
-		if l.inFlight < l.limit {
+		if priority && !registeredPriority {
+			l.priorityWait++
+			registeredPriority = true
+		}
+		if l.canAcquireLocked(priority) {
+			if registeredPriority && l.priorityWait > 0 {
+				l.priorityWait--
+				registeredPriority = false
+			}
 			l.inFlight++
+			if priority {
+				l.priorityBusy++
+			}
 			l.mu.Unlock()
 			started := time.Now()
 			var once sync.Once
 			return func(err error) {
 				once.Do(func() {
-					l.release(err, time.Since(started))
+					l.release(priority, err, time.Since(started))
 				})
 			}, nil
 		}
 		l.mu.Unlock()
 		select {
 		case <-ctx.Done():
+			if registeredPriority {
+				l.mu.Lock()
+				if l.priorityWait > 0 {
+					l.priorityWait--
+				}
+				l.mu.Unlock()
+			}
 			return nil, ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-func (l *adaptiveLimiter) release(err error, duration time.Duration) {
+func (l *adaptiveLimiter) canAcquireLocked(priority bool) bool {
+	if priority {
+		if l.inFlight < l.limit {
+			return true
+		}
+		reserve := l.priorityReserveLocked()
+		return reserve > 0 && l.priorityBusy < reserve && l.inFlight < l.max
+	}
+	if l.inFlight >= l.limit {
+		return false
+	}
+	if l.priorityWait > 0 {
+		return false
+	}
+	normalLimit := l.limit - l.priorityReserveLocked()
+	if normalLimit < 1 {
+		normalLimit = 1
+	}
+	return l.inFlight < normalLimit
+}
+
+func (l *adaptiveLimiter) priorityReserveLocked() int {
+	if l.limit <= 1 || l.reserve <= 0 {
+		return 0
+	}
+	reserve := l.limit / 8
+	if reserve < 1 {
+		reserve = 1
+	}
+	if reserve > l.reserve {
+		reserve = l.reserve
+	}
+	return reserve
+}
+
+func (l *adaptiveLimiter) release(priority bool, err error, duration time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.inFlight > 0 {
 		l.inFlight--
 	}
+	if priority && l.priorityBusy > 0 {
+		l.priorityBusy--
+	}
 	oldLimit := l.limit
 	reason := ""
 	if err != nil {
-		if l.limit > 1 {
-			l.limit = maxInt(1, l.limit/2)
+		floor := l.minimumLimitLocked()
+		if l.limit > floor {
+			l.limit = maxInt(floor, l.limit/2)
 		}
 		l.successes = 0
 		reason = "error"
@@ -430,8 +527,13 @@ func (l *adaptiveLimiter) release(err error, duration time.Duration) {
 		return
 	}
 	if duration >= l.slowThreshold {
-		if l.limit > 1 {
-			l.limit--
+		floor := l.minimumLimitLocked()
+		if l.limit > floor {
+			if duration >= 2*l.slowThreshold {
+				l.limit = maxInt(floor, l.limit/2)
+			} else {
+				l.limit--
+			}
 		}
 		l.successes = 0
 		reason = "slow"
@@ -458,6 +560,20 @@ func (l *adaptiveLimiter) logChangeLocked(oldLimit int, reason string, duration 
 	}
 	l.lastLog = now
 	l.logger.Printf("drive limiter %s window=%d->%d max=%d reason=%s duration=%s", l.name, oldLimit, l.limit, l.max, reason, duration.Round(time.Millisecond))
+}
+
+func (l *adaptiveLimiter) minimumLimitLocked() int {
+	if l.max <= 1 {
+		return 1
+	}
+	floor := l.reserve + 1
+	if floor < 2 {
+		return 2
+	}
+	if floor > l.max {
+		return l.max
+	}
+	return floor
 }
 
 func maxInt(a, b int) int {
@@ -510,11 +626,8 @@ func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
-		tunnel.waitForCleanupQuiet(context.Background(), cleanupMaxForegroundDelay)
-		workers := clampWorkers(tunnel.Concurrency)
-		if workers > 4 {
-			workers = 4
-		}
+		tunnel.waitForCleanupQuiet(context.Background())
+		workers := 1
 		jobs := make(chan cleanupTask)
 		var wg sync.WaitGroup
 		for i := 0; i < workers; i++ {
@@ -536,11 +649,11 @@ func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 	}()
 }
 
-func (t *Tunnel) waitForCleanupQuiet(ctx context.Context, maxWait time.Duration) {
-	if t == nil || maxWait <= 0 {
+func (t *Tunnel) waitForCleanupQuiet(ctx context.Context) {
+	if t == nil || cleanupMaxForegroundDelay <= 0 {
 		return
 	}
-	deadline := time.NewTimer(maxWait)
+	deadline := time.NewTimer(cleanupMaxForegroundDelay)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

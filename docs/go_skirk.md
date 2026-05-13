@@ -53,7 +53,6 @@ Important fields:
   caps; leave unset for auto profile.
 - `tunnel.exit_proxy`: optional proxy for target traffic from the exit.
 - `tunnel.cleanup_processed`: deletes processed mux objects.
-- `tunnel.burst_poll`: opt-in latency experiment; disabled by default.
 
 ## Drive AppData
 
@@ -61,9 +60,10 @@ Skirk uses Drive `appDataFolder` for encrypted runtime objects. That keeps data
 out of the user's visible Drive files and lets the recommended setup path use
 the narrow `drive.appdata` OAuth scope.
 
-Drive is still an object API. Latency comes from upload, list/discovery,
-download, and cleanup operations. The mux design reduces object count and
-browser fanout overhead; it does not make Drive a low-latency stream.
+Drive is still an object API. Runtime discovery uses fresh prefix listing;
+latency comes from upload, object visibility, download, and cleanup operations.
+The mux design reduces object count and browser fanout overhead; it does not
+make Drive a low-latency stream.
 
 ## Quota Accounting
 
@@ -107,7 +107,7 @@ priority over deleting old objects.
 
 - default age: 24 hours;
 - default interval: 6 hours;
-- prefixes: `muxv4/`, legacy `muxv3/`, `control/`, `data/`.
+- prefix: `muxv4/`.
 
 Environment controls:
 

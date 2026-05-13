@@ -47,35 +47,6 @@ func TestOpenEnvelopeRejectsTamper(t *testing.T) {
 	}
 }
 
-func TestDeriveStreamKeySeparatesConnectionsAndDirections(t *testing.T) {
-	sid, _ := ParseSessionID("00112233445566778899aabbccddeeff")
-	upA, err := DeriveStreamKey("test-secret", sid, DirectionUp, "conn-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	upA2, err := DeriveStreamKey("test-secret", sid, DirectionUp, "conn-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	upB, err := DeriveStreamKey("test-secret", sid, DirectionUp, "conn-b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	downA, err := DeriveStreamKey("test-secret", sid, DirectionDown, "conn-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(upA, upA2) {
-		t.Fatal("same stream inputs must derive the same key")
-	}
-	if bytes.Equal(upA, upB) {
-		t.Fatal("different connection IDs must derive different stream keys")
-	}
-	if bytes.Equal(upA, downA) {
-		t.Fatal("different directions must derive different stream keys")
-	}
-}
-
 func TestDeriveMuxLaneKeyV4SeparatesClientsRunsAndDirections(t *testing.T) {
 	sid, _ := ParseSessionID("00112233445566778899aabbccddeeff")
 	upA, err := DeriveMuxLaneKeyV4("test-secret", sid, DirectionUp, "client-a", "run-a", 0)

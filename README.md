@@ -159,11 +159,29 @@ Runtime logs include per-minute Drive operation counts, estimated quota units,
 errors, response bytes, and operation timing. Google Cloud Console metrics are
 the project-level source of truth when using your own OAuth client/project.
 
+## Runtime Shape
+
+Skirk's production runtime uses a prefix-scoped Drive mailbox with fresh object
+listing. That path is intentionally simple: upload encrypted mux objects, poll the
+matching direction prefix, download by Drive file ID, and delete processed
+objects after foreground traffic is quiet.
+
+The Linux installer can perform VPS setup non-interactively:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
+  SKIRK_SERVER_SETUP=1 \
+  SKIRK_ADC=/path/to/application_default_credentials.json \
+  sh
+```
+
+Clients still use the Google-fronted Drive path and do not need inbound
+connectivity.
+
 ## Cleanup And Disconnect
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
-automatic janitor that deletes stale `muxv4/`, legacy `muxv3/`, `control/`, and
-`data/` objects older than 24 hours.
+automatic janitor that deletes stale `muxv4/` objects older than 24 hours.
 
 Manual cleanup is dry-run by default:
 
@@ -201,6 +219,19 @@ SOCKS listener:
 skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:40000
 ```
 
+For a clean VPS install that should create the WARP wireproxy service, write the
+exit proxy into the generated config and start the exit service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
+  SKIRK_SERVER_SETUP=1 \
+  SKIRK_INSTALL_SYSTEMD=1 \
+  SKIRK_INSTALL_WIREPROXY=1 \
+  SKIRK_ACCEPT_WARP_TOS=1 \
+  SKIRK_ADC=/path/to/application_default_credentials.json \
+  sh
+```
+
 Expose an HTTP/HTTPS proxy on the client in addition to SOCKS5:
 
 ```bash
@@ -210,14 +241,9 @@ skirk serve-client \
   --http-proxy-listen 127.0.0.1:18081
 ```
 
-Bounded burst polling exists as an experiment and is disabled by default:
-
-```bash
-skirk serve-client --config skirk-kit/client.skirk --burst-poll --burst-poll-ms 25
-```
-
-Early measurements showed only modest, noisy latency gains, so the stable
-default remains the normal adaptive polling path.
+Skirk uses prefix-scoped fresh listing for runtime object discovery. The main
+latency knob exposed to clients is `--poll-ms`; lower values trade more Drive API
+calls for faster wakeups.
 
 ## Documentation
 

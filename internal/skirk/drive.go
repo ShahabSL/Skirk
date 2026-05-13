@@ -32,7 +32,7 @@ const driveListPageSize = "100"
 const driveListMaxPages = 16
 const defaultDriveCleanupMaxPages = 256
 const driveQuotaMaxSamplesPerOp = 4096
-const driveSlowRequestThreshold = 4 * time.Second
+const driveSlowRequestThreshold = 2 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
 
 type DriveCleanupOptions struct {
@@ -255,7 +255,11 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 
 func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error) {
 	values := url.Values{}
-	values.Set("q", d.containsQuery([]string{prefix}))
+	query := d.containsQuery([]string{prefix})
+	if !since.IsZero() {
+		query += fmt.Sprintf(" and modifiedTime >= '%s'", escapeDriveQuery(since.UTC().Format(time.RFC3339Nano)))
+	}
+	values.Set("q", query)
 	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime desc")
@@ -592,6 +596,9 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 }
 
 func (d *DriveStore) logDriveRequest(label string, attempts int, status int, body []byte, duration time.Duration, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	if d.quota != nil {
 		if report, ok := d.quota.Record(label, status, len(body), duration, err); ok && d.Logger != nil {
 			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",

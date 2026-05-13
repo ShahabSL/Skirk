@@ -11,8 +11,7 @@
   the Skirk sidecar.
 - Added Drive Mux v4 documentation as the single production transport.
 - Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
-  benchmarks, quota telemetry, and bounded burst polling as an opt-in
-  experiment.
+  benchmarks, quota telemetry, and Drive Changes based discovery.
 - Updated setup docs around one-line `skirk:` profiles, `serve-client`,
   `serve-exit`, custom OAuth device-flow setup, and Drive `appDataFolder`.
 - Removed stale references to alternate runtime control lanes and visible Drive

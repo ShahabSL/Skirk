@@ -1,8 +1,10 @@
 package skirk
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,7 +33,7 @@ func TestDriveStoreAppDataQuery(t *testing.T) {
 func TestDriveStoreLegacyAppDataFolderID(t *testing.T) {
 	store := NewDriveStore(nil, "token", DriveConfig{FolderID: "appDataFolder"})
 	if !store.isAppData() {
-		t.Fatal("expected legacy appDataFolder folder_id to enable appDataFolder mode")
+		t.Fatal("expected appDataFolder folder_id to enable appDataFolder mode")
 	}
 }
 
@@ -89,36 +91,30 @@ func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
 	}
 }
 
-func TestDriveStoreListFreshStopsAtOlderObjects(t *testing.T) {
-	since := time.Date(2026, 5, 11, 15, 0, 0, 0, time.UTC)
-	pages := 0
+func TestDriveStoreListFreshFiltersByModifiedTime(t *testing.T) {
+	var gotQuery url.Values
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		pages++
 		query, err := url.ParseQuery(req.URL.RawQuery)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if query.Get("pageToken") == "" {
-			return stringResponse(http.StatusOK, `{
-				"nextPageToken":"next",
-				"files":[
-					{"id":"fresh","name":"muxv3/session/down/l00/0000000000000001.f1.b32","size":"32","modifiedTime":"2026-05-11T15:00:01Z"},
-					{"id":"old","name":"muxv3/session/down/l00/0000000000000000.f1.b32","size":"32","modifiedTime":"2026-05-11T14:59:59Z"}
-				]
-			}`), nil
-		}
-		return stringResponse(http.StatusOK, `{"files":[{"id":"too-old","name":"muxv3/session/down/l00/ffffffffffffffff.f1.b32","size":"32","modifiedTime":"2026-05-11T14:00:00Z"}]}`), nil
+		gotQuery = query
+		return stringResponse(http.StatusOK, `{"files":[]}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
-	infos, err := store.ListFresh(context.Background(), "muxv3/session/down/", since)
-	if err != nil {
+	since := time.Date(2026, 5, 12, 23, 40, 1, 123000000, time.UTC)
+	if _, err := store.ListFresh(context.Background(), "muxv4/session/down/client/run/", since); err != nil {
 		t.Fatal(err)
 	}
-	if pages != 1 {
-		t.Fatalf("pages = %d, want 1", pages)
+	query := gotQuery.Get("q")
+	if !strings.Contains(query, "name contains 'muxv4/session/down/client/run/'") {
+		t.Fatalf("q = %q, want name prefix filter", query)
 	}
-	if len(infos) != 1 || infos[0].ID != "fresh" {
-		t.Fatalf("infos = %#v, want only fresh object", infos)
+	if !strings.Contains(query, "modifiedTime >= '2026-05-12T23:40:01.123Z'") {
+		t.Fatalf("q = %q, want modifiedTime lower bound", query)
+	}
+	if gotQuery.Get("orderBy") != "modifiedTime desc" {
+		t.Fatalf("orderBy = %q, want modifiedTime desc", gotQuery.Get("orderBy"))
 	}
 }
 
@@ -140,9 +136,9 @@ func TestDriveStoreCleanupDeletesExpiredMuxObjects(t *testing.T) {
 			return stringResponse(http.StatusOK, `{
 				"nextPageToken":"should-not-be-read",
 				"files":[
-					{"id":"old-id","name":"muxv3/abc/up/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"old-id","name":"muxv4/abc/up/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
 					{"id":"other-id","name":"other/abc/up/old","size":"20","modifiedTime":"2026-05-11T10:00:00Z"},
-					{"id":"new-id","name":"muxv3/abc/up/new","size":"30","modifiedTime":"2026-05-11T12:30:00Z"}
+					{"id":"new-id","name":"muxv4/abc/up/new","size":"30","modifiedTime":"2026-05-11T12:30:00Z"}
 				]
 			}`), nil
 		case http.MethodDelete:
@@ -155,7 +151,7 @@ func TestDriveStoreCleanupDeletesExpiredMuxObjects(t *testing.T) {
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
 	result, err := store.Cleanup(context.Background(), DriveCleanupOptions{
-		Prefix:            "muxv3/abc/",
+		Prefix:            "muxv4/abc/",
 		OlderThan:         time.Hour,
 		Now:               time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
 		DeleteConcurrency: 2,
@@ -179,12 +175,12 @@ func TestDriveStoreCleanupDryRunDoesNotDelete(t *testing.T) {
 			return stringResponse(http.StatusNoContent, ""), nil
 		}
 		return stringResponse(http.StatusOK, `{
-			"files":[{"id":"old-id","name":"muxv3/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
+			"files":[{"id":"old-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
 		}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
 	result, err := store.Cleanup(context.Background(), DriveCleanupOptions{
-		Prefix:    "muxv3/abc/",
+		Prefix:    "muxv4/abc/",
 		OlderThan: time.Hour,
 		Now:       time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
 		DryRun:    true,
@@ -218,6 +214,21 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	}
 	if snapshot.Ops["download"].P50DurationMS != 250 || snapshot.Ops["upload"].P95DurationMS != 100 {
 		t.Fatalf("snapshot ops = %+v, want duration percentiles", snapshot.Ops)
+	}
+}
+
+func TestDriveStoreSuppressesCanceledRequestObservabilityNoise(t *testing.T) {
+	var logs bytes.Buffer
+	store := &DriveStore{
+		quota:  newDriveQuotaStats(time.Minute),
+		Logger: log.New(&logs, "", 0),
+	}
+	store.logDriveRequest("download", 1, 0, nil, 250*time.Millisecond, context.Canceled)
+	if logs.Len() != 0 {
+		t.Fatalf("canceled request log = %q, want no log noise", logs.String())
+	}
+	if snapshot := store.quota.Snapshot(); snapshot.Calls != 0 || snapshot.Errors != 0 {
+		t.Fatalf("quota snapshot = %+v, want canceled hedge attempt omitted", snapshot)
 	}
 }
 

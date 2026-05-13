@@ -59,14 +59,12 @@ func setupInit(ctx context.Context, args []string) error {
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used with --oauth-client-file")
 	clientRoute := fs.String("client-route", "google_front", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
-	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for the client")
-	exitProxy := fs.String("exit-proxy", "", "optional upstream SOCKS5 URL for the exit")
+	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
+	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 8*1024*1024, "maximum tunnel chunk size")
-	pollMS := fs.Int("poll-ms", 100, "mailbox poll interval in milliseconds")
-	clientConcurrency := fs.Int("client-concurrency", 0, "legacy client Drive upload/download concurrency; sets both split knobs")
-	exitConcurrency := fs.Int("exit-concurrency", 0, "legacy exit Drive upload/download concurrency; sets both split knobs")
+	pollMS := fs.Int("poll-ms", 100, "Drive mailbox poll interval in milliseconds")
 	clientUploadConcurrency := fs.Int("client-upload-concurrency", 0, "client Drive upload concurrency; 0 uses auto profile")
 	clientDownloadConcurrency := fs.Int("client-download-concurrency", 0, "client Drive download concurrency; 0 uses auto profile")
 	exitUploadConcurrency := fs.Int("exit-upload-concurrency", 0, "exit Drive upload concurrency; 0 uses auto profile")
@@ -80,14 +78,6 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	if *adcPath != "" && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
-	}
-	if *clientConcurrency > 0 {
-		*clientUploadConcurrency = *clientConcurrency
-		*clientDownloadConcurrency = *clientConcurrency
-	}
-	if *exitConcurrency > 0 {
-		*exitUploadConcurrency = *exitConcurrency
-		*exitDownloadConcurrency = *exitConcurrency
 	}
 
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
@@ -162,13 +152,15 @@ func setupInit(ctx context.Context, args []string) error {
 		Drive:     baseDrive,
 		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *clientUploadConcurrency, *clientDownloadConcurrency),
 	}
+	exitTunnel := setupTunnelConfig(*listen, *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency)
+	exitTunnel.ExitProxy = strings.TrimSpace(*exitProxy)
 	exitCfg := skirk.Config{
 		Secret:    secret,
 		SessionID: sessionID,
 		Auth:      auth,
-		Route:     skirk.RouteConfig{Mode: *exitRoute, Proxy: *exitProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
+		Route:     skirk.RouteConfig{Mode: *exitRoute, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     baseDrive,
-		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency),
+		Tunnel:    exitTunnel,
 	}
 	if err := os.MkdirAll(*outDir, 0700); err != nil {
 		return err
@@ -272,7 +264,7 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 	return nil
 }
 
-func setupTunnelConfig(listen string, chunkSize, pollMS, uploadConcurrency, downloadConcurrency int) skirk.TunnelConfig {
+func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, downloadConcurrency int) skirk.TunnelConfig {
 	cfg := skirk.TunnelConfig{
 		Listen:           listen,
 		Profile:          "auto",

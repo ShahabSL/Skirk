@@ -215,14 +215,10 @@ skirk serve-client \
   --http-proxy-listen 127.0.0.1:18081
 ```
 
-`burst polling` یک حالت آزمایشی است و پیش‌فرض نیست:
-
-```bash
-skirk serve-client --config skirk-kit/client.skirk --burst-poll --burst-poll-ms 25
-```
-
-در تست‌های اولیه، بهبود latency آن کم و ناپایدار بود؛ برای همین مسیر پایدار
-همان adaptive polling معمولی است.
+مسیر پایدار runtime از fresh prefix listing روی Google Drive استفاده می‌کند.
+مقدار `--poll-ms` knob اصلی latency سمت کلاینت است و مقدار پیش‌فرض/پیشنهادی
+`100` میلی‌ثانیه است؛ polling تهاجمی‌تر می‌تواند رقابت بیشتری روی Drive ایجاد
+کند.
 
 ## مستندات
 

@@ -93,7 +93,6 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 		writeProxyError(client, http.StatusBadGateway, "proxy handler unavailable")
 		return
 	}
-
 	tunnelSide, proxySide := net.Pipe()
 	defer proxySide.Close()
 	done := make(chan struct{})
@@ -175,4 +174,11 @@ func (c bufferedConn) Read(p []byte) (int, error) {
 		return c.reader.Read(p)
 	}
 	return c.Conn.Read(p)
+}
+
+func (c bufferedConn) CloseWrite() error {
+	if halfCloser, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return halfCloser.CloseWrite()
+	}
+	return nil
 }

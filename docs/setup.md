@@ -124,9 +124,19 @@ skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:4
 skirk serve-exit --config skirk-kit/exit.json --upload-concurrency 16 --download-concurrency 32
 ```
 
-`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv4/`,
-legacy `muxv3/`, `control/`, and `data/` objects older than 24 hours. Override
-with:
+For generated kits, prefer writing the exit proxy into `exit.json` during
+setup:
+
+```bash
+skirk setup init --out skirk-kit --exit-proxy socks5h://127.0.0.1:40000
+```
+
+When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs wgcf/wireproxy,
+starts `wireproxy.service`, and defaults `SKIRK_EXIT_PROXY` to that local SOCKS
+listener. `SKIRK_ACCEPT_WARP_TOS=1` makes the WARP registration noninteractive.
+
+`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv4/`
+objects older than 24 hours. Override with:
 
 ```bash
 SKIRK_JANITOR_OLDER_THAN=6h skirk serve-exit --config skirk-kit/exit.json
@@ -201,8 +211,6 @@ Available route modes:
 - `real_pinned`
 - `google_front`
 - `google_front_pinned`
-- `google_front_h1`
-- `google_front_h1_pinned`
 
 Pinned modes use the configured `--google-ip` value.
 
@@ -251,13 +259,10 @@ Delete stale objects:
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
 ```
 
-Clean a specific legacy prefix:
+Clean a specific prefix:
 
 ```bash
-skirk cleanup --config skirk-kit/exit.json --prefix data/ --older-than 1s --delete
-skirk cleanup --config skirk-kit/exit.json --prefix control/ --older-than 1s --delete
 skirk cleanup --config skirk-kit/exit.json --prefix muxv4/ --older-than 1s --delete
-skirk cleanup --config skirk-kit/exit.json --prefix muxv3/ --older-than 1s --delete
 ```
 
 ## Disconnect Or Revoke

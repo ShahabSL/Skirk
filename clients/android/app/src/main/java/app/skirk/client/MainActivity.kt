@@ -22,18 +22,23 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.VpnKey
@@ -67,10 +72,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import java.io.File
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF111111),
@@ -130,6 +139,7 @@ private fun SkirkTheme(content: @Composable () -> Unit) {
 @Composable
 fun ConfigScreen() {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val store = remember(context) { ProfileStore(context.applicationContext) }
     var profiles by remember { mutableStateOf(store.listProfiles()) }
     var selectedId by remember { mutableStateOf(store.selectedProfileId()) }
@@ -141,6 +151,7 @@ fun ConfigScreen() {
     var proxyShareLan by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var logText by remember { mutableStateOf(readSkirkLogs(context)) }
     var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -195,6 +206,13 @@ fun ConfigScreen() {
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    LaunchedEffect(running) {
+        while (running) {
+            logText = readSkirkLogs(context)
+            delay(2_000L)
         }
     }
 
@@ -269,6 +287,17 @@ fun ConfigScreen() {
                         SkirkProxyService.stop(context)
                         running = false
                         message = "Disconnected"
+                    },
+                )
+            }
+
+            item {
+                LogsPanel(
+                    logText = logText,
+                    onRefresh = { logText = readSkirkLogs(context) },
+                    onCopy = {
+                        clipboard.setText(AnnotatedString(logText))
+                        Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
                     },
                 )
             }
@@ -392,6 +421,44 @@ private fun ConnectionPanel(
         }
         if (message.isNotBlank()) {
             Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun LogsPanel(
+    logText: String,
+    onRefresh: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    Panel {
+        SectionHeader(Icons.Rounded.Storage, "Logs", "Sidecar output")
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 120.dp, max = 260.dp),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Text(
+                text = logText.ifBlank { "No logs yet." },
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onRefresh) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null)
+                Text("Refresh")
+            }
+            OutlinedButton(onClick = onCopy, enabled = logText.isNotBlank()) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null)
+                Text("Copy")
+            }
         }
     }
 }
@@ -720,4 +787,36 @@ private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
     return AndroidSkirkEngine.lanAddresses(profile.socksPort)
         .firstOrNull()
         ?: "0.0.0.0:${profile.socksPort}"
+}
+
+private fun readSkirkLogs(context: android.content.Context): String {
+    val logsDir = File(context.filesDir, "logs")
+    if (!logsDir.exists()) {
+        return ""
+    }
+    return logsDir.listFiles()
+        ?.filter { it.isFile && it.name.endsWith(".log") }
+        ?.sortedBy { it.name }
+        ?.joinToString("\n\n") { file ->
+            val text = file.readTail(maxBytes = 64 * 1024, maxLines = 240)
+            "== ${file.name} ==\n$text"
+        }
+        ?.takeLast(96 * 1024)
+        .orEmpty()
+}
+
+private fun File.readTail(maxBytes: Int, maxLines: Int): String {
+    if (!exists() || length() == 0L) {
+        return ""
+    }
+    val start = (length() - maxBytes).coerceAtLeast(0L)
+    inputStream().use { input ->
+        if (start > 0L) {
+            input.skip(start)
+        }
+        return input.bufferedReader()
+            .readLines()
+            .takeLast(maxLines)
+            .joinToString("\n")
+    }
 }

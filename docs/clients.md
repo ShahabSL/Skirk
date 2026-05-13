@@ -74,7 +74,7 @@ Windows is currently proxy-first. It does not install a system VPN/TUN driver.
 Configure the browser or application proxy settings to SOCKS5
 `127.0.0.1:18080`.
 
-Command-line fallback:
+Command-line client:
 
 ```powershell
 .\skirk-windows-amd64.exe serve-client --config .\client.skirk --listen 127.0.0.1:18080
