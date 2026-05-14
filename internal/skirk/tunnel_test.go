@@ -463,7 +463,7 @@ func TestMuxObjectNameIncludesEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := muxObjectName(sid, DirectionDown, "client-a", "run-a", "cafebabedeadbeef", 0x1234, 3, 9, 2, 1234, true)
+	name := muxObjectName(sid, DirectionDown, "client-a", "run-a", "cafebabedeadbeef", 0x1234, 3, 9, 2, 7, 8, 1234, true)
 	if !strings.Contains(name, "/down/client-a/run-a/cafebabedeadbeef/p0/s0000000000001234/l03/") {
 		t.Fatalf("name = %q, want client/run/epoch segment", name)
 	}
@@ -473,6 +473,9 @@ func TestMuxObjectNameIncludesEpoch(t *testing.T) {
 	}
 	if meta.ID != "file-id" || meta.ClientID != "client-a" || meta.RunID != "run-a" || meta.StreamID != 0x1234 || meta.Lane != 3 || meta.Seq != 9 || !meta.Priority {
 		t.Fatalf("meta = %+v, want priority client/run stream lane=3 seq=9 id=file-id", meta)
+	}
+	if meta.PlainBytes != 1234 || !meta.FrameRangeKnown || meta.FrameMinSeq != 7 || meta.FrameMaxSeq != 8 {
+		t.Fatalf("meta = %+v, want plain bytes and frame range", meta)
 	}
 }
 
@@ -509,6 +512,34 @@ func TestMuxExitOpenClaimSuppressesDuplicatesAndRecentlyClosed(t *testing.T) {
 	mux.streamsMu.Unlock()
 	if !mux.claimExitOpen(key) {
 		t.Fatal("open should be allowed after the recently closed guard expires")
+	}
+}
+
+func TestMuxRSTBeforeOpenRemembersClosedStream(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		t:       &Tunnel{},
+		role:    "exit",
+		streams: map[muxStreamKey]*muxStream{},
+		opening: map[muxStreamKey]struct{}{},
+		closed:  map[muxStreamKey]time.Time{},
+		pending: map[muxStreamKey][]muxFrame{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
+	mux.queuePendingFrame(muxFrame{Kind: muxFrameData, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1, Payload: []byte("late")})
+
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID})
+	if !mux.isClosedStream(key) {
+		t.Fatal("unknown RST should remember the stream as closed")
+	}
+	if mux.claimExitOpen(key) {
+		t.Fatal("open claim succeeded after earlier RST")
+	}
+	mux.pendingMu.Lock()
+	pending := len(mux.pending[key])
+	mux.pendingMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending frames = %d, want dropped after RST", pending)
 	}
 }
 
@@ -755,6 +786,46 @@ func TestMuxBatchLoopSeparatesUrgentFromBulk(t *testing.T) {
 	}
 }
 
+func TestNormalSendAdmissionAllowsNewStreamPastSoftQueueCap(t *testing.T) {
+	ctx := context.Background()
+	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
+	streams := muxNormalFrameQueue / muxNormalStreamQueue
+	for stream := 0; stream < streams; stream++ {
+		for seq := 1; seq <= muxNormalStreamQueue; seq++ {
+			frame := muxFrame{
+				Kind:     muxFrameData,
+				ClientID: "client-a",
+				RunID:    "run-a",
+				StreamID: uint64(stream + 1),
+				Seq:      uint64(seq),
+				Payload:  make([]byte, inlineDataThreshold+1),
+			}
+			if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
+				t.Fatalf("fill stream %d seq %d: %v", stream, seq, err)
+			}
+		}
+	}
+	lane.normalMu.Lock()
+	queued := lane.normalQueuedFrames
+	lane.normalMu.Unlock()
+	if queued != muxNormalFrameQueue {
+		t.Fatalf("queued frames = %d, want soft cap %d", queued, muxNormalFrameQueue)
+	}
+
+	newStreamCtx, cancelNewStream := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancelNewStream()
+	if err := lane.enqueueNormalFrame(newStreamCtx, muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 999, Seq: 1, Payload: []byte("new-stream")}); err != nil {
+		t.Fatalf("new stream admission should bypass soft cap: %v", err)
+	}
+
+	fullStreamCtx, cancelFullStream := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancelFullStream()
+	err := lane.enqueueNormalFrame(fullStreamCtx, muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: 99, Payload: []byte("full-stream")})
+	if err == nil {
+		t.Fatal("existing full stream admitted beyond per-stream cap")
+	}
+}
+
 func TestMuxBatchLoopUrgentProgressesWithSaturatedNormalUpload(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -818,7 +889,7 @@ func TestNormalSendSchedulerInterleavesStreams(t *testing.T) {
 func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	ctx := context.Background()
 	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
-	payload := make([]byte, 160*1024)
+	payload := make([]byte, 256*1024)
 	for seq := uint64(1); seq <= 4; seq++ {
 		frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: seq, Payload: payload}
 		if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
@@ -884,10 +955,63 @@ func TestNormalMuxSchedulerProcessesStreamInObjectSequence(t *testing.T) {
 			if got.Seq != want {
 				t.Fatalf("got seq %d, want %d", got.Seq, want)
 			}
-			mux.finishNormalMuxObject(ctx, ready)
+			mux.finishNormalMuxObject(ctx, got)
 		case <-time.After(time.Second):
 			t.Fatalf("timed out waiting for seq %d", want)
 		}
+	}
+}
+
+func TestMuxNextObjectPrefersUrgentBeforeNormal(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		recvUrgent:       make(chan muxObjectMeta, 1),
+		recvNormalReady:  make(chan muxStreamKey, 1),
+		recvNormalFlows:  map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive: map[muxStreamKey]int{},
+		recvNormalSent:   map[muxStreamKey]bool{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 9}
+	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1}) {
+		t.Fatal("enqueue normal object failed")
+	}
+	mux.recvUrgent <- muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: 99, Seq: 7, Priority: true}
+
+	budget := muxNormalStreamInflight
+	got, ok := mux.nextMuxObject(ctx, false, &budget)
+	if !ok {
+		t.Fatal("nextMuxObject returned false")
+	}
+	if !got.Priority || got.StreamID != 99 {
+		t.Fatalf("got %+v, want urgent object before normal", got)
+	}
+}
+
+func TestMuxNextObjectServesNormalAfterUrgentBudget(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		recvUrgent:       make(chan muxObjectMeta, 1),
+		recvNormalReady:  make(chan muxStreamKey, 1),
+		recvNormalFlows:  map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive: map[muxStreamKey]int{},
+		recvNormalSent:   map[muxStreamKey]bool{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 9}
+	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1}) {
+		t.Fatal("enqueue normal object failed")
+	}
+	mux.recvUrgent <- muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: 99, Seq: 7, Priority: true}
+	budget := 0
+
+	got, ok := mux.nextMuxObject(ctx, false, &budget)
+	if !ok {
+		t.Fatal("nextMuxObject returned false")
+	}
+	if got.Priority || got.StreamID != key.StreamID {
+		t.Fatalf("got %+v, want normal object after urgent budget exhausted", got)
+	}
+	if budget != muxNormalStreamInflight {
+		t.Fatalf("budget = %d, want reset to %d", budget, muxNormalStreamInflight)
 	}
 }
 
@@ -991,7 +1115,7 @@ func TestNormalMuxSchedulerAllowsBoundedStreamInflight(t *testing.T) {
 	default:
 	}
 
-	mux.finishNormalMuxObject(ctx, key)
+	mux.finishNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1})
 	select {
 	case ready := <-mux.recvNormalReady:
 		got, ok := mux.takeNormalMuxObject(ctx, ready)
@@ -1006,7 +1130,57 @@ func TestNormalMuxSchedulerAllowsBoundedStreamInflight(t *testing.T) {
 	}
 }
 
-func TestNormalMuxSchedulerPausesOnReassemblyBacklog(t *testing.T) {
+func TestNormalMuxSchedulerCapsStreamInflightBytes(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		recvNormalReady:       make(chan muxStreamKey, 4),
+		recvNormalFlows:       map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive:      map[muxStreamKey]int{},
+		recvNormalActiveBytes: map[muxStreamKey]int{},
+		recvNormalSent:        map[muxStreamKey]bool{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 9}
+	objectBytes := muxNormalStreamInflightBytes/2 + 1
+	for seq := uint64(1); seq <= 3; seq++ {
+		meta := muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: seq, PlainBytes: objectBytes}
+		if !mux.enqueueNormalMuxObject(ctx, meta) {
+			t.Fatalf("enqueue seq %d failed", seq)
+		}
+	}
+
+	var first muxObjectMeta
+	select {
+	case ready := <-mux.recvNormalReady:
+		got, ok := mux.takeNormalMuxObject(ctx, ready)
+		if !ok {
+			t.Fatal("ready stream had no object")
+		}
+		first = got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first object")
+	}
+	select {
+	case ready := <-mux.recvNormalReady:
+		t.Fatalf("received extra ready token while byte window is full: %+v", ready)
+	default:
+	}
+
+	mux.finishNormalMuxObject(ctx, first)
+	select {
+	case ready := <-mux.recvNormalReady:
+		got, ok := mux.takeNormalMuxObject(ctx, ready)
+		if !ok {
+			t.Fatal("ready stream had no object after byte window refill")
+		}
+		if got.Seq != 2 {
+			t.Fatalf("got seq %d, want 2", got.Seq)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for byte window refill")
+	}
+}
+
+func TestNormalMuxSchedulerAllowsGapRecoveryWhileReassemblyPaused(t *testing.T) {
 	ctx := context.Background()
 	left, right := net.Pipe()
 	defer left.Close()
@@ -1030,22 +1204,33 @@ func TestNormalMuxSchedulerPausesOnReassemblyBacklog(t *testing.T) {
 	stream.recvPendingBytes = muxStreamPauseBytes
 	stream.mu.Unlock()
 
-	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1}) {
+	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1, FrameMinSeq: 1, FrameMaxSeq: 1, FrameRangeKnown: true}) {
 		t.Fatal("enqueue failed")
 	}
+	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 3, FrameMinSeq: 3, FrameMaxSeq: 3, FrameRangeKnown: true}) {
+		t.Fatal("enqueue follow-up failed")
+	}
+	var recovery muxObjectMeta
 	select {
 	case ready := <-mux.recvNormalReady:
-		if _, ok := mux.takeNormalMuxObject(ctx, ready); ok {
-			t.Fatal("scheduler took a normal object while reassembly backlog was paused")
+		got, ok := mux.takeNormalMuxObject(ctx, ready)
+		if !ok {
+			t.Fatal("scheduler refused the missing object needed to drain reassembly backlog")
 		}
-	default:
+		if got.Seq != 1 {
+			t.Fatalf("got seq %d, want missing seq 1", got.Seq)
+		}
+		recovery = got
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for gap recovery object")
 	}
 
 	stream.mu.Lock()
 	delete(stream.recvPending, 2)
 	stream.recvPendingBytes = 0
+	stream.recvExpected = 3
 	stream.mu.Unlock()
-	mux.signalNormalMuxObjectIfReady(ctx, key)
+	mux.finishNormalMuxObject(ctx, recovery)
 
 	select {
 	case ready := <-mux.recvNormalReady:
@@ -1053,11 +1238,54 @@ func TestNormalMuxSchedulerPausesOnReassemblyBacklog(t *testing.T) {
 		if !ok {
 			t.Fatal("ready stream had no object after reassembly drain")
 		}
+		if got.Seq != 3 {
+			t.Fatalf("got seq %d, want 3", got.Seq)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for normal receive resume")
+	}
+}
+
+func TestNormalMuxSchedulerPausesOnInboundBacklog(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		t:                &Tunnel{},
+		streams:          map[muxStreamKey]*muxStream{},
+		recvNormalReady:  make(chan muxStreamKey, 1),
+		recvNormalFlows:  map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive: map[muxStreamKey]int{},
+		recvNormalSent:   map[muxStreamKey]bool{},
+	}
+	stream := mux.registerStream(7, "client-a", "run-a", nil)
+	key := stream.key()
+	for i := 0; i < muxStreamInboundPause; i++ {
+		stream.inbound <- []byte("x")
+	}
+
+	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1}) {
+		t.Fatal("enqueue failed")
+	}
+	select {
+	case ready := <-mux.recvNormalReady:
+		if got, ok := mux.takeNormalMuxObject(ctx, ready); ok {
+			t.Fatalf("scheduler took object %+v while inbound backlog was paused", got)
+		}
+	default:
+	}
+
+	<-stream.inbound
+	mux.signalNormalMuxObjectIfReady(ctx, key)
+	select {
+	case ready := <-mux.recvNormalReady:
+		got, ok := mux.takeNormalMuxObject(ctx, ready)
+		if !ok {
+			t.Fatal("ready stream had no object after inbound drain")
+		}
 		if got.Seq != 1 {
 			t.Fatalf("got seq %d, want 1", got.Seq)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for normal receive resume")
+		t.Fatal("timed out waiting for inbound receive resume")
 	}
 }
 
@@ -1306,6 +1534,120 @@ func TestMuxListFreshSinceAdvancesWithLookback(t *testing.T) {
 	if got := mux.listFreshSince(); !got.Equal(want) {
 		t.Fatalf("list since moved backward to %s, want %s", got, want)
 	}
+}
+
+func TestMuxListFreshSinceDoesNotAdvanceWhenFreshListIsTruncated(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	since := startedAt.Add(10 * time.Second)
+	store := &freshStatusStore{result: ObjectListInfo{Objects: []ObjectInfo{{Updated: startedAt.Add(2 * time.Minute).Format(time.RFC3339Nano)}}, Truncated: true, NextPageToken: "page-17"}}
+	mux := &driveMux{
+		t:         &Tunnel{Data: store},
+		startedAt: startedAt,
+		listSince: since,
+	}
+
+	if _, err := mux.listRecvMuxObjects(context.Background(), "muxv4/session/down/client/run/"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mux.listFreshSince(); !got.Equal(since) {
+		t.Fatalf("list since = %s, want unchanged %s after truncated fresh list", got, since)
+	}
+	if _, err := mux.listRecvMuxObjects(context.Background(), "muxv4/session/down/client/run/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.pageCalls) < 2 || store.pageCalls[0] != "" || store.pageCalls[1] != "page-17" {
+		t.Fatalf("page calls = %#v, want second poll to resume from truncation token", store.pageCalls)
+	}
+}
+
+func TestMuxPollContinuesWhenFreshListHasNextPageToken(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	store := &freshStatusStore{result: ObjectListInfo{Truncated: true, NextPageToken: "page-2"}}
+	mux := &driveMux{
+		t:         &Tunnel{Data: store, ClientID: "client-a", RunID: "run-a", PollInterval: 100 * time.Millisecond},
+		role:      "client",
+		recvDir:   DirectionDown,
+		startedAt: startedAt,
+		listSince: startedAt,
+		seen:      map[string]struct{}{},
+		queued:    map[string]struct{}{},
+	}
+	if !mux.pollMuxObjects(context.Background()) {
+		t.Fatal("poll should continue immediately when a fresh-list page token remains")
+	}
+	if !mux.hasListFreshPageToken() {
+		t.Fatal("fresh-list page token was not retained")
+	}
+}
+
+func TestMuxListFreshIncompleteWithoutNextPageAdvancesWithLookback(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	newest := startedAt.Add(2 * time.Minute)
+	store := &freshStatusStore{result: ObjectListInfo{
+		Objects:    []ObjectInfo{{Updated: newest.Format(time.RFC3339Nano)}},
+		Truncated:  true,
+		Incomplete: true,
+	}}
+	mux := &driveMux{
+		t:         &Tunnel{Data: store},
+		startedAt: startedAt,
+		listSince: startedAt,
+	}
+	if _, err := mux.listRecvMuxObjects(context.Background(), "muxv4/session/down/client/run/"); err != nil {
+		t.Fatal(err)
+	}
+	want := newest.Add(-muxListLookback)
+	if got := mux.listFreshSince(); !got.Equal(want) {
+		t.Fatalf("list since = %s, want %s after incomplete page without nextPageToken", got, want)
+	}
+}
+
+func TestMuxMarkSeenCompactionPreservesQueuedClaims(t *testing.T) {
+	mux := &driveMux{
+		seen:   map[string]struct{}{},
+		queued: map[string]struct{}{"inflight": struct{}{}},
+	}
+	for i := 0; i <= 200000; i++ {
+		mux.seen[fmt.Sprintf("seen-%d", i)] = struct{}{}
+	}
+	mux.markSeen("done")
+	if !mux.isKnown("inflight") {
+		t.Fatal("queued in-flight claim was lost during seen compaction")
+	}
+	if !mux.isKnown("done") {
+		t.Fatal("newly seen object was lost during seen compaction")
+	}
+}
+
+func TestNormalReceivePausedCountsInboundBacklog(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}}
+	stream := mux.registerStream(1, "client-a", "run-a", nil)
+	for i := 0; i < muxStreamInboundPause; i++ {
+		stream.inbound <- []byte("x")
+	}
+	if !mux.normalReceivePaused(stream.key()) {
+		t.Fatal("normal receive should pause when inbound writer backlog reaches threshold")
+	}
+	<-stream.inbound
+	if mux.normalReceivePaused(stream.key()) {
+		t.Fatal("normal receive stayed paused after inbound backlog dropped below threshold")
+	}
+}
+
+type freshStatusStore struct {
+	BlobStore
+	result    ObjectListInfo
+	err       error
+	pageCalls []string
+}
+
+func (s *freshStatusStore) ListFreshStatus(context.Context, string, time.Time) (ObjectListInfo, error) {
+	return s.result, s.err
+}
+
+func (s *freshStatusStore) ListFreshPageStatus(_ context.Context, _ string, _ time.Time, pageToken string) (ObjectListInfo, error) {
+	s.pageCalls = append(s.pageCalls, pageToken)
+	return s.result, s.err
 }
 
 func TestMuxProcessFailureBackoffDoesNotImmediateRequeue(t *testing.T) {

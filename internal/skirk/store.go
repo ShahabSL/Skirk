@@ -12,6 +12,14 @@ type ObjectInfo struct {
 	Updated string
 }
 
+type ObjectListInfo struct {
+	Objects       []ObjectInfo
+	Truncated     bool
+	NextPageToken string
+	Pages         int
+	Incomplete    bool
+}
+
 type BlobStore interface {
 	Put(ctx context.Context, name string, data []byte) error
 	Get(ctx context.Context, name string) ([]byte, error)
@@ -34,4 +42,12 @@ type ContainsListStore interface {
 
 type FreshListStore interface {
 	ListFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error)
+}
+
+type FreshListStatusStore interface {
+	ListFreshStatus(ctx context.Context, prefix string, since time.Time) (ObjectListInfo, error)
+}
+
+type FreshListPageStatusStore interface {
+	ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error)
 }

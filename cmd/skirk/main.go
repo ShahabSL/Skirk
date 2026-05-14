@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,7 +16,9 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"skirk/internal/skirk"
@@ -75,6 +79,8 @@ func run(args []string) error {
 		return configCommand(args[2:])
 	case "bench-live":
 		return benchLive(ctx, args[2:])
+	case "bench-drive":
+		return benchDrive(ctx, args[2:])
 	case "serve-client":
 		return serveClient(ctx, args[2:])
 	case "client":
@@ -104,6 +110,7 @@ func usage() {
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
+  bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
   serve-client --config skirk.json [--listen 127.0.0.1:18080] [--client-id my-device]
@@ -462,6 +469,64 @@ type benchQuotaRequestSummary struct {
 	ResponseBytes float64 `json:"response_bytes"`
 }
 
+type benchDriveResult struct {
+	RouteMode      string                   `json:"route_mode"`
+	Prefix         string                   `json:"prefix"`
+	StartedUTC     string                   `json:"started_utc"`
+	DurationMS     int64                    `json:"duration_ms"`
+	VisibilityPoll int64                    `json:"visibility_poll_ms"`
+	Matrix         []benchDriveMatrixResult `json:"matrix"`
+	Quota          skirk.DriveQuotaSnapshot `json:"quota"`
+	QuotaOps       string                   `json:"quota_ops"`
+}
+
+type benchDriveMatrixResult struct {
+	Mode           string             `json:"mode"`
+	SizeBytes      int64              `json:"size_bytes"`
+	RangeBytes     int64              `json:"range_bytes,omitempty"`
+	Concurrency    int                `json:"concurrency"`
+	Objects        int                `json:"objects"`
+	SetupMS        int64              `json:"setup_ms,omitempty"`
+	Successes      int                `json:"successes"`
+	Failures       int                `json:"failures"`
+	Bytes          int64              `json:"bytes"`
+	DurationMS     int64              `json:"duration_ms"`
+	MeanMBps       float64            `json:"mean_MBps"`
+	MeanMbps       float64            `json:"mean_mbps"`
+	DownloadMbps   float64            `json:"download_mbps"`
+	UploadMbps     float64            `json:"upload_mbps,omitempty"`
+	P50TotalMS     int64              `json:"p50_total_ms"`
+	P95TotalMS     int64              `json:"p95_total_ms"`
+	P50UploadMS    int64              `json:"p50_upload_ms"`
+	P95UploadMS    int64              `json:"p95_upload_ms"`
+	P50VisibleMS   int64              `json:"p50_visible_ms"`
+	P95VisibleMS   int64              `json:"p95_visible_ms"`
+	P50DownloadMS  int64              `json:"p50_download_ms"`
+	P95DownloadMS  int64              `json:"p95_download_ms"`
+	P50DeleteMS    int64              `json:"p50_delete_ms"`
+	P95DeleteMS    int64              `json:"p95_delete_ms"`
+	ListPollsTotal int                `json:"list_polls_total"`
+	ListPagesTotal int                `json:"list_pages_total"`
+	Samples        []benchDriveSample `json:"samples"`
+	Errors         map[string]int     `json:"errors,omitempty"`
+}
+
+type benchDriveSample struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	SizeBytes   int64  `json:"size_bytes"`
+	OK          bool   `json:"ok"`
+	Error       string `json:"error,omitempty"`
+	UploadMS    int64  `json:"upload_ms"`
+	VisibleMS   int64  `json:"visible_ms"`
+	DownloadMS  int64  `json:"download_ms"`
+	DeleteMS    int64  `json:"delete_ms"`
+	TotalMS     int64  `json:"total_ms"`
+	ListCalls   int    `json:"list_calls"`
+	ListPages   int    `json:"list_pages"`
+	ListPartial bool   `json:"list_partial"`
+}
+
 func benchLive(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bench-live", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/client.skirk", "config path or inline config text")
@@ -581,6 +646,566 @@ func benchLive(ctx context.Context, args []string) error {
 		DriveOps:        quota.Ops,
 		QuotaOps:        quota.OpSummary(),
 	})
+}
+
+func benchDrive(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("bench-drive", flag.ExitOnError)
+	configPath := fs.String("config", "skirk-kit/client.skirk", "config path or inline config text")
+	routeMode := fs.String("route-mode", "", "override config route mode")
+	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
+	sizesValue := fs.String("sizes", "256K,512K,1M,2M,4M", "comma-separated object sizes")
+	concurrencyValue := fs.String("concurrency", "4,8,16", "comma-separated Drive lifecycle concurrency levels")
+	objects := fs.Int("objects", 32, "objects per size/concurrency matrix cell")
+	mode := fs.String("mode", "lifecycle", "benchmark mode: lifecycle, known-id, or range")
+	rangeSizeValue := fs.String("range-size", "256K", "byte range size for --mode range")
+	visibilityPoll := fs.Duration("visibility-poll", 100*time.Millisecond, "Drive discovery poll interval")
+	visibilityTimeout := fs.Duration("visibility-timeout", 30*time.Second, "timeout waiting for files.list discovery")
+	timeout := fs.Duration("timeout", 30*time.Minute, "overall benchmark timeout")
+	cleanupObjects := fs.Bool("cleanup", true, "delete benchmark objects after each sample")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *objects < 1 {
+		return fmt.Errorf("--objects must be at least 1")
+	}
+	if *visibilityPoll <= 0 {
+		return fmt.Errorf("--visibility-poll must be positive")
+	}
+	if *visibilityTimeout <= 0 {
+		return fmt.Errorf("--visibility-timeout must be positive")
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("--timeout must be positive")
+	}
+	sizes, err := parseSizeList(*sizesValue)
+	if err != nil {
+		return err
+	}
+	concurrencyLevels, err := parsePositiveIntList(*concurrencyValue)
+	if err != nil {
+		return err
+	}
+	rangeSize, err := parseSizeValue(*rangeSizeValue)
+	if err != nil {
+		return err
+	}
+	cfg, err := skirk.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(*routeMode) != "" {
+		cfg.Route.Mode = strings.TrimSpace(*routeMode)
+	}
+	if strings.TrimSpace(*googleIP) != "" {
+		cfg.Route.GoogleIP = strings.TrimSpace(*googleIP)
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	benchCtx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	drive, err := skirk.StoresFromConfig(benchCtx, cfg)
+	if err != nil {
+		return err
+	}
+	drive.ResetTelemetry()
+	started := time.Now()
+	prefix := fmt.Sprintf("bench-drive/%s/", started.UTC().Format("20060102T150405.000000000Z"))
+	result := benchDriveResult{
+		RouteMode:      cfg.Route.Mode,
+		Prefix:         prefix,
+		StartedUTC:     started.UTC().Format(time.RFC3339Nano),
+		VisibilityPoll: visibilityPoll.Milliseconds(),
+	}
+	for _, size := range sizes {
+		payload := make([]byte, size)
+		if _, err := rand.Read(payload); err != nil {
+			return err
+		}
+		for _, concurrency := range concurrencyLevels {
+			var matrix benchDriveMatrixResult
+			switch strings.TrimSpace(strings.ToLower(*mode)) {
+			case "", "lifecycle":
+				matrix, err = runBenchDriveMatrix(benchCtx, drive, prefix, payload, concurrency, *objects, *visibilityPoll, *visibilityTimeout, *cleanupObjects)
+			case "known-id", "known_id", "download", "known-id-download":
+				matrix, err = runBenchDriveKnownIDMatrix(benchCtx, drive, prefix, payload, concurrency, *objects, *cleanupObjects, 0)
+			case "range", "known-id-range", "known_id_range":
+				matrix, err = runBenchDriveKnownIDMatrix(benchCtx, drive, prefix, payload, concurrency, *objects, *cleanupObjects, rangeSize)
+			default:
+				err = fmt.Errorf("unknown --mode %q", *mode)
+			}
+			if err != nil {
+				return err
+			}
+			result.Matrix = append(result.Matrix, matrix)
+		}
+	}
+	result.DurationMS = time.Since(started).Milliseconds()
+	result.Quota = drive.QuotaSnapshot()
+	result.QuotaOps = result.Quota.OpSummary()
+	return printJSON(result)
+}
+
+func runBenchDriveMatrix(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, objects int, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (benchDriveMatrixResult, error) {
+	started := time.Now()
+	jobs := make(chan int)
+	results := make(chan benchDriveSample, objects)
+	var wg sync.WaitGroup
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > objects {
+		concurrency = objects
+	}
+	since := started.UTC().Add(-time.Minute)
+	for worker := 0; worker < concurrency; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				results <- runBenchDriveSample(ctx, drive, prefix, payload, concurrency, index, since, pollInterval, visibilityTimeout, cleanupObjects)
+			}
+		}()
+	}
+	for index := 0; index < objects; index++ {
+		select {
+		case jobs <- index:
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			close(results)
+			return benchDriveMatrixResult{}, ctx.Err()
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	matrix := benchDriveMatrixResult{
+		Mode:        "lifecycle",
+		SizeBytes:   int64(len(payload)),
+		Concurrency: concurrency,
+		Objects:     objects,
+		Errors:      map[string]int{},
+	}
+	for sample := range results {
+		matrix.Samples = append(matrix.Samples, sample)
+		matrix.ListPollsTotal += sample.ListCalls
+		matrix.ListPagesTotal += sample.ListPages
+		if sample.OK {
+			matrix.Successes++
+			matrix.Bytes += int64(len(payload))
+		} else {
+			matrix.Failures++
+			matrix.Errors[sample.Error]++
+		}
+	}
+	sort.Slice(matrix.Samples, func(i, j int) bool { return matrix.Samples[i].Index < matrix.Samples[j].Index })
+	matrix.DurationMS = time.Since(started).Milliseconds()
+	if matrix.DurationMS > 0 {
+		matrix.MeanMBps = float64(matrix.Bytes) / (float64(matrix.DurationMS) / 1000) / 1_000_000
+		matrix.MeanMbps = matrix.MeanMBps * 8
+	}
+	matrix.DownloadMbps = throughputMbps(matrix.Samples, int64(len(payload)), func(s benchDriveSample) int64 { return s.DownloadMS })
+	matrix.UploadMbps = throughputMbps(matrix.Samples, int64(len(payload)), func(s benchDriveSample) int64 { return s.UploadMS })
+	matrix.P50TotalMS, matrix.P95TotalMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.TotalMS })
+	matrix.P50UploadMS, matrix.P95UploadMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.UploadMS })
+	matrix.P50VisibleMS, matrix.P95VisibleMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.VisibleMS })
+	matrix.P50DownloadMS, matrix.P95DownloadMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.DownloadMS })
+	matrix.P50DeleteMS, matrix.P95DeleteMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.DeleteMS })
+	if len(matrix.Errors) == 0 {
+		matrix.Errors = nil
+	}
+	return matrix, nil
+}
+
+type benchDriveKnownObject struct {
+	index int
+	name  string
+	id    string
+}
+
+func runBenchDriveKnownIDMatrix(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, objects int, cleanupObjects bool, rangeBytes int) (benchDriveMatrixResult, error) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > objects {
+		concurrency = objects
+	}
+	mode := "known-id"
+	verifiedBytes := int64(len(payload))
+	if rangeBytes > 0 {
+		mode = "range"
+		if rangeBytes > len(payload) {
+			rangeBytes = len(payload)
+		}
+		verifiedBytes = int64(rangeBytes)
+	}
+	setupStart := time.Now()
+	records := make([]benchDriveKnownObject, objects)
+	uploadJobs := make(chan int)
+	uploadErrs := make(chan error, objects)
+	var uploadWG sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		uploadWG.Add(1)
+		go func() {
+			defer uploadWG.Done()
+			for index := range uploadJobs {
+				name := fmt.Sprintf("%sknown-id/%d/%d/%08d.bin", prefix, len(payload), concurrency, index)
+				info, err := drive.PutObject(ctx, name, payload)
+				if err != nil {
+					uploadErrs <- fmt.Errorf("preload %s: %w", name, err)
+					continue
+				}
+				records[index] = benchDriveKnownObject{index: index, name: name, id: info.ID}
+			}
+		}()
+	}
+	for index := 0; index < objects; index++ {
+		select {
+		case uploadJobs <- index:
+		case <-ctx.Done():
+			close(uploadJobs)
+			uploadWG.Wait()
+			return benchDriveMatrixResult{}, ctx.Err()
+		}
+	}
+	close(uploadJobs)
+	uploadWG.Wait()
+	close(uploadErrs)
+	var preloadErrors []string
+	for err := range uploadErrs {
+		if err != nil {
+			preloadErrors = append(preloadErrors, cliErrorSummary(err))
+		}
+	}
+	if len(preloadErrors) > 0 {
+		if cleanupObjects {
+			ids := make([]string, 0, len(records))
+			for _, record := range records {
+				if record.id != "" {
+					ids = append(ids, record.id)
+				}
+			}
+			_ = drive.DeleteIDs(context.Background(), ids, concurrency)
+		}
+		return benchDriveMatrixResult{}, fmt.Errorf("known-id preload failed: %s", strings.Join(preloadErrors, "; "))
+	}
+	setupMS := time.Since(setupStart).Milliseconds()
+	defer func() {
+		if cleanupObjects {
+			ids := make([]string, 0, len(records))
+			for _, record := range records {
+				if record.id != "" {
+					ids = append(ids, record.id)
+				}
+			}
+			_ = drive.DeleteIDs(context.Background(), ids, concurrency)
+		}
+	}()
+
+	started := time.Now()
+	downloadJobs := make(chan benchDriveKnownObject)
+	results := make(chan benchDriveSample, objects)
+	var downloadWG sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		downloadWG.Add(1)
+		go func() {
+			defer downloadWG.Done()
+			for record := range downloadJobs {
+				results <- runBenchDriveKnownIDDownload(ctx, drive, record, payload, rangeBytes)
+			}
+		}()
+	}
+	for _, record := range records {
+		select {
+		case downloadJobs <- record:
+		case <-ctx.Done():
+			close(downloadJobs)
+			downloadWG.Wait()
+			close(results)
+			return benchDriveMatrixResult{}, ctx.Err()
+		}
+	}
+	close(downloadJobs)
+	downloadWG.Wait()
+	close(results)
+
+	matrix := benchDriveMatrixResult{
+		Mode:        mode,
+		SizeBytes:   int64(len(payload)),
+		RangeBytes:  int64(rangeBytes),
+		Concurrency: concurrency,
+		Objects:     objects,
+		SetupMS:     setupMS,
+		Errors:      map[string]int{},
+	}
+	for sample := range results {
+		matrix.Samples = append(matrix.Samples, sample)
+		if sample.OK {
+			matrix.Successes++
+			matrix.Bytes += verifiedBytes
+		} else {
+			matrix.Failures++
+			matrix.Errors[sample.Error]++
+		}
+	}
+	sort.Slice(matrix.Samples, func(i, j int) bool { return matrix.Samples[i].Index < matrix.Samples[j].Index })
+	matrix.DurationMS = time.Since(started).Milliseconds()
+	if matrix.DurationMS > 0 {
+		matrix.MeanMBps = float64(matrix.Bytes) / (float64(matrix.DurationMS) / 1000) / 1_000_000
+		matrix.MeanMbps = matrix.MeanMBps * 8
+	}
+	matrix.DownloadMbps = throughputMbps(matrix.Samples, verifiedBytes, func(s benchDriveSample) int64 { return s.DownloadMS })
+	matrix.P50TotalMS, matrix.P95TotalMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.TotalMS })
+	matrix.P50DownloadMS, matrix.P95DownloadMS = sampleDurationPercentiles(matrix.Samples, func(s benchDriveSample) int64 { return s.DownloadMS })
+	if len(matrix.Errors) == 0 {
+		matrix.Errors = nil
+	}
+	return matrix, nil
+}
+
+func runBenchDriveKnownIDDownload(ctx context.Context, drive *skirk.DriveStore, record benchDriveKnownObject, payload []byte, rangeBytes int) (sample benchDriveSample) {
+	sample = benchDriveSample{Index: record.index, Name: record.name, SizeBytes: int64(len(payload))}
+	started := time.Now()
+	defer func() {
+		sample.TotalMS = time.Since(started).Milliseconds()
+	}()
+	downloadStart := time.Now()
+	var data []byte
+	var err error
+	if rangeBytes > 0 {
+		if rangeBytes > len(payload) {
+			rangeBytes = len(payload)
+		}
+		sample.SizeBytes = int64(rangeBytes)
+		data, _, err = drive.GetRangeByID(ctx, record.id, 0, int64(rangeBytes-1))
+	} else {
+		data, err = drive.GetByID(ctx, record.id)
+	}
+	sample.DownloadMS = time.Since(downloadStart).Milliseconds()
+	if err != nil {
+		sample.Error = "download:" + cliErrorSummary(err)
+		return sample
+	}
+	expectedLen := len(payload)
+	if rangeBytes > 0 {
+		expectedLen = rangeBytes
+	}
+	if len(data) != expectedLen {
+		sample.Error = fmt.Sprintf("download_size:%d", len(data))
+		return sample
+	}
+	if rangeBytes > 0 {
+		if !bytes.Equal(data, payload[:rangeBytes]) {
+			sample.Error = "download_mismatch"
+			return sample
+		}
+	} else if !bytes.Equal(data, payload) {
+		sample.Error = "download_mismatch"
+		return sample
+	}
+	sample.OK = true
+	return sample
+}
+
+func throughputMbps(samples []benchDriveSample, bytesPerSample int64, duration func(benchDriveSample) int64) float64 {
+	if bytesPerSample <= 0 {
+		return 0
+	}
+	var bytes int64
+	var milliseconds int64
+	for _, sample := range samples {
+		if !sample.OK {
+			continue
+		}
+		ms := duration(sample)
+		if ms <= 0 {
+			continue
+		}
+		bytes += bytesPerSample
+		milliseconds += ms
+	}
+	if milliseconds <= 0 {
+		return 0
+	}
+	return float64(bytes*8) / (float64(milliseconds) / 1000) / 1_000_000
+}
+
+func runBenchDriveSample(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, index int, since time.Time, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (sample benchDriveSample) {
+	name := fmt.Sprintf("%slifecycle/%d/%d/%08d-%d.bin", prefix, len(payload), concurrency, index, len(payload))
+	sample = benchDriveSample{Index: index, Name: name, SizeBytes: int64(len(payload))}
+	started := time.Now()
+	defer func() {
+		sample.TotalMS = time.Since(started).Milliseconds()
+	}()
+	info, err := drive.PutObject(ctx, name, payload)
+	sample.UploadMS = time.Since(started).Milliseconds()
+	if err != nil {
+		sample.Error = "upload:" + cliErrorSummary(err)
+		return sample
+	}
+	visibleStart := time.Now()
+	deadline := time.NewTimer(visibilityTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		sample.ListCalls++
+		listInfo, listErr := drive.ListFreshStatus(ctx, prefix, since)
+		if listErr != nil {
+			sample.Error = "list:" + cliErrorSummary(listErr)
+			return sample
+		}
+		if listInfo.Pages > 0 {
+			sample.ListPages += listInfo.Pages
+		} else {
+			sample.ListPages++
+		}
+		sample.ListPartial = sample.ListPartial || listInfo.Truncated
+		for _, object := range listInfo.Objects {
+			if object.ID == info.ID {
+				sample.VisibleMS = time.Since(visibleStart).Milliseconds()
+				goto visible
+			}
+		}
+		select {
+		case <-ctx.Done():
+			sample.Error = "context:" + cliErrorSummary(ctx.Err())
+			return sample
+		case <-deadline.C:
+			sample.VisibleMS = time.Since(visibleStart).Milliseconds()
+			sample.Error = "visibility_timeout"
+			return sample
+		case <-ticker.C:
+		}
+	}
+visible:
+	downloadStart := time.Now()
+	data, err := drive.GetByID(ctx, info.ID)
+	sample.DownloadMS = time.Since(downloadStart).Milliseconds()
+	if err != nil {
+		sample.Error = "download:" + cliErrorSummary(err)
+		return sample
+	}
+	if len(data) != len(payload) {
+		sample.Error = fmt.Sprintf("download_size:%d", len(data))
+		return sample
+	}
+	if !bytes.Equal(data, payload) {
+		sample.Error = "download_mismatch"
+		return sample
+	}
+	if cleanupObjects {
+		deleteStart := time.Now()
+		err = drive.DeleteID(ctx, info.ID)
+		sample.DeleteMS = time.Since(deleteStart).Milliseconds()
+		if err != nil {
+			sample.Error = "delete:" + cliErrorSummary(err)
+			return sample
+		}
+	}
+	sample.OK = true
+	return sample
+}
+
+func parseSizeList(value string) ([]int, error) {
+	parts := strings.Split(value, ",")
+	var out []int
+	for _, part := range parts {
+		size, err := parseSizeValue(part)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, size)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no sizes configured")
+	}
+	return out, nil
+}
+
+func parseSizeValue(value string) (int, error) {
+	value = strings.TrimSpace(strings.ToUpper(value))
+	if value == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(value, "KIB"):
+		multiplier, value = 1024, strings.TrimSuffix(value, "KIB")
+	case strings.HasSuffix(value, "KB"):
+		multiplier, value = 1000, strings.TrimSuffix(value, "KB")
+	case strings.HasSuffix(value, "K"):
+		multiplier, value = 1024, strings.TrimSuffix(value, "K")
+	case strings.HasSuffix(value, "MIB"):
+		multiplier, value = 1024*1024, strings.TrimSuffix(value, "MIB")
+	case strings.HasSuffix(value, "MB"):
+		multiplier, value = 1000*1000, strings.TrimSuffix(value, "MB")
+	case strings.HasSuffix(value, "M"):
+		multiplier, value = 1024*1024, strings.TrimSuffix(value, "M")
+	case strings.HasSuffix(value, "GIB"):
+		multiplier, value = 1024*1024*1024, strings.TrimSuffix(value, "GIB")
+	case strings.HasSuffix(value, "GB"):
+		multiplier, value = 1000*1000*1000, strings.TrimSuffix(value, "GB")
+	case strings.HasSuffix(value, "G"):
+		multiplier, value = 1024*1024*1024, strings.TrimSuffix(value, "G")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid size %q", value)
+	}
+	if n > int64(^uint(0)>>1)/multiplier {
+		return 0, fmt.Errorf("size too large")
+	}
+	return int(n * multiplier), nil
+}
+
+func parsePositiveIntList(value string) ([]int, error) {
+	parts := strings.Split(value, ",")
+	var out []int
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid positive integer %q", part)
+		}
+		out = append(out, n)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no positive integers configured")
+	}
+	return out, nil
+}
+
+func sampleDurationPercentiles(samples []benchDriveSample, get func(benchDriveSample) int64) (int64, int64) {
+	values := make([]int64, 0, len(samples))
+	for _, sample := range samples {
+		if sample.OK {
+			values = append(values, get(sample))
+		}
+	}
+	if len(values) == 0 {
+		return 0, 0
+	}
+	return percentileMS(values, 0.50), percentileMS(values, 0.95)
+}
+
+func cliErrorSummary(err error) string {
+	if err == nil {
+		return "none"
+	}
+	text := strings.TrimSpace(err.Error())
+	if text == "" {
+		return err.Error()
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	if len(text) > 240 {
+		return text[:240]
+	}
+	return text
 }
 
 func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency, uploadConcurrency, downloadConcurrency int) error {

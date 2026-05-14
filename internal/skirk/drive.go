@@ -187,6 +187,48 @@ func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error)
 	return last.Body, nil
 }
 
+func (d *DriveStore) GetRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, int, error) {
+	if start < 0 || end < start {
+		return nil, 0, fmt.Errorf("invalid byte range %d-%d", start, end)
+	}
+	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
+	headers := map[string]string{
+		"Range": fmt.Sprintf("bytes=%d-%d", start, end),
+	}
+	var last *HTTPResult
+	for attempt := 0; attempt < 5; attempt++ {
+		result, err := d.request(ctx, http.MethodGet, path, headers, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		last = result
+		if result.Status != http.StatusNotFound {
+			if result.Status != http.StatusPartialContent {
+				if err := require2xx(result, "drive range download by id"); err != nil {
+					return nil, result.Status, err
+				}
+				return nil, result.Status, fmt.Errorf("drive range download by id returned status=%d, want 206", result.Status)
+			}
+			return result.Body, result.Status, nil
+		}
+		if attempt == 4 {
+			break
+		}
+		delay := time.Duration(150*(attempt+1)*(attempt+1)) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := require2xx(last, "drive range download by id"); err != nil {
+		return nil, last.Status, err
+	}
+	return last.Body, last.Status, nil
+}
+
 func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	infos, err := d.listContains(ctx, []string{prefix})
 	if err != nil {
@@ -202,17 +244,27 @@ func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 }
 
 func (d *DriveStore) ListFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error) {
-	infos, err := d.listContainsFresh(ctx, prefix, since)
+	info, err := d.ListFreshStatus(ctx, prefix, since)
+	return info.Objects, err
+}
+
+func (d *DriveStore) ListFreshStatus(ctx context.Context, prefix string, since time.Time) (ObjectListInfo, error) {
+	return d.ListFreshPageStatus(ctx, prefix, since, "")
+}
+
+func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
+	info, err := d.listContainsFresh(ctx, prefix, since, pageToken)
 	if err != nil {
-		return nil, err
+		return ObjectListInfo{}, err
 	}
-	filtered := infos[:0]
-	for _, info := range infos {
-		if strings.HasPrefix(info.Name, prefix) {
-			filtered = append(filtered, info)
+	filtered := info.Objects[:0]
+	for _, object := range info.Objects {
+		if strings.HasPrefix(object.Name, prefix) {
+			filtered = append(filtered, object)
 		}
 	}
-	return filtered, nil
+	info.Objects = filtered
+	return info, nil
 }
 
 func (d *DriveStore) ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
@@ -222,7 +274,7 @@ func (d *DriveStore) ListContains(ctx context.Context, contains []string) ([]Obj
 func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))
-	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime desc")
 	if d.isAppData() {
@@ -253,21 +305,24 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 	return infos, nil
 }
 
-func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error) {
+func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
 	values := url.Values{}
 	query := d.containsQuery([]string{prefix})
 	if !since.IsZero() {
 		query += fmt.Sprintf(" and modifiedTime >= '%s'", escapeDriveQuery(since.UTC().Format(time.RFC3339Nano)))
 	}
 	values.Set("q", query)
-	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime desc")
+	if strings.TrimSpace(pageToken) != "" {
+		values.Set("pageToken", strings.TrimSpace(pageToken))
+	}
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
 	}
 	var infos []ObjectInfo
-	err := d.eachFilesPageUntil(ctx, values, "drive list", func(payload driveListPayload) (bool, error) {
+	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", driveListMaxPages, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
 			if !strings.Contains(item.Name, prefix) {
 				continue
@@ -284,10 +339,10 @@ func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since
 		return true, nil
 	})
 	if err != nil {
-		return nil, err
+		return ObjectListInfo{}, err
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
-	return infos, nil
+	return ObjectListInfo{Objects: infos, Truncated: status.Truncated, NextPageToken: status.NextPageToken, Pages: status.Pages, Incomplete: status.Incomplete}, nil
 }
 
 func (d *DriveStore) Delete(ctx context.Context, name string) error {
@@ -496,13 +551,21 @@ func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, 
 }
 
 type driveListPayload struct {
-	NextPageToken string `json:"nextPageToken"`
-	Files         []struct {
+	NextPageToken    string `json:"nextPageToken"`
+	IncompleteSearch bool   `json:"incompleteSearch"`
+	Files            []struct {
 		ID           string `json:"id"`
 		Name         string `json:"name"`
 		Size         string `json:"size"`
 		ModifiedTime string `json:"modifiedTime"`
 	} `json:"files"`
+}
+
+type driveListPageStatus struct {
+	Truncated     bool
+	NextPageToken string
+	Pages         int
+	Incomplete    bool
 }
 
 func (d *DriveStore) eachFilesPage(ctx context.Context, values url.Values, op string, fn func(driveListPayload) error) error {
@@ -519,35 +582,46 @@ func (d *DriveStore) eachFilesPageUntil(ctx context.Context, values url.Values, 
 }
 
 func (d *DriveStore) eachFilesPageUntilLimit(ctx context.Context, values url.Values, op string, maxPages int, fn func(driveListPayload) (bool, error)) error {
+	_, err := d.eachFilesPageUntilLimitStatus(ctx, values, op, maxPages, fn)
+	return err
+}
+
+func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values url.Values, op string, maxPages int, fn func(driveListPayload) (bool, error)) (driveListPageStatus, error) {
 	if maxPages <= 0 {
 		maxPages = driveListMaxPages
 	}
 	pageValues := cloneValues(values)
+	incomplete := false
 	for page := 0; page < maxPages; page++ {
 		result, err := d.request(ctx, http.MethodGet, "/drive/v3/files?"+pageValues.Encode(), nil, nil)
 		if err != nil {
-			return err
+			return driveListPageStatus{}, err
 		}
 		if err := require2xx(result, op); err != nil {
-			return err
+			return driveListPageStatus{}, err
 		}
 		var payload driveListPayload
 		if err := json.Unmarshal(result.Body, &payload); err != nil {
-			return err
+			return driveListPageStatus{}, err
 		}
+		incomplete = incomplete || payload.IncompleteSearch
+		pages := page + 1
 		keepGoing, err := fn(payload)
 		if err != nil {
-			return err
+			return driveListPageStatus{}, err
 		}
 		if !keepGoing {
-			return nil
+			return driveListPageStatus{Truncated: incomplete, Pages: pages, Incomplete: incomplete}, nil
 		}
 		if payload.NextPageToken == "" {
-			return nil
+			return driveListPageStatus{Truncated: incomplete, Pages: pages, Incomplete: incomplete}, nil
+		}
+		if page == maxPages-1 {
+			return driveListPageStatus{Truncated: true, NextPageToken: payload.NextPageToken, Pages: pages, Incomplete: incomplete}, nil
 		}
 		pageValues.Set("pageToken", payload.NextPageToken)
 	}
-	return nil
+	return driveListPageStatus{}, nil
 }
 
 func cloneValues(values url.Values) url.Values {

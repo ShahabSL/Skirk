@@ -30,7 +30,7 @@ const (
 	proxyDriveSlowThreshold       = 10 * time.Second
 	exitFamilyPreferenceTimeout   = 2 * time.Second
 	cleanupQuietWindow            = 2 * time.Second
-	cleanupMaxForegroundDelay     = 5 * time.Second
+	cleanupMaxForegroundDelay     = 2 * time.Minute
 	exitDialTimeout               = 30 * time.Second
 	burstSlowListThreshold        = 3 * time.Second
 	burstCooldownAfterSlow        = 20 * time.Second

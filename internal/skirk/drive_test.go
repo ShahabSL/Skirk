@@ -3,6 +3,7 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -115,6 +116,98 @@ func TestDriveStoreListFreshFiltersByModifiedTime(t *testing.T) {
 	}
 	if gotQuery.Get("orderBy") != "modifiedTime desc" {
 		t.Fatalf("orderBy = %q, want modifiedTime desc", gotQuery.Get("orderBy"))
+	}
+}
+
+func TestDriveStoreListFreshStatusReportsTruncatedPageLimit(t *testing.T) {
+	requests := 0
+	prefix := "muxv4/session/down/client/run/"
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if requests == 1 && query.Get("pageToken") != "" {
+			t.Fatalf("first pageToken = %q, want empty", query.Get("pageToken"))
+		}
+		if requests > 1 && query.Get("pageToken") == "" {
+			t.Fatalf("request %d missing pageToken", requests)
+		}
+		body := fmt.Sprintf(`{"nextPageToken":"page-%d","files":[{"id":"id-%d","name":"%s%016x.f1.b1","size":"1","modifiedTime":"2026-05-12T23:40:01Z"}]}`, requests, requests, prefix, requests)
+		return stringResponse(http.StatusOK, body), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	info, err := store.ListFreshStatus(context.Background(), prefix, time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != driveListMaxPages {
+		t.Fatalf("requests = %d, want page limit %d", requests, driveListMaxPages)
+	}
+	if !info.Truncated {
+		t.Fatal("fresh list should report truncation when nextPageToken remains at page limit")
+	}
+	if len(info.Objects) != driveListMaxPages {
+		t.Fatalf("objects = %d, want %d", len(info.Objects), driveListMaxPages)
+	}
+	if info.NextPageToken == "" {
+		t.Fatal("fresh list should expose next page token when truncated")
+	}
+	if info.Pages != driveListMaxPages {
+		t.Fatalf("pages = %d, want %d", info.Pages, driveListMaxPages)
+	}
+}
+
+func TestDriveStoreListFreshStatusReportsIncompleteSearch(t *testing.T) {
+	prefix := "muxv4/session/down/client/run/"
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(query.Get("fields"), "incompleteSearch") {
+			t.Fatalf("fields = %q, want incompleteSearch", query.Get("fields"))
+		}
+		body := fmt.Sprintf(`{"incompleteSearch":true,"files":[{"id":"id-1","name":"%s%016x.f1.b1","size":"1","modifiedTime":"2026-05-12T23:40:01Z"}]}`, prefix, 1)
+		return stringResponse(http.StatusOK, body), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	info, err := store.ListFreshStatus(context.Background(), prefix, time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Truncated {
+		t.Fatal("fresh list should report truncation when Drive returns incompleteSearch")
+	}
+	if len(info.Objects) != 1 {
+		t.Fatalf("objects = %d, want 1", len(info.Objects))
+	}
+	if !info.Incomplete {
+		t.Fatal("fresh list should report incompleteSearch separately")
+	}
+}
+
+func TestDriveStoreListFreshPageStatusUsesPageToken(t *testing.T) {
+	prefix := "muxv4/session/down/client/run/"
+	var gotPageToken string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotPageToken = query.Get("pageToken")
+		return stringResponse(http.StatusOK, `{"files":[]}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	if _, err := store.ListFreshPageStatus(context.Background(), prefix, time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC), "next-page"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPageToken != "next-page" {
+		t.Fatalf("pageToken = %q, want next-page", gotPageToken)
 	}
 }
 
