@@ -29,7 +29,7 @@ const (
 	muxMaxFrames             = 512
 	muxMinBatch              = 64 * 1024
 	muxMaxBatch              = 1 * 1024 * 1024
-	muxNormalFairBatch       = 256 * 1024
+	muxNormalFairBatch       = 512 * 1024
 	muxInlineFirst           = 16 * 1024
 	muxPendingFrameLimit     = 4096
 	muxUrgentFrameQueue      = 1024
@@ -51,7 +51,7 @@ const (
 	muxPriorityTinyData      = 4 * 1024
 	muxPriorityDataChunk     = inlineDataThreshold
 	muxInitialPriorityFrames = 4
-	muxNormalStreamInflight  = 4
+	muxNormalStreamInflight  = 6
 	muxPriorityDownloadHedge = 1500 * time.Millisecond
 )
 
@@ -420,8 +420,40 @@ func (m *driveMux) unregisterStream(stream *muxStream) {
 	}
 	m.streamsMu.Unlock()
 	m.dropPendingFrames(key)
+	m.dropQueuedNormalMuxObjects(key)
 	m.active.Add(-1)
 	m.t.activeStreams.Add(-1)
+}
+
+func (m *driveMux) dropQueuedNormalMuxObjects(key muxStreamKey) {
+	m.recvNormalMu.Lock()
+	metas := m.removeQueuedNormalMuxObjectsLocked(key)
+	m.recvNormalMu.Unlock()
+	m.discardQueuedMuxObjects(metas)
+}
+
+func (m *driveMux) removeQueuedNormalMuxObjectsLocked(key muxStreamKey) []muxObjectMeta {
+	metas := append([]muxObjectMeta(nil), m.recvNormalFlows[key]...)
+	delete(m.recvNormalFlows, key)
+	if m.recvNormalActive[key] == 0 {
+		delete(m.recvNormalActive, key)
+	}
+	delete(m.recvNormalSent, key)
+	return metas
+}
+
+func (m *driveMux) discardQueuedMuxObjects(metas []muxObjectMeta) {
+	for _, meta := range metas {
+		m.discardQueuedMuxObject(meta)
+	}
+}
+
+func (m *driveMux) discardQueuedMuxObject(meta muxObjectMeta) {
+	if meta.Name == "" {
+		return
+	}
+	m.markSeen(meta.Name)
+	m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
 }
 
 func (m *driveMux) rememberClosedStreamLocked(key muxStreamKey, now time.Time) {
@@ -1297,7 +1329,11 @@ func (m *driveMux) enqueueMuxObject(ctx context.Context, meta muxObjectMeta) boo
 	if m.enqueueNormalMuxObject(ctx, meta) {
 		return true
 	}
-	m.unclaimQueued(meta.Name)
+	if m.isClosedStream(meta.key()) {
+		m.discardQueuedMuxObject(meta)
+	} else {
+		m.unclaimQueued(meta.Name)
+	}
 	return false
 }
 
@@ -1333,6 +1369,10 @@ func (m *driveMux) enqueueNormalMuxObject(ctx context.Context, meta muxObjectMet
 		return false
 	}
 	m.recvNormalMu.Lock()
+	if m.isClosedStream(key) {
+		m.recvNormalMu.Unlock()
+		return false
+	}
 	items := append(m.recvNormalFlows[key], meta)
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Seq != items[j].Seq {
@@ -1371,11 +1411,9 @@ func (m *driveMux) takeNormalMuxObject(ctx context.Context, key muxStreamKey) (m
 	m.recvNormalMu.Lock()
 	m.recvNormalSent[key] = false
 	if closed {
-		delete(m.recvNormalFlows, key)
-		if m.recvNormalActive[key] == 0 {
-			delete(m.recvNormalActive, key)
-		}
+		metas := m.removeQueuedNormalMuxObjectsLocked(key)
 		m.recvNormalMu.Unlock()
+		m.discardQueuedMuxObjects(metas)
 		return muxObjectMeta{}, false
 	}
 	if paused {

@@ -755,6 +755,35 @@ func TestMuxBatchLoopSeparatesUrgentFromBulk(t *testing.T) {
 	}
 }
 
+func TestMuxBatchLoopUrgentProgressesWithSaturatedNormalUpload(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
+	lane.urgent = make(chan muxFrame, 1)
+	lane.urgentUpload = make(chan []muxFrame, 1)
+	lane.upload = make(chan []muxFrame, 1)
+
+	bulk := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: 2, Payload: make([]byte, inlineDataThreshold+1)}
+	lane.upload <- []muxFrame{bulk}
+	if err := lane.enqueueNormalFrame(ctx, bulk); err != nil {
+		t.Fatalf("enqueue bulk frame: %v", err)
+	}
+	go lane.runBatchLoop(ctx)
+
+	urgent := muxFrame{Kind: muxFrameOpen, ClientID: "client-a", RunID: "run-a", StreamID: 3, Payload: []byte("open")}
+	lane.urgent <- urgent
+
+	select {
+	case urgentBatch := <-lane.urgentUpload:
+		if len(urgentBatch) != 1 || urgentBatch[0].StreamID != urgent.StreamID || !muxPriorityBatch(urgentBatch) {
+			t.Fatalf("urgent batch = %+v, want only the urgent frame", urgentBatch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for urgent upload while normal upload was saturated")
+	}
+}
+
 func TestNormalSendSchedulerInterleavesStreams(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -789,7 +818,7 @@ func TestNormalSendSchedulerInterleavesStreams(t *testing.T) {
 func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	ctx := context.Background()
 	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
-	payload := make([]byte, 96*1024)
+	payload := make([]byte, 160*1024)
 	for seq := uint64(1); seq <= 4; seq++ {
 		frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: seq, Payload: payload}
 		if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
@@ -801,8 +830,8 @@ func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	if !ok {
 		t.Fatal("take normal batch returned false")
 	}
-	if len(batch) != 2 {
-		t.Fatalf("batch frames = %d, want 2 under fair batch cap", len(batch))
+	if len(batch) != 3 {
+		t.Fatalf("batch frames = %d, want 3 under fair batch cap", len(batch))
 	}
 	if got := muxBatchPlainBytes(batch); got > muxNormalFairBatch {
 		t.Fatalf("batch bytes = %d, want <= %d", got, muxNormalFairBatch)
@@ -817,6 +846,15 @@ func receiveMuxBatch(t *testing.T, ch <-chan []muxFrame) []muxFrame {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for mux batch")
 		return nil
+	}
+}
+
+func TestNormalMuxReceiveTuningStaysBelowReassemblyHardCaps(t *testing.T) {
+	if got := muxNormalStreamInflight * muxNormalFairBatch; got >= muxStreamPendingBytes {
+		t.Fatalf("normal receive byte window = %d, want < hard pending byte cap %d", got, muxStreamPendingBytes)
+	}
+	if got := muxNormalStreamInflight * muxMaxFrames; got >= muxStreamPendingFrames {
+		t.Fatalf("normal receive frame window = %d, want < hard pending frame cap %d", got, muxStreamPendingFrames)
 	}
 }
 
@@ -850,6 +888,69 @@ func TestNormalMuxSchedulerProcessesStreamInObjectSequence(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("timed out waiting for seq %d", want)
 		}
+	}
+}
+
+func TestNormalMuxSchedulerDropsQueuedObjectsForClosedStream(t *testing.T) {
+	ctx := context.Background()
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	mux := &driveMux{
+		t:                &Tunnel{CleanupProcessed: true},
+		streams:          map[muxStreamKey]*muxStream{},
+		closed:           map[muxStreamKey]time.Time{},
+		pending:          map[muxStreamKey][]muxFrame{},
+		seen:             map[string]struct{}{},
+		queued:           map[string]struct{}{},
+		cleanupQueue:     make(chan cleanupTask, 1),
+		recvNormalReady:  make(chan muxStreamKey, 1),
+		recvNormalFlows:  map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive: map[muxStreamKey]int{},
+		recvNormalSent:   map[muxStreamKey]bool{},
+	}
+	stream := mux.registerStream(42, "client-a", "run-a", left)
+	key := stream.key()
+	meta := muxObjectMeta{
+		Name:     "muxv4/queued-before-close",
+		ClientID: key.ClientID,
+		RunID:    key.RunID,
+		StreamID: key.StreamID,
+		Seq:      1,
+	}
+	if !mux.enqueueMuxObject(ctx, meta) {
+		t.Fatal("enqueue normal object failed")
+	}
+
+	stream.close()
+
+	mux.recvNormalMu.Lock()
+	_, hasFlow := mux.recvNormalFlows[key]
+	_, hasActive := mux.recvNormalActive[key]
+	_, hasSent := mux.recvNormalSent[key]
+	mux.recvNormalMu.Unlock()
+	if hasFlow || hasActive || hasSent {
+		t.Fatalf("closed stream left scheduler state: flow=%t active=%t sent=%t", hasFlow, hasActive, hasSent)
+	}
+	if !mux.isKnown(meta.Name) {
+		t.Fatal("closed stream did not mark dropped object as seen")
+	}
+	select {
+	case task := <-mux.cleanupQueue:
+		if task.name != meta.Name || task.id != meta.ID {
+			t.Fatalf("cleanup task = %+v, want name=%q id=%q", task, meta.Name, meta.ID)
+		}
+	default:
+		t.Fatal("closed stream did not schedule dropped object cleanup")
+	}
+
+	select {
+	case ready := <-mux.recvNormalReady:
+		if got, ok := mux.takeNormalMuxObject(ctx, ready); ok {
+			t.Fatalf("stale ready token returned closed-stream object: %+v", got)
+		}
+	default:
 	}
 }
 
@@ -1143,6 +1244,38 @@ func TestBypassExitProxyForLoopbackTargets(t *testing.T) {
 	for _, target := range []string{"example.com:443", "10.0.0.1:80"} {
 		if bypassExitProxy(target) {
 			t.Fatalf("target %q should not bypass exit proxy", target)
+		}
+	}
+}
+
+func TestExitTargetIPv4Preference(t *testing.T) {
+	tests := []struct {
+		target       string
+		family       string
+		wantPrimary  string
+		wantFallback string
+	}{
+		{target: "example.com:443", family: "prefer_ipv4", wantPrimary: "tcp4", wantFallback: "tcp"},
+		{target: "127.0.0.1:8080", family: "prefer_ipv4", wantPrimary: "tcp4", wantFallback: "tcp"},
+		{target: "[::1]:8080", family: "prefer_ipv4", wantPrimary: "", wantFallback: "tcp"},
+		{target: "2001:db8::1", family: "prefer_ipv4", wantPrimary: "", wantFallback: "tcp"},
+		{target: "[::1]:8080", family: "ipv4_only", wantPrimary: "tcp4", wantFallback: ""},
+		{target: "127.0.0.1:8080", family: "ipv6_only", wantPrimary: "tcp6", wantFallback: ""},
+	}
+	for _, tt := range tests {
+		gotPrimary, gotFallback := exitDialNetworks(tt.target, tt.family)
+		if gotPrimary != tt.wantPrimary || gotFallback != tt.wantFallback {
+			t.Fatalf("exitDialNetworks(%q, %q) = (%q, %q), want (%q, %q)", tt.target, tt.family, gotPrimary, gotFallback, tt.wantPrimary, tt.wantFallback)
+		}
+	}
+	for _, target := range []string{"example.com:443", "127.0.0.1:8080", "localhost"} {
+		if !targetSupportsIPFamilyPreference(target, "ipv4") {
+			t.Fatalf("target %q should allow IPv4 preference", target)
+		}
+	}
+	for _, target := range []string{"[::1]:8080", "2001:db8::1"} {
+		if targetSupportsIPFamilyPreference(target, "ipv4") {
+			t.Fatalf("target %q should not force IPv4 preference", target)
 		}
 	}
 }

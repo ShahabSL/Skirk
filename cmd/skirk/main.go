@@ -326,6 +326,7 @@ func serveExit(ctx context.Context, args []string) error {
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy for exit traffic, for example socks5h://127.0.0.1:40000")
+	exitIPFamily := fs.String("exit-ip-family", "", "exit target dial family: auto, prefer_ipv4, ipv4_only, prefer_ipv6, or ipv6_only")
 	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -336,6 +337,9 @@ func serveExit(ctx context.Context, args []string) error {
 	}
 	if strings.TrimSpace(*exitProxy) != "" {
 		cfg.Tunnel.ExitProxy = strings.TrimSpace(*exitProxy)
+	}
+	if strings.TrimSpace(*exitIPFamily) != "" {
+		cfg.Tunnel.ExitIPFamily = strings.TrimSpace(*exitIPFamily)
 	}
 	if *observe {
 		cfg.Tunnel.Observe = true
@@ -353,7 +357,7 @@ func serveExit(ctx context.Context, args []string) error {
 	}
 	defer lock.Close()
 	startMailboxJanitor(ctx, drive)
-	log.Printf("skirk exit polling session=%s exit_proxy=%s", skirk.SessionString(tunnel.SessionID), firstNonEmpty(tunnel.ExitProxy, "none"))
+	log.Printf("skirk exit polling session=%s exit_proxy=%s exit_ip_family=%s", skirk.SessionString(tunnel.SessionID), firstNonEmpty(tunnel.ExitProxy, "none"), firstNonEmpty(tunnel.ExitIPFamily, "prefer_ipv4"))
 	return tunnel.ServeExit(ctx)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -20,13 +21,14 @@ const (
 	initialOpenDataWait           = 15 * time.Millisecond
 	interactiveCoalesceDelay      = 5 * time.Millisecond
 	mediumCoalesceDelay           = 50 * time.Millisecond
-	bulkCoalesceDelay             = 300 * time.Millisecond
+	bulkCoalesceDelay             = 75 * time.Millisecond
 	deferredCleanupDelay          = 5 * time.Second
 	deferredCleanupFlushThreshold = 128
 	idleOpenPollInterval          = 1 * time.Second
 	openPollWarmWindow            = 45 * time.Second
 	directDriveSlowThreshold      = 5 * time.Second
 	proxyDriveSlowThreshold       = 10 * time.Second
+	exitFamilyPreferenceTimeout   = 2 * time.Second
 	cleanupQuietWindow            = 2 * time.Second
 	cleanupMaxForegroundDelay     = 5 * time.Second
 	exitDialTimeout               = 30 * time.Second
@@ -47,6 +49,7 @@ type Tunnel struct {
 	Profile              string
 	RouteProxy           string
 	ExitProxy            string
+	ExitIPFamily         string
 	BurstPoll            bool
 	BurstPollInterval    time.Duration
 	BurstPollWindow      time.Duration
@@ -84,6 +87,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		Profile:             cfg.Tunnel.Profile,
 		RouteProxy:          cfg.Route.Proxy,
 		ExitProxy:           strings.TrimSpace(cfg.Tunnel.ExitProxy),
+		ExitIPFamily:        strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
 		BurstPoll:           cfg.Tunnel.BurstPoll,
 		BurstPollInterval:   time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
 		BurstPollWindow:     time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
@@ -233,8 +237,87 @@ func (t *Tunnel) dialExitTarget(ctx context.Context, target string) (net.Conn, e
 	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" && !bypassExitProxy(target) {
 		return DialViaProxy(ctx, proxy, target)
 	}
+	return dialDirectExitTarget(ctx, target, t.ExitIPFamily)
+}
+
+func dialDirectExitTarget(ctx context.Context, target, family string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: exitDialTimeout, KeepAlive: 30 * time.Second}
-	return dialer.DialContext(ctx, "tcp", target)
+	primary, fallback := exitDialNetworks(target, family)
+	if primary != "" {
+		attemptCtx, cancel := context.WithTimeout(ctx, exitFamilyPreferenceTimeout)
+		conn, err := dialer.DialContext(attemptCtx, primary, target)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+		if fallback == "" || !shouldFallbackFromFamilyDial(err) {
+			return nil, err
+		}
+	}
+	if fallback == "" {
+		fallback = "tcp"
+	}
+	return dialer.DialContext(ctx, fallback, target)
+}
+
+func exitDialNetworks(target, family string) (string, string) {
+	switch strings.TrimSpace(family) {
+	case "ipv4_only":
+		return "tcp4", ""
+	case "prefer_ipv6":
+		if targetSupportsIPFamilyPreference(target, "ipv6") {
+			return "tcp6", "tcp"
+		}
+		return "", "tcp"
+	case "ipv6_only":
+		return "tcp6", ""
+	case "auto":
+		return "", "tcp"
+	default:
+		if targetSupportsIPFamilyPreference(target, "ipv4") {
+			return "tcp4", "tcp"
+		}
+		return "", "tcp"
+	}
+}
+
+func targetSupportsIPFamilyPreference(target, family string) bool {
+	trimmed := strings.TrimSpace(target)
+	host, _, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		ip := net.ParseIP(trimmed)
+		return ip == nil || ipMatchesFamily(ip, family)
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || ipMatchesFamily(ip, family)
+}
+
+func ipMatchesFamily(ip net.IP, family string) bool {
+	if ip == nil {
+		return true
+	}
+	if family == "ipv4" {
+		return ip.To4() != nil
+	}
+	return ip.To4() == nil
+}
+
+func shouldFallbackFromFamilyDial(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "no suitable address") ||
+		strings.Contains(text, "network is unreachable") ||
+		strings.Contains(text, "address family not supported") ||
+		strings.Contains(text, "no such host")
 }
 
 func bypassExitProxy(target string) bool {

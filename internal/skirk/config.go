@@ -87,6 +87,7 @@ type TunnelConfig struct {
 	Listen              string `json:"listen,omitempty"`
 	Profile             string `json:"profile,omitempty"`
 	ExitProxy           string `json:"exit_proxy,omitempty"`
+	ExitIPFamily        string `json:"exit_ip_family,omitempty"`
 	BurstPoll           bool   `json:"burst_poll,omitempty"`
 	BurstPollMS         int    `json:"burst_poll_ms,omitempty"`
 	BurstPollWindowMS   int    `json:"burst_poll_window_ms,omitempty"`
@@ -283,6 +284,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Tunnel.Profile == "" {
 		c.Tunnel.Profile = "auto"
 	}
+	if c.Tunnel.ExitIPFamily == "" {
+		c.Tunnel.ExitIPFamily = "prefer_ipv4"
+	}
 	if c.Tunnel.ChunkSize == 0 {
 		c.Tunnel.ChunkSize = 8 * 1024 * 1024
 	}
@@ -325,6 +329,11 @@ func (c *Config) Validate() error {
 	case "", "auto", "fixed":
 	default:
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
+	}
+	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
+	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":
+	default:
+		return fmt.Errorf("config.tunnel.exit_ip_family must be auto, prefer_ipv4, ipv4_only, prefer_ipv6, or ipv6_only")
 	}
 	if c.Tunnel.PollIntervalMS <= 0 || c.Tunnel.PollIntervalMS > 60000 {
 		return fmt.Errorf("config.tunnel.poll_interval_ms must be between 1 and 60000")
