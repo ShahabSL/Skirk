@@ -59,9 +59,9 @@ Important constraints:
   is a candidate for larger data segments, but it adds an initiation round trip
   and must be benchmarked before becoming the default.
 
-## v5 Shape
+## v5/v6 Shape
 
-v5 separates the control plane from the data plane.
+v5/v6 separates the control plane from the data plane.
 
 Data objects carry encrypted payload bytes. Control objects carry encrypted
 manifests that point to data object IDs and describe how those bytes map into
@@ -91,12 +91,15 @@ Only control and ack names are downloaded through the hot discovery path. Data
 objects are fetched by Drive file ID from control records.
 
 Important: with the current `appDataFolder` scope, data object creation still
-pollutes the Drive change feed. v5 must therefore either:
+pollutes the Drive change feed. The protocol must therefore support both
+discovery candidates until live gates prove the better default:
 
-- use larger data slabs and prove that the change-feed tax is acceptable;
-- use a control-only `files.list` prefix as a v5a control discovery path; or
-- move data objects to a different Drive corpus with broader OAuth scope and
-  accept the deployment and security tradeoff.
+- v5a: control-only `files.list` prefixes, keeping slabs out of discovery
+  results while retaining app-private scope.
+- v5b: `changes.list` cursor, accepting data-change noise and proving the
+  change-feed tax with measurements.
+- opt-in broader-scope variant: move data objects to another Drive corpus and
+  keep appDataFolder control, accepting security and setup tradeoffs.
 
 ### Control Record
 
@@ -133,6 +136,32 @@ created_unix_nano
 
 The sealed data object remains self-authenticating. The control record only
 authorizes which object ID and byte range should be read.
+
+### Data Slab
+
+Large payload objects are immutable slabs. Each slab contains independently
+authenticated records, not one whole-object AEAD envelope:
+
+```text
+slab_header:
+  magic="SKD5", version, direction, client_id, run_id, epoch, lane, slab_seq,
+  data_file_id, object_name, record_count
+
+record:
+  magic="SKR5", version, direction, lane, slab_seq, record_index,
+  priority_class, flags, stream_id, stream_seq_min, stream_seq_max,
+  stream_byte_start, plain_len, sealed_len, ciphertext+tag
+```
+
+The data AEAD key is derived separately from the control key and includes the
+session, direction, client, run, epoch, and `data` purpose. Nonces are
+deterministic within an epoch/lane from `(direction, lane, slab_seq,
+record_index)`.
+
+The AEAD associated data includes the record header, Drive `data_file_id`, Drive
+object name, byte offset, and byte length. This is required for safe range
+reads: a `206 Content-Range` proves which bytes Drive returned, while AEAD
+proves that the bytes are the exact manifest-authorized record.
 
 ## Traffic Classes
 
@@ -190,6 +219,15 @@ not enough for arbitrary byte ranges because a valid HTTP `Content-Range` only
 proves which bytes Drive returned, not that a partial slice is a valid encrypted
 Skirk record.
 
+Generated IDs:
+
+- reserve data file IDs before upload;
+- include the ID in the upload metadata and in the sealed record associated
+  data;
+- on ambiguous upload retry or `409 Conflict`, fetch metadata by that same ID
+  and verify name and size;
+- never allocate a new file ID for the same stream range.
+
 ## Control Plane
 
 Primary discovery candidates:
@@ -243,7 +281,9 @@ is a single request.
 
 Resumable upload is evaluated for larger bulk data objects only if benchmarks
 show that session initiation plus upload beats multipart latency or improves
-failure recovery. A resumable implementation must:
+failure recovery. Google documents resumable upload as the preferred path for
+larger files and unreliable links, but the initiation request is still expensive
+for control and small interactive data. A resumable implementation must:
 
 - persist upload session state only inside a single object upload attempt;
 - query upload status after ambiguous failures;
@@ -277,6 +317,9 @@ Before claiming a speed or stability improvement, logs or metrics must expose:
 Unit:
 
 - control record encode/decode/authentication;
+- data slab encode/decode/authentication;
+- single-record range open rejects wrong manifest metadata and tampered
+  ciphertext;
 - monotonic ACK and credit handling;
 - receiver credit blocks bulk but not control;
 - range validation rejects wrong status or wrong `Content-Range`;
@@ -286,9 +329,13 @@ Unit:
 Integration:
 
 - raw Drive known-ID whole-object and range throughput matrix;
+- raw Drive generated-ID upload and `409 Conflict` idempotency matrix;
+- change-feed pollution matrix for appDataFolder slabs under v5b;
 - live SOCKS download throughput;
-- live HTTP proxy browsing with several real pages;
-- bulk download while a media-like stream consumes periodic segments;
+- deterministic synthetic page load with many small assets;
+- deterministic synthetic media stream with periodic segment bursts while bulk
+  downloads run;
+- chat/WebSocket/SSE-style small bidirectional stream during bulk;
 - five or more clients sharing one exit;
 - restart recovery with orphan data/control objects;
 - cleanup under foreground load.
@@ -304,6 +351,9 @@ Regression gate:
 
 - Domain-specific prioritization. It will optimize the demo and fail general
   applications.
+- YouTube as the deterministic gate. Keep it as exploratory smoke only; ads,
+  codecs, experiments, login state, and autoplay policy change independently of
+  the tunnel.
 - Infinite concurrency. It raises Drive latency and creates self-inflicted
   queueing.
 - Larger objects only. It can recover bulk throughput but increases startup

@@ -1,0 +1,750 @@
+package skirk
+
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"math"
+)
+
+const (
+	muxV5ControlMagic         = "SKC5"
+	muxV5ControlVersion       = byte(1)
+	muxV5DataMagic            = "SKD5"
+	muxV5DataVersion          = byte(1)
+	muxV5DataRecordMagic      = "SKR5"
+	muxV5DataRecordVersion    = byte(1)
+	muxV5DataRecordHeaderSize = 61
+	muxV5MaxSlabSeq           = uint64(1<<48 - 1)
+
+	muxV5RecordOpen   = byte(1)
+	muxV5RecordData   = byte(2)
+	muxV5RecordFIN    = byte(3)
+	muxV5RecordRST    = byte(4)
+	muxV5RecordACK    = byte(5)
+	muxV5RecordCredit = byte(6)
+
+	muxV5ClassControl     = byte(1)
+	muxV5ClassInteractive = byte(2)
+	muxV5ClassBurst       = byte(3)
+	muxV5ClassBulk        = byte(4)
+)
+
+type muxV5ControlPage struct {
+	Direction  byte
+	ClientID   string
+	RunID      string
+	Epoch      string
+	ControlSeq uint64
+	Records    []muxV5ControlRecord
+}
+
+type muxV5ControlRecord struct {
+	Type            byte
+	PriorityClass   byte
+	StreamID        uint64
+	StreamSeqMin    uint64
+	StreamSeqMax    uint64
+	PlainBytes      uint64
+	SealedBytes     uint64
+	DataFileID      string
+	DataOffset      uint64
+	DataLength      uint64
+	FrameCount      uint32
+	CreditBytes     uint64
+	AckByteOffset   uint64
+	AckStreamSeq    uint64
+	CreatedUnixNano int64
+}
+
+type muxV5DataSlab struct {
+	Direction  byte
+	ClientID   string
+	RunID      string
+	Epoch      string
+	DataFileID string
+	ObjectName string
+	Lane       int
+	SlabSeq    uint64
+	Records    []muxV5DataRecord
+}
+
+type muxV5DataRecord struct {
+	RecordIndex     uint32
+	PriorityClass   byte
+	Flags           byte
+	StreamID        uint64
+	StreamSeqMin    uint64
+	StreamSeqMax    uint64
+	StreamByteStart uint64
+	Plaintext       []byte
+}
+
+type muxV5DataRecordRef struct {
+	DataFileID      string
+	ObjectName      string
+	Direction       byte
+	Lane            int
+	SlabSeq         uint64
+	RecordIndex     uint32
+	PriorityClass   byte
+	Flags           byte
+	StreamID        uint64
+	StreamSeqMin    uint64
+	StreamSeqMax    uint64
+	StreamByteStart uint64
+	PlainBytes      uint64
+	SealedBytes     uint64
+	DataOffset      uint64
+	DataLength      uint64
+}
+
+func sealMuxV5ControlPage(key []byte, sid [16]byte, page muxV5ControlPage) ([]byte, error) {
+	raw, err := encodeMuxV5ControlPage(page)
+	if err != nil {
+		return nil, err
+	}
+	return Seal(key, sid, page.Direction, page.ControlSeq, raw, false)
+}
+
+func openMuxV5ControlPage(key []byte, sealed []byte) (muxV5ControlPage, error) {
+	env, raw, err := OpenEnvelope(key, sealed)
+	if err != nil {
+		return muxV5ControlPage{}, err
+	}
+	page, err := decodeMuxV5ControlPage(raw)
+	if err != nil {
+		return muxV5ControlPage{}, err
+	}
+	if env.Direction != page.Direction {
+		return muxV5ControlPage{}, fmt.Errorf("mux v5 control direction mismatch envelope=%d page=%d", env.Direction, page.Direction)
+	}
+	if env.Sequence != page.ControlSeq {
+		return muxV5ControlPage{}, fmt.Errorf("mux v5 control sequence mismatch envelope=%d page=%d", env.Sequence, page.ControlSeq)
+	}
+	return page, nil
+}
+
+func sealMuxV5DataSlab(key []byte, slab muxV5DataSlab) ([]byte, []muxV5DataRecordRef, error) {
+	if len(key) != keyLen {
+		return nil, nil, fmt.Errorf("key must be %d bytes", keyLen)
+	}
+	if slab.Lane < 0 || slab.Lane > 255 {
+		return nil, nil, fmt.Errorf("mux v5 data lane out of range: %d", slab.Lane)
+	}
+	if slab.SlabSeq > muxV5MaxSlabSeq {
+		return nil, nil, errors.New("mux v5 data slab sequence out of range")
+	}
+	if len(slab.Records) > math.MaxUint16 {
+		return nil, nil, errors.New("too many mux v5 data records")
+	}
+	gcm, err := muxV5GCM(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	var buf bytes.Buffer
+	if err := encodeMuxV5DataSlabHeader(&buf, slab); err != nil {
+		return nil, nil, err
+	}
+	refs := make([]muxV5DataRecordRef, 0, len(slab.Records))
+	for i, record := range slab.Records {
+		offset := uint64(buf.Len())
+		sealed, ref, err := sealMuxV5DataRecord(gcm, slab, record, offset)
+		if err != nil {
+			return nil, nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		buf.Write(sealed)
+		refs = append(refs, ref)
+	}
+	return buf.Bytes(), refs, nil
+}
+
+func openMuxV5DataSlab(key []byte, data []byte) (muxV5DataSlab, []muxV5DataRecordRef, error) {
+	if len(key) != keyLen {
+		return muxV5DataSlab{}, nil, fmt.Errorf("key must be %d bytes", keyLen)
+	}
+	gcm, err := muxV5GCM(key)
+	if err != nil {
+		return muxV5DataSlab{}, nil, err
+	}
+	reader := bytes.NewReader(data)
+	slab, count, err := decodeMuxV5DataSlabHeader(reader)
+	if err != nil {
+		return muxV5DataSlab{}, nil, err
+	}
+	records := make([]muxV5DataRecord, 0, count)
+	refs := make([]muxV5DataRecordRef, 0, count)
+	for i := 0; i < int(count); i++ {
+		offset := uint64(len(data) - reader.Len())
+		recordBytes, err := readMuxV5DataRecordBytes(reader)
+		if err != nil {
+			return muxV5DataSlab{}, nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		ref, err := muxV5DataRecordRefFromBytes(slab, recordBytes, offset)
+		if err != nil {
+			return muxV5DataSlab{}, nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		record, err := openMuxV5DataRecord(gcm, ref, recordBytes)
+		if err != nil {
+			return muxV5DataSlab{}, nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		records = append(records, record)
+		refs = append(refs, ref)
+	}
+	if reader.Len() != 0 {
+		return muxV5DataSlab{}, nil, errors.New("trailing mux v5 data slab bytes")
+	}
+	slab.Records = records
+	return slab, refs, nil
+}
+
+func openMuxV5DataRecord(gcm cipher.AEAD, ref muxV5DataRecordRef, data []byte) (muxV5DataRecord, error) {
+	parsed, err := muxV5DataRecordRefFromBytes(muxV5DataSlab{
+		Direction:  ref.Direction,
+		DataFileID: ref.DataFileID,
+		ObjectName: ref.ObjectName,
+		Lane:       ref.Lane,
+		SlabSeq:    ref.SlabSeq,
+	}, data, ref.DataOffset)
+	if err != nil {
+		return muxV5DataRecord{}, err
+	}
+	if parsed != ref {
+		return muxV5DataRecord{}, errors.New("mux v5 data record manifest mismatch")
+	}
+	header := data[:muxV5DataRecordHeaderSize]
+	ciphertext := data[muxV5DataRecordHeaderSize:]
+	aad, err := muxV5DataRecordAAD(header, ref)
+	if err != nil {
+		return muxV5DataRecord{}, err
+	}
+	plaintext, err := gcm.Open(nil, muxV5DataRecordNonce(ref.Direction, ref.Lane, ref.SlabSeq, ref.RecordIndex), ciphertext, aad)
+	if err != nil {
+		return muxV5DataRecord{}, err
+	}
+	if uint64(len(plaintext)) != ref.PlainBytes {
+		return muxV5DataRecord{}, errors.New("mux v5 data record plaintext length mismatch")
+	}
+	return muxV5DataRecord{
+		RecordIndex:     ref.RecordIndex,
+		PriorityClass:   ref.PriorityClass,
+		Flags:           ref.Flags,
+		StreamID:        ref.StreamID,
+		StreamSeqMin:    ref.StreamSeqMin,
+		StreamSeqMax:    ref.StreamSeqMax,
+		StreamByteStart: ref.StreamByteStart,
+		Plaintext:       plaintext,
+	}, nil
+}
+
+func encodeMuxV5ControlPage(page muxV5ControlPage) ([]byte, error) {
+	if len(page.Records) > math.MaxUint16 {
+		return nil, errors.New("too many mux v5 control records")
+	}
+	var buf bytes.Buffer
+	buf.WriteString(muxV5ControlMagic)
+	buf.WriteByte(muxV5ControlVersion)
+	buf.WriteByte(page.Direction)
+	writeUint64(&buf, page.ControlSeq)
+	if err := writeString16(&buf, page.ClientID); err != nil {
+		return nil, fmt.Errorf("client id: %w", err)
+	}
+	if err := writeString16(&buf, page.RunID); err != nil {
+		return nil, fmt.Errorf("run id: %w", err)
+	}
+	if err := writeString16(&buf, page.Epoch); err != nil {
+		return nil, fmt.Errorf("epoch: %w", err)
+	}
+	writeUint16(&buf, uint16(len(page.Records)))
+	for i, record := range page.Records {
+		if err := encodeMuxV5ControlRecord(&buf, record); err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeMuxV5ControlRecord(buf *bytes.Buffer, record muxV5ControlRecord) error {
+	buf.WriteByte(record.Type)
+	buf.WriteByte(record.PriorityClass)
+	writeUint64(buf, record.StreamID)
+	writeUint64(buf, record.StreamSeqMin)
+	writeUint64(buf, record.StreamSeqMax)
+	writeUint64(buf, record.PlainBytes)
+	writeUint64(buf, record.SealedBytes)
+	writeUint64(buf, record.DataOffset)
+	writeUint64(buf, record.DataLength)
+	writeUint32(buf, record.FrameCount)
+	writeUint64(buf, record.CreditBytes)
+	writeUint64(buf, record.AckByteOffset)
+	writeUint64(buf, record.AckStreamSeq)
+	writeUint64(buf, uint64(record.CreatedUnixNano))
+	if err := writeString16(buf, record.DataFileID); err != nil {
+		return fmt.Errorf("data file id: %w", err)
+	}
+	return nil
+}
+
+func decodeMuxV5ControlPage(data []byte) (muxV5ControlPage, error) {
+	reader := bytes.NewReader(data)
+	magic := make([]byte, len(muxV5ControlMagic))
+	if _, err := reader.Read(magic); err != nil {
+		return muxV5ControlPage{}, errors.New("mux v5 control page too short")
+	}
+	if string(magic) != muxV5ControlMagic {
+		return muxV5ControlPage{}, errors.New("bad mux v5 control magic")
+	}
+	version, err := reader.ReadByte()
+	if err != nil {
+		return muxV5ControlPage{}, errors.New("mux v5 control page missing version")
+	}
+	if version != muxV5ControlVersion {
+		return muxV5ControlPage{}, fmt.Errorf("unsupported mux v5 control version %d", version)
+	}
+	direction, err := reader.ReadByte()
+	if err != nil {
+		return muxV5ControlPage{}, errors.New("mux v5 control page missing direction")
+	}
+	controlSeq, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlPage{}, err
+	}
+	clientID, err := readString16(reader)
+	if err != nil {
+		return muxV5ControlPage{}, fmt.Errorf("client id: %w", err)
+	}
+	runID, err := readString16(reader)
+	if err != nil {
+		return muxV5ControlPage{}, fmt.Errorf("run id: %w", err)
+	}
+	epoch, err := readString16(reader)
+	if err != nil {
+		return muxV5ControlPage{}, fmt.Errorf("epoch: %w", err)
+	}
+	count, err := readUint16(reader)
+	if err != nil {
+		return muxV5ControlPage{}, err
+	}
+	page := muxV5ControlPage{
+		Direction:  direction,
+		ClientID:   clientID,
+		RunID:      runID,
+		Epoch:      epoch,
+		ControlSeq: controlSeq,
+		Records:    make([]muxV5ControlRecord, 0, count),
+	}
+	for i := 0; i < int(count); i++ {
+		record, err := decodeMuxV5ControlRecord(reader)
+		if err != nil {
+			return muxV5ControlPage{}, fmt.Errorf("record %d: %w", i, err)
+		}
+		page.Records = append(page.Records, record)
+	}
+	if reader.Len() != 0 {
+		return muxV5ControlPage{}, errors.New("trailing mux v5 control bytes")
+	}
+	return page, nil
+}
+
+func decodeMuxV5ControlRecord(reader *bytes.Reader) (muxV5ControlRecord, error) {
+	recordType, err := reader.ReadByte()
+	if err != nil {
+		return muxV5ControlRecord{}, errors.New("missing record type")
+	}
+	priorityClass, err := reader.ReadByte()
+	if err != nil {
+		return muxV5ControlRecord{}, errors.New("missing priority class")
+	}
+	streamID, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	streamSeqMin, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	streamSeqMax, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	plainBytes, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	sealedBytes, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	dataOffset, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	dataLength, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	frameCount, err := readUint32(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	creditBytes, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	ackByteOffset, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	ackStreamSeq, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	createdUnixNano, err := readUint64(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, err
+	}
+	dataFileID, err := readString16(reader)
+	if err != nil {
+		return muxV5ControlRecord{}, fmt.Errorf("data file id: %w", err)
+	}
+	return muxV5ControlRecord{
+		Type:            recordType,
+		PriorityClass:   priorityClass,
+		StreamID:        streamID,
+		StreamSeqMin:    streamSeqMin,
+		StreamSeqMax:    streamSeqMax,
+		PlainBytes:      plainBytes,
+		SealedBytes:     sealedBytes,
+		DataFileID:      dataFileID,
+		DataOffset:      dataOffset,
+		DataLength:      dataLength,
+		FrameCount:      frameCount,
+		CreditBytes:     creditBytes,
+		AckByteOffset:   ackByteOffset,
+		AckStreamSeq:    ackStreamSeq,
+		CreatedUnixNano: int64(createdUnixNano),
+	}, nil
+}
+
+func muxV5GCM(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func encodeMuxV5DataSlabHeader(buf *bytes.Buffer, slab muxV5DataSlab) error {
+	buf.WriteString(muxV5DataMagic)
+	buf.WriteByte(muxV5DataVersion)
+	buf.WriteByte(slab.Direction)
+	buf.WriteByte(byte(slab.Lane))
+	writeUint64(buf, slab.SlabSeq)
+	if err := writeString16(buf, slab.ClientID); err != nil {
+		return fmt.Errorf("client id: %w", err)
+	}
+	if err := writeString16(buf, slab.RunID); err != nil {
+		return fmt.Errorf("run id: %w", err)
+	}
+	if err := writeString16(buf, slab.Epoch); err != nil {
+		return fmt.Errorf("epoch: %w", err)
+	}
+	if err := writeString16(buf, slab.DataFileID); err != nil {
+		return fmt.Errorf("data file id: %w", err)
+	}
+	if err := writeString16(buf, slab.ObjectName); err != nil {
+		return fmt.Errorf("object name: %w", err)
+	}
+	writeUint16(buf, uint16(len(slab.Records)))
+	return nil
+}
+
+func decodeMuxV5DataSlabHeader(reader *bytes.Reader) (muxV5DataSlab, uint16, error) {
+	magic := make([]byte, len(muxV5DataMagic))
+	if _, err := reader.Read(magic); err != nil {
+		return muxV5DataSlab{}, 0, errors.New("mux v5 data slab too short")
+	}
+	if string(magic) != muxV5DataMagic {
+		return muxV5DataSlab{}, 0, errors.New("bad mux v5 data magic")
+	}
+	version, err := reader.ReadByte()
+	if err != nil {
+		return muxV5DataSlab{}, 0, errors.New("mux v5 data slab missing version")
+	}
+	if version != muxV5DataVersion {
+		return muxV5DataSlab{}, 0, fmt.Errorf("unsupported mux v5 data version %d", version)
+	}
+	direction, err := reader.ReadByte()
+	if err != nil {
+		return muxV5DataSlab{}, 0, errors.New("mux v5 data slab missing direction")
+	}
+	lane, err := reader.ReadByte()
+	if err != nil {
+		return muxV5DataSlab{}, 0, errors.New("mux v5 data slab missing lane")
+	}
+	slabSeq, err := readUint64(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, err
+	}
+	clientID, err := readString16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, fmt.Errorf("client id: %w", err)
+	}
+	runID, err := readString16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, fmt.Errorf("run id: %w", err)
+	}
+	epoch, err := readString16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, fmt.Errorf("epoch: %w", err)
+	}
+	dataFileID, err := readString16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, fmt.Errorf("data file id: %w", err)
+	}
+	objectName, err := readString16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, fmt.Errorf("object name: %w", err)
+	}
+	count, err := readUint16(reader)
+	if err != nil {
+		return muxV5DataSlab{}, 0, err
+	}
+	return muxV5DataSlab{
+		Direction:  direction,
+		ClientID:   clientID,
+		RunID:      runID,
+		Epoch:      epoch,
+		DataFileID: dataFileID,
+		ObjectName: objectName,
+		Lane:       int(lane),
+		SlabSeq:    slabSeq,
+	}, count, nil
+}
+
+func sealMuxV5DataRecord(gcm cipher.AEAD, slab muxV5DataSlab, record muxV5DataRecord, offset uint64) ([]byte, muxV5DataRecordRef, error) {
+	if len(record.Plaintext) > math.MaxUint32 {
+		return nil, muxV5DataRecordRef{}, errors.New("mux v5 data record plaintext too large")
+	}
+	cipherLen := uint64(len(record.Plaintext) + gcm.Overhead())
+	dataLength := uint64(muxV5DataRecordHeaderSize) + cipherLen
+	ref := muxV5DataRecordRef{
+		DataFileID:      slab.DataFileID,
+		ObjectName:      slab.ObjectName,
+		Direction:       slab.Direction,
+		Lane:            slab.Lane,
+		SlabSeq:         slab.SlabSeq,
+		RecordIndex:     record.RecordIndex,
+		PriorityClass:   record.PriorityClass,
+		Flags:           record.Flags,
+		StreamID:        record.StreamID,
+		StreamSeqMin:    record.StreamSeqMin,
+		StreamSeqMax:    record.StreamSeqMax,
+		StreamByteStart: record.StreamByteStart,
+		PlainBytes:      uint64(len(record.Plaintext)),
+		SealedBytes:     cipherLen,
+		DataOffset:      offset,
+		DataLength:      dataLength,
+	}
+	header, err := encodeMuxV5DataRecordHeader(ref)
+	if err != nil {
+		return nil, muxV5DataRecordRef{}, err
+	}
+	aad, err := muxV5DataRecordAAD(header, ref)
+	if err != nil {
+		return nil, muxV5DataRecordRef{}, err
+	}
+	ciphertext := gcm.Seal(nil, muxV5DataRecordNonce(ref.Direction, ref.Lane, ref.SlabSeq, ref.RecordIndex), record.Plaintext, aad)
+	out := make([]byte, 0, len(header)+len(ciphertext))
+	out = append(out, header...)
+	out = append(out, ciphertext...)
+	return out, ref, nil
+}
+
+func encodeMuxV5DataRecordHeader(ref muxV5DataRecordRef) ([]byte, error) {
+	if ref.Lane < 0 || ref.Lane > 255 {
+		return nil, fmt.Errorf("mux v5 data lane out of range: %d", ref.Lane)
+	}
+	if ref.SlabSeq > muxV5MaxSlabSeq {
+		return nil, errors.New("mux v5 data slab sequence out of range")
+	}
+	if ref.SealedBytes > math.MaxUint32 || ref.PlainBytes > math.MaxUint32 {
+		return nil, errors.New("mux v5 data record length too large")
+	}
+	var buf bytes.Buffer
+	buf.WriteString(muxV5DataRecordMagic)
+	buf.WriteByte(muxV5DataRecordVersion)
+	buf.WriteByte(ref.PriorityClass)
+	buf.WriteByte(ref.Flags)
+	buf.WriteByte(ref.Direction)
+	buf.WriteByte(byte(ref.Lane))
+	writeUint64(&buf, ref.SlabSeq)
+	writeUint32(&buf, ref.RecordIndex)
+	writeUint64(&buf, ref.StreamID)
+	writeUint64(&buf, ref.StreamSeqMin)
+	writeUint64(&buf, ref.StreamSeqMax)
+	writeUint64(&buf, ref.StreamByteStart)
+	writeUint32(&buf, uint32(ref.PlainBytes))
+	writeUint32(&buf, uint32(ref.SealedBytes))
+	if buf.Len() != muxV5DataRecordHeaderSize {
+		return nil, fmt.Errorf("mux v5 data record header size=%d want=%d", buf.Len(), muxV5DataRecordHeaderSize)
+	}
+	return buf.Bytes(), nil
+}
+
+func muxV5DataRecordRefFromBytes(slab muxV5DataSlab, data []byte, offset uint64) (muxV5DataRecordRef, error) {
+	if len(data) < muxV5DataRecordHeaderSize {
+		return muxV5DataRecordRef{}, errors.New("mux v5 data record too short")
+	}
+	header := data[:muxV5DataRecordHeaderSize]
+	if string(header[:4]) != muxV5DataRecordMagic {
+		return muxV5DataRecordRef{}, errors.New("bad mux v5 data record magic")
+	}
+	if header[4] != muxV5DataRecordVersion {
+		return muxV5DataRecordRef{}, fmt.Errorf("unsupported mux v5 data record version %d", header[4])
+	}
+	ref := muxV5DataRecordRef{
+		DataFileID:      slab.DataFileID,
+		ObjectName:      slab.ObjectName,
+		PriorityClass:   header[5],
+		Flags:           header[6],
+		Direction:       header[7],
+		Lane:            int(header[8]),
+		SlabSeq:         binary.BigEndian.Uint64(header[9:17]),
+		RecordIndex:     binary.BigEndian.Uint32(header[17:21]),
+		StreamID:        binary.BigEndian.Uint64(header[21:29]),
+		StreamSeqMin:    binary.BigEndian.Uint64(header[29:37]),
+		StreamSeqMax:    binary.BigEndian.Uint64(header[37:45]),
+		StreamByteStart: binary.BigEndian.Uint64(header[45:53]),
+		PlainBytes:      uint64(binary.BigEndian.Uint32(header[53:57])),
+		SealedBytes:     uint64(binary.BigEndian.Uint32(header[57:61])),
+		DataOffset:      offset,
+	}
+	ref.DataLength = uint64(muxV5DataRecordHeaderSize) + ref.SealedBytes
+	if ref.Direction != slab.Direction || ref.Lane != slab.Lane || ref.SlabSeq != slab.SlabSeq {
+		return muxV5DataRecordRef{}, errors.New("mux v5 data record slab identity mismatch")
+	}
+	if uint64(len(data)) != ref.DataLength {
+		return muxV5DataRecordRef{}, fmt.Errorf("mux v5 data record length=%d want=%d", len(data), ref.DataLength)
+	}
+	return ref, nil
+}
+
+func readMuxV5DataRecordBytes(reader *bytes.Reader) ([]byte, error) {
+	if reader.Len() < muxV5DataRecordHeaderSize {
+		return nil, errors.New("truncated mux v5 data record header")
+	}
+	header := make([]byte, muxV5DataRecordHeaderSize)
+	if _, err := reader.Read(header); err != nil {
+		return nil, err
+	}
+	if string(header[:4]) != muxV5DataRecordMagic {
+		return nil, errors.New("bad mux v5 data record magic")
+	}
+	sealedBytes := int(binary.BigEndian.Uint32(header[57:61]))
+	if sealedBytes > reader.Len() {
+		return nil, errors.New("truncated mux v5 data record ciphertext")
+	}
+	out := make([]byte, 0, muxV5DataRecordHeaderSize+sealedBytes)
+	out = append(out, header...)
+	ciphertext := make([]byte, sealedBytes)
+	if _, err := reader.Read(ciphertext); err != nil {
+		return nil, err
+	}
+	out = append(out, ciphertext...)
+	return out, nil
+}
+
+func muxV5DataRecordAAD(header []byte, ref muxV5DataRecordRef) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.Write(header)
+	if err := writeString16(&buf, ref.DataFileID); err != nil {
+		return nil, fmt.Errorf("data file id: %w", err)
+	}
+	if err := writeString16(&buf, ref.ObjectName); err != nil {
+		return nil, fmt.Errorf("object name: %w", err)
+	}
+	writeUint64(&buf, ref.DataOffset)
+	writeUint64(&buf, ref.DataLength)
+	return buf.Bytes(), nil
+}
+
+func muxV5DataRecordNonce(direction byte, lane int, slabSeq uint64, recordIndex uint32) []byte {
+	out := make([]byte, 12)
+	out[0] = direction
+	out[1] = byte(lane)
+	for i := 0; i < 6; i++ {
+		out[7-i] = byte(slabSeq >> (8 * i))
+	}
+	binary.BigEndian.PutUint32(out[8:12], recordIndex)
+	return out
+}
+
+func writeString16(buf *bytes.Buffer, value string) error {
+	if len(value) > math.MaxUint16 {
+		return errors.New("string too long")
+	}
+	writeUint16(buf, uint16(len(value)))
+	buf.WriteString(value)
+	return nil
+}
+
+func readString16(reader *bytes.Reader) (string, error) {
+	size, err := readUint16(reader)
+	if err != nil {
+		return "", err
+	}
+	if int(size) > reader.Len() {
+		return "", errors.New("truncated string")
+	}
+	raw := make([]byte, int(size))
+	if _, err := reader.Read(raw); err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func writeUint16(buf *bytes.Buffer, value uint16) {
+	var tmp [2]byte
+	binary.BigEndian.PutUint16(tmp[:], value)
+	buf.Write(tmp[:])
+}
+
+func writeUint32(buf *bytes.Buffer, value uint32) {
+	var tmp [4]byte
+	binary.BigEndian.PutUint32(tmp[:], value)
+	buf.Write(tmp[:])
+}
+
+func writeUint64(buf *bytes.Buffer, value uint64) {
+	var tmp [8]byte
+	binary.BigEndian.PutUint64(tmp[:], value)
+	buf.Write(tmp[:])
+}
+
+func readUint16(reader *bytes.Reader) (uint16, error) {
+	var tmp [2]byte
+	if _, err := reader.Read(tmp[:]); err != nil {
+		return 0, errors.New("truncated uint16")
+	}
+	return binary.BigEndian.Uint16(tmp[:]), nil
+}
+
+func readUint32(reader *bytes.Reader) (uint32, error) {
+	var tmp [4]byte
+	if _, err := reader.Read(tmp[:]); err != nil {
+		return 0, errors.New("truncated uint32")
+	}
+	return binary.BigEndian.Uint32(tmp[:]), nil
+}
+
+func readUint64(reader *bytes.Reader) (uint64, error) {
+	var tmp [8]byte
+	if _, err := reader.Read(tmp[:]); err != nil {
+		return 0, errors.New("truncated uint64")
+	}
+	return binary.BigEndian.Uint64(tmp[:]), nil
+}

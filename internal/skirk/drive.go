@@ -112,6 +112,18 @@ func (d *DriveStore) GenerateObjectIDs(ctx context.Context, count int) ([]string
 }
 
 func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
+	return d.putObject(ctx, "", name, data)
+}
+
+func (d *DriveStore) PutObjectWithID(ctx context.Context, fileID, name string, data []byte) (ObjectInfo, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return ObjectInfo{}, errors.New("drive upload with id requires file id")
+	}
+	return d.putObject(ctx, fileID, name, data)
+}
+
+func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []byte) (ObjectInfo, error) {
 	var body bytes.Buffer
 	boundary := fmt.Sprintf("skirk-%d", time.Now().UnixNano())
 	writer := multipart.NewWriter(&body)
@@ -121,6 +133,9 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 	metadata := map[string]any{
 		"name":     name,
 		"mimeType": "application/octet-stream",
+	}
+	if fileID != "" {
+		metadata["id"] = fileID
 	}
 	if d.isAppData() {
 		metadata["parents"] = []string{"appDataFolder"}
@@ -159,6 +174,19 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 	if err != nil {
 		return ObjectInfo{}, err
 	}
+	if result.Status == http.StatusConflict && fileID != "" {
+		info, err := d.getObjectInfoByID(ctx, fileID)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		if info.Name != "" && info.Name != name {
+			return ObjectInfo{}, fmt.Errorf("drive upload id conflict name=%q want=%q", info.Name, name)
+		}
+		if info.Size != int64(len(data)) {
+			return ObjectInfo{}, fmt.Errorf("drive upload id conflict size=%d want=%d", info.Size, len(data))
+		}
+		return info, nil
+	}
 	if err := require2xx(result, "drive upload"); err != nil {
 		return ObjectInfo{}, err
 	}
@@ -172,6 +200,32 @@ func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (O
 	}
 	size, _ := strconv.ParseInt(payload.Size, 10, 64)
 	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size}, nil
+}
+
+func (d *DriveStore) getObjectInfoByID(ctx context.Context, fileID string) (ObjectInfo, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return ObjectInfo{}, errors.New("drive metadata by id requires file id")
+	}
+	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=id,name,size,modifiedTime"
+	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := require2xx(result, "drive metadata by id"); err != nil {
+		return ObjectInfo{}, err
+	}
+	var payload struct {
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		Size         string `json:"size"`
+		ModifiedTime string `json:"modifiedTime"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ObjectInfo{}, err
+	}
+	size, _ := strconv.ParseInt(payload.Size, 10, 64)
+	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size, Updated: payload.ModifiedTime}, nil
 }
 
 func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
@@ -1289,6 +1343,8 @@ func driveRequestLabel(method, path string) string {
 		return "changes"
 	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files/generateIds"):
 		return "generate_ids"
+	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files/"):
+		return "metadata"
 	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files?"):
 		return "list"
 	case method == http.MethodDelete && strings.HasPrefix(path, "/drive/v3/files/"):

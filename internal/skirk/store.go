@@ -52,6 +52,10 @@ type ObjectPutStore interface {
 	PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error)
 }
 
+type ObjectPutIDStore interface {
+	PutObjectWithID(ctx context.Context, fileID, name string, data []byte) (ObjectInfo, error)
+}
+
 type ObjectIDReserveStore interface {
 	GenerateObjectIDs(ctx context.Context, count int) ([]string, error)
 }

@@ -3,9 +3,12 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -98,6 +101,73 @@ func TestDriveStoreGenerateObjectIDsUsesAppDataSpace(t *testing.T) {
 	}
 	if gotQuery.Get("count") != "2" || gotQuery.Get("space") != "appDataFolder" || gotQuery.Get("fields") != "ids" {
 		t.Fatalf("query = %s, want count, appDataFolder space, and ids field", gotQuery.Encode())
+	}
+}
+
+func TestDriveStorePutObjectWithIDIncludesGeneratedID(t *testing.T) {
+	var metadata map[string]any
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || !strings.Contains(req.URL.RawQuery, "uploadType=multipart") {
+			t.Fatalf("request = %s %s, want multipart upload", req.Method, req.URL.String())
+		}
+		mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mediaType != "multipart/related" {
+			t.Fatalf("content type = %q, want multipart/related", mediaType)
+		}
+		reader := multipart.NewReader(req.Body, params["boundary"])
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewDecoder(part).Decode(&metadata); err != nil {
+			t.Fatal(err)
+		}
+		return stringResponse(http.StatusOK, `{"id":"generated-id","name":"object","size":"4"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	info, err := store.PutObjectWithID(context.Background(), "generated-id", "object", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != "generated-id" || info.Name != "object" || info.Size != 4 {
+		t.Fatalf("info = %+v, want generated-id object size 4", info)
+	}
+	if metadata["id"] != "generated-id" || metadata["name"] != "object" || metadata["mimeType"] != "application/octet-stream" {
+		t.Fatalf("metadata = %#v, want id/name/mimeType", metadata)
+	}
+	parents, ok := metadata["parents"].([]any)
+	if !ok || len(parents) != 1 || parents[0] != "appDataFolder" {
+		t.Fatalf("parents = %#v, want appDataFolder", metadata["parents"])
+	}
+}
+
+func TestDriveStorePutObjectWithIDTreatsConflictAsIdempotent(t *testing.T) {
+	var requests []string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.Method+" "+req.URL.Path+"?"+req.URL.RawQuery)
+		if req.Method == http.MethodPost {
+			return stringResponse(http.StatusConflict, `{"error":{"status":"ALREADY_EXISTS"}}`), nil
+		}
+		if req.Method == http.MethodGet && req.URL.Path == "/drive/v3/files/generated-id" {
+			return stringResponse(http.StatusOK, `{"id":"generated-id","name":"object","size":"4","modifiedTime":"2026-05-14T00:00:00Z"}`), nil
+		}
+		return stringResponse(http.StatusNotFound, `{}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	info, err := store.PutObjectWithID(context.Background(), "generated-id", "object", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != "generated-id" || info.Name != "object" || info.Size != 4 {
+		t.Fatalf("info = %+v, want existing generated object", info)
+	}
+	if len(requests) != 2 || !strings.Contains(requests[1], "fields=id,name,size,modifiedTime") {
+		t.Fatalf("requests = %#v, want conflict metadata lookup", requests)
 	}
 }
 
