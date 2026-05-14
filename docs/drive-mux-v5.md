@@ -38,10 +38,9 @@ The design uses only current Drive API primitives:
 - `files.create` for immutable object creation.
 - `files.get?alt=media` for whole-object download by ID.
 - `Range: bytes=start-end` for partial media reads.
+- `files.list` on control/ack prefixes as the first control-plane candidate.
 - `changes.getStartPageToken` and `changes.list` with
-  `spaces=appDataFolder` as the primary control-plane cursor.
-- `files.list` remains a recovery and cleanup primitive, not the steady-state
-  data discovery path.
+  `spaces=appDataFolder` as an experimental durable cursor candidate.
 - `files.delete` by ID for garbage collection.
 
 Important constraints:
@@ -100,6 +99,13 @@ discovery candidates until live gates prove the better default:
   change-feed tax with measurements.
 - opt-in broader-scope variant: move data objects to another Drive corpus and
   keep appDataFolder control, accepting security and setup tradeoffs.
+
+As of the 2026-05-14 `google_front_pinned` primitive benchmark, v5a is the
+leading default candidate: control-prefix `files.list` observed all generated-ID
+control objects in one call at roughly 200 ms, while `changes.list` required
+10-18 calls and 2.6-4.5 s for the same objects because data object creations
+polluted the change stream. v5b remains a recovery or opt-in candidate until it
+beats v5a under the same bulk load.
 
 ### Control Record
 

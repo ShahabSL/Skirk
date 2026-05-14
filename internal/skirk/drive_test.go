@@ -400,6 +400,9 @@ func TestDriveStoreListChangesUsesAppDataAndFields(t *testing.T) {
 	if !strings.Contains(gotQuery.Get("fields"), "newStartPageToken") || !strings.Contains(gotQuery.Get("fields"), "file(id,name,size,modifiedTime)") {
 		t.Fatalf("fields = %q, want compact change fields", gotQuery.Get("fields"))
 	}
+	if strings.Contains(gotQuery.Get("fields"), "changes(id") {
+		t.Fatalf("fields = %q, must not request unsupported top-level change id", gotQuery.Get("fields"))
+	}
 	if info.NextPageToken != "next-token" || len(info.Changes) != 2 {
 		t.Fatalf("changes = %+v, want next token and two changes", info)
 	}

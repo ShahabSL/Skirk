@@ -1030,7 +1030,7 @@ func (l *muxLane) uploadBatch(ctx context.Context, frames []muxFrame) error {
 	priority := muxPriorityBatch(frames)
 	minSeq, maxSeq := muxBatchFrameSeqRange(frames)
 	name := muxObjectName(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, seq, len(frames), minSeq, maxSeq, len(raw), priority)
-	release, err := l.mux.t.acquireUploadSlot(ctx, priority)
+	release, err := l.mux.t.acquireUploadSlotBytes(ctx, priority)
 	if err != nil {
 		return err
 	}
@@ -1042,7 +1042,7 @@ func (l *muxLane) uploadBatch(ctx context.Context, frames []muxFrame) error {
 		err = l.mux.t.Data.Put(opCtx, name, sealed)
 	}
 	cancel()
-	release(err)
+	release(err, int64(len(sealed)))
 	duration := time.Since(started)
 	if l.mux.t.Logger != nil && (l.mux.t.Observe || err != nil || duration >= l.mux.t.slowDriveThreshold()) {
 		l.mux.t.Logger.Printf("mux upload role=%s lane=%d seq=%d priority=%t stream=%016x frames=%d frame_seq_min=%d frame_seq_max=%d plain_bytes=%d sealed_bytes=%d urgent_q=%d normal_q=%d urgent_upload_q=%d normal_upload_q=%d duration=%s error=%s", l.mux.role, l.idx, seq, priority, frames[0].StreamID, len(frames), minSeq, maxSeq, len(raw), len(sealed), len(l.urgent), l.normalQueueLen(), len(l.urgentUpload), len(l.upload), duration.Round(time.Millisecond), errorSummary(err))
@@ -2030,7 +2030,7 @@ func (m *driveMux) downloadMuxObjectOnce(ctx context.Context, meta muxObjectMeta
 }
 
 func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectMeta, hedgeWon *atomic.Bool) ([]byte, error) {
-	release, err := m.t.acquireDownloadSlot(ctx, meta.Priority)
+	release, err := m.t.acquireDownloadSlotBytes(ctx, meta.Priority)
 	if err != nil {
 		return nil, err
 	}
@@ -2050,7 +2050,7 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 	if hedgeWon != nil && hedgeWon.Load() && errors.Is(err, context.Canceled) {
 		releaseErr = nil
 	}
-	release(releaseErr)
+	release(releaseErr, int64(len(sealed)))
 	return sealed, err
 }
 

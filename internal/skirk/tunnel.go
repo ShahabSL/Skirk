@@ -28,6 +28,9 @@ const (
 	openPollWarmWindow            = 45 * time.Second
 	directDriveSlowThreshold      = 5 * time.Second
 	proxyDriveSlowThreshold       = 10 * time.Second
+	limiterBulkByteThreshold      = 1 * 1024 * 1024
+	limiterDirectBulkBytesPerSec  = 512 * 1024
+	limiterProxyBulkBytesPerSec   = 256 * 1024
 	exitFamilyPreferenceTimeout   = 2 * time.Second
 	cleanupQuietWindow            = 2 * time.Second
 	cleanupMaxForegroundDelay     = 2 * time.Minute
@@ -376,8 +379,16 @@ func (t *Tunnel) acquireUploadSlot(ctx context.Context, priority bool) (func(err
 	return t.limiter(true).Acquire(ctx, priority)
 }
 
+func (t *Tunnel) acquireUploadSlotBytes(ctx context.Context, priority bool) (func(error, int64), error) {
+	return t.limiter(true).AcquireBytes(ctx, priority)
+}
+
 func (t *Tunnel) acquireDownloadSlot(ctx context.Context, priority bool) (func(error), error) {
 	return t.limiter(false).Acquire(ctx, priority)
+}
+
+func (t *Tunnel) acquireDownloadSlotBytes(ctx context.Context, priority bool) (func(error, int64), error) {
+	return t.limiter(false).AcquireBytes(ctx, priority)
 }
 
 func (t *Tunnel) limiter(upload bool) *adaptiveLimiter {
@@ -476,6 +487,7 @@ type adaptiveLimiter struct {
 	priorityBusy  int
 	successes     int
 	slowThreshold time.Duration
+	bulkBytesPerS int64
 	name          string
 	logger        *log.Logger
 	lastLog       time.Time
@@ -492,7 +504,11 @@ func newAdaptiveLimiter(initial, max int, slowThreshold time.Duration, name stri
 	if slowThreshold <= 0 {
 		slowThreshold = directDriveSlowThreshold
 	}
-	return &adaptiveLimiter{limit: initial, max: max, reserve: priorityReserve(max), slowThreshold: slowThreshold, name: name, logger: logger}
+	bytesPerSecond := int64(limiterDirectBulkBytesPerSec)
+	if slowThreshold >= proxyDriveSlowThreshold {
+		bytesPerSecond = limiterProxyBulkBytesPerSec
+	}
+	return &adaptiveLimiter{limit: initial, max: max, reserve: priorityReserve(max), slowThreshold: slowThreshold, bulkBytesPerS: bytesPerSecond, name: name, logger: logger}
 }
 
 func priorityReserve(max int) int {
@@ -510,6 +526,16 @@ func priorityReserve(max int) int {
 }
 
 func (l *adaptiveLimiter) Acquire(ctx context.Context, priority bool) (func(error), error) {
+	release, err := l.AcquireBytes(ctx, priority)
+	if err != nil {
+		return nil, err
+	}
+	return func(err error) {
+		release(err, 0)
+	}, nil
+}
+
+func (l *adaptiveLimiter) AcquireBytes(ctx context.Context, priority bool) (func(error, int64), error) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	registeredPriority := false
@@ -531,9 +557,9 @@ func (l *adaptiveLimiter) Acquire(ctx context.Context, priority bool) (func(erro
 			l.mu.Unlock()
 			started := time.Now()
 			var once sync.Once
-			return func(err error) {
+			return func(err error, bytes int64) {
 				once.Do(func() {
-					l.release(priority, err, time.Since(started))
+					l.release(priority, err, time.Since(started), bytes)
 				})
 			}, nil
 		}
@@ -588,7 +614,7 @@ func (l *adaptiveLimiter) priorityReserveLocked() int {
 	return reserve
 }
 
-func (l *adaptiveLimiter) release(priority bool, err error, duration time.Duration) {
+func (l *adaptiveLimiter) release(priority bool, err error, duration time.Duration, bytes int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.inFlight > 0 {
@@ -606,13 +632,14 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 		}
 		l.successes = 0
 		reason = "error"
-		l.logChangeLocked(oldLimit, reason, duration)
+		l.logChangeLocked(oldLimit, reason, duration, bytes)
 		return
 	}
-	if duration >= l.slowThreshold {
+	slowThreshold := l.effectiveSlowThresholdLocked(priority, bytes)
+	if duration >= slowThreshold {
 		floor := l.minimumLimitLocked()
 		if l.limit > floor {
-			if duration >= 2*l.slowThreshold {
+			if duration >= 2*slowThreshold {
 				l.limit = maxInt(floor, l.limit/2)
 			} else {
 				l.limit--
@@ -620,7 +647,7 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 		}
 		l.successes = 0
 		reason = "slow"
-		l.logChangeLocked(oldLimit, reason, duration)
+		l.logChangeLocked(oldLimit, reason, duration, bytes)
 		return
 	}
 	l.successes++
@@ -630,10 +657,21 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 		l.successes = 0
 		reason = "healthy"
 	}
-	l.logChangeLocked(oldLimit, reason, duration)
+	l.logChangeLocked(oldLimit, reason, duration, bytes)
 }
 
-func (l *adaptiveLimiter) logChangeLocked(oldLimit int, reason string, duration time.Duration) {
+func (l *adaptiveLimiter) effectiveSlowThresholdLocked(priority bool, bytes int64) time.Duration {
+	if priority || bytes < limiterBulkByteThreshold || l.bulkBytesPerS <= 0 {
+		return l.slowThreshold
+	}
+	budget := time.Second + time.Duration(bytes*int64(time.Second)/l.bulkBytesPerS)
+	if budget < l.slowThreshold {
+		return l.slowThreshold
+	}
+	return budget
+}
+
+func (l *adaptiveLimiter) logChangeLocked(oldLimit int, reason string, duration time.Duration, bytes int64) {
 	if l.logger == nil || reason == "" || oldLimit == l.limit {
 		return
 	}
@@ -642,6 +680,10 @@ func (l *adaptiveLimiter) logChangeLocked(oldLimit int, reason string, duration 
 		return
 	}
 	l.lastLog = now
+	if bytes > 0 {
+		l.logger.Printf("drive limiter %s window=%d->%d max=%d reason=%s duration=%s bytes=%d", l.name, oldLimit, l.limit, l.max, reason, duration.Round(time.Millisecond), bytes)
+		return
+	}
 	l.logger.Printf("drive limiter %s window=%d->%d max=%d reason=%s duration=%s", l.name, oldLimit, l.limit, l.max, reason, duration.Round(time.Millisecond))
 }
 

@@ -401,7 +401,7 @@ func (d *DriveStore) ListChanges(ctx context.Context, pageToken string, includeR
 	values.Set("pageToken", pageToken)
 	values.Set("pageSize", driveListPageSize)
 	values.Set("includeRemoved", strconv.FormatBool(includeRemoved))
-	values.Set("fields", "nextPageToken,newStartPageToken,changes(id,fileId,removed,time,file(id,name,size,modifiedTime))")
+	values.Set("fields", "nextPageToken,newStartPageToken,changes(fileId,removed,time,file(id,name,size,modifiedTime))")
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
 	}

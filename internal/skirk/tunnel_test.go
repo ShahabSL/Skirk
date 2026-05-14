@@ -366,14 +366,37 @@ func TestTunnelSupportsTwoClientNamespacesOnOneExit(t *testing.T) {
 func TestAdaptiveLimiterBacksOffOnSlowSuccess(t *testing.T) {
 	limiter := newAdaptiveLimiter(4, 8, 100*time.Millisecond, "test", nil)
 	limiter.inFlight = 1
-	limiter.release(false, nil, 150*time.Millisecond)
+	limiter.release(false, nil, 150*time.Millisecond, 0)
 	if limiter.limit != 3 {
 		t.Fatalf("slow success limit = %d, want 3", limiter.limit)
 	}
 	limiter.inFlight = 1
-	limiter.release(false, nil, 250*time.Millisecond)
+	limiter.release(false, nil, 250*time.Millisecond, 0)
 	if limiter.limit != 2 {
 		t.Fatalf("second slow success limit = %d, want 2", limiter.limit)
+	}
+}
+
+func TestAdaptiveLimiterUsesByteAwareSlowThresholdForBulk(t *testing.T) {
+	limiter := newAdaptiveLimiter(4, 8, 5*time.Second, "test", nil)
+	limiter.inFlight = 1
+	limiter.release(false, nil, 6*time.Second, 4*1024*1024)
+	if limiter.limit != 4 {
+		t.Fatalf("bulk transfer at acceptable byte rate limit = %d, want 4", limiter.limit)
+	}
+	limiter.inFlight = 1
+	limiter.release(false, nil, 20*time.Second, 4*1024*1024)
+	if limiter.limit != 2 {
+		t.Fatalf("very slow bulk transfer limit = %d, want 2", limiter.limit)
+	}
+}
+
+func TestAdaptiveLimiterKeepsPriorityLatencyByteInsensitive(t *testing.T) {
+	limiter := newAdaptiveLimiter(4, 8, 5*time.Second, "test", nil)
+	limiter.inFlight = 1
+	limiter.release(true, nil, 6*time.Second, 4*1024*1024)
+	if limiter.limit != 3 {
+		t.Fatalf("priority slow transfer limit = %d, want 3", limiter.limit)
 	}
 }
 
