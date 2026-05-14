@@ -75,6 +75,42 @@ func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
 	return err
 }
 
+func (d *DriveStore) GenerateObjectIDs(ctx context.Context, count int) ([]string, error) {
+	if count < 1 || count > 1000 {
+		return nil, fmt.Errorf("drive generate ids count must be between 1 and 1000")
+	}
+	values := url.Values{}
+	values.Set("count", strconv.Itoa(count))
+	values.Set("fields", "ids")
+	if d.isAppData() {
+		values.Set("space", "appDataFolder")
+	}
+	result, err := d.request(ctx, http.MethodGet, "/drive/v3/files/generateIds?"+values.Encode(), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := require2xx(result, "drive generate ids"); err != nil {
+		return nil, err
+	}
+	var payload struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(payload.IDs))
+	for _, id := range payload.IDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("drive generate ids response missing ids")
+	}
+	return ids, nil
+}
+
 func (d *DriveStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
 	var body bytes.Buffer
 	boundary := fmt.Sprintf("skirk-%d", time.Now().UnixNano())
@@ -188,28 +224,43 @@ func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error)
 }
 
 func (d *DriveStore) GetRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, int, error) {
+	body, _, status, err := d.getRangeByID(ctx, fileID, start, end)
+	return body, status, err
+}
+
+func (d *DriveStore) GetObjectRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, error) {
+	body, info, _, err := d.getRangeByID(ctx, fileID, start, end)
+	return body, info, err
+}
+
+func (d *DriveStore) getRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, int, error) {
 	if start < 0 || end < start {
-		return nil, 0, fmt.Errorf("invalid byte range %d-%d", start, end)
+		return nil, ObjectRangeInfo{}, 0, fmt.Errorf("invalid byte range %d-%d", start, end)
 	}
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
 	headers := map[string]string{
-		"Range": fmt.Sprintf("bytes=%d-%d", start, end),
+		"Range":           fmt.Sprintf("bytes=%d-%d", start, end),
+		"Accept-Encoding": "identity",
 	}
 	var last *HTTPResult
 	for attempt := 0; attempt < 5; attempt++ {
 		result, err := d.request(ctx, http.MethodGet, path, headers, nil)
 		if err != nil {
-			return nil, 0, err
+			return nil, ObjectRangeInfo{}, 0, err
 		}
 		last = result
 		if result.Status != http.StatusNotFound {
 			if result.Status != http.StatusPartialContent {
 				if err := require2xx(result, "drive range download by id"); err != nil {
-					return nil, result.Status, err
+					return nil, ObjectRangeInfo{}, result.Status, err
 				}
-				return nil, result.Status, fmt.Errorf("drive range download by id returned status=%d, want 206", result.Status)
+				return nil, ObjectRangeInfo{}, result.Status, fmt.Errorf("drive range download by id returned status=%d, want 206", result.Status)
 			}
-			return result.Body, result.Status, nil
+			info, err := validateContentRange(result.Header.Get("Content-Range"), start, end, len(result.Body))
+			if err != nil {
+				return nil, ObjectRangeInfo{}, result.Status, err
+			}
+			return result.Body, info, result.Status, nil
 		}
 		if attempt == 4 {
 			break
@@ -219,14 +270,14 @@ func (d *DriveStore) GetRangeByID(ctx context.Context, fileID string, start, end
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, 0, ctx.Err()
+			return nil, ObjectRangeInfo{}, 0, ctx.Err()
 		case <-timer.C:
 		}
 	}
 	if err := require2xx(last, "drive range download by id"); err != nil {
-		return nil, last.Status, err
+		return nil, ObjectRangeInfo{}, last.Status, err
 	}
-	return last.Body, last.Status, nil
+	return last.Body, ObjectRangeInfo{}, last.Status, nil
 }
 
 func (d *DriveStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -264,6 +315,75 @@ func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, sin
 		}
 	}
 	info.Objects = filtered
+	return info, nil
+}
+
+func (d *DriveStore) ChangesStartPageToken(ctx context.Context) (string, error) {
+	result, err := d.request(ctx, http.MethodGet, "/drive/v3/changes/startPageToken?fields=startPageToken", nil, nil)
+	if err != nil {
+		return "", err
+	}
+	if err := require2xx(result, "drive changes start page token"); err != nil {
+		return "", err
+	}
+	var payload struct {
+		StartPageToken string `json:"startPageToken"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.StartPageToken) == "" {
+		return "", errors.New("drive changes start page token response missing token")
+	}
+	return payload.StartPageToken, nil
+}
+
+func (d *DriveStore) ListChanges(ctx context.Context, pageToken string, includeRemoved bool) (ChangeListInfo, error) {
+	pageToken = strings.TrimSpace(pageToken)
+	if pageToken == "" {
+		return ChangeListInfo{}, errors.New("drive changes page token is required")
+	}
+	values := url.Values{}
+	values.Set("pageToken", pageToken)
+	values.Set("pageSize", driveListPageSize)
+	values.Set("includeRemoved", strconv.FormatBool(includeRemoved))
+	values.Set("fields", "nextPageToken,newStartPageToken,changes(id,fileId,removed,time,file(id,name,size,modifiedTime))")
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	result, err := d.request(ctx, http.MethodGet, "/drive/v3/changes?"+values.Encode(), nil, nil)
+	if err != nil {
+		return ChangeListInfo{}, err
+	}
+	if err := require2xx(result, "drive changes list"); err != nil {
+		return ChangeListInfo{}, err
+	}
+	var payload driveChangesPayload
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ChangeListInfo{}, err
+	}
+	info := ChangeListInfo{
+		NextPageToken:     payload.NextPageToken,
+		NewStartPageToken: payload.NewStartPageToken,
+	}
+	for _, change := range payload.Changes {
+		item := ChangeInfo{
+			ID:      change.ID,
+			FileID:  change.FileID,
+			Updated: change.Time,
+			Removed: change.Removed,
+		}
+		if item.FileID == "" {
+			item.FileID = change.File.ID
+		}
+		item.Name = change.File.Name
+		if change.File.ModifiedTime != "" {
+			item.Updated = change.File.ModifiedTime
+		}
+		size, _ := strconv.ParseInt(change.File.Size, 10, 64)
+		item.Size = size
+		info.Changes = append(info.Changes, item)
+	}
 	return info, nil
 }
 
@@ -561,6 +681,23 @@ type driveListPayload struct {
 	} `json:"files"`
 }
 
+type driveChangesPayload struct {
+	NextPageToken     string `json:"nextPageToken"`
+	NewStartPageToken string `json:"newStartPageToken"`
+	Changes           []struct {
+		ID      string `json:"id"`
+		FileID  string `json:"fileId"`
+		Removed bool   `json:"removed"`
+		Time    string `json:"time"`
+		File    struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			Size         string `json:"size"`
+			ModifiedTime string `json:"modifiedTime"`
+		} `json:"file"`
+	} `json:"changes"`
+}
+
 type driveListPageStatus struct {
 	Truncated     bool
 	NextPageToken string
@@ -630,6 +767,47 @@ func cloneValues(values url.Values) url.Values {
 		out[key] = append([]string(nil), list...)
 	}
 	return out
+}
+
+func validateContentRange(header string, wantStart, wantEnd int64, bodyLen int) (ObjectRangeInfo, error) {
+	header = strings.TrimSpace(header)
+	if !strings.HasPrefix(strings.ToLower(header), "bytes ") {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range missing Content-Range: %q", header)
+	}
+	value := strings.TrimSpace(header[len("bytes "):])
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range malformed Content-Range: %q", header)
+	}
+	rangePart := strings.SplitN(parts[0], "-", 2)
+	if len(rangePart) != 2 {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range malformed byte interval: %q", header)
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(rangePart[0]), 10, 64)
+	if err != nil {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range malformed start %q: %w", header, err)
+	}
+	end, err := strconv.ParseInt(strings.TrimSpace(rangePart[1]), 10, 64)
+	if err != nil {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range malformed end %q: %w", header, err)
+	}
+	total := int64(-1)
+	if strings.TrimSpace(parts[1]) != "*" {
+		total, err = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		if err != nil {
+			return ObjectRangeInfo{}, fmt.Errorf("drive range malformed total %q: %w", header, err)
+		}
+	}
+	if start != wantStart || end != wantEnd {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range mismatch got=%d-%d want=%d-%d", start, end, wantStart, wantEnd)
+	}
+	if gotLen := end - start + 1; gotLen != int64(bodyLen) {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range body length=%d want=%d", bodyLen, gotLen)
+	}
+	if total >= 0 && end >= total {
+		return ObjectRangeInfo{}, fmt.Errorf("drive range end=%d exceeds total=%d", end, total)
+	}
+	return ObjectRangeInfo{Start: start, End: end, Total: total}, nil
 }
 
 func (d *DriveStore) request(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
@@ -1020,11 +1198,11 @@ func driveQuotaLogInterval() time.Duration {
 
 func driveQuotaUnits(op string) int {
 	switch op {
-	case "list":
+	case "list", "changes":
 		return 100
 	case "download":
 		return 200
-	case "upload", "delete", "create":
+	case "upload", "delete", "create", "generate_ids":
 		return 50
 	default:
 		return 5
@@ -1107,6 +1285,10 @@ func driveRequestLabel(method, path string) string {
 		return "upload"
 	case method == http.MethodGet && strings.Contains(path, "alt=media"):
 		return "download"
+	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/changes"):
+		return "changes"
+	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files/generateIds"):
+		return "generate_ids"
 	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files?"):
 		return "list"
 	case method == http.MethodDelete && strings.HasPrefix(path, "/drive/v3/files/"):

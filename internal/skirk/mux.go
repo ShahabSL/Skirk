@@ -28,8 +28,9 @@ const (
 	muxLaneCount                 = 4
 	muxMaxFrames                 = 512
 	muxMinBatch                  = 64 * 1024
-	muxMaxBatch                  = 1 * 1024 * 1024
+	muxMaxBatch                  = 4 * 1024 * 1024
 	muxNormalFairBatch           = 1 * 1024 * 1024
+	muxNormalBulkBatch           = 4 * 1024 * 1024
 	muxInlineFirst               = 16 * 1024
 	muxPendingFrameLimit         = 4096
 	muxUrgentFrameQueue          = 1024
@@ -37,7 +38,7 @@ const (
 	muxNormalFrameQueueHard      = muxNormalFrameQueue * 4
 	muxNormalStreamQueue         = 16
 	muxUrgentUploadQueue         = 32
-	muxNormalUploadQueue         = 4
+	muxNormalUploadQueue         = 1
 	muxStreamInbound             = 64
 	muxStreamInboundPause        = muxStreamInbound * 3 / 4
 	muxReceiveQueue              = 8192
@@ -54,7 +55,7 @@ const (
 	muxPriorityDataChunk         = inlineDataThreshold
 	muxInitialPriorityFrames     = 4
 	muxNormalStreamInflight      = 6
-	muxNormalStreamInflightBytes = 3 * muxNormalFairBatch
+	muxNormalStreamInflightBytes = 12 * muxNormalFairBatch
 	muxPriorityDownloadHedge     = 1500 * time.Millisecond
 )
 
@@ -1181,12 +1182,14 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 			if m.t != nil && m.t.Logger != nil {
 				m.t.Logger.Printf("mux list fresh truncated role=%s direction=%s prefix=%s infos=%d since=%s next_page=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.NextPageToken != "")
 			}
+		} else if err == nil && (result.Truncated || result.Incomplete) {
+			m.setListFreshPageToken("")
+			if m.t != nil && m.t.Logger != nil {
+				m.t.Logger.Printf("mux list fresh partial role=%s direction=%s prefix=%s infos=%d since=%s truncated=%t incomplete=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.Truncated, result.Incomplete)
+			}
 		} else if err == nil {
 			m.setListFreshPageToken("")
 			m.advanceListSince(result.Objects)
-			if result.Incomplete && m.t != nil && m.t.Logger != nil {
-				m.t.Logger.Printf("mux list fresh incomplete role=%s direction=%s prefix=%s infos=%d since=%s", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano))
-			}
 		}
 		return result.Objects, err
 	}
@@ -1195,8 +1198,8 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 		if err == nil && !result.Truncated {
 			m.advanceListSince(result.Objects)
 		}
-		if err == nil && result.Truncated && m.t != nil && m.t.Logger != nil {
-			m.t.Logger.Printf("mux list fresh truncated role=%s direction=%s prefix=%s infos=%d since=%s", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), m.listFreshSince().Format(time.RFC3339Nano))
+		if err == nil && (result.Truncated || result.Incomplete) && m.t != nil && m.t.Logger != nil {
+			m.t.Logger.Printf("mux list fresh partial role=%s direction=%s prefix=%s infos=%d since=%s truncated=%t incomplete=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), m.listFreshSince().Format(time.RFC3339Nano), result.Truncated, result.Incomplete)
 		}
 		return result.Objects, err
 	}
@@ -2298,8 +2301,8 @@ func (m *driveMux) maxBatchBytes() int {
 
 func (m *driveMux) normalBatchBytes() int {
 	size := m.maxBatchBytes()
-	if size > muxNormalFairBatch {
-		return muxNormalFairBatch
+	if size > muxNormalBulkBatch {
+		return muxNormalBulkBatch
 	}
 	return size
 }

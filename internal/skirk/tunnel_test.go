@@ -888,9 +888,9 @@ func TestNormalSendSchedulerInterleavesStreams(t *testing.T) {
 
 func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	ctx := context.Background()
-	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
+	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 8 * 1024 * 1024}}, 0)
 	payload := make([]byte, 256*1024)
-	for seq := uint64(1); seq <= 4; seq++ {
+	for seq := uint64(1); seq <= muxNormalStreamQueue; seq++ {
 		frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: seq, Payload: payload}
 		if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
 			t.Fatalf("enqueue normal frame %d: %v", seq, err)
@@ -901,11 +901,11 @@ func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	if !ok {
 		t.Fatal("take normal batch returned false")
 	}
-	if len(batch) != 3 {
-		t.Fatalf("batch frames = %d, want 3 under fair batch cap", len(batch))
+	if got := muxBatchPlainBytes(batch); got > muxNormalBulkBatch {
+		t.Fatalf("batch bytes = %d, want <= %d", got, muxNormalBulkBatch)
 	}
-	if got := muxBatchPlainBytes(batch); got > muxNormalFairBatch {
-		t.Fatalf("batch bytes = %d, want <= %d", got, muxNormalFairBatch)
+	if got := muxBatchPlainBytes(batch); got <= muxNormalFairBatch {
+		t.Fatalf("batch bytes = %d, want bulk batch larger than old fair cap %d", got, muxNormalFairBatch)
 	}
 }
 
@@ -921,7 +921,7 @@ func receiveMuxBatch(t *testing.T, ch <-chan []muxFrame) []muxFrame {
 }
 
 func TestNormalMuxReceiveTuningStaysBelowReassemblyHardCaps(t *testing.T) {
-	if got := muxNormalStreamInflight * muxNormalFairBatch; got >= muxStreamPendingBytes {
+	if got := muxNormalStreamInflightBytes; got >= muxStreamPendingBytes {
 		t.Fatalf("normal receive byte window = %d, want < hard pending byte cap %d", got, muxStreamPendingBytes)
 	}
 	if got := muxNormalStreamInflight * muxMaxFrames; got >= muxStreamPendingFrames {
@@ -1580,7 +1580,7 @@ func TestMuxPollContinuesWhenFreshListHasNextPageToken(t *testing.T) {
 	}
 }
 
-func TestMuxListFreshIncompleteWithoutNextPageAdvancesWithLookback(t *testing.T) {
+func TestMuxListFreshIncompleteWithoutNextPageDoesNotAdvance(t *testing.T) {
 	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
 	newest := startedAt.Add(2 * time.Minute)
 	store := &freshStatusStore{result: ObjectListInfo{
@@ -1596,9 +1596,14 @@ func TestMuxListFreshIncompleteWithoutNextPageAdvancesWithLookback(t *testing.T)
 	if _, err := mux.listRecvMuxObjects(context.Background(), "muxv4/session/down/client/run/"); err != nil {
 		t.Fatal(err)
 	}
-	want := newest.Add(-muxListLookback)
-	if got := mux.listFreshSince(); !got.Equal(want) {
-		t.Fatalf("list since = %s, want %s after incomplete page without nextPageToken", got, want)
+	if got := mux.listFreshSince(); !got.Equal(startedAt) {
+		t.Fatalf("list since = %s, want unchanged %s after incomplete page without nextPageToken", got, startedAt)
+	}
+	if _, err := mux.listRecvMuxObjects(context.Background(), "muxv4/session/down/client/run/"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.pageCalls) < 2 || store.pageCalls[0] != "" || store.pageCalls[1] != "" {
+		t.Fatalf("page calls = %#v, want retry from the same freshness cursor without a page token", store.pageCalls)
 	}
 }
 

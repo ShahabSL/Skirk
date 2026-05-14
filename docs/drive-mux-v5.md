@@ -48,6 +48,9 @@ Important constraints:
 
 - `changes.list` page tokens are stable and produce `newStartPageToken` only at
   the end of the current change stream.
+- `changes.list` is filtered by Drive space, not by Skirk object prefix. Data
+  objects created in `appDataFolder` still appear in the change stream even
+  when receivers ignore their names.
 - `files.list` pages can be incomplete, paginated, or token-rejected; it cannot
   be treated as a reliable single-call queue under load.
 - Range downloads must require HTTP 206 and validate the returned range before
@@ -84,8 +87,16 @@ Ack object:
 <session>/<dir>/<client>/<run>/a/<epoch>/<seq>.ack
 ```
 
-Only control and ack names are part of the hot discovery path. Data objects are
-fetched by Drive file ID from control records.
+Only control and ack names are downloaded through the hot discovery path. Data
+objects are fetched by Drive file ID from control records.
+
+Important: with the current `appDataFolder` scope, data object creation still
+pollutes the Drive change feed. v5 must therefore either:
+
+- use larger data slabs and prove that the change-feed tax is acceptable;
+- use a control-only `files.list` prefix as a v5a control discovery path; or
+- move data objects to a different Drive corpus with broader OAuth scope and
+  accept the deployment and security tradeoff.
 
 ### Control Record
 
@@ -174,9 +185,23 @@ Range reads:
 - used for reassembly hole recovery and expected-sequence-first reads;
 - whole-object GET remains preferred when the full object is immediately useful.
 
+Range reads require independently authenticated fragments. Whole-object AEAD is
+not enough for arbitrary byte ranges because a valid HTTP `Content-Range` only
+proves which bytes Drive returned, not that a partial slice is a valid encrypted
+Skirk record.
+
 ## Control Plane
 
-Primary discovery uses `changes.list` on `appDataFolder`:
+Primary discovery candidates:
+
+- v5a: `files.list` on control and ack prefixes only. This keeps data slabs out
+  of the discovery result set while staying inside the current `appDataFolder`
+  scope, but still inherits list pagination and incomplete-page behavior.
+- v5b: `changes.list` on `appDataFolder`. This gives a durable cursor, but the
+  change stream includes data slab creations and must be benchmarked under bulk
+  load.
+
+If `changes.list` is used:
 
 1. On startup, get or recover the saved start page token for this session side.
 2. Poll `changes.list` with `spaces=appDataFolder`.
@@ -197,7 +222,8 @@ Fallback recovery:
 Receivers emit ack/credit records containing:
 
 - per-stream highest contiguous sequence delivered to the local socket;
-- per-stream remaining receive credit;
+- per-stream cumulative byte offset delivered to the local socket;
+- per-stream cumulative byte credit granted to the sender;
 - highest control sequence processed per peer epoch;
 - data file IDs eligible for deletion after all referenced bytes are delivered.
 
@@ -299,4 +325,3 @@ Regression gate:
 5. Add adaptive data object sizing and range reads.
 6. Add watermark GC.
 7. Run the full live gate matrix before changing defaults.
-

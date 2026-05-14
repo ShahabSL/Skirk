@@ -77,6 +77,30 @@ func TestDriveStoreRefreshesTokenAfterUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDriveStoreGenerateObjectIDsUsesAppDataSpace(t *testing.T) {
+	var gotQuery url.Values
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotQuery = query
+		return stringResponse(http.StatusOK, `{"ids":["id-1","id-2"]}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	ids, err := store.GenerateObjectIDs(context.Background(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != "id-1" || ids[1] != "id-2" {
+		t.Fatalf("ids = %#v, want id-1/id-2", ids)
+	}
+	if gotQuery.Get("count") != "2" || gotQuery.Get("space") != "appDataFolder" || gotQuery.Get("fields") != "ids" {
+		t.Fatalf("query = %s, want count, appDataFolder space, and ids field", gotQuery.Encode())
+	}
+}
+
 func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
 	var gotQuery string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -211,6 +235,112 @@ func TestDriveStoreListFreshPageStatusUsesPageToken(t *testing.T) {
 	}
 }
 
+func TestDriveStoreGetObjectRangeByIDValidatesContentRange(t *testing.T) {
+	var gotRange string
+	var gotEncoding string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotRange = req.Header.Get("Range")
+		gotEncoding = req.Header.Get("Accept-Encoding")
+		resp := stringResponse(http.StatusPartialContent, "hello")
+		resp.Header.Set("Content-Range", "bytes 10-14/100")
+		return resp, nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	data, info, err := store.GetObjectRangeByID(context.Background(), "file-id", 10, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("data = %q, want hello", string(data))
+	}
+	if info.Start != 10 || info.End != 14 || info.Total != 100 {
+		t.Fatalf("range info = %+v, want 10-14/100", info)
+	}
+	if gotRange != "bytes=10-14" {
+		t.Fatalf("Range = %q, want bytes=10-14", gotRange)
+	}
+	if gotEncoding != "identity" {
+		t.Fatalf("Accept-Encoding = %q, want identity", gotEncoding)
+	}
+}
+
+func TestDriveStoreGetObjectRangeByIDRejectsWrongContentRange(t *testing.T) {
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp := stringResponse(http.StatusPartialContent, "hello")
+		resp.Header.Set("Content-Range", "bytes 11-15/100")
+		return resp, nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	_, _, err := store.GetObjectRangeByID(context.Background(), "file-id", 10, 14)
+	if err == nil || !strings.Contains(err.Error(), "range mismatch") {
+		t.Fatalf("error = %v, want range mismatch", err)
+	}
+}
+
+func TestDriveStoreChangesStartPageToken(t *testing.T) {
+	var gotPath string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotPath = req.URL.Path + "?" + req.URL.RawQuery
+		return stringResponse(http.StatusOK, `{"startPageToken":"token-1"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	token, err := store.ChangesStartPageToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "token-1" {
+		t.Fatalf("token = %q, want token-1", token)
+	}
+	if gotPath != "/drive/v3/changes/startPageToken?fields=startPageToken" {
+		t.Fatalf("path = %q, want changes start token path", gotPath)
+	}
+}
+
+func TestDriveStoreListChangesUsesAppDataAndFields(t *testing.T) {
+	var gotQuery url.Values
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotQuery = query
+		return stringResponse(http.StatusOK, `{
+			"nextPageToken":"next-token",
+			"changes":[
+				{"id":"1","fileId":"file-1","time":"2026-05-13T12:00:00Z","file":{"id":"file-1","name":"muxv5/control","size":"42","modifiedTime":"2026-05-13T12:00:01Z"}},
+				{"id":"2","fileId":"file-2","removed":true}
+			]
+		}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	info, err := store.ListChanges(context.Background(), "start-token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Get("spaces") != "appDataFolder" {
+		t.Fatalf("spaces = %q, want appDataFolder", gotQuery.Get("spaces"))
+	}
+	if gotQuery.Get("pageToken") != "start-token" || gotQuery.Get("includeRemoved") != "true" {
+		t.Fatalf("query = %s, want page token and includeRemoved", gotQuery.Encode())
+	}
+	if !strings.Contains(gotQuery.Get("fields"), "newStartPageToken") || !strings.Contains(gotQuery.Get("fields"), "file(id,name,size,modifiedTime)") {
+		t.Fatalf("fields = %q, want compact change fields", gotQuery.Get("fields"))
+	}
+	if info.NextPageToken != "next-token" || len(info.Changes) != 2 {
+		t.Fatalf("changes = %+v, want next token and two changes", info)
+	}
+	if info.Changes[0].FileID != "file-1" || info.Changes[0].Name != "muxv5/control" || info.Changes[0].Size != 42 || info.Changes[0].Updated != "2026-05-13T12:00:01Z" {
+		t.Fatalf("first change = %+v, want file metadata", info.Changes[0])
+	}
+	if !info.Changes[1].Removed {
+		t.Fatalf("second change = %+v, want removed", info.Changes[1])
+	}
+}
+
 func TestDriveStoreCleanupDeletesExpiredMuxObjects(t *testing.T) {
 	var deleted []string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -300,6 +430,12 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	}
 	if report.Ops["upload"].Units != 50 || report.Ops["download"].Units != 200 {
 		t.Fatalf("ops = %#v, want upload=50 and download=200 units", report.Ops)
+	}
+	if driveQuotaUnits("changes") != 100 {
+		t.Fatalf("changes quota units = %d, want 100", driveQuotaUnits("changes"))
+	}
+	if driveQuotaUnits("generate_ids") != 50 {
+		t.Fatalf("generate_ids quota units = %d, want 50", driveQuotaUnits("generate_ids"))
 	}
 	snapshot := stats.Snapshot()
 	if snapshot.Calls != 2 || snapshot.Units != 250 || snapshot.Errors != 1 || snapshot.ResponseBytes != 30 {
