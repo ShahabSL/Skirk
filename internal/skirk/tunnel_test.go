@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -187,6 +188,129 @@ func TestTunnelMuxV5BBulkPlaneRoundTripWithMemoryStore(t *testing.T) {
 		if object.ID == "" {
 			t.Fatalf("expected control object %s to carry generated id", object.Name)
 		}
+	}
+}
+
+func TestTunnelMuxV6RangePlaneRoundTripWithMemoryStore(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	data := &rangeCountingStore{MemoryStore: NewMemoryStore()}
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-v6", RunID: "run-v6"},
+		Tunnel: TunnelConfig{
+			Listen:           freeTCPAddr(t),
+			Transport:        "muxv6",
+			ChunkSize:        4 * 1024 * 1024,
+			PollIntervalMS:   5,
+			CleanupProcessed: false,
+		},
+	}
+	cfg.ApplyDefaults()
+	clientTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = exitTunnel.ServeExit(ctx) }()
+	go func() { _ = clientTunnel.ServeClient(ctx, cfg.Tunnel.Listen) }()
+	time.Sleep(75 * time.Millisecond)
+
+	conn, err := dialViaSOCKS5(context.Background(), "socks5h://"+cfg.Tunnel.Listen, echo.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := make([]byte, 768*1024)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := conn.Write(payload)
+		writeErr <- err
+	}()
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("v6 echo payload mismatch")
+	}
+
+	controlPrefix := muxVersionDirPrefix(muxV6ObjectPrefix, clientTunnel.SessionID, DirectionUp, muxV5PlaneControl, cfg.Client.ID, cfg.Client.RunID)
+	controlObjects, err := data.List(context.Background(), controlPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(controlObjects) == 0 {
+		t.Fatalf("expected muxv6 control-plane objects under %s", controlPrefix)
+	}
+	dataPrefix := muxVersionDirPrefix(muxV6ObjectPrefix, clientTunnel.SessionID, DirectionUp, muxV5PlaneData, cfg.Client.ID, cfg.Client.RunID)
+	dataObjects, err := data.List(context.Background(), dataPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dataObjects) == 0 {
+		t.Fatalf("expected muxv6 data-plane objects under %s", dataPrefix)
+	}
+	for _, info := range dataObjects {
+		route, ok := parseMuxVersionDataObjectInfo(info.Name, muxV6ObjectPrefix)
+		if !ok {
+			t.Fatalf("invalid muxv6 data object name %q", info.Name)
+		}
+		if route.StreamID == 0 {
+			t.Fatalf("muxv6 data object %q used stream 0, want real stream id for receive scheduling", info.Name)
+		}
+	}
+	bulkPrefix := muxVersionDirPrefix(muxV6ObjectPrefix, clientTunnel.SessionID, DirectionUp, muxV5PlaneBulk, cfg.Client.ID, cfg.Client.RunID)
+	bulkObjects, err := data.List(context.Background(), bulkPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bulkObjects) != 0 {
+		t.Fatalf("muxv6 should not use bulk-prefix discovery, found %d objects under %s", len(bulkObjects), bulkPrefix)
+	}
+	rangeCalls, fullDataIDCalls := data.counts()
+	if rangeCalls == 0 {
+		t.Fatal("muxv6 did not use range reads for data records")
+	}
+	if fullDataIDCalls != 0 {
+		t.Fatalf("muxv6 full data GetByID calls = %d, want 0", fullDataIDCalls)
 	}
 }
 
@@ -1166,6 +1290,69 @@ func TestNormalSendSchedulerCapsBulkBatchSize(t *testing.T) {
 	}
 }
 
+func TestNormalSendSchedulerUsesFairBatchWhenStreamsContend(t *testing.T) {
+	ctx := context.Background()
+	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 8 * 1024 * 1024}}, 0)
+	payload := make([]byte, 500*1024)
+	for seq := uint64(1); seq <= 6; seq++ {
+		frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: seq, Payload: payload}
+		if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
+			t.Fatalf("enqueue bulk stream frame %d: %v", seq, err)
+		}
+	}
+	contender := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 2, Seq: 1, Payload: payload}
+	if err := lane.enqueueNormalFrame(ctx, contender); err != nil {
+		t.Fatalf("enqueue contender frame: %v", err)
+	}
+
+	first, ok := lane.takeNormalBatch(ctx)
+	if !ok {
+		t.Fatal("take first batch returned false")
+	}
+	if first[0].StreamID != 1 {
+		t.Fatalf("first batch stream = %d, want bulk stream 1", first[0].StreamID)
+	}
+	if got := muxBatchPlainBytes(first); got > muxNormalFairBatch {
+		t.Fatalf("first batch bytes = %d, want <= fair cap %d while streams contend", got, muxNormalFairBatch)
+	}
+
+	second, ok := lane.takeNormalBatch(ctx)
+	if !ok {
+		t.Fatal("take second batch returned false")
+	}
+	if second[0].StreamID != 2 {
+		t.Fatalf("second batch stream = %d, want contender stream 2", second[0].StreamID)
+	}
+}
+
+func TestNormalSendSchedulerObservesContention(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	lane := newMuxLane(&driveMux{
+		t:    &Tunnel{ChunkSize: 8 * 1024 * 1024, Observe: true, Logger: log.New(&logs, "", 0)},
+		role: "client",
+	}, 0)
+	payload := make([]byte, 500*1024)
+	for seq := uint64(1); seq <= 3; seq++ {
+		frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Seq: seq, Payload: payload}
+		if err := lane.enqueueNormalFrame(ctx, frame); err != nil {
+			t.Fatalf("enqueue bulk stream frame %d: %v", seq, err)
+		}
+	}
+	contender := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 2, Seq: 1, Payload: payload}
+	if err := lane.enqueueNormalFrame(ctx, contender); err != nil {
+		t.Fatalf("enqueue contender frame: %v", err)
+	}
+
+	if _, ok := lane.takeNormalBatch(ctx); !ok {
+		t.Fatal("take normal batch returned false")
+	}
+	logText := logs.String()
+	if !strings.Contains(logText, "mux send scheduler") || !strings.Contains(logText, "contended=true") {
+		t.Fatalf("scheduler log = %q, want contention observation", logText)
+	}
+}
+
 func receiveMuxBatch(t *testing.T, ch <-chan []muxFrame) []muxFrame {
 	t.Helper()
 	select {
@@ -2123,6 +2310,39 @@ type freshStatusStore struct {
 	result    ObjectListInfo
 	err       error
 	pageCalls []string
+}
+
+type rangeCountingStore struct {
+	*MemoryStore
+
+	mu              sync.Mutex
+	rangeCalls      int
+	fullDataIDCalls int
+}
+
+func (s *rangeCountingStore) GetObjectRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, error) {
+	s.mu.Lock()
+	s.rangeCalls++
+	s.mu.Unlock()
+	return s.MemoryStore.GetObjectRangeByID(ctx, fileID, start, end)
+}
+
+func (s *rangeCountingStore) GetByID(ctx context.Context, fileID string) ([]byte, error) {
+	s.MemoryStore.mu.Lock()
+	name := s.MemoryStore.ids[fileID]
+	s.MemoryStore.mu.Unlock()
+	if strings.Contains(name, "/"+muxV5PlaneData+"/") {
+		s.mu.Lock()
+		s.fullDataIDCalls++
+		s.mu.Unlock()
+	}
+	return s.MemoryStore.GetByID(ctx, fileID)
+}
+
+func (s *rangeCountingStore) counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rangeCalls, s.fullDataIDCalls
 }
 
 func (s *freshStatusStore) ListFreshStatus(context.Context, string, time.Time) (ObjectListInfo, error) {

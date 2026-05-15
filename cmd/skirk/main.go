@@ -199,7 +199,7 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/ and muxv5/<session>/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/, muxv5/<session>/, and muxv6/<session>/")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")
@@ -221,7 +221,7 @@ func cleanup(ctx context.Context, args []string) error {
 			return err
 		}
 		session := skirk.SessionString(sid)
-		cleanupPrefixes = []string{"muxv4/" + session + "/", "muxv5/" + session + "/"}
+		cleanupPrefixes = []string{"muxv4/" + session + "/", "muxv5/" + session + "/", "muxv6/" + session + "/"}
 	}
 	results := make([]skirk.DriveCleanupResult, 0, len(cleanupPrefixes))
 	for _, cleanupPrefix := range cleanupPrefixes {
@@ -255,7 +255,7 @@ func serveClient(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, or muxv5b")
+	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -344,7 +344,7 @@ func serveExit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-exit", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, or muxv5b")
+	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -391,7 +391,7 @@ func serveExit(ctx context.Context, args []string) error {
 const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 6 * time.Hour
 
-var mailboxJanitorPrefixes = []string{"muxv4/", "muxv5/"}
+var mailboxJanitorPrefixes = []string{"muxv4/", "muxv5/", "muxv6/"}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
@@ -696,7 +696,7 @@ func benchLive(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, or muxv5b")
+	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")

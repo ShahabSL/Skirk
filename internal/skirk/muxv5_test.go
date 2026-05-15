@@ -166,6 +166,22 @@ func TestMuxV5DataRecordRangeOpenAuthenticatesManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifestFromRef := func(ref muxV5DataRecordRef) muxV5ControlRecord {
+		return muxV5ControlRecord{
+			Type:            muxV5RecordData,
+			PriorityClass:   ref.PriorityClass,
+			StreamID:        ref.StreamID,
+			StreamSeqMin:    ref.StreamSeqMin,
+			StreamSeqMax:    ref.StreamSeqMax,
+			PlainBytes:      ref.PlainBytes,
+			SealedBytes:     ref.SealedBytes,
+			DataFileID:      ref.DataFileID,
+			DataObjectName:  ref.ObjectName,
+			DataOffset:      ref.DataOffset,
+			DataLength:      ref.DataLength,
+			CreatedUnixNano: time.Date(2026, 5, 14, 1, 0, 2, 0, time.UTC).UnixNano(),
+		}
+	}
 	sealed, refs, err := sealMuxV5DataSlab(key, muxV5DataSlab{
 		Direction:  DirectionDown,
 		ClientID:   "client-a",
@@ -176,44 +192,107 @@ func TestMuxV5DataRecordRangeOpenAuthenticatesManifest(t *testing.T) {
 		Lane:       1,
 		SlabSeq:    5,
 		Records: []muxV5DataRecord{
-			{RecordIndex: 0, PriorityClass: muxV5ClassBulk, StreamID: 22, StreamSeqMin: 10, StreamSeqMax: 12, Plaintext: []byte("range-open-me")},
+			{RecordIndex: 0, PriorityClass: muxV5ClassBulk, StreamID: 22, StreamSeqMin: 10, StreamSeqMax: 12, Plaintext: []byte("first-record")},
+			{RecordIndex: 1, PriorityClass: muxV5ClassBulk, StreamID: 22, StreamSeqMin: 13, StreamSeqMax: 15, StreamByteStart: 12, Plaintext: []byte("range-open-me")},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := refs[0]
-	recordBytes := sealed[ref.DataOffset : ref.DataOffset+ref.DataLength]
-	gcm, err := muxV5GCM(key)
+	if len(refs) != 2 {
+		t.Fatalf("refs = %d, want 2", len(refs))
+	}
+	ref := refs[1]
+	start := int(ref.DataOffset)
+	end := start + int(ref.DataLength)
+	recordBytes := append([]byte(nil), sealed[start:end]...)
+	if _, _, err := openMuxV5DataSlab(key, recordBytes); err == nil {
+		t.Fatal("record byte range opened as a full slab")
+	}
+	manifest := manifestFromRef(ref)
+	record, openedRef, err := openMuxV5DataRecordFromManifest(key, manifest, recordBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := openMuxV5DataRecord(gcm, ref, recordBytes)
-	if err != nil {
-		t.Fatal(err)
+	if openedRef != ref {
+		t.Fatalf("opened ref = %+v, want %+v", openedRef, ref)
 	}
 	if string(record.Plaintext) != "range-open-me" {
 		t.Fatalf("plaintext = %q, want range-open-me", string(record.Plaintext))
 	}
+	recordFromRef, err := openMuxV5DataRecordFromRef(key, ref, recordBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(recordFromRef.Plaintext, record.Plaintext) {
+		t.Fatalf("ref plaintext = %q, want %q", string(recordFromRef.Plaintext), string(record.Plaintext))
+	}
+
+	shiftedRange := sealed[start-1 : end-1]
+	truncatedRange := recordBytes[:len(recordBytes)-1]
+	otherRef := refs[0]
+	otherStart := int(otherRef.DataOffset)
+	otherEnd := otherStart + int(otherRef.DataLength)
+	otherRecordBytes := sealed[otherStart:otherEnd]
+	tampered := append([]byte(nil), recordBytes...)
+	tampered[len(tampered)-1] ^= 0x80
+
+	for _, tt := range []struct {
+		name     string
+		manifest muxV5ControlRecord
+		data     []byte
+	}{
+		{name: "shifted range", manifest: manifest, data: shiftedRange},
+		{name: "truncated range", manifest: manifest, data: truncatedRange},
+		{name: "other record range", manifest: manifest, data: otherRecordBytes},
+		{name: "tampered ciphertext", manifest: manifest, data: tampered},
+		{name: "wrong offset", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.DataOffset++
+			return wrong
+		}(), data: recordBytes},
+		{name: "wrong length", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.DataLength--
+			return wrong
+		}(), data: recordBytes},
+		{name: "wrong file id", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.DataFileID = "other-drive-file-id"
+			return wrong
+		}(), data: recordBytes},
+		{name: "wrong object name", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.DataObjectName = "other-object-name"
+			return wrong
+		}(), data: recordBytes},
+		{name: "wrong stream id", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.StreamID++
+			return wrong
+		}(), data: recordBytes},
+		{name: "wrong sealed length", manifest: func() muxV5ControlRecord {
+			wrong := manifest
+			wrong.SealedBytes--
+			return wrong
+		}(), data: recordBytes},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, err := openMuxV5DataRecordFromManifest(key, tt.manifest, tt.data); err == nil {
+				t.Fatal("record opened with wrong range or manifest")
+			}
+		})
+	}
+
 	wrongRef := ref
 	wrongRef.DataOffset++
-	if _, err := openMuxV5DataRecord(gcm, wrongRef, recordBytes); err == nil {
-		t.Fatal("record opened with wrong manifest offset")
+	if _, err := openMuxV5DataRecordFromRef(key, wrongRef, recordBytes); err == nil {
+		t.Fatal("record opened with wrong ref offset")
 	}
 	wrongRef = ref
 	wrongRef.DataFileID = "other-drive-file-id"
-	if _, err := openMuxV5DataRecord(gcm, wrongRef, recordBytes); err == nil {
-		t.Fatal("record opened with wrong manifest file id")
-	}
-	wrongRef = ref
-	wrongRef.ObjectName = "other-object-name"
-	if _, err := openMuxV5DataRecord(gcm, wrongRef, recordBytes); err == nil {
-		t.Fatal("record opened with wrong manifest object name")
-	}
-	tampered := append([]byte(nil), recordBytes...)
-	tampered[len(tampered)-1] ^= 0x80
-	if _, err := openMuxV5DataRecord(gcm, ref, tampered); err == nil {
-		t.Fatal("tampered record opened successfully")
+	if _, err := openMuxV5DataRecordFromRef(key, wrongRef, recordBytes); err == nil {
+		t.Fatal("record opened with wrong ref file id")
 	}
 }
 

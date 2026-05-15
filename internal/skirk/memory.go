@@ -99,6 +99,27 @@ func (s *MemoryStore) GetByID(_ context.Context, fileID string) ([]byte, error) 
 	return append([]byte(nil), data...), nil
 }
 
+func (s *MemoryStore) GetObjectRangeByID(_ context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, error) {
+	if start < 0 || end < start {
+		return nil, ObjectRangeInfo{}, fmt.Errorf("invalid byte range %d-%d", start, end)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name, ok := s.ids[fileID]
+	if !ok {
+		return nil, ObjectRangeInfo{}, fmt.Errorf("object id not found: %s", fileID)
+	}
+	data, ok := s.objects[name]
+	if !ok {
+		return nil, ObjectRangeInfo{}, fmt.Errorf("object not found for id: %s", fileID)
+	}
+	if end >= int64(len(data)) {
+		return nil, ObjectRangeInfo{}, fmt.Errorf("range %d-%d exceeds object size %d", start, end, len(data))
+	}
+	body := append([]byte(nil), data[start:end+1]...)
+	return body, ObjectRangeInfo{Start: start, End: end, Total: int64(len(data))}, nil
+}
+
 func (s *MemoryStore) List(_ context.Context, prefix string) ([]ObjectInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

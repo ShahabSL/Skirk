@@ -108,6 +108,26 @@ func TestConfigRejectsNonPositiveFixedPollInterval(t *testing.T) {
 	}
 }
 
+func TestConfigValidatesMuxV6Transport(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+		Tunnel: TunnelConfig{
+			Transport: "muxv6",
+		},
+	}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := normalizeMuxTransport(cfg.Tunnel.Transport); got != "muxv6" {
+		t.Fatalf("normalizeMuxTransport(muxv6) = %q, want muxv6", got)
+	}
+	cfg.Tunnel.Transport = "muxv7"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "muxv6") {
+		t.Fatalf("err = %v, want transport validation error mentioning muxv6", err)
+	}
+}
+
 func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
 	var count int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

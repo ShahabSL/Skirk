@@ -119,6 +119,27 @@ pressure through a second bulk prefix. Both remain experimental until ACK/credit
 range-readable multi-record slabs, and per-client byte fairness produce a live
 win over muxv4.
 
+The 2026-05-14 muxv6a range-slab experiment made `muxv6` a real opt-in
+transport with a separate `muxv6/` prefix, control-prefix discovery, and
+validated Drive range reads. It proved the safety primitive but did not beat
+muxv4 in live tests:
+
+- muxv6 single-record range path: 100 MiB bulk at about 26.5 Mbps, TTFB about
+  4.4 s, small request p95 about 5.8 s.
+- muxv6 coalesced range slabs: 100 MiB bulk at about 21.4 Mbps, TTFB about
+  4.8 s, small request p95 about 5.1 s.
+- same-binary muxv4 comparison: 100 MiB bulk at about 32.7 Mbps, TTFB about
+  4.5 s, small request p95 about 4.9 s.
+
+The loss came from serial data-then-control uploads and the extra control
+discovery step. A coalesced multi-record slab variant was removed from the
+runtime path because it was slower and could make retry ownership ambiguous if
+the uploader drained extra batches before a transient Drive error. The range
+mechanism is useful as a primitive, but it is not a default candidate unless
+sender credit and byte-fair scheduling can keep large slabs full while
+preventing bulk from delaying interactive streams. muxv4 remains the best
+proven default after this checkpoint.
+
 ### Control Record
 
 Each control page contains one or more encrypted records:

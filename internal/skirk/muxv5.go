@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	muxV5ObjectPrefix         = "muxv5"
+	muxV6ObjectPrefix         = "muxv6"
 	muxV5ControlMagic         = "SKC5"
 	muxV5ControlVersion       = byte(1)
 	muxV5DataMagic            = "SKD5"
@@ -113,6 +115,17 @@ type muxV5DataRecordRef struct {
 	SealedBytes     uint64
 	DataOffset      uint64
 	DataLength      uint64
+}
+
+type muxV5DataObjectRoute struct {
+	SessionID string
+	Direction byte
+	ClientID  string
+	RunID     string
+	Epoch     string
+	StreamID  uint64
+	Lane      int
+	Seq       uint64
 }
 
 func sealMuxV5ControlPage(key []byte, sid [16]byte, page muxV5ControlPage) ([]byte, error) {
@@ -224,14 +237,43 @@ func openMuxV5DataSlab(key []byte, data []byte) (muxV5DataSlab, []muxV5DataRecor
 	return slab, refs, nil
 }
 
+func openMuxV5DataRecordFromRef(key []byte, ref muxV5DataRecordRef, data []byte) (muxV5DataRecord, error) {
+	if len(key) != keyLen {
+		return muxV5DataRecord{}, fmt.Errorf("key must be %d bytes", keyLen)
+	}
+	gcm, err := muxV5GCM(key)
+	if err != nil {
+		return muxV5DataRecord{}, err
+	}
+	return openMuxV5DataRecord(gcm, ref, data)
+}
+
+func openMuxV5DataRecordFromManifest(key []byte, manifest muxV5ControlRecord, data []byte) (muxV5DataRecord, muxV5DataRecordRef, error) {
+	if manifest.DataFileID == "" || manifest.DataObjectName == "" || manifest.DataLength == 0 {
+		return muxV5DataRecord{}, muxV5DataRecordRef{}, errors.New("mux v5 data record missing data reference")
+	}
+	ref, err := muxV5DataRecordRefFromRangeBytes(data, manifest.DataFileID, manifest.DataObjectName, manifest.DataOffset)
+	if err != nil {
+		return muxV5DataRecord{}, muxV5DataRecordRef{}, err
+	}
+	if ref.DataLength != manifest.DataLength ||
+		ref.PriorityClass != manifest.PriorityClass ||
+		ref.StreamID != manifest.StreamID ||
+		ref.StreamSeqMin != manifest.StreamSeqMin ||
+		ref.StreamSeqMax != manifest.StreamSeqMax ||
+		ref.PlainBytes != manifest.PlainBytes ||
+		ref.SealedBytes != manifest.SealedBytes {
+		return muxV5DataRecord{}, muxV5DataRecordRef{}, errors.New("mux v5 data manifest record mismatch")
+	}
+	record, err := openMuxV5DataRecordFromRef(key, ref, data)
+	if err != nil {
+		return muxV5DataRecord{}, muxV5DataRecordRef{}, err
+	}
+	return record, ref, nil
+}
+
 func openMuxV5DataRecord(gcm cipher.AEAD, ref muxV5DataRecordRef, data []byte) (muxV5DataRecord, error) {
-	parsed, err := muxV5DataRecordRefFromBytes(muxV5DataSlab{
-		Direction:  ref.Direction,
-		DataFileID: ref.DataFileID,
-		ObjectName: ref.ObjectName,
-		Lane:       ref.Lane,
-		SlabSeq:    ref.SlabSeq,
-	}, data, ref.DataOffset)
+	parsed, err := muxV5DataRecordRefFromRangeBytes(data, ref.DataFileID, ref.ObjectName, ref.DataOffset)
 	if err != nil {
 		return muxV5DataRecord{}, err
 	}
@@ -646,6 +688,17 @@ func encodeMuxV5DataRecordHeader(ref muxV5DataRecordRef) ([]byte, error) {
 }
 
 func muxV5DataRecordRefFromBytes(slab muxV5DataSlab, data []byte, offset uint64) (muxV5DataRecordRef, error) {
+	ref, err := muxV5DataRecordRefFromRangeBytes(data, slab.DataFileID, slab.ObjectName, offset)
+	if err != nil {
+		return muxV5DataRecordRef{}, err
+	}
+	if ref.Direction != slab.Direction || ref.Lane != slab.Lane || ref.SlabSeq != slab.SlabSeq {
+		return muxV5DataRecordRef{}, errors.New("mux v5 data record slab identity mismatch")
+	}
+	return ref, nil
+}
+
+func muxV5DataRecordRefFromRangeBytes(data []byte, dataFileID, objectName string, offset uint64) (muxV5DataRecordRef, error) {
 	if len(data) < muxV5DataRecordHeaderSize {
 		return muxV5DataRecordRef{}, errors.New("mux v5 data record too short")
 	}
@@ -657,8 +710,8 @@ func muxV5DataRecordRefFromBytes(slab muxV5DataSlab, data []byte, offset uint64)
 		return muxV5DataRecordRef{}, fmt.Errorf("unsupported mux v5 data record version %d", header[4])
 	}
 	ref := muxV5DataRecordRef{
-		DataFileID:      slab.DataFileID,
-		ObjectName:      slab.ObjectName,
+		DataFileID:      dataFileID,
+		ObjectName:      objectName,
 		PriorityClass:   header[5],
 		Flags:           header[6],
 		Direction:       header[7],
@@ -674,9 +727,6 @@ func muxV5DataRecordRefFromBytes(slab muxV5DataSlab, data []byte, offset uint64)
 		DataOffset:      offset,
 	}
 	ref.DataLength = uint64(muxV5DataRecordHeaderSize) + ref.SealedBytes
-	if ref.Direction != slab.Direction || ref.Lane != slab.Lane || ref.SlabSeq != slab.SlabSeq {
-		return muxV5DataRecordRef{}, errors.New("mux v5 data record slab identity mismatch")
-	}
 	if uint64(len(data)) != ref.DataLength {
 		return muxV5DataRecordRef{}, fmt.Errorf("mux v5 data record length=%d want=%d", len(data), ref.DataLength)
 	}
@@ -734,7 +784,15 @@ func muxV5DataRecordNonce(direction byte, lane int, slabSeq uint64, recordIndex 
 }
 
 func muxV5DirPrefix(sid [16]byte, direction byte, plane, clientID, runID string) string {
-	base := fmt.Sprintf("muxv5/%s/%s/%s/", SessionString(sid), directionName(direction), plane)
+	return muxVersionDirPrefix(muxV5ObjectPrefix, sid, direction, plane, clientID, runID)
+}
+
+func muxVersionDirPrefix(prefix string, sid [16]byte, direction byte, plane, clientID, runID string) string {
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		prefix = muxV5ObjectPrefix
+	}
+	base := fmt.Sprintf("%s/%s/%s/%s/", prefix, SessionString(sid), directionName(direction), plane)
 	clientID = strings.TrimSpace(clientID)
 	runID = strings.TrimSpace(runID)
 	if clientID == "" {
@@ -747,40 +805,114 @@ func muxV5DirPrefix(sid [16]byte, direction byte, plane, clientID, runID string)
 }
 
 func muxV5ControlObjectName(sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
+	return muxVersionControlObjectName(muxV5ObjectPrefix, sid, direction, clientID, runID, epoch, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes, priority)
+}
+
+func muxVersionControlObjectName(prefix string, sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
 	epoch = firstNonEmptyString(strings.TrimSpace(epoch), "0000000000000000")
 	class := muxV5ClassBulkName
 	if priority {
 		class = muxV5ClassHotName
 	}
-	return fmt.Sprintf("%s%s/%s/s%016x/l%02d/%016x.f%d.r%016x-%016x.b%d.ctrl", muxV5DirPrefix(sid, direction, muxV5PlaneControl, clientID, runID), epoch, class, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes)
+	return fmt.Sprintf("%s%s/%s/s%016x/l%02d/%016x.f%d.r%016x-%016x.b%d.ctrl", muxVersionDirPrefix(prefix, sid, direction, muxV5PlaneControl, clientID, runID), epoch, class, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes)
 }
 
 func muxV5DataObjectName(sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64) string {
+	return muxVersionDataObjectName(muxV5ObjectPrefix, sid, direction, clientID, runID, epoch, streamID, lane, seq)
+}
+
+func muxVersionDataObjectName(prefix string, sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64) string {
 	epoch = firstNonEmptyString(strings.TrimSpace(epoch), "0000000000000000")
-	return fmt.Sprintf("%s%s/s%016x/l%02d/%016x.data", muxV5DirPrefix(sid, direction, muxV5PlaneData, clientID, runID), epoch, streamID, lane, seq)
+	return fmt.Sprintf("%s%s/s%016x/l%02d/%016x.data", muxVersionDirPrefix(prefix, sid, direction, muxV5PlaneData, clientID, runID), epoch, streamID, lane, seq)
+}
+
+func parseMuxVersionDataObjectInfo(name, prefix string) (muxV5DataObjectRoute, bool) {
+	parts := strings.Split(name, "/")
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		prefix = muxV5ObjectPrefix
+	}
+	if len(parts) != 10 || parts[0] != prefix || parts[3] != muxV5PlaneData || !strings.HasPrefix(parts[7], "s") || !strings.HasPrefix(parts[8], "l") {
+		return muxV5DataObjectRoute{}, false
+	}
+	var direction byte
+	switch parts[2] {
+	case "up":
+		direction = DirectionUp
+	case "down":
+		direction = DirectionDown
+	default:
+		return muxV5DataObjectRoute{}, false
+	}
+	streamID, err := strconv.ParseUint(strings.TrimPrefix(parts[7], "s"), 16, 64)
+	if err != nil {
+		return muxV5DataObjectRoute{}, false
+	}
+	lane, err := strconv.Atoi(strings.TrimPrefix(parts[8], "l"))
+	if err != nil {
+		return muxV5DataObjectRoute{}, false
+	}
+	base := strings.TrimSuffix(parts[9], ".data")
+	if base == parts[9] {
+		return muxV5DataObjectRoute{}, false
+	}
+	seq, err := strconv.ParseUint(base, 16, 64)
+	if err != nil {
+		return muxV5DataObjectRoute{}, false
+	}
+	return muxV5DataObjectRoute{
+		SessionID: parts[1],
+		Direction: direction,
+		ClientID:  parts[4],
+		RunID:     parts[5],
+		Epoch:     parts[6],
+		StreamID:  streamID,
+		Lane:      lane,
+		Seq:       seq,
+	}, true
 }
 
 func muxV5BulkObjectName(sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
+	return muxVersionBulkObjectName(muxV5ObjectPrefix, sid, direction, clientID, runID, epoch, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes, priority)
+}
+
+func muxVersionBulkObjectName(prefix string, sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
 	epoch = firstNonEmptyString(strings.TrimSpace(epoch), "0000000000000000")
 	class := muxV5ClassBulkName
 	if priority {
 		class = muxV5ClassHotName
 	}
-	return fmt.Sprintf("%s%s/%s/s%016x/l%02d/%016x.f%d.r%016x-%016x.b%d.bulk", muxV5DirPrefix(sid, direction, muxV5PlaneBulk, clientID, runID), epoch, class, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes)
+	return fmt.Sprintf("%s%s/%s/s%016x/l%02d/%016x.f%d.r%016x-%016x.b%d.bulk", muxVersionDirPrefix(prefix, sid, direction, muxV5PlaneBulk, clientID, runID), epoch, class, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes)
 }
 
 func parseMuxV5ControlObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
-	return parseMuxV5PlaneObjectInfo(info, muxV5PlaneControl, ".ctrl")
+	return parseMuxVersionPlaneObjectInfo(info, muxV5ObjectPrefix, muxV5PlaneControl, ".ctrl")
 }
 
 func parseMuxV5BulkObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
-	return parseMuxV5PlaneObjectInfo(info, muxV5PlaneBulk, ".bulk")
+	return parseMuxVersionPlaneObjectInfo(info, muxV5ObjectPrefix, muxV5PlaneBulk, ".bulk")
+}
+
+func parseMuxV6ControlObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
+	return parseMuxVersionPlaneObjectInfo(info, muxV6ObjectPrefix, muxV5PlaneControl, ".ctrl")
+}
+
+func parseMuxV6BulkObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
+	return parseMuxVersionPlaneObjectInfo(info, muxV6ObjectPrefix, muxV5PlaneBulk, ".bulk")
 }
 
 func parseMuxV5PlaneObjectInfo(info ObjectInfo, plane, suffix string) (muxObjectMeta, bool) {
+	return parseMuxVersionPlaneObjectInfo(info, muxV5ObjectPrefix, plane, suffix)
+}
+
+func parseMuxVersionPlaneObjectInfo(info ObjectInfo, prefix, plane, suffix string) (muxObjectMeta, bool) {
 	name := info.Name
 	parts := strings.Split(name, "/")
-	if len(parts) != 11 || parts[0] != "muxv5" || parts[3] != plane || !strings.HasPrefix(parts[8], "s") || !strings.HasPrefix(parts[9], "l") {
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		prefix = muxV5ObjectPrefix
+	}
+	if len(parts) != 11 || parts[0] != prefix || parts[3] != plane || !strings.HasPrefix(parts[8], "s") || !strings.HasPrefix(parts[9], "l") {
 		return muxObjectMeta{}, false
 	}
 	clientID := parts[4]

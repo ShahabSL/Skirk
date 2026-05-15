@@ -336,9 +336,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
 	switch strings.TrimSpace(c.Tunnel.Transport) {
-	case "", "muxv4", "muxv5a", "muxv5b":
+	case "", "muxv4", "muxv5a", "muxv5b", "muxv6":
 	default:
-		return fmt.Errorf("config.tunnel.transport must be muxv4, muxv5a, or muxv5b")
+		return fmt.Errorf("config.tunnel.transport must be muxv4, muxv5a, muxv5b, or muxv6")
 	}
 	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
 	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":

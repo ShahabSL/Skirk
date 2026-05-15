@@ -175,6 +175,13 @@ type muxLane struct {
 	seq                 uint64
 }
 
+type muxV6UploadBatch struct {
+	frames []muxFrame
+	raw    []byte
+	minSeq uint64
+	maxSeq uint64
+}
+
 type muxStream struct {
 	id       uint64
 	clientID string
@@ -252,17 +259,46 @@ func normalizeMuxTransport(transport string) string {
 		return "muxv5a"
 	case "muxv5b":
 		return "muxv5b"
+	case "muxv6":
+		return "muxv6"
 	default:
 		return "muxv4"
 	}
 }
 
 func (m *driveMux) useMuxV5() bool {
-	return m != nil && (m.transport == "muxv5a" || m.transport == "muxv5b")
+	return m != nil && (m.transport == "muxv5a" || m.transport == "muxv5b" || m.transport == "muxv6")
 }
 
 func (m *driveMux) useMuxV5B() bool {
 	return m != nil && m.transport == "muxv5b"
+}
+
+func (m *driveMux) useMuxV6() bool {
+	return m != nil && m.transport == "muxv6"
+}
+
+func (m *driveMux) v5ObjectPrefix() string {
+	if m.useMuxV6() {
+		return muxV6ObjectPrefix
+	}
+	return muxV5ObjectPrefix
+}
+
+func (m *driveMux) v5DirPrefix(direction byte, plane, clientID, runID string) string {
+	return muxVersionDirPrefix(m.v5ObjectPrefix(), m.t.SessionID, direction, plane, clientID, runID)
+}
+
+func (m *driveMux) v5ControlObjectName(direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
+	return muxVersionControlObjectName(m.v5ObjectPrefix(), m.t.SessionID, direction, clientID, runID, epoch, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes, priority)
+}
+
+func (m *driveMux) v5DataObjectName(direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64) string {
+	return muxVersionDataObjectName(m.v5ObjectPrefix(), m.t.SessionID, direction, clientID, runID, epoch, streamID, lane, seq)
+}
+
+func (m *driveMux) v5BulkObjectName(direction byte, clientID, runID, epoch string, streamID uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
+	return muxVersionBulkObjectName(m.v5ObjectPrefix(), m.t.SessionID, direction, clientID, runID, epoch, streamID, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes, priority)
 }
 
 func (m *driveMux) nextMuxV5ControlSeq() uint64 {
@@ -932,6 +968,7 @@ func (l *muxLane) takeNormalBatch(ctx context.Context) ([]muxFrame, bool) {
 			key := l.normalOrder[0]
 			l.normalOrder = l.normalOrder[1:]
 			l.normalQueuedStreams[key] = false
+			contended := len(l.normalOrder) > 0
 			queue := l.normalQueues[key]
 			if len(queue) == 0 {
 				delete(l.normalQueues, key)
@@ -943,7 +980,7 @@ func (l *muxLane) takeNormalBatch(ctx context.Context) ([]muxFrame, bool) {
 			frames := []muxFrame{first}
 			bytes := encodedMuxFrameSize(first)
 			consumed := 1
-			batchLimit := l.mux.normalBatchBytes()
+			batchLimit := l.normalBatchLimit(contended)
 			for consumed < len(queue) && len(frames) < muxMaxFrames && bytes < batchLimit {
 				next := queue[consumed]
 				if !sameMuxBatchNamespace(first, next) {
@@ -969,7 +1006,10 @@ func (l *muxLane) takeNormalBatch(ctx context.Context) ([]muxFrame, bool) {
 				delete(l.normalQueues, key)
 				delete(l.normalQueuedStreams, key)
 			}
+			remainingFrames := l.normalQueuedFrames
+			remainingStreams := len(l.normalOrder)
 			l.normalMu.Unlock()
+			l.observeNormalSchedule(first, len(frames), bytes, batchLimit, contended, remainingStreams, remainingFrames)
 			return frames, true
 		}
 		l.normalMu.Unlock()
@@ -979,6 +1019,24 @@ func (l *muxLane) takeNormalBatch(ctx context.Context) ([]muxFrame, bool) {
 		case <-l.normalWake:
 		}
 	}
+}
+
+func (l *muxLane) normalBatchLimit(contended bool) int {
+	limit := l.mux.normalBatchBytes()
+	if contended && limit > muxNormalFairBatch {
+		return muxNormalFairBatch
+	}
+	return limit
+}
+
+func (l *muxLane) observeNormalSchedule(first muxFrame, frames, bytes, batchLimit int, contended bool, remainingStreams, remainingFrames int) {
+	if l.mux == nil || l.mux.t == nil || !l.mux.t.Observe || l.mux.t.Logger == nil {
+		return
+	}
+	if !contended && remainingStreams == 0 {
+		return
+	}
+	l.mux.t.Logger.Printf("mux send scheduler role=%s lane=%d stream=%016x frames=%d plain_bytes=%d batch_limit=%d contended=%t remaining_streams=%d remaining_frames=%d", l.mux.role, l.idx, first.StreamID, frames, bytes, batchLimit, contended, remainingStreams, remainingFrames)
 }
 
 func (l *muxLane) runUploadLoop(ctx context.Context, priorityOnly bool) {
@@ -1075,6 +1133,9 @@ func muxPriorityBatch(frames []muxFrame) bool {
 }
 
 func (l *muxLane) uploadBatch(ctx context.Context, frames []muxFrame) error {
+	if l.mux.useMuxV6() {
+		return l.uploadBatchV6(ctx, frames)
+	}
 	if l.mux.useMuxV5() {
 		return l.uploadBatchV5A(ctx, frames)
 	}
@@ -1130,6 +1191,150 @@ func (l *muxLane) uploadBatchV4(ctx context.Context, frames []muxFrame) error {
 	return err
 }
 
+func (l *muxLane) uploadBatchV6(ctx context.Context, frames []muxFrame) error {
+	batch, err := l.prepareMuxV6UploadBatch(frames)
+	if err != nil {
+		return err
+	}
+	priority := muxPriorityBatch(frames)
+	if priority || len(batch.raw) <= muxV5InlineControlLimit(priority) {
+		return l.uploadBatchV5A(ctx, frames)
+	}
+	return l.uploadMuxV6Slab(ctx, frames[0].ClientID, frames[0].RunID, []muxV6UploadBatch{batch}, len(batch.raw))
+}
+
+func (l *muxLane) prepareMuxV6UploadBatch(frames []muxFrame) (muxV6UploadBatch, error) {
+	if len(frames) == 0 {
+		return muxV6UploadBatch{}, nil
+	}
+	if frames[0].ClientID == "" || frames[0].RunID == "" {
+		return muxV6UploadBatch{}, errors.New("mux v6 upload batch missing client namespace")
+	}
+	raw, err := encodeMuxBatch(frames)
+	if err != nil {
+		return muxV6UploadBatch{}, err
+	}
+	minSeq, maxSeq := muxBatchFrameSeqRange(frames)
+	return muxV6UploadBatch{frames: frames, raw: raw, minSeq: minSeq, maxSeq: maxSeq}, nil
+}
+
+func (l *muxLane) uploadMuxV6Slab(ctx context.Context, clientID, runID string, batches []muxV6UploadBatch, totalBytes int) error {
+	if len(batches) == 0 {
+		return nil
+	}
+	if len(batches[0].frames) == 0 {
+		return errors.New("mux v6 slab contains empty batch")
+	}
+	streamID := batches[0].frames[0].StreamID
+	frameMinSeq := batches[0].minSeq
+	frameMaxSeq := batches[0].maxSeq
+	dataSeq := atomic.AddUint64(&l.seq, 1)
+	controlSeq := l.mux.nextMuxV5ControlSeq()
+	dataID, err := l.mux.reserveMuxV5ObjectID(ctx)
+	if err != nil {
+		return err
+	}
+	controlID, err := l.mux.reserveMuxV5ObjectID(ctx)
+	if err != nil {
+		return err
+	}
+	dataKey, err := DeriveMuxDataKeyV5(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch)
+	if err != nil {
+		return err
+	}
+	dataName := l.mux.v5DataObjectName(l.mux.sendDir, clientID, runID, l.mux.epoch, streamID, l.idx, dataSeq)
+	dataRecords := make([]muxV5DataRecord, 0, len(batches))
+	now := time.Now().UnixNano()
+	totalFrames := 0
+	for i, batch := range batches {
+		if len(batch.frames) == 0 {
+			return errors.New("mux v6 slab contains empty batch")
+		}
+		if batch.frames[0].StreamID != streamID {
+			return errors.New("mux v6 slab cannot mix streams")
+		}
+		totalFrames += len(batch.frames)
+		if batch.minSeq < frameMinSeq {
+			frameMinSeq = batch.minSeq
+		}
+		if batch.maxSeq > frameMaxSeq {
+			frameMaxSeq = batch.maxSeq
+		}
+		dataRecords = append(dataRecords, muxV5DataRecord{
+			RecordIndex:   uint32(i),
+			PriorityClass: muxV5ClassBulk,
+			StreamID:      batch.frames[0].StreamID,
+			StreamSeqMin:  batch.minSeq,
+			StreamSeqMax:  batch.maxSeq,
+			Plaintext:     batch.raw,
+		})
+	}
+	sealedData, refs, err := sealMuxV5DataSlab(dataKey, muxV5DataSlab{
+		Direction:  l.mux.sendDir,
+		ClientID:   clientID,
+		RunID:      runID,
+		Epoch:      l.mux.epoch,
+		DataFileID: dataID,
+		ObjectName: dataName,
+		Lane:       l.idx,
+		SlabSeq:    dataSeq,
+		Records:    dataRecords,
+	})
+	if err != nil {
+		return err
+	}
+	if len(refs) != len(batches) {
+		return fmt.Errorf("mux v6 data slab refs=%d want %d", len(refs), len(batches))
+	}
+	records := make([]muxV5ControlRecord, 0, len(batches))
+	for i, batch := range batches {
+		ref := refs[i]
+		records = append(records, muxV5ControlRecord{
+			Type:            muxV5RecordTypeForBatch(batch.frames),
+			PriorityClass:   muxV5ClassBulk,
+			StreamID:        batch.frames[0].StreamID,
+			StreamSeqMin:    batch.minSeq,
+			StreamSeqMax:    batch.maxSeq,
+			PlainBytes:      uint64(len(batch.raw)),
+			SealedBytes:     ref.SealedBytes,
+			DataFileID:      dataID,
+			DataObjectName:  dataName,
+			DataOffset:      ref.DataOffset,
+			DataLength:      ref.DataLength,
+			FrameCount:      uint32(len(batch.frames)),
+			CreatedUnixNano: now,
+		})
+	}
+	controlKey, err := DeriveMuxControlKeyV5(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch)
+	if err != nil {
+		return err
+	}
+	page := muxV5ControlPage{
+		Direction:  l.mux.sendDir,
+		ClientID:   clientID,
+		RunID:      runID,
+		Epoch:      l.mux.epoch,
+		ControlSeq: controlSeq,
+		Records:    records,
+	}
+	sealedControl, err := sealMuxV5ControlPage(controlKey, l.mux.t.SessionID, page)
+	if err != nil {
+		return err
+	}
+	if err := l.mux.uploadV5ObjectWithRetry(ctx, dataName, dataID, sealedData, false); err != nil {
+		return err
+	}
+	controlName := l.mux.v5ControlObjectName(l.mux.sendDir, clientID, runID, l.mux.epoch, streamID, l.idx, controlSeq, totalFrames, frameMinSeq, frameMaxSeq, totalBytes, false)
+	if err := l.mux.uploadV5ObjectWithRetry(ctx, controlName, controlID, sealedControl, false); err != nil {
+		return err
+	}
+	if l.mux.t.Logger != nil && l.mux.t.Observe {
+		l.mux.t.Logger.Printf("mux v6 slab upload role=%s lane=%d control_seq=%d data_seq=%d records=%d frames=%d plain_bytes=%d sealed_data_bytes=%d", l.mux.role, l.idx, controlSeq, dataSeq, len(records), totalFrames, totalBytes, len(sealedData))
+	}
+	l.mux.wakeReceiver()
+	return nil
+}
+
 func (l *muxLane) uploadBatchV5A(ctx context.Context, frames []muxFrame) error {
 	if len(frames) == 0 {
 		return nil
@@ -1180,7 +1385,7 @@ func (l *muxLane) uploadBatchV5A(ctx context.Context, frames []muxFrame) error {
 		if err != nil {
 			return err
 		}
-		dataName := muxV5DataObjectName(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, dataSeq)
+		dataName := l.mux.v5DataObjectName(l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, dataSeq)
 		sealedData, refs, err := sealMuxV5DataSlab(dataKey, muxV5DataSlab{
 			Direction:  l.mux.sendDir,
 			ClientID:   clientID,
@@ -1227,7 +1432,7 @@ func (l *muxLane) uploadBatchV5A(ctx context.Context, frames []muxFrame) error {
 	if err != nil {
 		return err
 	}
-	controlName := muxV5ControlObjectName(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, controlSeq, len(frames), minSeq, maxSeq, len(raw), priority)
+	controlName := l.mux.v5ControlObjectName(l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, controlSeq, len(frames), minSeq, maxSeq, len(raw), priority)
 	if err := l.mux.uploadV5ObjectWithRetry(ctx, controlName, controlID, sealedControl, priority); err != nil {
 		return err
 	}
@@ -1249,7 +1454,7 @@ func (l *muxLane) uploadBatchV5BulkDirect(ctx context.Context, frames []muxFrame
 	if err != nil {
 		return err
 	}
-	dataName := muxV5BulkObjectName(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, dataSeq, len(frames), minSeq, maxSeq, len(raw), false)
+	dataName := l.mux.v5BulkObjectName(l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, l.idx, dataSeq, len(frames), minSeq, maxSeq, len(raw), false)
 	sealedData, refs, err := sealMuxV5DataSlab(dataKey, muxV5DataSlab{
 		Direction:  l.mux.sendDir,
 		ClientID:   clientID,
@@ -1521,7 +1726,7 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 
 func (m *driveMux) pollMuxV5Objects(ctx context.Context) bool {
 	controlPrefix := m.recvPrefix()
-	controlProcessed := m.pollMuxObjectsFromPrefix(ctx, controlPrefix, "v5_control_prefix", m.listRecvMuxObjects, parseMuxV5ControlObjectInfo, m.hasListFreshPageToken)
+	controlProcessed := m.pollMuxObjectsFromPrefix(ctx, controlPrefix, m.v5DiscoverySource(muxV5PlaneControl), m.listRecvMuxObjects, m.parseV5ControlObjectInfo, m.hasListFreshPageToken)
 	if !m.useMuxV5B() {
 		return controlProcessed
 	}
@@ -1529,9 +1734,30 @@ func (m *driveMux) pollMuxV5Objects(ctx context.Context) bool {
 		return true
 	}
 	bulkPrefix := m.recvV5BulkPrefix()
-	bulkProcessed := m.pollMuxObjectsFromPrefix(ctx, bulkPrefix, "v5_bulk_prefix", m.listRecvMuxV5BulkObjects, parseMuxV5BulkObjectInfo, m.hasMuxV5BulkListFreshPageToken)
+	bulkProcessed := m.pollMuxObjectsFromPrefix(ctx, bulkPrefix, m.v5DiscoverySource(muxV5PlaneBulk), m.listRecvMuxV5BulkObjects, m.parseV5BulkObjectInfo, m.hasMuxV5BulkListFreshPageToken)
 	m.v5ControlPollsSinceBulk = 0
 	return controlProcessed || bulkProcessed
+}
+
+func (m *driveMux) v5DiscoverySource(plane string) string {
+	if m.useMuxV6() {
+		return "v6_" + plane + "_prefix"
+	}
+	return "v5_" + plane + "_prefix"
+}
+
+func (m *driveMux) parseV5ControlObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
+	if m.useMuxV6() {
+		return parseMuxV6ControlObjectInfo(info)
+	}
+	return parseMuxV5ControlObjectInfo(info)
+}
+
+func (m *driveMux) parseV5BulkObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
+	if m.useMuxV6() {
+		return parseMuxV6BulkObjectInfo(info)
+	}
+	return parseMuxV5BulkObjectInfo(info)
 }
 
 func (m *driveMux) shouldPollMuxV5BulkAfterControlWork() bool {
@@ -1587,9 +1813,9 @@ func (m *driveMux) pollMuxObjectsFromPrefix(ctx context.Context, prefix, source 
 func (m *driveMux) recvPrefix() string {
 	if m.useMuxV5() {
 		if m.role == "exit" {
-			return muxV5DirPrefix(m.t.SessionID, m.recvDir, muxV5PlaneControl, "", "")
+			return m.v5DirPrefix(m.recvDir, muxV5PlaneControl, "", "")
 		}
-		return muxV5DirPrefix(m.t.SessionID, m.recvDir, muxV5PlaneControl, m.t.ClientID, m.t.RunID)
+		return m.v5DirPrefix(m.recvDir, muxV5PlaneControl, m.t.ClientID, m.t.RunID)
 	}
 	if m.role == "exit" {
 		return muxDirPrefix(m.t.SessionID, m.recvDir, "", "")
@@ -1599,9 +1825,9 @@ func (m *driveMux) recvPrefix() string {
 
 func (m *driveMux) recvV5BulkPrefix() string {
 	if m.role == "exit" {
-		return muxV5DirPrefix(m.t.SessionID, m.recvDir, muxV5PlaneBulk, "", "")
+		return m.v5DirPrefix(m.recvDir, muxV5PlaneBulk, "", "")
 	}
-	return muxV5DirPrefix(m.t.SessionID, m.recvDir, muxV5PlaneBulk, m.t.ClientID, m.t.RunID)
+	return m.v5DirPrefix(m.recvDir, muxV5PlaneBulk, m.t.ClientID, m.t.RunID)
 }
 
 func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -2495,7 +2721,7 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 
 func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) error {
 	if m.useMuxV5() {
-		if _, ok := parseMuxV5BulkObjectInfo(ObjectInfo{Name: meta.Name}); ok {
+		if _, ok := m.parseV5BulkObjectInfo(ObjectInfo{Name: meta.Name}); ok {
 			return m.processMuxV5BulkObject(ctx, meta)
 		}
 		return m.processMuxV5ControlObject(ctx, meta)
@@ -2651,11 +2877,20 @@ func (m *driveMux) openMuxV5ControlRecordData(ctx context.Context, meta muxObjec
 	if record.DataFileID == "" || record.DataObjectName == "" || record.DataLength == 0 {
 		return nil, cleanupTask{}, errors.New("mux v5 data record missing data reference")
 	}
-	sealedData, err := m.downloadMuxV5DataObject(ctx, record, meta.Priority)
+	dataKey, err := DeriveMuxDataKeyV5(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Epoch)
 	if err != nil {
 		return nil, cleanupTask{}, err
 	}
-	dataKey, err := DeriveMuxDataKeyV5(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Epoch)
+	if m.useMuxV6() {
+		raw, cleanup, ok, err := m.openMuxV6ControlRecordDataRange(ctx, dataKey, meta, record)
+		if err != nil {
+			return nil, cleanupTask{}, err
+		}
+		if ok {
+			return raw, cleanup, nil
+		}
+	}
+	sealedData, err := m.downloadMuxV5DataObject(ctx, record, meta.Priority)
 	if err != nil {
 		return nil, cleanupTask{}, err
 	}
@@ -2683,6 +2918,62 @@ func (m *driveMux) openMuxV5ControlRecordData(ctx context.Context, meta muxObjec
 		}
 	}
 	return nil, cleanupTask{}, errors.New("mux v5 data manifest range not found")
+}
+
+func (m *driveMux) openMuxV6ControlRecordDataRange(ctx context.Context, dataKey []byte, meta muxObjectMeta, record muxV5ControlRecord) ([]byte, cleanupTask, bool, error) {
+	store, ok := m.t.Data.(RangeObjectStore)
+	if !ok {
+		return nil, cleanupTask{}, false, nil
+	}
+	if record.DataLength == 0 || record.DataOffset > ^uint64(0)-(record.DataLength-1) {
+		return nil, cleanupTask{}, true, errors.New("mux v6 invalid data range")
+	}
+	end := record.DataOffset + record.DataLength - 1
+	const maxRangeOffset = uint64(1<<63 - 1)
+	if record.DataOffset > maxRangeOffset || end > maxRangeOffset {
+		return nil, cleanupTask{}, true, errors.New("mux v6 data range too large")
+	}
+	release, err := m.t.acquireDownloadSlotBytes(ctx, meta.Priority)
+	if err != nil {
+		return nil, cleanupTask{}, true, err
+	}
+	started := time.Now()
+	opCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(int(record.DataLength), meta.Priority, m.t.RouteProxy != ""))
+	recordBytes, rangeInfo, err := store.GetObjectRangeByID(opCtx, record.DataFileID, int64(record.DataOffset), int64(end))
+	cancel()
+	release(err, int64(len(recordBytes)))
+	duration := time.Since(started)
+	if m.t.Logger != nil && (m.t.Observe || err != nil || duration >= m.t.slowDriveThreshold()) {
+		m.t.Logger.Printf("mux v6 range download role=%s object=%s id=%t stream=%016x bytes=%d range=%d-%d duration=%s error=%s", m.role, muxShortName(record.DataObjectName), record.DataFileID != "", record.StreamID, len(recordBytes), record.DataOffset, end, duration.Round(time.Millisecond), errorSummary(err))
+	}
+	if err != nil {
+		return nil, cleanupTask{}, true, err
+	}
+	if rangeInfo.Start != int64(record.DataOffset) || rangeInfo.End != int64(end) {
+		return nil, cleanupTask{}, true, fmt.Errorf("mux v6 content range=%d-%d want=%d-%d", rangeInfo.Start, rangeInfo.End, record.DataOffset, end)
+	}
+	dataRecord, ref, err := openMuxV5DataRecordFromManifest(dataKey, record, recordBytes)
+	if err != nil {
+		return nil, cleanupTask{}, true, err
+	}
+	route, ok := parseMuxVersionDataObjectInfo(record.DataObjectName, m.v5ObjectPrefix())
+	if !ok {
+		return nil, cleanupTask{}, true, errors.New("mux v6 invalid data object name")
+	}
+	if route.SessionID != SessionString(m.t.SessionID) ||
+		route.Direction != m.recvDir ||
+		route.ClientID != meta.ClientID ||
+		route.RunID != meta.RunID ||
+		route.Epoch != meta.Epoch ||
+		(route.StreamID != 0 && route.StreamID != record.StreamID) ||
+		route.Lane != ref.Lane ||
+		route.Seq != ref.SlabSeq {
+		return nil, cleanupTask{}, true, errors.New("mux v6 data record route mismatch")
+	}
+	if dataRecord.RecordIndex != ref.RecordIndex {
+		return nil, cleanupTask{}, true, errors.New("mux v6 data record index mismatch")
+	}
+	return append([]byte(nil), dataRecord.Plaintext...), cleanupTask{name: record.DataObjectName, id: record.DataFileID}, true, nil
 }
 
 func validateMuxV5ControlRecordPayload(record muxV5ControlRecord, raw []byte) ([]muxFrame, error) {
