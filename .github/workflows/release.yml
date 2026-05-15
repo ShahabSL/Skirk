@@ -99,13 +99,13 @@ jobs:
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $commit = "${env:GITHUB_SHA}".Substring(0, 7)
           $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
-          go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk.exe ./cmd/skirk
+          go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk-sidecar.exe ./cmd/skirk
 
       - name: Build Tauri desktop app
         working-directory: clients/desktop
         run: |
           npm ci
-          npm run tauri build -- --bundles nsis
+          npm run tauri build -- --no-bundle
 
       - name: Build portable zip
         run: python clients/desktop/scripts/package_windows_portable.py
@@ -114,13 +114,8 @@ jobs:
         shell: pwsh
         run: |
           $zip = "dist/windows-portable/Skirk_windows_x64_portable.zip"
-          $installer = Get-ChildItem "clients/desktop/src-tauri/target/release/bundle/nsis" -Filter "*.exe" | Select-Object -First 1
-          Copy-Item $installer.FullName "dist/skirk-desktop-windows-x64-installer.exe"
-          $files = @($zip, "dist/skirk-desktop-windows-x64-installer.exe")
-          foreach ($file in $files) {
-            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $(Split-Path $file -Leaf)" | Set-Content "$file.sha256"
-          }
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $zip -Leaf)" | Set-Content "$zip.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -128,8 +123,6 @@ jobs:
           path: |
             dist/windows-portable/Skirk_windows_x64_portable.zip
             dist/windows-portable/Skirk_windows_x64_portable.zip.sha256
-            dist/skirk-desktop-windows-x64-installer.exe
-            dist/skirk-desktop-windows-x64-installer.exe.sha256
           if-no-files-found: error
 
   publish:
@@ -157,8 +150,24 @@ jobs:
             echo "no release assets found" >&2
             exit 1
           fi
+          upload_args=()
+          for asset in "${assets[@]}"; do
+            case "$(basename "$asset")" in
+              Skirk_windows_x64_portable.zip)
+                upload_args+=("${asset}#Windows GUI portable app")
+                ;;
+              skirk-windows-amd64.zip)
+                upload_args+=("${asset}#Windows CLI zip")
+                ;;
+              *)
+                upload_args+=("$asset")
+                ;;
+            esac
+          done
+          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n'
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+            gh release upload "${GITHUB_REF_NAME}" "${upload_args[@]}" --clobber
+            gh release edit "${GITHUB_REF_NAME}" --notes "$release_notes"
           else
-            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --title "${GITHUB_REF_NAME}" --generate-notes
+            gh release create "${GITHUB_REF_NAME}" "${upload_args[@]}" --title "${GITHUB_REF_NAME}" --generate-notes --notes "$release_notes"
           fi

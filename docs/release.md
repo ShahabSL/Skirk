@@ -38,13 +38,14 @@ This writes:
 
 - `dist/skirk-linux-amd64.tar.gz`
 - `dist/skirk-linux-arm64.tar.gz`
-- `dist/skirk-windows-amd64.zip`
+- `dist/skirk-windows-amd64.zip` (Windows CLI)
 - `dist/SHA256SUMS`
 
 Client release assets are built by GitHub Actions:
 
-- Windows portable desktop zip
-- Windows desktop installer
+- Windows portable desktop zip (`Skirk_windows_x64_portable.zip`) for normal GUI use.
+- Windows CLI zip (`skirk-windows-amd64.zip`) for manual PowerShell use. This
+  asset is not the desktop app.
 
 The Android workflow validates that a debug APK still builds, but debug-signed
 APKs are not uploaded as public release assets.

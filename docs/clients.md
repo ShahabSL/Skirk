@@ -61,7 +61,11 @@ skirk serve-client \
 
 ## Windows Desktop
 
-The preferred Windows UX is the portable desktop app from release assets. It:
+The preferred Windows UX is the portable desktop app from release assets:
+`Skirk_windows_x64_portable.zip`. Extract it and open the root `Skirk.exe`.
+The `skirk-windows-amd64.zip` asset is the CLI-only build for PowerShell users.
+
+The desktop app:
 
 - imports one-line `skirk:` profiles or `client.json`;
 - stores profiles in portable data;

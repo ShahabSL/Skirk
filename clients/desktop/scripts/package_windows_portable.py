@@ -43,14 +43,17 @@ def main() -> int:
     webview_loader = app_exe.parent / "WebView2Loader.dll"
     if webview_loader.exists():
         shutil.copy2(webview_loader, out_dir / "WebView2Loader.dll")
-    sidecar = desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "skirk.exe"
-    if not sidecar.exists():
-        sidecar = repo / "bin" / "skirk-windows-amd64.exe"
-    if not sidecar.exists():
+    sidecar_candidates = [
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "skirk-sidecar.exe",
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "skirk.exe",
+        repo / "bin" / "skirk-windows-amd64.exe",
+    ]
+    sidecar = next((path for path in sidecar_candidates if path.exists()), None)
+    if sidecar is None:
         print("skirk.exe sidecar not found. Run `make build-windows` first.", file=sys.stderr)
         return 1
     for sidecar_dir in sidecar_dirs:
-        shutil.copy2(sidecar, sidecar_dir / "skirk.exe")
+        shutil.copy2(sidecar, sidecar_dir / "skirk-sidecar.exe")
     for relative in ("LICENSE", "DISCLAIMER.md", "SECURITY.md", "third_party/NOTICE.md"):
         source = repo / relative
         if source.exists():
@@ -58,6 +61,11 @@ def main() -> int:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
     (out_dir / "skirk-portable").write_text("portable mode marker\n", encoding="utf-8")
+    (out_dir / "START_HERE.txt").write_text(
+        "Open Skirk.exe to use the Skirk desktop app.\n"
+        "The files under sidecars/ are internal engine binaries and are not the app UI.\n",
+        encoding="utf-8",
+    )
     (out_dir / "portable-data" / "README.txt").write_text(
         "Skirk portable data lives here. Imported profiles, configs, and logs stay beside Skirk.exe.\n",
         encoding="utf-8",

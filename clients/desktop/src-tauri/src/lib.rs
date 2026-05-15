@@ -400,7 +400,7 @@ fn sidecar_candidate_paths(
     current_dir: Option<&Path>,
 ) -> Vec<PathBuf> {
     let names: &[&str] = if cfg!(windows) {
-        &["skirk.exe", "skirk-windows-amd64.exe"]
+        &["skirk-sidecar.exe", "skirk.exe", "skirk-windows-amd64.exe"]
     } else {
         &["skirk", "skirk-linux-amd64"]
     };
@@ -431,7 +431,9 @@ fn sidecar_candidate_paths(
                     .join(os_dir)
                     .join(name),
             );
-            push_sidecar_candidate(&mut candidates, &mut seen, dir.join(name));
+            if !cfg!(windows) || *name == "skirk-sidecar.exe" {
+                push_sidecar_candidate(&mut candidates, &mut seen, dir.join(name));
+            }
         }
     }
 
@@ -489,7 +491,7 @@ fn sidecar_not_found_message(candidates: &[PathBuf]) -> String {
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join("; ");
-    "skirk sidecar not found; place skirk.exe beside Skirk.exe, under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
+    "skirk sidecar not found; place skirk-sidecar.exe under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
         .to_string()
         + &searched
 }
@@ -835,7 +837,11 @@ mod tests {
     #[test]
     fn sidecar_candidates_cover_portable_and_tauri_resource_layouts() {
         let os_dir = if cfg!(windows) { "windows" } else { "linux" };
-        let sidecar_name = if cfg!(windows) { "skirk.exe" } else { "skirk" };
+        let sidecar_name = if cfg!(windows) {
+            "skirk-sidecar.exe"
+        } else {
+            "skirk"
+        };
         let exe_dir = PathBuf::from("/opt/skirk");
         let resource_dir = exe_dir.join("resources");
         let candidates =

@@ -12,6 +12,6 @@ mkdir -p "$desktop_root/src-tauri/resources/sidecars/linux"
 mkdir -p "$desktop_root/src-tauri/resources/sidecars/windows"
 
 GOOS=linux GOARCH=amd64 go build -C "$repo_root" -trimpath -ldflags "$ldflags" -o "$desktop_root/src-tauri/resources/sidecars/linux/skirk" ./cmd/skirk
-GOOS=windows GOARCH=amd64 go build -C "$repo_root" -trimpath -ldflags "$ldflags" -o "$desktop_root/src-tauri/resources/sidecars/windows/skirk.exe" ./cmd/skirk
+GOOS=windows GOARCH=amd64 go build -C "$repo_root" -trimpath -ldflags "$ldflags" -o "$desktop_root/src-tauri/resources/sidecars/windows/skirk-sidecar.exe" ./cmd/skirk
 
 chmod +x "$desktop_root/src-tauri/resources/sidecars/linux/skirk"

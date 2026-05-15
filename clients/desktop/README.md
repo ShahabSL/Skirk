@@ -51,12 +51,15 @@ Ship a zip/folder like:
 
 ```text
 Skirk.exe
+START_HERE.txt
 skirk-portable
 portable-data/
-sidecars/windows/skirk.exe
+sidecars/windows/skirk-sidecar.exe
 ```
 
 Portable mode activates when `portable-data/` or `skirk-portable` exists beside the app executable.
+Users should open `Skirk.exe`. The sidecar binary is the internal Go engine that
+the desktop app starts and stops.
 
 The app stores:
 
