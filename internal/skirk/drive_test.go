@@ -335,6 +335,49 @@ func TestDriveStoreGetObjectRangeByIDValidatesContentRange(t *testing.T) {
 	}
 }
 
+func TestDriveStoreGetByIDUsesIdentityEncoding(t *testing.T) {
+	var gotEncoding string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotEncoding = req.Header.Get("Accept-Encoding")
+		return stringResponse(http.StatusOK, "hello"), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	data, err := store.GetByID(context.Background(), "file-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("data = %q, want hello", string(data))
+	}
+	if gotEncoding != "identity" {
+		t.Fatalf("Accept-Encoding = %q, want identity", gotEncoding)
+	}
+}
+
+func TestDriveStoreGetUsesIdentityEncoding(t *testing.T) {
+	var gotEncoding string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/drive/v3/files" {
+			return stringResponse(http.StatusOK, `{"files":[{"id":"file-id","name":"object","size":"5","modifiedTime":"2026-05-14T00:00:00Z"}]}`), nil
+		}
+		gotEncoding = req.Header.Get("Accept-Encoding")
+		return stringResponse(http.StatusOK, "hello"), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	data, err := store.Get(context.Background(), "object")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("data = %q, want hello", string(data))
+	}
+	if gotEncoding != "identity" {
+		t.Fatalf("Accept-Encoding = %q, want identity", gotEncoding)
+	}
+}
+
 func TestDriveStoreGetObjectRangeByIDRejectsWrongContentRange(t *testing.T) {
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		resp := stringResponse(http.StatusPartialContent, "hello")

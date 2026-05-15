@@ -257,7 +257,7 @@ func serveClient(ctx context.Context, args []string) error {
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
-	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
@@ -346,7 +346,7 @@ func serveExit(ctx context.Context, args []string) error {
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
-	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy for exit traffic, for example socks5h://127.0.0.1:40000")
@@ -698,7 +698,7 @@ func benchLive(ctx context.Context, args []string) error {
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
 	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
-	concurrency := fs.Int("concurrency", 0, "override Drive upload/download concurrency")
+	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
@@ -1840,8 +1840,6 @@ func applyTunnelOverrides(cfg *skirk.Config, chunkSize, pollMS, concurrency, upl
 	}
 	if concurrency > 0 {
 		cfg.Tunnel.Concurrency = concurrency
-		cfg.Tunnel.UploadConcurrency = concurrency
-		cfg.Tunnel.DownloadConcurrency = concurrency
 	}
 	if uploadConcurrency > 0 {
 		cfg.Tunnel.UploadConcurrency = uploadConcurrency

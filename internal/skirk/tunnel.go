@@ -18,13 +18,16 @@ import (
 const (
 	inlineDataThreshold           = 64 * 1024
 	mediumDataThreshold           = 8 * 1024
+	bulkStreamCoalesceAfter       = 256 * 1024
 	initialOpenDataWait           = 15 * time.Millisecond
 	interactiveCoalesceDelay      = 5 * time.Millisecond
 	mediumCoalesceDelay           = 50 * time.Millisecond
 	bulkCoalesceDelay             = 75 * time.Millisecond
+	forcedBulkCoalesceDelay       = 100 * time.Millisecond
 	interactiveCoalesceMaxAge     = 15 * time.Millisecond
 	mediumCoalesceMaxAge          = 75 * time.Millisecond
 	bulkCoalesceMaxAge            = 250 * time.Millisecond
+	forcedBulkCoalesceMaxAge      = 1 * time.Second
 	deferredCleanupDelay          = 5 * time.Second
 	deferredCleanupFlushThreshold = 128
 	idleOpenPollInterval          = 1 * time.Second
@@ -34,12 +37,16 @@ const (
 	limiterBulkByteThreshold      = 1 * 1024 * 1024
 	limiterDirectBulkBytesPerSec  = 2 * 1024 * 1024
 	limiterProxyBulkBytesPerSec   = 1 * 1024 * 1024
+	limiterBackoffCooldown        = 2 * time.Second
+	limiterMinNormalSlots         = 2
 	autoClientUploadWorkers       = 8
 	autoClientProxyUploadWorkers  = 4
 	autoExitUploadWorkers         = 16
+	autoExitUploadMaxWorkers      = 32
 	autoClientUploadWindow        = 4
 	autoClientProxyUploadWindow   = 2
 	autoExitUploadWindow          = 8
+	autoExitExplicitUploadWindow  = 16
 	exitFamilyPreferenceTimeout   = 2 * time.Second
 	cleanupQuietWindow            = 2 * time.Second
 	cleanupMaxForegroundDelay     = 2 * time.Minute
@@ -348,7 +355,11 @@ func bypassExitProxy(target string) bool {
 
 func (t *Tunnel) uploadWorkerCount() int {
 	if t.UploadConcurrency > 0 {
-		return clampWorkers(t.UploadConcurrency)
+		workers := clampWorkers(t.UploadConcurrency)
+		if t.autoProfile() && t.role == "exit" && workers > autoExitUploadMaxWorkers {
+			return autoExitUploadMaxWorkers
+		}
+		return workers
 	}
 	if t.autoProfile() {
 		switch t.role {
@@ -438,7 +449,7 @@ func (t *Tunnel) slowDriveThreshold() time.Duration {
 }
 
 func (t *Tunnel) initialUploadWindow(max int) int {
-	if t.UploadConcurrency > 0 || !t.autoProfile() {
+	if !t.autoProfile() {
 		return max
 	}
 	switch t.role {
@@ -448,6 +459,9 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 		}
 		return minInt(autoClientUploadWindow, max)
 	case "exit":
+		if t.UploadConcurrency > 0 {
+			return minInt(autoExitExplicitUploadWindow, max)
+		}
 		return minInt(autoExitUploadWindow, max)
 	default:
 		return minInt(autoClientUploadWindow, max)
@@ -455,7 +469,7 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 }
 
 func (t *Tunnel) initialDownloadWindow(max int) int {
-	if t.DownloadConcurrency > 0 || !t.autoProfile() {
+	if !t.autoProfile() {
 		return max
 	}
 	switch t.role {
@@ -502,6 +516,7 @@ type adaptiveLimiter struct {
 	name          string
 	logger        *log.Logger
 	lastLog       time.Time
+	backoffUntil  time.Time
 }
 
 func newAdaptiveLimiter(initial, max int, slowThreshold time.Duration, name string, logger *log.Logger) *adaptiveLimiter {
@@ -633,28 +648,21 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 	}
 	oldLimit := l.limit
 	reason := ""
+	now := time.Now()
 	if err != nil {
-		floor := l.minimumLimitLocked()
-		if l.limit > floor {
-			l.limit = maxInt(floor, l.limit/2)
+		if l.backoffLocked(now, true) {
+			reason = "error"
 		}
 		l.successes = 0
-		reason = "error"
 		l.logChangeLocked(oldLimit, reason, duration, bytes)
 		return
 	}
 	slowThreshold := l.effectiveSlowThresholdLocked(priority, bytes)
 	if duration >= slowThreshold {
-		floor := l.minimumLimitLocked()
-		if l.limit > floor {
-			if duration >= 2*slowThreshold {
-				l.limit = maxInt(floor, l.limit/2)
-			} else {
-				l.limit--
-			}
+		if l.backoffLocked(now, duration >= 2*slowThreshold) {
+			reason = "slow"
 		}
 		l.successes = 0
-		reason = "slow"
 		l.logChangeLocked(oldLimit, reason, duration, bytes)
 		return
 	}
@@ -666,6 +674,26 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 		reason = "healthy"
 	}
 	l.logChangeLocked(oldLimit, reason, duration, bytes)
+}
+
+func (l *adaptiveLimiter) backoffLocked(now time.Time, severe bool) bool {
+	if !l.backoffUntil.IsZero() && now.Before(l.backoffUntil) {
+		return false
+	}
+	floor := l.minimumLimitLocked()
+	if l.limit <= floor {
+		return false
+	}
+	if severe {
+		l.limit = maxInt(floor, l.limit/2)
+	} else {
+		l.limit--
+		if l.limit < floor {
+			l.limit = floor
+		}
+	}
+	l.backoffUntil = now.Add(limiterBackoffCooldown)
+	return true
 }
 
 func (l *adaptiveLimiter) effectiveSlowThresholdLocked(priority bool, bytes int64) time.Duration {
@@ -699,7 +727,7 @@ func (l *adaptiveLimiter) minimumLimitLocked() int {
 	if l.max <= 1 {
 		return 1
 	}
-	floor := l.reserve + 1
+	floor := l.reserve + limiterMinNormalSlots
 	if floor < 2 {
 		return 2
 	}
@@ -813,6 +841,10 @@ func (t *Tunnel) foregroundBusy() bool {
 }
 
 func readChunk(reader io.Reader, buffer []byte) (int, error) {
+	return readChunkWithPolicy(reader, buffer, false)
+}
+
+func readChunkWithPolicy(reader io.Reader, buffer []byte, forceBulk bool) (int, error) {
 	n, err := reader.Read(buffer)
 	if n <= 0 || err != nil || n == len(buffer) {
 		return n, err
@@ -826,8 +858,8 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 	defer deadlineConn.SetReadDeadline(time.Time{})
 	started := time.Now()
 	for n < len(buffer) {
-		delay := coalesceDelayForBytes(n)
-		maxAge := coalesceMaxAgeForBytes(n)
+		delay := coalesceDelayForBytesWithPolicy(n, forceBulk)
+		maxAge := coalesceMaxAgeForBytesWithPolicy(n, forceBulk)
 		if maxAge > 0 {
 			remaining := maxAge - time.Since(started)
 			if remaining <= 0 {
@@ -859,6 +891,13 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 }
 
 func coalesceDelayForBytes(n int) time.Duration {
+	return coalesceDelayForBytesWithPolicy(n, false)
+}
+
+func coalesceDelayForBytesWithPolicy(n int, forceBulk bool) time.Duration {
+	if forceBulk {
+		return forcedBulkCoalesceDelay
+	}
 	if n >= inlineDataThreshold {
 		return bulkCoalesceDelay
 	}
@@ -869,6 +908,13 @@ func coalesceDelayForBytes(n int) time.Duration {
 }
 
 func coalesceMaxAgeForBytes(n int) time.Duration {
+	return coalesceMaxAgeForBytesWithPolicy(n, false)
+}
+
+func coalesceMaxAgeForBytesWithPolicy(n int, forceBulk bool) time.Duration {
+	if forceBulk {
+		return forcedBulkCoalesceMaxAge
+	}
 	if n >= inlineDataThreshold {
 		return bulkCoalesceMaxAge
 	}

@@ -234,7 +234,7 @@ func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
 		return nil, err
 	}
 	path := "/drive/v3/files/" + url.PathEscape(info.ID) + "?alt=media"
-	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	result, err := d.mediaRequest(ctx, http.MethodGet, path, driveMediaDownloadHeaders(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -246,9 +246,10 @@ func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
 
 func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error) {
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
+	headers := driveMediaDownloadHeaders()
 	var last *HTTPResult
 	for attempt := 0; attempt < 5; attempt++ {
-		result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+		result, err := d.mediaRequest(ctx, http.MethodGet, path, headers, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -277,6 +278,10 @@ func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error)
 	return last.Body, nil
 }
 
+func driveMediaDownloadHeaders() map[string]string {
+	return map[string]string{"Accept-Encoding": "identity"}
+}
+
 func (d *DriveStore) GetRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, int, error) {
 	body, _, status, err := d.getRangeByID(ctx, fileID, start, end)
 	return body, status, err
@@ -298,7 +303,7 @@ func (d *DriveStore) getRangeByID(ctx context.Context, fileID string, start, end
 	}
 	var last *HTTPResult
 	for attempt := 0; attempt < 5; attempt++ {
-		result, err := d.request(ctx, http.MethodGet, path, headers, nil)
+		result, err := d.mediaRequest(ctx, http.MethodGet, path, headers, nil)
 		if err != nil {
 			return nil, ObjectRangeInfo{}, 0, err
 		}
@@ -865,6 +870,9 @@ func validateContentRange(header string, wantStart, wantEnd int64, bodyLen int) 
 }
 
 func (d *DriveStore) request(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	if d.http == nil {
+		return nil, errors.New("drive http client is nil")
+	}
 	var last *HTTPResult
 	label := driveRequestLabel(method, path)
 	started := time.Now()
@@ -931,6 +939,10 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 	case duration >= driveSlowRequestThreshold:
 		d.Logger.Printf("drive request slow op=%s attempts=%d status=%d duration=%s", label, attempts, status, duration)
 	}
+}
+
+func (d *DriveStore) mediaRequest(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return d.request(ctx, method, path, headers, body)
 }
 
 type driveQuotaStats struct {

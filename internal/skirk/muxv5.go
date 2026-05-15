@@ -975,7 +975,7 @@ func parseMuxVersionPlaneObjectInfo(info ObjectInfo, prefix, plane, suffix strin
 	if strings.TrimSpace(info.Updated) != "" {
 		updated, _ = time.Parse(time.RFC3339Nano, info.Updated)
 	}
-	return muxObjectMeta{Name: name, ID: info.ID, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, Lane: lane, Seq: seq, Priority: class == muxV5ClassHotName, PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
+	return muxObjectMeta{Name: name, ID: info.ID, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, Lane: lane, Seq: seq, Priority: class == muxV5ClassHotName, Plane: plane, PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
 }
 
 func writeString16(buf *bytes.Buffer, value string) error {

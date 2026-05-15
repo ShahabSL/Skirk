@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"skirk/internal/skirk"
 	"strings"
 	"testing"
 )
@@ -62,6 +63,44 @@ func TestNormalizeOAuthScopes(t *testing.T) {
 	}
 	if strings.Count(got, "openid") != 1 {
 		t.Fatalf("normalizeOAuthScopes did not deduplicate: %q", got)
+	}
+}
+
+func TestApplyTunnelOverridesConcurrencyDoesNotSetAutoProfileSplitCaps(t *testing.T) {
+	cfg := &skirk.Config{
+		Secret: "test-secret",
+		Auth:   skirk.AuthConfig{AccessToken: "token"},
+		Route:  skirk.RouteConfig{Mode: "direct"},
+		Drive:  skirk.DriveConfig{Space: "appDataFolder"},
+		Tunnel: skirk.TunnelConfig{Profile: "auto", ChunkSize: 16 * 1024 * 1024, PollIntervalMS: 100, BurstPollMS: 75, BurstPollWindowMS: 5000, Concurrency: 8},
+	}
+	if err := applyTunnelOverrides(cfg, 0, 0, 64, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.Tunnel.Concurrency, 64; got != want {
+		t.Fatalf("concurrency = %d, want %d", got, want)
+	}
+	if cfg.Tunnel.UploadConcurrency != 0 || cfg.Tunnel.DownloadConcurrency != 0 {
+		t.Fatalf("split caps = upload %d download %d, want zero auto caps", cfg.Tunnel.UploadConcurrency, cfg.Tunnel.DownloadConcurrency)
+	}
+}
+
+func TestApplyTunnelOverridesSplitCapsRemainExplicit(t *testing.T) {
+	cfg := &skirk.Config{
+		Secret: "test-secret",
+		Auth:   skirk.AuthConfig{AccessToken: "token"},
+		Route:  skirk.RouteConfig{Mode: "direct"},
+		Drive:  skirk.DriveConfig{Space: "appDataFolder"},
+		Tunnel: skirk.TunnelConfig{Profile: "auto", ChunkSize: 16 * 1024 * 1024, PollIntervalMS: 100, BurstPollMS: 75, BurstPollWindowMS: 5000, Concurrency: 8},
+	}
+	if err := applyTunnelOverrides(cfg, 0, 0, 0, 12, 48); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.Tunnel.UploadConcurrency, 12; got != want {
+		t.Fatalf("upload cap = %d, want %d", got, want)
+	}
+	if got, want := cfg.Tunnel.DownloadConcurrency, 48; got != want {
+		t.Fatalf("download cap = %d, want %d", got, want)
 	}
 }
 

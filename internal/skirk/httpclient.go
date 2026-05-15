@@ -93,10 +93,14 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		}
 		handshakeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
+		clientHelloID := utls.HelloChrome_Auto
+		if isGoogleFrontHTTP1Route(route.Mode) {
+			clientHelloID = utls.HelloRandomizedNoALPN
+		}
 		uconn := utls.UClient(raw, &utls.Config{
 			ServerName: host,
 			MinVersion: utls.VersionTLS12,
-		}, utls.HelloChrome_Auto)
+		}, clientHelloID)
 		if err := uconn.HandshakeContext(handshakeCtx); err != nil {
 			_ = raw.Close()
 			return nil, err
