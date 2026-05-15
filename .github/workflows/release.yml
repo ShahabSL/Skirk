@@ -136,6 +136,7 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           mapfile -t assets < <(find dist-release -type f | sort)
           if [ "${#assets[@]}" -eq 0 ]; then
