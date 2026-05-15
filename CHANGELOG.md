@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed setup on VPS hosts with broken IPv6 connectivity to Google OAuth by
+  automatically preferring IPv4 for `gcloud` login when possible.
+- Clarified install commands to use the absolute installed binary path when
+  shell `PATH` propagation is unreliable.
+- Added donation placeholders to the README.
 - Fixed Android sidecar startup validation so stale local listeners are not
   accepted as a healthy new engine, without using an Android parent-death signal
   that can terminate valid app-launched sidecars.
