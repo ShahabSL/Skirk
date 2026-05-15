@@ -56,6 +56,10 @@ Important fields:
 - `tunnel.exit_proxy`: optional proxy for target traffic from the exit.
 - `tunnel.cleanup_processed`: deletes processed mux objects.
 
+For the production transport design, see [Architecture](architecture.md). For
+protocol experiments and promotion gates, see
+[Transport Research](transport-research.md).
+
 ## Drive AppData
 
 Skirk uses Drive `appDataFolder` for encrypted runtime objects. That keeps data
@@ -109,7 +113,7 @@ priority over deleting old objects.
 
 - default age: 24 hours;
 - default interval: 6 hours;
-- prefix: `muxv4/`.
+- prefixes: mux transport object prefixes.
 
 Environment controls:
 

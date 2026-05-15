@@ -1,7 +1,5 @@
 # Skirk Transport Modes
 
-Date: 2026-05-11
-
 Skirk has one production transport:
 
 ```text
@@ -36,6 +34,11 @@ The transport groups active TCP streams into bounded mux lanes:
 This is the current best shape for Drive because it minimizes object count and
 avoids one Drive polling loop per browser connection.
 
+Current protocol lab results show muxv4 as the best proven default under the
+current appDataFolder, single-mailbox, Google-fronted/pinned-route constraints.
+That conclusion is workload-based: candidates must preserve browsing and media
+behavior during bulk transfers, not only improve one bulk download.
+
 ## Discovery
 
 ```text
@@ -62,6 +65,8 @@ Available route modes:
   real Google API TLS name.
 - `google_front`: use a Google-looking TLS/SNI path for Google API traffic.
 - `google_front_pinned`: same idea pinned to `--google-ip`.
+- `google_front_h1` and `google_front_h1_pinned`: HTTP/1.1 variants used for
+  route experiments.
 
 Use fronted routes only on networks where you are authorized to test and where
 normal Google API hostnames are blocked or unreliable.
@@ -74,18 +79,16 @@ normal Google API hostnames are blocked or unreliable.
 - Android app: whole-device VPN mode and optional SOCKS/LAN sharing.
 - Windows desktop app: profile import and local SOCKS proxy control.
 
-## Discovery
-
-Skirk uses fresh prefix listing for runtime discovery. Client/run namespacing
-keeps each client's downlink prefix separate while the exit watches the shared
-uplink prefix.
-
 ## Constraints
 
 Google Drive is an object API, not a stream API. A new small request/response
 still needs object upload, object discovery, exit processing, response upload,
 and response discovery. Skirk removes avoidable extra objects and shares polling
 across streams, but it cannot remove Drive object visibility latency.
+
+Large muxv4-only speedups are therefore unlikely without changing a core
+constraint such as using multiple mailboxes, a broader OAuth/data-plane split,
+or a non-Drive carrier. See [Transport Research](transport-research.md).
 
 UDP is not a first-class transport. Android VPN mode routes TCP through Skirk;
 apps that rely heavily on UDP or QUIC may need to fall back to TCP.

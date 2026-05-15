@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -17,13 +18,18 @@ import kotlin.concurrent.thread
 
 class SkirkProxyService : Service() {
     private val engine by lazy { AndroidSkirkEngine(this, "skirk-client.log") }
+    private val connectionState by lazy { ConnectionStateStore(this) }
     private val startInProgress = AtomicBoolean(false)
+    @Volatile
+    private var stopRequested = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            stopRequested = true
             stopProxy()
+            connectionState.stopped("Disconnected")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -33,16 +39,24 @@ class SkirkProxyService : Service() {
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
+            connectionState.stopped("No profile selected")
             stopSelf()
             return START_NOT_STICKY
         }
 
         startForegroundCompat(profile)
+        stopRequested = false
+        connectionState.connecting(profile, "SOCKS connecting on ${profile.socksAddress}")
         if (startInProgress.compareAndSet(false, true)) {
             thread(name = "skirk-proxy-start", start = true) {
                 runCatching { startProxy(profile) }
                     .onFailure { error ->
                         Log.e(TAG, "Failed to start Skirk", error)
+                        if (stopRequested) {
+                            connectionState.stopped("Disconnected")
+                        } else {
+                            connectionState.failed("SOCKS failed: ${error.message ?: "start failed"}")
+                        }
                         stopProxy()
                         stopSelf()
                     }
@@ -55,6 +69,11 @@ class SkirkProxyService : Service() {
     override fun onDestroy() {
         Log.i(TAG, "Proxy service destroyed")
         stopProxy()
+        val state = connectionState.read()
+        if (state.running && state.mode == ClientProfile.CONNECTION_MODE_PROXY) {
+            stopRequested = true
+            connectionState.stopped("SOCKS stopped")
+        }
         super.onDestroy()
     }
 
@@ -62,7 +81,11 @@ class SkirkProxyService : Service() {
         Log.i(TAG, "Starting proxy on ${profile.socksAddress}")
         stopProxy()
         engine.start(profile)
-        engine.waitUntilReady(profile.socksHost, profile.socksPort)
+        engine.waitUntilReady(readinessHost(profile), profile.socksPort)
+        if (stopRequested) {
+            return
+        }
+        connectionState.connected(profile, "SOCKS connected on ${displayAddress(profile)}")
         Log.i(TAG, "Proxy ready on ${profile.socksAddress}")
     }
 
@@ -108,10 +131,26 @@ class SkirkProxyService : Service() {
             .setContentTitle("Skirk is connected")
             .setContentText("SOCKS5 $address")
             .setContentIntent(contentIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+                    "Disconnect",
+                    stopIntent,
+                ).build(),
+            )
             .setOngoing(true)
             .build()
     }
+
+    private fun readinessHost(profile: ClientProfile): String =
+        if (profile.socksHost == "0.0.0.0") "127.0.0.1" else profile.socksHost
+
+    private fun displayAddress(profile: ClientProfile): String =
+        if (profile.shareLan) {
+            lanAddresses(profile.socksPort).firstOrNull() ?: profile.socksAddress
+        } else {
+            profile.socksAddress
+        }
 
     private fun ensureNotificationChannel() {
         val manager = getSystemService(NotificationManager::class.java)

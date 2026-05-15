@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
@@ -24,6 +25,7 @@ import kotlin.concurrent.thread
 class SkirkVpnService : VpnService() {
     private val engine by lazy { AndroidSkirkEngine(this, "skirk-vpn-client.log") }
     private val tunnel by lazy { HevTun2Socks() }
+    private val connectionState by lazy { ConnectionStateStore(this) }
     private val stopOnce = AtomicBoolean(false)
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile
@@ -36,7 +38,7 @@ class SkirkVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             thread(name = "skirk-vpn-stop", start = true) {
-                stopTunnel("stop requested")
+                stopTunnel("Disconnected")
             }
             return START_NOT_STICKY
         }
@@ -46,11 +48,13 @@ class SkirkVpnService : VpnService() {
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
+            connectionState.stopped("No profile selected")
             stopSelf()
             return START_NOT_STICKY
         }
 
         startForegroundCompat("Connecting")
+        connectionState.connecting(profile, "VPN connecting")
         stopRequested = false
         stopOnce.set(false)
         if (!workerStarted) {
@@ -59,7 +63,7 @@ class SkirkVpnService : VpnService() {
                 runCatching { startTunnel(profile) }
                     .onFailure { error ->
                         Log.e(TAG, "VPN start failed", error)
-                        stopTunnel(error.message ?: "start failed")
+                        stopTunnel("VPN failed: ${error.message ?: "start failed"}", failed = true)
                     }
             }
         }
@@ -67,7 +71,7 @@ class SkirkVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        stopTunnel("system revoked VPN permission")
+        stopTunnel("VPN permission was revoked")
         super.onRevoke()
     }
 
@@ -134,10 +138,11 @@ class SkirkVpnService : VpnService() {
         val configFile = writeTunnelConfig(localProfile.socksPort)
         tunnel.TProxyStartService(configFile.absolutePath, vpnInterface!!.fd)
         startForegroundCompat("Connected")
+        connectionState.connected(localProfile, "VPN connected")
         Log.i(TAG, "VPN connected through SOCKS 127.0.0.1:${localProfile.socksPort}")
     }
 
-    private fun stopTunnel(reason: String) {
+    private fun stopTunnel(reason: String, failed: Boolean = false) {
         if (!stopOnce.compareAndSet(false, true)) {
             return
         }
@@ -150,6 +155,11 @@ class SkirkVpnService : VpnService() {
         vpnInterface = null
         engine.stop()
         workerStarted = false
+        if (failed) {
+            connectionState.failed(reason)
+        } else {
+            connectionState.stopped(reason)
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -245,7 +255,13 @@ class SkirkVpnService : VpnService() {
             .setContentTitle("Skirk VPN")
             .setContentText(status)
             .setContentIntent(contentIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+                    "Disconnect",
+                    stopIntent,
+                ).build(),
+            )
             .setOngoing(true)
             .build()
     }
@@ -270,8 +286,6 @@ class SkirkVpnService : VpnService() {
         private const val TUN_IPV4_ADDRESS = "198.18.0.1"
         private const val TUN_IPV6_ADDRESS = "fd7a:736b:6972:6b::1"
         private const val MAP_DNS_ADDRESS = "198.18.0.2"
-        fun prepare(context: Context): Intent? = VpnService.prepare(context)
-
         fun start(context: Context, profile: ClientProfile) {
             val intent = Intent(context, SkirkVpnService::class.java)
                 .setAction(ACTION_START)

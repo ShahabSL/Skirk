@@ -114,7 +114,7 @@ func usage() {
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
-  bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range|v5-primitives] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
+  bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
   serve-client --config skirk.json [--listen 127.0.0.1:18080] [--client-id my-device]
@@ -199,7 +199,7 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/, muxv5/<session>/, and muxv6/<session>/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")
@@ -221,7 +221,7 @@ func cleanup(ctx context.Context, args []string) error {
 			return err
 		}
 		session := skirk.SessionString(sid)
-		cleanupPrefixes = []string{"muxv4/" + session + "/", "muxv5/" + session + "/", "muxv6/" + session + "/"}
+		cleanupPrefixes = []string{"muxv4/" + session + "/"}
 	}
 	results := make([]skirk.DriveCleanupResult, 0, len(cleanupPrefixes))
 	for _, cleanupPrefix := range cleanupPrefixes {
@@ -255,7 +255,7 @@ func serveClient(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
+	transport := fs.String("transport", "", "override mux transport: muxv4")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -344,7 +344,7 @@ func serveExit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-exit", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
+	transport := fs.String("transport", "", "override mux transport: muxv4")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -391,7 +391,7 @@ func serveExit(ctx context.Context, args []string) error {
 const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 6 * time.Hour
 
-var mailboxJanitorPrefixes = []string{"muxv4/", "muxv5/", "muxv6/"}
+var mailboxJanitorPrefixes = []string{"muxv4/"}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
@@ -520,15 +520,14 @@ type benchQuotaRequestSummary struct {
 }
 
 type benchDriveResult struct {
-	RouteMode      string                        `json:"route_mode"`
-	Prefix         string                        `json:"prefix"`
-	StartedUTC     string                        `json:"started_utc"`
-	DurationMS     int64                         `json:"duration_ms"`
-	VisibilityPoll int64                         `json:"visibility_poll_ms"`
-	Matrix         []benchDriveMatrixResult      `json:"matrix,omitempty"`
-	V5Primitives   []benchDriveV5PrimitiveResult `json:"v5_primitives,omitempty"`
-	Quota          skirk.DriveQuotaSnapshot      `json:"quota"`
-	QuotaOps       string                        `json:"quota_ops"`
+	RouteMode      string                   `json:"route_mode"`
+	Prefix         string                   `json:"prefix"`
+	StartedUTC     string                   `json:"started_utc"`
+	DurationMS     int64                    `json:"duration_ms"`
+	VisibilityPoll int64                    `json:"visibility_poll_ms"`
+	Matrix         []benchDriveMatrixResult `json:"matrix,omitempty"`
+	Quota          skirk.DriveQuotaSnapshot `json:"quota"`
+	QuotaOps       string                   `json:"quota_ops"`
 }
 
 type benchDriveMatrixResult struct {
@@ -578,103 +577,6 @@ type benchDriveSample struct {
 	ListPartial bool   `json:"list_partial"`
 }
 
-type benchDriveV5PrimitiveResult struct {
-	Mode                    string                        `json:"mode"`
-	SizeBytes               int64                         `json:"size_bytes"`
-	RangeBytes              int64                         `json:"range_bytes"`
-	Concurrency             int                           `json:"concurrency"`
-	Objects                 int                           `json:"objects"`
-	GeneratedIDsRequested   int                           `json:"generated_ids_requested"`
-	GeneratedIDsReturned    int                           `json:"generated_ids_returned"`
-	GeneratedIDsUnique      int                           `json:"generated_ids_unique"`
-	GeneratedIDMismatches   int                           `json:"generated_id_mismatches"`
-	ConflictProbes          int                           `json:"conflict_probes"`
-	ConflictSuccesses       int                           `json:"conflict_successes"`
-	ConflictFailures        int                           `json:"conflict_failures"`
-	CleanupFailures         int                           `json:"cleanup_failures"`
-	Successes               int                           `json:"successes"`
-	Failures                int                           `json:"failures"`
-	Bytes                   int64                         `json:"bytes"`
-	DurationMS              int64                         `json:"duration_ms"`
-	MeanMBps                float64                       `json:"mean_MBps"`
-	MeanMbps                float64                       `json:"mean_mbps"`
-	FullDownloadMbps        float64                       `json:"full_download_mbps"`
-	RangeDownloadMbps       float64                       `json:"range_download_mbps"`
-	P50TotalMS              int64                         `json:"p50_total_ms"`
-	P95TotalMS              int64                         `json:"p95_total_ms"`
-	P50GenerateIDsMS        int64                         `json:"p50_generate_ids_ms"`
-	P95GenerateIDsMS        int64                         `json:"p95_generate_ids_ms"`
-	P50DataUploadMS         int64                         `json:"p50_data_upload_ms"`
-	P95DataUploadMS         int64                         `json:"p95_data_upload_ms"`
-	P50ControlUploadMS      int64                         `json:"p50_control_upload_ms"`
-	P95ControlUploadMS      int64                         `json:"p95_control_upload_ms"`
-	P50ConflictProbeMS      int64                         `json:"p50_conflict_probe_ms"`
-	P95ConflictProbeMS      int64                         `json:"p95_conflict_probe_ms"`
-	P50ListVisibleMS        int64                         `json:"p50_list_visible_ms"`
-	P95ListVisibleMS        int64                         `json:"p95_list_visible_ms"`
-	P50ChangesVisibleMS     int64                         `json:"p50_changes_visible_ms"`
-	P95ChangesVisibleMS     int64                         `json:"p95_changes_visible_ms"`
-	P50FullDownloadMS       int64                         `json:"p50_full_download_ms"`
-	P95FullDownloadMS       int64                         `json:"p95_full_download_ms"`
-	P50RangeDownloadMS      int64                         `json:"p50_range_download_ms"`
-	P95RangeDownloadMS      int64                         `json:"p95_range_download_ms"`
-	ListPollsTotal          int                           `json:"list_polls_total"`
-	ListPagesTotal          int                           `json:"list_pages_total"`
-	ChangesPollsTotal       int                           `json:"changes_polls_total"`
-	ChangesPagesTotal       int                           `json:"changes_pages_total"`
-	ChangesIgnoredTotal     int                           `json:"changes_ignored_total"`
-	ChangesDataSeenTotal    int                           `json:"changes_data_seen_total"`
-	ChangesControlSeenTotal int                           `json:"changes_control_seen_total"`
-	NewStartTokenSeen       bool                          `json:"new_start_token_seen"`
-	ChangesPollutionRatio   float64                       `json:"changes_pollution_ratio"`
-	Samples                 []benchDriveV5PrimitiveSample `json:"samples"`
-	Errors                  map[string]int                `json:"errors,omitempty"`
-}
-
-type benchDriveV5PrimitiveSample struct {
-	Index              int    `json:"index"`
-	DataID             string `json:"data_id,omitempty"`
-	ControlID          string `json:"control_id,omitempty"`
-	DataName           string `json:"data_name"`
-	ControlName        string `json:"control_name"`
-	SizeBytes          int64  `json:"size_bytes"`
-	RangeBytes         int64  `json:"range_bytes"`
-	OK                 bool   `json:"ok"`
-	Error              string `json:"error,omitempty"`
-	ChangesTokenMS     int64  `json:"changes_token_ms"`
-	GenerateIDsMS      int64  `json:"generate_ids_ms"`
-	DataUploadMS       int64  `json:"data_upload_ms"`
-	ControlUploadMS    int64  `json:"control_upload_ms"`
-	ConflictProbeMS    int64  `json:"conflict_probe_ms,omitempty"`
-	ListVisibleMS      int64  `json:"list_visible_ms"`
-	ChangesVisibleMS   int64  `json:"changes_visible_ms"`
-	FullDownloadMS     int64  `json:"full_download_ms"`
-	RangeDownloadMS    int64  `json:"range_download_ms"`
-	DeleteMS           int64  `json:"delete_ms"`
-	TotalMS            int64  `json:"total_ms"`
-	ListCalls          int    `json:"list_calls"`
-	ListPages          int    `json:"list_pages"`
-	ListPartial        bool   `json:"list_partial"`
-	ChangesCalls       int    `json:"changes_calls"`
-	ChangesPages       int    `json:"changes_pages"`
-	ChangesIgnored     int    `json:"changes_ignored"`
-	ChangesDataSeen    int    `json:"changes_data_seen"`
-	ChangesControlSeen int    `json:"changes_control_seen"`
-}
-
-type benchDriveVisibilityResult struct {
-	VisibleMS      map[string]int64
-	Calls          int
-	Pages          int
-	Partial        bool
-	Ignored        int
-	DataSeen       int
-	ControlSeen    int
-	NewStartToken  bool
-	TruncatedPages int
-	Error          string
-}
-
 func benchLive(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bench-live", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/client.skirk", "config path or inline config text")
@@ -696,7 +598,7 @@ func benchLive(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4, muxv5a, muxv5b, or muxv6")
+	transport := fs.String("transport", "", "override mux transport: muxv4")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -847,8 +749,8 @@ func benchDrive(ctx context.Context, args []string) error {
 	sizesValue := fs.String("sizes", "256K,512K,1M,2M,4M", "comma-separated object sizes")
 	concurrencyValue := fs.String("concurrency", "4,8,16", "comma-separated Drive lifecycle concurrency levels")
 	objects := fs.Int("objects", 32, "objects per size/concurrency matrix cell")
-	mode := fs.String("mode", "lifecycle", "benchmark mode: lifecycle, known-id, range, or v5-primitives")
-	rangeSizeValue := fs.String("range-size", "256K", "byte range size for --mode range and v5-primitives")
+	mode := fs.String("mode", "lifecycle", "benchmark mode: lifecycle, known-id, or range")
+	rangeSizeValue := fs.String("range-size", "256K", "byte range size for --mode range")
 	visibilityPoll := fs.Duration("visibility-poll", 100*time.Millisecond, "Drive discovery poll interval")
 	visibilityTimeout := fs.Duration("visibility-timeout", 30*time.Second, "timeout waiting for Drive discovery")
 	timeout := fs.Duration("timeout", 30*time.Minute, "overall benchmark timeout")
@@ -915,15 +817,6 @@ func benchDrive(ctx context.Context, args []string) error {
 			return err
 		}
 		for _, concurrency := range concurrencyLevels {
-			switch normalizedMode {
-			case "v5", "v5-primitives", "v5_primitives", "primitives":
-				primitive, err := runBenchDriveV5PrimitiveMatrix(benchCtx, drive, prefix, payload, concurrency, *objects, rangeSize, *visibilityPoll, *visibilityTimeout, *cleanupObjects)
-				if err != nil {
-					return err
-				}
-				result.V5Primitives = append(result.V5Primitives, primitive)
-				continue
-			}
 			var matrix benchDriveMatrixResult
 			switch normalizedMode {
 			case "", "lifecycle":
@@ -945,382 +838,6 @@ func benchDrive(ctx context.Context, args []string) error {
 	result.Quota = drive.QuotaSnapshot()
 	result.QuotaOps = result.Quota.OpSummary()
 	return printJSON(result)
-}
-
-func runBenchDriveV5PrimitiveMatrix(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, objects, rangeBytes int, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (matrix benchDriveV5PrimitiveResult, err error) {
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	if concurrency > objects {
-		concurrency = objects
-	}
-	if rangeBytes > len(payload) {
-		rangeBytes = len(payload)
-	}
-	started := time.Now()
-	matrix = benchDriveV5PrimitiveResult{
-		Mode:                  "v5-primitives",
-		SizeBytes:             int64(len(payload)),
-		RangeBytes:            int64(rangeBytes),
-		Concurrency:           concurrency,
-		Objects:               objects,
-		GeneratedIDsRequested: objects * 2,
-		Errors:                map[string]int{},
-	}
-	tokenStart := time.Now()
-	changeToken, err := drive.ChangesStartPageToken(ctx)
-	changeTokenMS := time.Since(tokenStart).Milliseconds()
-	if err != nil {
-		return matrix, fmt.Errorf("v5 primitive changes token: %w", err)
-	}
-	generateStart := time.Now()
-	ids, err := drive.GenerateObjectIDs(ctx, matrix.GeneratedIDsRequested)
-	generateIDsMS := time.Since(generateStart).Milliseconds()
-	if err != nil {
-		return matrix, fmt.Errorf("v5 primitive generate ids: %w", err)
-	}
-	matrix.GeneratedIDsReturned = len(ids)
-	uniqueIDs := map[string]struct{}{}
-	for _, id := range ids {
-		uniqueIDs[id] = struct{}{}
-	}
-	matrix.GeneratedIDsUnique = len(uniqueIDs)
-	if matrix.GeneratedIDsReturned != matrix.GeneratedIDsRequested {
-		matrix.GeneratedIDMismatches += absInt(matrix.GeneratedIDsRequested - matrix.GeneratedIDsReturned)
-	}
-	if matrix.GeneratedIDsUnique != matrix.GeneratedIDsReturned {
-		matrix.GeneratedIDMismatches += matrix.GeneratedIDsReturned - matrix.GeneratedIDsUnique
-	}
-	if len(ids) < matrix.GeneratedIDsRequested {
-		return matrix, fmt.Errorf("v5 primitive generated %d ids, want %d", len(ids), matrix.GeneratedIDsRequested)
-	}
-	cleanupIDs := append([]string(nil), ids[:matrix.GeneratedIDsRequested]...)
-	defer func() {
-		if cleanupObjects && len(cleanupIDs) > 0 {
-			if err := drive.DeleteIDs(context.Background(), cleanupIDs, max(1, min(concurrency, 8))); err != nil {
-				matrix.CleanupFailures++
-				if matrix.Errors == nil {
-					matrix.Errors = map[string]int{}
-				}
-				matrix.Errors["cleanup:"+cliErrorSummary(err)]++
-			}
-		}
-	}()
-
-	dataPrefix := fmt.Sprintf("%sv5/data/%d/%d/", prefix, len(payload), concurrency)
-	controlPrefix := fmt.Sprintf("%sv5/control/%d/%d/", prefix, len(payload), concurrency)
-	samples := make([]benchDriveV5PrimitiveSample, objects)
-	controlTargets := make(map[string]int, objects)
-	for index := range samples {
-		samples[index] = benchDriveV5PrimitiveSample{
-			Index:          index,
-			DataID:         ids[index*2],
-			ControlID:      ids[index*2+1],
-			DataName:       fmt.Sprintf("%s%08d.bin", dataPrefix, index),
-			ControlName:    fmt.Sprintf("%s%08d.json", controlPrefix, index),
-			SizeBytes:      int64(len(payload)),
-			RangeBytes:     int64(rangeBytes),
-			ChangesTokenMS: changeTokenMS,
-			GenerateIDsMS:  generateIDsMS,
-		}
-		controlTargets[samples[index].ControlID] = index
-	}
-	runIndexed := func(fn func(int)) error {
-		jobs := make(chan int)
-		var wg sync.WaitGroup
-		for worker := 0; worker < concurrency; worker++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for index := range jobs {
-					fn(index)
-				}
-			}()
-		}
-		for index := range samples {
-			select {
-			case jobs <- index:
-			case <-ctx.Done():
-				close(jobs)
-				wg.Wait()
-				return ctx.Err()
-			}
-		}
-		close(jobs)
-		wg.Wait()
-		return nil
-	}
-	if err := runIndexed(func(index int) {
-		sample := &samples[index]
-		uploadStart := time.Now()
-		info, err := drive.PutObjectWithID(ctx, sample.DataID, sample.DataName, payload)
-		sample.DataUploadMS = time.Since(uploadStart).Milliseconds()
-		if err != nil {
-			sample.Error = "data_upload:" + cliErrorSummary(err)
-			return
-		}
-		if info.ID != sample.DataID {
-			sample.Error = "data_id_mismatch:" + info.ID
-			return
-		}
-	}); err != nil {
-		return matrix, err
-	}
-	if err := runIndexed(func(index int) {
-		sample := &samples[index]
-		if sample.Error != "" {
-			return
-		}
-		controlPayload, err := json.Marshal(map[string]any{
-			"version":      5,
-			"kind":         "primitive-control",
-			"data_id":      sample.DataID,
-			"data_name":    sample.DataName,
-			"data_size":    len(payload),
-			"range_bytes":  rangeBytes,
-			"created_unix": time.Now().UnixNano(),
-		})
-		if err != nil {
-			sample.Error = "control_encode:" + cliErrorSummary(err)
-			return
-		}
-		uploadStart := time.Now()
-		info, err := drive.PutObjectWithID(ctx, sample.ControlID, sample.ControlName, controlPayload)
-		sample.ControlUploadMS = time.Since(uploadStart).Milliseconds()
-		if err != nil {
-			sample.Error = "control_upload:" + cliErrorSummary(err)
-			return
-		}
-		if info.ID != sample.ControlID {
-			sample.Error = "control_id_mismatch:" + info.ID
-			return
-		}
-	}); err != nil {
-		return matrix, err
-	}
-
-	matrix.ConflictProbes = 1
-	conflictStart := time.Now()
-	if len(samples) > 0 && samples[0].Error == "" {
-		info, err := drive.PutObjectWithID(ctx, samples[0].DataID, samples[0].DataName, payload)
-		samples[0].ConflictProbeMS = time.Since(conflictStart).Milliseconds()
-		if err != nil {
-			matrix.ConflictFailures++
-			samples[0].Error = "conflict_probe:" + cliErrorSummary(err)
-		} else if info.ID != samples[0].DataID || info.Name != samples[0].DataName || info.Size != int64(len(payload)) {
-			matrix.ConflictFailures++
-			samples[0].Error = "conflict_probe_mismatch"
-		} else {
-			matrix.ConflictSuccesses++
-		}
-	}
-
-	since := started.UTC().Add(-time.Minute)
-	activeControlTargets := make(map[string]int, len(controlTargets))
-	for id, index := range controlTargets {
-		if samples[index].Error == "" {
-			activeControlTargets[id] = index
-		}
-	}
-	if len(activeControlTargets) > 0 {
-		visibilityCtx, cancel := context.WithTimeout(ctx, visibilityTimeout)
-		listCh := make(chan benchDriveVisibilityResult, 1)
-		changesCh := make(chan benchDriveVisibilityResult, 1)
-		go func() {
-			listCh <- waitBenchDriveListVisible(visibilityCtx, drive, controlPrefix, activeControlTargets, since, pollInterval)
-		}()
-		go func() {
-			changesCh <- waitBenchDriveChangesVisible(visibilityCtx, drive, changeToken, activeControlTargets, dataPrefix, controlPrefix, pollInterval)
-		}()
-		listResult := <-listCh
-		changesResult := <-changesCh
-		cancel()
-		matrix.ListPollsTotal = listResult.Calls
-		matrix.ListPagesTotal = listResult.Pages
-		matrix.ChangesPollsTotal = changesResult.Calls
-		matrix.ChangesPagesTotal = changesResult.Pages
-		matrix.ChangesIgnoredTotal = changesResult.Ignored
-		matrix.ChangesDataSeenTotal = changesResult.DataSeen
-		matrix.ChangesControlSeenTotal = changesResult.ControlSeen
-		matrix.NewStartTokenSeen = changesResult.NewStartToken
-		totalChanges := changesResult.DataSeen + changesResult.ControlSeen + changesResult.Ignored
-		if totalChanges > 0 {
-			matrix.ChangesPollutionRatio = float64(changesResult.DataSeen+changesResult.Ignored) / float64(totalChanges)
-		}
-		for id, index := range activeControlTargets {
-			if visibleMS, ok := listResult.VisibleMS[id]; ok {
-				samples[index].ListVisibleMS = visibleMS
-			} else if samples[index].Error == "" {
-				samples[index].Error = "list_visible:" + firstNonEmpty(listResult.Error, "missing_control")
-			}
-			if visibleMS, ok := changesResult.VisibleMS[id]; ok {
-				samples[index].ChangesVisibleMS = visibleMS
-			} else if samples[index].Error == "" {
-				samples[index].Error = "changes_visible:" + firstNonEmpty(changesResult.Error, "missing_control")
-			}
-		}
-	}
-
-	if err := runIndexed(func(index int) {
-		sample := &samples[index]
-		if sample.Error != "" {
-			return
-		}
-		downloadStart := time.Now()
-		data, err := drive.GetByID(ctx, sample.DataID)
-		sample.FullDownloadMS = time.Since(downloadStart).Milliseconds()
-		if err != nil {
-			sample.Error = "full_download:" + cliErrorSummary(err)
-			return
-		}
-		if !bytes.Equal(data, payload) {
-			sample.Error = fmt.Sprintf("full_download_mismatch:%d", len(data))
-			return
-		}
-		if rangeBytes <= 0 {
-			return
-		}
-		rangeStart := time.Now()
-		rangeData, _, err := drive.GetRangeByID(ctx, sample.DataID, 0, int64(rangeBytes-1))
-		sample.RangeDownloadMS = time.Since(rangeStart).Milliseconds()
-		if err != nil {
-			sample.Error = "range_download:" + cliErrorSummary(err)
-			return
-		}
-		if !bytes.Equal(rangeData, payload[:rangeBytes]) {
-			sample.Error = fmt.Sprintf("range_download_mismatch:%d", len(rangeData))
-		}
-	}); err != nil {
-		return matrix, err
-	}
-
-	for index := range samples {
-		samples[index].TotalMS = time.Since(started).Milliseconds()
-		if samples[index].Error == "" {
-			samples[index].OK = true
-		}
-		matrix.Samples = append(matrix.Samples, samples[index])
-		if samples[index].OK {
-			matrix.Successes++
-			matrix.Bytes += int64(len(payload))
-		} else {
-			matrix.Failures++
-			matrix.Errors[samples[index].Error]++
-		}
-		if strings.Contains(samples[index].Error, "_id_mismatch") {
-			matrix.GeneratedIDMismatches++
-		}
-	}
-	sort.Slice(matrix.Samples, func(i, j int) bool { return matrix.Samples[i].Index < matrix.Samples[j].Index })
-	matrix.DurationMS = time.Since(started).Milliseconds()
-	if matrix.DurationMS > 0 {
-		matrix.MeanMBps = float64(matrix.Bytes) / (float64(matrix.DurationMS) / 1000) / 1_000_000
-		matrix.MeanMbps = matrix.MeanMBps * 8
-	}
-	matrix.FullDownloadMbps = throughputV5PrimitiveMbps(matrix.Samples, int64(len(payload)), func(s benchDriveV5PrimitiveSample) int64 { return s.FullDownloadMS })
-	matrix.RangeDownloadMbps = throughputV5PrimitiveMbps(matrix.Samples, int64(rangeBytes), func(s benchDriveV5PrimitiveSample) int64 { return s.RangeDownloadMS })
-	matrix.P50TotalMS, matrix.P95TotalMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.TotalMS })
-	matrix.P50GenerateIDsMS, matrix.P95GenerateIDsMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.GenerateIDsMS })
-	matrix.P50DataUploadMS, matrix.P95DataUploadMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.DataUploadMS })
-	matrix.P50ControlUploadMS, matrix.P95ControlUploadMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.ControlUploadMS })
-	matrix.P50ConflictProbeMS, matrix.P95ConflictProbeMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.ConflictProbeMS })
-	matrix.P50ListVisibleMS, matrix.P95ListVisibleMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.ListVisibleMS })
-	matrix.P50ChangesVisibleMS, matrix.P95ChangesVisibleMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.ChangesVisibleMS })
-	matrix.P50FullDownloadMS, matrix.P95FullDownloadMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.FullDownloadMS })
-	matrix.P50RangeDownloadMS, matrix.P95RangeDownloadMS = v5PrimitivePercentiles(matrix.Samples, func(s benchDriveV5PrimitiveSample) int64 { return s.RangeDownloadMS })
-	if len(matrix.Errors) == 0 {
-		matrix.Errors = nil
-	}
-	return matrix, nil
-}
-
-func waitBenchDriveListVisible(ctx context.Context, drive *skirk.DriveStore, prefix string, targetIDs map[string]int, since time.Time, pollInterval time.Duration) benchDriveVisibilityResult {
-	started := time.Now()
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	out := benchDriveVisibilityResult{VisibleMS: map[string]int64{}}
-	for {
-		out.Calls++
-		info, err := drive.ListFreshStatus(ctx, prefix, since)
-		if err != nil {
-			out.Error = cliErrorSummary(err)
-			return out
-		}
-		if info.Pages > 0 {
-			out.Pages += info.Pages
-		} else {
-			out.Pages++
-		}
-		if info.Truncated || info.Incomplete {
-			out.TruncatedPages++
-		}
-		out.Partial = out.Partial || info.Truncated || info.Incomplete
-		for _, object := range info.Objects {
-			if _, ok := targetIDs[object.ID]; ok {
-				if _, seen := out.VisibleMS[object.ID]; !seen {
-					out.VisibleMS[object.ID] = time.Since(started).Milliseconds()
-				}
-			}
-		}
-		if len(out.VisibleMS) == len(targetIDs) {
-			return out
-		}
-		select {
-		case <-ctx.Done():
-			out.Error = firstNonEmpty(cliErrorSummary(ctx.Err()), "timeout")
-			return out
-		case <-ticker.C:
-		}
-	}
-}
-
-func waitBenchDriveChangesVisible(ctx context.Context, drive *skirk.DriveStore, pageToken string, targetIDs map[string]int, dataPrefix, controlPrefix string, pollInterval time.Duration) benchDriveVisibilityResult {
-	started := time.Now()
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	out := benchDriveVisibilityResult{VisibleMS: map[string]int64{}}
-	token := pageToken
-	for {
-		out.Calls++
-		info, err := drive.ListChanges(ctx, token, false)
-		if err != nil {
-			out.Error = cliErrorSummary(err)
-			return out
-		}
-		out.Pages++
-		for _, change := range info.Changes {
-			switch {
-			case strings.HasPrefix(change.Name, dataPrefix):
-				out.DataSeen++
-			case strings.HasPrefix(change.Name, controlPrefix):
-				out.ControlSeen++
-			default:
-				out.Ignored++
-			}
-			if _, ok := targetIDs[change.FileID]; ok {
-				if _, seen := out.VisibleMS[change.FileID]; !seen {
-					out.VisibleMS[change.FileID] = time.Since(started).Milliseconds()
-				}
-			}
-		}
-		if len(out.VisibleMS) == len(targetIDs) {
-			return out
-		}
-		if info.NextPageToken != "" {
-			token = info.NextPageToken
-			continue
-		}
-		if info.NewStartPageToken != "" {
-			out.NewStartToken = true
-			token = info.NewStartPageToken
-		}
-		select {
-		case <-ctx.Done():
-			out.Error = firstNonEmpty(cliErrorSummary(ctx.Err()), "timeout")
-			return out
-		case <-ticker.C:
-		}
-	}
 }
 
 func runBenchDriveMatrix(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, objects int, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (benchDriveMatrixResult, error) {
@@ -1393,6 +910,83 @@ func runBenchDriveMatrix(ctx context.Context, drive *skirk.DriveStore, prefix st
 		matrix.Errors = nil
 	}
 	return matrix, nil
+}
+
+func runBenchDriveSample(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, index int, since time.Time, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (sample benchDriveSample) {
+	name := fmt.Sprintf("%slifecycle/%d/%d/%08d-%d.bin", prefix, len(payload), concurrency, index, len(payload))
+	sample = benchDriveSample{Index: index, Name: name, SizeBytes: int64(len(payload))}
+	started := time.Now()
+	defer func() {
+		sample.TotalMS = time.Since(started).Milliseconds()
+	}()
+	info, err := drive.PutObject(ctx, name, payload)
+	sample.UploadMS = time.Since(started).Milliseconds()
+	if err != nil {
+		sample.Error = "upload:" + cliErrorSummary(err)
+		return sample
+	}
+	visibleStart := time.Now()
+	deadline := time.NewTimer(visibilityTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		sample.ListCalls++
+		listInfo, listErr := drive.ListFreshStatus(ctx, prefix, since)
+		if listErr != nil {
+			sample.Error = "list:" + cliErrorSummary(listErr)
+			return sample
+		}
+		if listInfo.Pages > 0 {
+			sample.ListPages += listInfo.Pages
+		} else {
+			sample.ListPages++
+		}
+		sample.ListPartial = sample.ListPartial || listInfo.Truncated
+		for _, object := range listInfo.Objects {
+			if object.ID == info.ID {
+				sample.VisibleMS = time.Since(visibleStart).Milliseconds()
+				goto visible
+			}
+		}
+		select {
+		case <-ctx.Done():
+			sample.Error = "context:" + cliErrorSummary(ctx.Err())
+			return sample
+		case <-deadline.C:
+			sample.VisibleMS = time.Since(visibleStart).Milliseconds()
+			sample.Error = "visibility_timeout"
+			return sample
+		case <-ticker.C:
+		}
+	}
+visible:
+	downloadStart := time.Now()
+	data, err := drive.GetByID(ctx, info.ID)
+	sample.DownloadMS = time.Since(downloadStart).Milliseconds()
+	if err != nil {
+		sample.Error = "download:" + cliErrorSummary(err)
+		return sample
+	}
+	if len(data) != len(payload) {
+		sample.Error = fmt.Sprintf("download_size:%d", len(data))
+		return sample
+	}
+	if !bytes.Equal(data, payload) {
+		sample.Error = "download_mismatch"
+		return sample
+	}
+	if cleanupObjects {
+		deleteStart := time.Now()
+		err = drive.DeleteID(ctx, info.ID)
+		sample.DeleteMS = time.Since(deleteStart).Milliseconds()
+		if err != nil {
+			sample.Error = "delete:" + cliErrorSummary(err)
+			return sample
+		}
+	}
+	sample.OK = true
+	return sample
 }
 
 type benchDriveKnownObject struct {
@@ -1608,106 +1202,6 @@ func throughputMbps(samples []benchDriveSample, bytesPerSample int64, duration f
 	return float64(bytes*8) / (float64(milliseconds) / 1000) / 1_000_000
 }
 
-func throughputV5PrimitiveMbps(samples []benchDriveV5PrimitiveSample, bytesPerSample int64, duration func(benchDriveV5PrimitiveSample) int64) float64 {
-	if bytesPerSample <= 0 {
-		return 0
-	}
-	var bytes int64
-	var milliseconds int64
-	for _, sample := range samples {
-		if !sample.OK {
-			continue
-		}
-		ms := duration(sample)
-		if ms <= 0 {
-			continue
-		}
-		bytes += bytesPerSample
-		milliseconds += ms
-	}
-	if milliseconds <= 0 {
-		return 0
-	}
-	return float64(bytes*8) / (float64(milliseconds) / 1000) / 1_000_000
-}
-
-func runBenchDriveSample(ctx context.Context, drive *skirk.DriveStore, prefix string, payload []byte, concurrency, index int, since time.Time, pollInterval, visibilityTimeout time.Duration, cleanupObjects bool) (sample benchDriveSample) {
-	name := fmt.Sprintf("%slifecycle/%d/%d/%08d-%d.bin", prefix, len(payload), concurrency, index, len(payload))
-	sample = benchDriveSample{Index: index, Name: name, SizeBytes: int64(len(payload))}
-	started := time.Now()
-	defer func() {
-		sample.TotalMS = time.Since(started).Milliseconds()
-	}()
-	info, err := drive.PutObject(ctx, name, payload)
-	sample.UploadMS = time.Since(started).Milliseconds()
-	if err != nil {
-		sample.Error = "upload:" + cliErrorSummary(err)
-		return sample
-	}
-	visibleStart := time.Now()
-	deadline := time.NewTimer(visibilityTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	for {
-		sample.ListCalls++
-		listInfo, listErr := drive.ListFreshStatus(ctx, prefix, since)
-		if listErr != nil {
-			sample.Error = "list:" + cliErrorSummary(listErr)
-			return sample
-		}
-		if listInfo.Pages > 0 {
-			sample.ListPages += listInfo.Pages
-		} else {
-			sample.ListPages++
-		}
-		sample.ListPartial = sample.ListPartial || listInfo.Truncated
-		for _, object := range listInfo.Objects {
-			if object.ID == info.ID {
-				sample.VisibleMS = time.Since(visibleStart).Milliseconds()
-				goto visible
-			}
-		}
-		select {
-		case <-ctx.Done():
-			sample.Error = "context:" + cliErrorSummary(ctx.Err())
-			return sample
-		case <-deadline.C:
-			sample.VisibleMS = time.Since(visibleStart).Milliseconds()
-			sample.Error = "visibility_timeout"
-			return sample
-		case <-ticker.C:
-		}
-	}
-visible:
-	downloadStart := time.Now()
-	data, err := drive.GetByID(ctx, info.ID)
-	sample.DownloadMS = time.Since(downloadStart).Milliseconds()
-	if err != nil {
-		sample.Error = "download:" + cliErrorSummary(err)
-		return sample
-	}
-	if len(data) != len(payload) {
-		sample.Error = fmt.Sprintf("download_size:%d", len(data))
-		return sample
-	}
-	if !bytes.Equal(data, payload) {
-		sample.Error = "download_mismatch"
-		return sample
-	}
-	if cleanupObjects {
-		deleteStart := time.Now()
-		err = drive.DeleteID(ctx, info.ID)
-		sample.DeleteMS = time.Since(deleteStart).Milliseconds()
-		if err != nil {
-			sample.Error = "delete:" + cliErrorSummary(err)
-			return sample
-		}
-	}
-	sample.OK = true
-	return sample
-}
-
 func parseSizeList(value string) ([]int, error) {
 	parts := strings.Split(value, ",")
 	var out []int
@@ -1780,27 +1274,7 @@ func parsePositiveIntList(value string) ([]int, error) {
 	return out, nil
 }
 
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
 func sampleDurationPercentiles(samples []benchDriveSample, get func(benchDriveSample) int64) (int64, int64) {
-	values := make([]int64, 0, len(samples))
-	for _, sample := range samples {
-		if sample.OK {
-			values = append(values, get(sample))
-		}
-	}
-	if len(values) == 0 {
-		return 0, 0
-	}
-	return percentileMS(values, 0.50), percentileMS(values, 0.95)
-}
-
-func v5PrimitivePercentiles(samples []benchDriveV5PrimitiveSample, get func(benchDriveV5PrimitiveSample) int64) (int64, int64) {
 	values := make([]int64, 0, len(samples))
 	for _, sample := range samples {
 		if sample.OK {

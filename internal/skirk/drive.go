@@ -446,10 +446,6 @@ func (d *DriveStore) ListChanges(ctx context.Context, pageToken string, includeR
 	return info, nil
 }
 
-func (d *DriveStore) ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
-	return d.listContains(ctx, contains)
-}
-
 func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))

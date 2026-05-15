@@ -166,6 +166,13 @@ listing. That path is intentionally simple: upload encrypted mux objects, poll t
 matching direction prefix, download by Drive file ID, and delete processed
 objects after foreground traffic is quiet.
 
+Mux v4 is the current default for Skirk's Drive-only transport. In local
+same-day mixed-workload tests, it has been more reliable than the experimental
+candidates tried so far, especially when browser or media traffic overlaps bulk
+downloads. It is still bounded by Drive upload, object visibility, prefix
+listing, download, cleanup, quota, and route conditions, so benchmark results are
+environment-specific rather than guaranteed speed claims.
+
 The Linux installer can perform VPS setup non-interactively:
 
 ```bash
@@ -181,7 +188,7 @@ connectivity.
 ## Cleanup And Disconnect
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
-automatic janitor that deletes stale `muxv4/` objects older than 24 hours.
+automatic janitor that deletes stale mux transport objects older than 24 hours.
 
 Manual cleanup is dry-run by default:
 
@@ -250,8 +257,11 @@ calls for faster wakeups.
 - [Install Guide](docs/install.md)
 - [Setup Guide](docs/setup.md)
 - [Client Guide](docs/clients.md)
+- [Architecture](docs/architecture.md)
 - [Transport Modes](docs/skirk_modes.md)
+- [Transport Research](docs/transport-research.md)
 - [Go CLI Notes](docs/go_skirk.md)
+- [Development Guide](docs/development.md)
 - [Release Guide](docs/release.md)
 - [Security Policy](SECURITY.md)
 - [Legal Disclaimer](DISCLAIMER.md)

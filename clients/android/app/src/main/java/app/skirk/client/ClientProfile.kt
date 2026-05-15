@@ -46,14 +46,15 @@ data class ClientProfile(
             id: String = "profile-${UUID.randomUUID()}",
         ): ClientProfile {
             val parsed = SkirkConfig.parse(rawConfig)
+            val normalizedPort = validateSocksPort(socksPort)
             require(parsed.driveSpace == "appDataFolder" || parsed.driveFolderId.isNotBlank()) {
                 "Config is missing a Drive mailbox"
             }
             return ClientProfile(
                 id = id,
                 name = name.ifBlank { "Skirk profile" },
-                rawConfig = rawConfig.trim(),
-                socksPort = socksPort,
+                rawConfig = SkirkConfig.normalizeRaw(rawConfig),
+                socksPort = normalizedPort,
                 shareLan = shareLan,
                 connectionMode = normalizeConnectionMode(connectionMode),
                 routeMode = parsed.routeMode,
@@ -67,7 +68,7 @@ data class ClientProfile(
             id = json.getString("id"),
             name = json.getString("name"),
             rawConfig = json.getString("rawConfig"),
-            socksPort = json.optInt("socksPort", 18080),
+            socksPort = json.optInt("socksPort", 18080).coerceIn(MIN_SOCKS_PORT, MAX_SOCKS_PORT),
             shareLan = json.optBoolean("shareLan", false),
             connectionMode = normalizeConnectionMode(json.optString("connectionMode", CONNECTION_MODE_VPN)),
             routeMode = json.optString("routeMode", "real_pinned"),
@@ -78,8 +79,17 @@ data class ClientProfile(
 
         const val CONNECTION_MODE_PROXY = "proxy"
         const val CONNECTION_MODE_VPN = "vpn"
+        const val MIN_SOCKS_PORT = 1024
+        const val MAX_SOCKS_PORT = 65535
 
         fun normalizeConnectionMode(value: String): String =
             if (value == CONNECTION_MODE_PROXY) CONNECTION_MODE_PROXY else CONNECTION_MODE_VPN
+
+        fun validateSocksPort(port: Int): Int {
+            require(port in MIN_SOCKS_PORT..MAX_SOCKS_PORT) {
+                "Local SOCKS port must be between $MIN_SOCKS_PORT and $MAX_SOCKS_PORT"
+            }
+            return port
+        }
     }
 }

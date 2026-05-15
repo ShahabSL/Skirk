@@ -51,6 +51,12 @@ def main() -> int:
         return 1
     for sidecar_dir in sidecar_dirs:
         shutil.copy2(sidecar, sidecar_dir / "skirk.exe")
+    for relative in ("LICENSE", "DISCLAIMER.md", "SECURITY.md", "third_party/NOTICE.md"):
+        source = repo / relative
+        if source.exists():
+            destination = out_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
     (out_dir / "skirk-portable").write_text("portable mode marker\n", encoding="utf-8")
     (out_dir / "portable-data" / "README.txt").write_text(
         "Skirk portable data lives here. Imported profiles, configs, and logs stay beside Skirk.exe.\n",

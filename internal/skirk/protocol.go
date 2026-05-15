@@ -151,43 +151,6 @@ func DeriveMuxLaneKeyV4(secret string, sid [16]byte, direction byte, clientID, r
 	return hkdfSHA256(base, []byte("skirk-v4-mux-lane-salt"), info, keyLen), nil
 }
 
-func DeriveMuxControlKeyV5(secret string, sid [16]byte, direction byte, clientID, runID, epoch string) ([]byte, error) {
-	return deriveMuxKeyV5(secret, sid, direction, clientID, runID, epoch, "control")
-}
-
-func DeriveMuxDataKeyV5(secret string, sid [16]byte, direction byte, clientID, runID, epoch string) ([]byte, error) {
-	return deriveMuxKeyV5(secret, sid, direction, clientID, runID, epoch, "data")
-}
-
-func deriveMuxKeyV5(secret string, sid [16]byte, direction byte, clientID, runID, epoch, purpose string) ([]byte, error) {
-	base, err := DeriveKey(secret)
-	if err != nil {
-		return nil, err
-	}
-	clientID = strings.TrimSpace(clientID)
-	runID = strings.TrimSpace(runID)
-	epoch = strings.TrimSpace(epoch)
-	purpose = strings.TrimSpace(purpose)
-	if clientID == "" || runID == "" || epoch == "" {
-		return nil, fmt.Errorf("client id, run id, and epoch are required")
-	}
-	if purpose == "" {
-		return nil, fmt.Errorf("mux v5 key purpose is required")
-	}
-	info := make([]byte, 0, len("skirk-mux-aead-v5")+sessionIDLen+len(clientID)+len(runID)+len(epoch)+len(purpose)+8)
-	info = append(info, []byte("skirk-mux-aead-v5")...)
-	info = append(info, sid[:]...)
-	info = append(info, direction)
-	info = append(info, []byte(clientID)...)
-	info = append(info, 0)
-	info = append(info, []byte(runID)...)
-	info = append(info, 0)
-	info = append(info, []byte(epoch)...)
-	info = append(info, 0)
-	info = append(info, []byte(purpose)...)
-	return hkdfSHA256(base, []byte("skirk-v5-mux-salt"), info, keyLen), nil
-}
-
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 	extract := hmac.New(sha256.New, salt)
 	extract.Write(ikm)

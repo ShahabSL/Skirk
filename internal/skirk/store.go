@@ -69,10 +69,6 @@ type RangeObjectStore interface {
 	GetObjectRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, error)
 }
 
-type ContainsListStore interface {
-	ListContains(ctx context.Context, contains []string) ([]ObjectInfo, error)
-}
-
 type FreshListStore interface {
 	ListFresh(ctx context.Context, prefix string, since time.Time) ([]ObjectInfo, error)
 }

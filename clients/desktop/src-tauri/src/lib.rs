@@ -637,7 +637,6 @@ async fn disconnect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapsho
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = AppPaths::resolve(&app.handle())?;
             let resource_dir = app.path().resource_dir().ok();

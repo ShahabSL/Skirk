@@ -16,7 +16,7 @@ func TestIsGoogleFrontRoute(t *testing.T) {
 			t.Fatalf("expected %s to be a Google-fronted route", mode)
 		}
 	}
-	for _, mode := range []string{"", "direct", "real_pinned", "legacy_front"} {
+	for _, mode := range []string{"", "direct", "real_pinned", "unknown_route"} {
 		if isGoogleFrontRoute(mode) {
 			t.Fatalf("expected %s not to be a Google-fronted route", mode)
 		}

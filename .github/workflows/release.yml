@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
@@ -26,20 +26,18 @@ jobs:
       - name: Build release archives
         run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
 
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/skirk-*.tar.gz dist/skirk-*.zip dist/SHA256SUMS --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" dist/skirk-*.tar.gz dist/skirk-*.zip dist/SHA256SUMS --title "${GITHUB_REF_NAME}" --generate-notes
-          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-release
+          path: |
+            dist/skirk-*.tar.gz
+            dist/skirk-*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
 
   android:
-    name: Build Android Client
+    name: Validate Android Client
     runs-on: ubuntu-latest
-    needs: release
     steps:
       - uses: actions/checkout@v6
 
@@ -58,25 +56,13 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
 
-      - name: Build installable preview APK
+      - name: Build debug APK
         working-directory: clients/android
         run: ./gradlew :app:assembleDebug -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
-
-      - name: Prepare Android release assets
-        run: |
-          mkdir -p dist
-          cp clients/android/app/build/outputs/apk/debug/app-debug.apk dist/skirk-android-arm64-preview.apk
-          (cd dist && sha256sum skirk-android-arm64-preview.apk > skirk-android-arm64-preview.apk.sha256)
-
-      - name: Upload Android release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" dist/skirk-android-arm64-preview.apk dist/skirk-android-arm64-preview.apk.sha256 --clobber
 
   windows-desktop:
     name: Build Windows Desktop Client
     runs-on: windows-latest
-    needs: release
     steps:
       - uses: actions/checkout@v6
 
@@ -122,14 +108,42 @@ jobs:
             "$hash  $(Split-Path $file -Leaf)" | Set-Content "$file.sha256"
           }
 
-      - name: Upload Windows desktop release assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-release
+          path: |
+            dist/windows-portable/Skirk_windows_x64_portable.zip
+            dist/windows-portable/Skirk_windows_x64_portable.zip.sha256
+            dist/skirk-desktop-windows-x64-installer.exe
+            dist/skirk-desktop-windows-x64-installer.exe.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - release
+      - android
+      - windows-desktop
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
         run: |
-          gh release upload "${env:GITHUB_REF_NAME}" `
-            dist/windows-portable/Skirk_windows_x64_portable.zip `
-            dist/windows-portable/Skirk_windows_x64_portable.zip.sha256 `
-            dist/skirk-desktop-windows-x64-installer.exe `
-            dist/skirk-desktop-windows-x64-installer.exe.sha256 `
-            --clobber
+          mapfile -t assets < <(find dist-release -type f | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "no release assets found" >&2
+            exit 1
+          fi
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --title "${GITHUB_REF_NAME}" --generate-notes
+          fi

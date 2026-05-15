@@ -423,7 +423,7 @@ func TestDriveStoreListChangesUsesAppDataAndFields(t *testing.T) {
 		return stringResponse(http.StatusOK, `{
 			"nextPageToken":"next-token",
 			"changes":[
-				{"id":"1","fileId":"file-1","time":"2026-05-13T12:00:00Z","file":{"id":"file-1","name":"muxv5/control","size":"42","modifiedTime":"2026-05-13T12:00:01Z"}},
+				{"id":"1","fileId":"file-1","time":"2026-05-13T12:00:00Z","file":{"id":"file-1","name":"mux/control","size":"42","modifiedTime":"2026-05-13T12:00:01Z"}},
 				{"id":"2","fileId":"file-2","removed":true}
 			]
 		}`), nil
@@ -449,7 +449,7 @@ func TestDriveStoreListChangesUsesAppDataAndFields(t *testing.T) {
 	if info.NextPageToken != "next-token" || len(info.Changes) != 2 {
 		t.Fatalf("changes = %+v, want next token and two changes", info)
 	}
-	if info.Changes[0].FileID != "file-1" || info.Changes[0].Name != "muxv5/control" || info.Changes[0].Size != 42 || info.Changes[0].Updated != "2026-05-13T12:00:01Z" {
+	if info.Changes[0].FileID != "file-1" || info.Changes[0].Name != "mux/control" || info.Changes[0].Size != 42 || info.Changes[0].Updated != "2026-05-13T12:00:01Z" {
 		t.Fatalf("first change = %+v, want file metadata", info.Changes[0])
 	}
 	if !info.Changes[1].Removed {

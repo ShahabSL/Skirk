@@ -19,7 +19,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_ROOT = ROOT / "probe_results"
+OUT_ROOT = Path(os.environ.get("SKIRK_PROBE_OUT", ROOT / ".skirk-runs" / "probe_results"))
 DEFAULT_PROXY = "socks5h://127.0.0.1:1080"
 
 

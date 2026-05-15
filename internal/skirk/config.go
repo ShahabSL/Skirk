@@ -336,9 +336,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
 	switch strings.TrimSpace(c.Tunnel.Transport) {
-	case "", "muxv4", "muxv5a", "muxv5b", "muxv6":
+	case "", "muxv4":
 	default:
-		return fmt.Errorf("config.tunnel.transport must be muxv4, muxv5a, muxv5b, or muxv6")
+		return fmt.Errorf("config.tunnel.transport must be muxv4")
 	}
 	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
 	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":
@@ -717,10 +717,6 @@ func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) 
 	}
 	token.Source = "refresh_token"
 	return token, nil
-}
-
-func tokenNeedsRefresh(now time.Time, expiresAt time.Time) bool {
-	return tokenNeedsRefreshForRoute(now, expiresAt, RouteConfig{})
 }
 
 func tokenNeedsRefreshForRoute(now time.Time, expiresAt time.Time, route RouteConfig) bool {

@@ -12,6 +12,10 @@ Generated Skirk configs are credentials. `client.skirk`, `client.json`, and
 
 Do not commit generated configs, paste them into logs, or share them outside the intended client/exit devices.
 
+Raw benchmark artifacts under `.skirk-runs/` can also contain target URLs,
+timing history, account or project hints, local paths, and logs. Keep them
+private or scrub them before sharing.
+
 ## Revocation
 
 If a config leaks:

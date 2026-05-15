@@ -5,7 +5,7 @@
     "token_command": "gcloud auth print-access-token"
   },
   "route": {
-    "mode": "real_pinned",
+    "mode": "google_front",
     "proxy": "socks5h://127.0.0.1:1080",
     "google_ip": "216.239.38.120",
     "timeout_seconds": 240
@@ -16,9 +16,9 @@
   "tunnel": {
     "listen": "127.0.0.1:18080",
     "profile": "auto",
-    "chunk_size": 8388608,
-    "poll_interval_ms": 100,
-    "concurrency": 32,
+    "chunk_size": 16777216,
+    "poll_interval_ms": 250,
+    "concurrency": 8,
     "cleanup_processed": true
   }
 }

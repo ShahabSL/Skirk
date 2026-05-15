@@ -167,15 +167,21 @@ class AndroidSkirkEngine(
         }
 
         fun lanAddresses(port: Int): List<String> =
-            NetworkInterface.getNetworkInterfaces().toList()
-                .filter { it.isUp && !it.isLoopback }
+            runCatching { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty() }
+                .getOrDefault(emptyList())
+                .filter { networkInterface ->
+                    runCatching { networkInterface.isUp && !networkInterface.isLoopback }
+                        .getOrDefault(false)
+                }
                 .flatMap { networkInterface ->
-                    networkInterface.inetAddresses.toList()
-                        .filter { it.hostAddress?.contains(':') == false }
-                        .mapNotNull { address ->
-                            val host = address.hostAddress ?: return@mapNotNull null
-                            if (host.startsWith("127.")) null else "$host:$port"
-                        }
+                    runCatching {
+                        networkInterface.inetAddresses.toList()
+                            .filter { it.hostAddress?.contains(':') == false }
+                            .mapNotNull { address ->
+                                val host = address.hostAddress ?: return@mapNotNull null
+                                if (host.startsWith("127.")) null else "$host:$port"
+                            }
+                    }.getOrDefault(emptyList())
                 }
                 .distinct()
     }

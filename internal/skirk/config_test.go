@@ -108,23 +108,19 @@ func TestConfigRejectsNonPositiveFixedPollInterval(t *testing.T) {
 	}
 }
 
-func TestConfigValidatesMuxV6Transport(t *testing.T) {
+func TestConfigRejectsExperimentalTransport(t *testing.T) {
 	cfg := &Config{
 		Secret: strings.Repeat("a", 64),
 		Tunnel: TunnelConfig{
-			Transport: "muxv6",
+			Transport: "experimental",
 		},
 	}
 	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "muxv4") {
+		t.Fatalf("err = %v, want transport validation error mentioning muxv4", err)
 	}
-	if got := normalizeMuxTransport(cfg.Tunnel.Transport); got != "muxv6" {
-		t.Fatalf("normalizeMuxTransport(muxv6) = %q, want muxv6", got)
-	}
-	cfg.Tunnel.Transport = "muxv7"
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "muxv6") {
-		t.Fatalf("err = %v, want transport validation error mentioning muxv6", err)
+	if got := normalizeMuxTransport(cfg.Tunnel.Transport); got != "muxv4" {
+		t.Fatalf("normalizeMuxTransport(experimental) = %q, want muxv4", got)
 	}
 }
 

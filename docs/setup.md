@@ -135,8 +135,8 @@ When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs wgcf/wireproxy,
 starts `wireproxy.service`, and defaults `SKIRK_EXIT_PROXY` to that local SOCKS
 listener. `SKIRK_ACCEPT_WARP_TOS=1` makes the WARP registration noninteractive.
 
-`serve-exit` starts a mailbox janitor automatically. It removes stale `muxv4/`
-objects older than 24 hours. Override with:
+`serve-exit` starts a mailbox janitor automatically. It removes stale mux
+transport objects older than 24 hours. Override with:
 
 ```bash
 SKIRK_JANITOR_OLDER_THAN=6h skirk serve-exit --config skirk-kit/exit.json
@@ -211,6 +211,8 @@ Available route modes:
 - `real_pinned`
 - `google_front`
 - `google_front_pinned`
+- `google_front_h1`
+- `google_front_h1_pinned`
 
 Pinned modes use the configured `--google-ip` value.
 

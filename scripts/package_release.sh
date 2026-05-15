@@ -25,9 +25,12 @@ build_one() {
   mkdir -p "$dist/$name"
   echo "Building $name"
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/skirk
-  cp README.md README.fa.md LICENSE "$dist/$name/"
+  cp README.md README.fa.md LICENSE DISCLAIMER.md SECURITY.md CHANGELOG.md "$dist/$name/"
+  mkdir -p "$dist/$name/docs" "$dist/$name/third_party"
+  cp docs/setup.md docs/skirk_modes.md docs/go_skirk.md docs/architecture.md "$dist/$name/docs/"
+  cp third_party/NOTICE.md "$dist/$name/third_party/"
   if [ "$os" = "windows" ]; then
-    (cd "$dist/$name" && python3 -c 'import pathlib, zipfile; z=zipfile.ZipFile("../skirk-windows-amd64.zip", "w", zipfile.ZIP_DEFLATED); [z.write(p, p.name) for p in pathlib.Path(".").iterdir()]; z.close()')
+    (cd "$dist/$name" && python3 -c 'import pathlib, zipfile; z=zipfile.ZipFile("../skirk-windows-amd64.zip", "w", zipfile.ZIP_DEFLATED); [z.write(p, p.as_posix()) for p in pathlib.Path(".").rglob("*") if p.is_file()]; z.close()')
   else
     (cd "$dist/$name" && tar -czf "../$name.tar.gz" .)
   fi

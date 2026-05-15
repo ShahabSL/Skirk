@@ -19,7 +19,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_ROOT = ROOT / "probe_results"
+OUT_ROOT = Path(os.environ.get("SKIRK_PROBE_OUT", ROOT / ".skirk-runs" / "probe_results"))
 PROXY = os.environ.get("SKIRK_SOCKS", "socks5h://127.0.0.1:1080")
 GOOGLE_IP = os.environ.get("SKIRK_GOOGLE_IP", "216.239.38.120")
 PROJECT_ID = os.environ.get("SKIRK_PROJECT_ID", "gen-lang-client-0194763728")

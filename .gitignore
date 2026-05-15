@@ -20,12 +20,17 @@ exit.json
 *.token
 *.pem
 *.key
+*.jks
+*.keystore
+*.p12
+*.pfx
+google-services.json
+oauth-client.json
 
 # Probe/build artifacts
 .skirk-runs/
 probe_results/
 cloud_resources/
-cloudrun_probe/__pycache__/
 
 # Bundled research inputs are kept locally but not committed to the Skirk code repo.
 sources/

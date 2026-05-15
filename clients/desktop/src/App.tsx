@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Check,
@@ -16,13 +16,13 @@ import {
   Sun,
   Trash2,
   Upload,
-  Wifi,
 } from "lucide-react";
 
 import { desktopApi, type ClientProfile, type DesktopSnapshot } from "./lib/api";
 import logoMark from "./assets/logo-mark.png";
 
 type Theme = "light" | "dark";
+type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete";
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -34,16 +34,21 @@ function App() {
     window.localStorage.getItem("skirk-theme") === "dark" ? "dark" : "light",
   );
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
+  const profileNameId = useId();
+  const socksPortId = useId();
+  const socksPortHelpId = useId();
+  const rawConfigId = useId();
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       setSnapshot(await desktopApi.loadSnapshot());
       setError("");
     } catch (nextError) {
       setError(normalizeError(nextError));
     }
-  }
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -54,7 +59,15 @@ function App() {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!copyStatus) {
+      return;
+    }
+    const timer = window.setTimeout(() => setCopyStatus(""), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
 
   const selectedProfile = useMemo(() => {
     if (!snapshot) {
@@ -72,12 +85,41 @@ function App() {
   );
   const connected = snapshot?.connection.phase === "connected";
   const connecting = snapshot?.connection.phase === "connecting";
+  const disconnecting = snapshot?.connection.phase === "disconnecting";
+  const disconnectAvailable = connected || disconnecting;
+  const initialLoading = snapshot === null && error === "";
+  const busy = busyAction !== null;
+  const runtimeBusy = busy || connecting || disconnecting;
   const portNumber = Number(socksPort);
   const portValid = Number.isInteger(portNumber) && portNumber >= 1024 && portNumber <= 65535;
   const importDisabled = busy || rawConfig.trim() === "" || !portValid;
+  const phase = snapshot?.connection.phase ?? (initialLoading ? "loading" : "disconnected");
+  const socksAddress = snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile);
+  const runtimeProfile = activeProfile ?? selectedProfile;
+  const profileStatusLabel = activeProfile
+    ? "Active profile"
+    : selectedProfile
+      ? "Selected profile"
+      : "Profile";
+  const profileDetail = initialLoading
+    ? "Checking saved profiles..."
+    : runtimeProfile
+      ? `${runtimeProfile.routeMode} · ${selectedProfileAddress(runtimeProfile)}`
+      : "Import a profile to enable Connect.";
+  const lanAddressValue = initialLoading
+    ? "Loading..."
+    : snapshot?.connection.lanAddresses.join(", ") || "-";
+  const pidValue = initialLoading ? "Loading..." : snapshot?.connection.pid?.toString() ?? "-";
+  const endpointValue = initialLoading ? "Loading..." : socksAddress;
+  const copyDisabled = !selectedProfile || socksAddress === "-";
+  const runtimeStatusMessage =
+    copyStatus ||
+    (initialLoading
+      ? "Loading runtime status..."
+      : snapshot?.connection.message || runtimeMessage(connected, activeProfile));
 
-  async function run(action: () => Promise<DesktopSnapshot>) {
-    setBusy(true);
+  async function run(actionName: BusyAction, action: () => Promise<DesktopSnapshot>) {
+    setBusyAction(actionName);
     try {
       setSnapshot(await action());
       setError("");
@@ -85,7 +127,7 @@ function App() {
       setError(normalizeError(nextError));
       await refresh();
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -95,6 +137,20 @@ function App() {
       setRawConfig(text);
       setError("");
     } catch (nextError) {
+      setError(normalizeError(nextError));
+    }
+  }
+
+  async function copySocksAddress() {
+    if (socksAddress === "-") {
+      return;
+    }
+    try {
+      await copyText(socksAddress);
+      setCopyStatus("SOCKS address copied.");
+      setError("");
+    } catch (nextError) {
+      setCopyStatus("");
       setError(normalizeError(nextError));
     }
   }
@@ -113,18 +169,23 @@ function App() {
         </div>
 
         <StatusCard
-          phase={snapshot?.connection.phase ?? "disconnected"}
-          address={snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile)}
+          phase={phase}
+          address={initialLoading ? "Loading..." : socksAddress}
         />
 
         <nav className="side-nav" aria-label="Skirk sections">
           <a href="#runtime">Runtime</a>
           <a href="#profiles">Profiles</a>
+          <a href="#import">Import</a>
           <a href="#logs">Logs</a>
         </nav>
 
         <button
+          type="button"
           className="icon-line"
+          aria-pressed={theme === "dark"}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         >
           {theme === "dark" ? <Sun /> : <Moon />}
@@ -135,118 +196,92 @@ function App() {
       <main className="workspace">
         <header className="workspace-header">
           <div>
-            <span className="eyebrow">Windows SOCKS5 runtime</span>
-            <h1>Profiles, proxy, logs.</h1>
+            <span className="eyebrow">Skirk Desktop</span>
+            <h1>Connection console</h1>
           </div>
           <div className="header-actions">
-            <button className="icon-button" onClick={() => void refresh()} title="Refresh">
-              <RefreshCw />
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => void refresh()}
+              aria-label="Refresh status"
+              title="Refresh status"
+            >
+              <RefreshCw className={initialLoading ? "spin" : undefined} aria-hidden="true" />
             </button>
-            <PhaseBadge phase={snapshot?.connection.phase ?? "disconnected"} />
+            <PhaseBadge phase={phase} />
           </div>
         </header>
 
-        {error ? <div className="alert">{error}</div> : null}
+        {error ? (
+          <div className="alert" role="alert">
+            {error}
+          </div>
+        ) : null}
 
-        <section className="runtime-strip" id="runtime">
-          <Metric label="Active" value={activeProfile?.name ?? selectedProfile?.name ?? "None"} />
-          <Metric
-            label="SOCKS"
-            value={snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile)}
-          />
-          <Metric label="LAN" value={snapshot?.connection.lanAddresses.join(", ") || "-"} />
-          <Metric label="PID" value={snapshot?.connection.pid?.toString() ?? "-"} />
-        </section>
+        <section className={`control-surface ${phase}`} id="runtime" aria-labelledby="runtime-title">
+          <div className="control-main">
+            <div className={`status-indicator ${phase}`} aria-hidden="true">
+              <span />
+            </div>
+            <div className="control-copy">
+              <span className="eyebrow">Connection status</span>
+              <h2 id="runtime-title">{statusTitle(phase)}</h2>
+              <p aria-live="polite">{runtimeStatusMessage}</p>
+            </div>
+          </div>
 
-        <section className="action-bar">
-          <button
-            className="primary"
-            disabled={busy || connected || !selectedProfile}
-            onClick={() => run(() => desktopApi.connect())}
-          >
-            {busy || connecting ? <Loader2 className="spin" /> : <Play />}
-            Connect
-          </button>
-          <button disabled={busy || !connected} onClick={() => run(() => desktopApi.disconnect())}>
-            <Power />
-            Disconnect
-          </button>
-          <button
-            disabled={!selectedProfile}
-            onClick={() =>
-              copyText(snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile))
-            }
-          >
-            <Copy />
-            Copy SOCKS
-          </button>
-          <span className="runtime-message">
-            {snapshot?.connection.message || runtimeMessage(connected, activeProfile)}
-          </span>
+          <div className="profile-summary" aria-label="Profile in use">
+            <span>{profileStatusLabel}</span>
+            <strong>{initialLoading ? "Loading..." : runtimeProfile?.name ?? "No profile selected"}</strong>
+            <small>{profileDetail}</small>
+          </div>
+
+          <div className="command-row" aria-label="Connection actions">
+            {disconnectAvailable ? (
+              <button
+                type="button"
+                className="primary"
+                disabled={busy}
+                onClick={() => void run("disconnect", () => desktopApi.disconnect())}
+              >
+                {busyAction === "disconnect" || disconnecting ? <Loader2 className="spin" /> : <Power />}
+                Disconnect
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                disabled={runtimeBusy || !selectedProfile}
+                onClick={() => void run("connect", () => desktopApi.connect())}
+              >
+                {busyAction === "connect" || connecting ? <Loader2 className="spin" /> : <Play />}
+                Connect
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={copyDisabled}
+              onClick={() => void copySocksAddress()}
+            >
+              {copyStatus ? <Check /> : <Copy />}
+              {copyStatus ? "Copied" : "Copy SOCKS"}
+            </button>
+          </div>
+
+          <div className="metric-grid" aria-label="Runtime details">
+            <Metric label="SOCKS endpoint" value={endpointValue} />
+            <Metric label="LAN endpoints" value={lanAddressValue} />
+            <Metric label="Process ID" value={pidValue} />
+          </div>
         </section>
 
         <div className="content-grid">
-          <section className="panel import-panel">
-            <SectionTitle
-              icon={<Upload />}
-              title="Import"
-              detail={portValid ? "Ready" : "Port must be 1024-65535"}
-            />
-
-            <label>
-              <span>Name</span>
-              <input value={profileName} onChange={(event) => setProfileName(event.target.value)} />
-            </label>
-
-            <label>
-              <span>SOCKS port</span>
-              <input
-                inputMode="numeric"
-                value={socksPort}
-                onChange={(event) => setSocksPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
-              />
-            </label>
-
-            <label>
-              <span>Client profile text</span>
-              <textarea
-                value={rawConfig}
-                onChange={(event) => setRawConfig(event.target.value)}
-                spellCheck={false}
-              />
-            </label>
-
-            <label className="switch-row">
-              <input
-                type="checkbox"
-                checked={shareLan}
-                onChange={(event) => setShareLan(event.target.checked)}
-              />
-              <span>
-                <strong>Share on LAN</strong>
-                <small>Listen on 0.0.0.0 instead of loopback.</small>
-              </span>
-            </label>
-
-            <div className="button-row">
-              <button className="primary" disabled={importDisabled} onClick={() =>
-                run(() => desktopApi.importConfig(profileName, rawConfig, portNumber, shareLan))
-              }>
-                <Upload />
-                Import profile
-              </button>
-              <button type="button" onClick={() => void pasteConfig()}>
-                <ClipboardPaste />
-                Paste
-              </button>
-            </div>
-          </section>
-
-          <section className="panel" id="profiles">
+          <section className="panel profiles-panel" id="profiles">
             <SectionTitle
               icon={<Shield />}
               title="Profiles"
-              detail={`${snapshot?.profiles.length ?? 0} saved`}
+              detail={initialLoading ? "Loading" : `${snapshot?.profiles.length ?? 0} saved`}
             />
             <div className="profile-list">
               {snapshot?.profiles.length ? (
@@ -255,11 +290,16 @@ function App() {
                     key={profile.id}
                     profile={profile}
                     selected={profile.id === selectedProfile?.id}
-                    disabled={busy || connected}
-                    onSelect={() => run(() => desktopApi.selectProfile(profile.id))}
-                    onDelete={() => run(() => desktopApi.deleteProfile(profile.id))}
+                    disabled={runtimeBusy || connected}
+                    onSelect={() => void run("select", () => desktopApi.selectProfile(profile.id))}
+                    onDelete={() => void run("delete", () => desktopApi.deleteProfile(profile.id))}
                   />
                 ))
+              ) : initialLoading ? (
+                <div className="empty-state" aria-live="polite">
+                  <Loader2 className="spin" />
+                  <span>Loading profiles...</span>
+                </div>
               ) : (
                 <div className="empty-state">
                   <HardDrive />
@@ -269,24 +309,105 @@ function App() {
             </div>
           </section>
 
-          <section className="panel runtime-panel">
+          <section className="panel runtime-panel" aria-label="Runtime paths">
             <SectionTitle icon={<Server />} title="Runtime" detail={snapshot?.platform ?? "-"} />
             <div className="runtime-copy">
               <div>
                 <Laptop />
-                <span>Windows runs the packaged Skirk sidecar as a SOCKS5 proxy.</span>
+                <span>{runtimeCopy(phase, activeProfile ?? selectedProfile)}</span>
               </div>
               <div>
-                <Wifi />
-                <span>Android provides proxy and VPN modes from the same profile text.</span>
+                <HardDrive />
+                <span>Config directory: {snapshot?.configDir ?? "-"}</span>
               </div>
             </div>
           </section>
 
-          <section className="panel logs-panel" id="logs">
-            <SectionTitle icon={<HardDrive />} title="Logs" detail={snapshot?.logsDir ?? "-"} />
-            <pre>{snapshot?.logTail || "No log output yet."}</pre>
-          </section>
+          <details className="panel disclosure-panel import-panel" id="import">
+            <DisclosureSummary
+              icon={<Upload />}
+              title="Import profile"
+              detail={portValid ? "Ready" : "Port must be 1024-65535"}
+            />
+
+            <div className="import-form">
+              <div className="form-grid">
+                <label htmlFor={profileNameId}>
+                  <span>Name</span>
+                  <input
+                    id={profileNameId}
+                    value={profileName}
+                    autoComplete="off"
+                    onChange={(event) => setProfileName(event.target.value)}
+                  />
+                </label>
+
+                <label htmlFor={socksPortId}>
+                  <span>SOCKS port</span>
+                  <input
+                    id={socksPortId}
+                    inputMode="numeric"
+                    aria-describedby={socksPortHelpId}
+                    aria-invalid={!portValid}
+                    value={socksPort}
+                    onChange={(event) => setSocksPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  />
+                  <small id={socksPortHelpId} className={portValid ? "field-help" : "field-error"}>
+                    Use a local port from 1024 to 65535.
+                  </small>
+                </label>
+              </div>
+
+              <label htmlFor={rawConfigId}>
+                <span>Client profile text</span>
+                <textarea
+                  id={rawConfigId}
+                  value={rawConfig}
+                  onChange={(event) => setRawConfig(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+
+              <label className="switch-row">
+                <input
+                  type="checkbox"
+                  checked={shareLan}
+                  onChange={(event) => setShareLan(event.target.checked)}
+                />
+                <span>
+                  <strong>Share on LAN</strong>
+                  <small>Listen on 0.0.0.0 instead of loopback.</small>
+                </span>
+              </label>
+
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={importDisabled}
+                  onClick={() =>
+                    void run("import", () =>
+                      desktopApi.importConfig(profileName, rawConfig, portNumber, shareLan),
+                    )
+                  }
+                >
+                  {busyAction === "import" ? <Loader2 className="spin" /> : <Upload />}
+                  Import profile
+                </button>
+                <button type="button" disabled={busy} onClick={() => void pasteConfig()}>
+                  <ClipboardPaste />
+                  Paste
+                </button>
+              </div>
+            </div>
+          </details>
+
+          <details className="panel disclosure-panel logs-panel" id="logs">
+            <DisclosureSummary icon={<HardDrive />} title="Logs" detail={snapshot?.logsDir ?? "-"} />
+            <pre aria-label="Runtime log output" tabIndex={0}>
+              {initialLoading ? "Loading logs..." : snapshot?.logTail || "No log output yet."}
+            </pre>
+          </details>
         </div>
       </main>
     </div>
@@ -305,11 +426,35 @@ function SectionTitle({
   return (
     <div className="section-title">
       <div>
-        {icon}
+        <span className="section-icon" aria-hidden="true">
+          {icon}
+        </span>
         <h2>{title}</h2>
       </div>
       <span>{detail}</span>
     </div>
+  );
+}
+
+function DisclosureSummary({
+  icon,
+  title,
+  detail,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <summary className="section-title disclosure-summary" aria-label={`${title}: ${detail}`}>
+      <div>
+        <span className="section-icon" aria-hidden="true">
+          {icon}
+        </span>
+        <h2>{title}</h2>
+      </div>
+      <span>{detail}</span>
+    </summary>
   );
 }
 
@@ -329,7 +474,10 @@ function ProfileRow({
   return (
     <div className={selected ? "profile-row selected" : "profile-row"}>
       <button
+        type="button"
         disabled={disabled}
+        aria-pressed={selected}
+        aria-label={selected ? `${profile.name} is selected` : `Select ${profile.name}`}
         onClick={() => {
           if (!selected) {
             onSelect();
@@ -345,8 +493,15 @@ function ProfileRow({
           {profile.shareLan ? " · LAN" : ""}
         </span>
       </button>
-      <button className="icon-button" disabled={disabled} onClick={onDelete} title="Delete profile">
-        <Trash2 />
+      <button
+        type="button"
+        className="icon-button"
+        disabled={disabled}
+        onClick={onDelete}
+        aria-label={`Delete ${profile.name}`}
+        title="Delete profile"
+      >
+        <Trash2 aria-hidden="true" />
       </button>
     </div>
   );
@@ -354,9 +509,9 @@ function ProfileRow({
 
 function StatusCard({ phase, address }: { phase: string; address: string }) {
   return (
-    <div className="status-card">
+    <div className={`status-card ${phase}`} aria-live="polite">
       <span>Status</span>
-      <strong>{phase}</strong>
+      <strong>{formatPhase(phase)}</strong>
       <small>{address}</small>
     </div>
   );
@@ -372,7 +527,34 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function PhaseBadge({ phase }: { phase: string }) {
-  return <div className={`phase-badge ${phase}`}>{phase}</div>;
+  return (
+    <div className={`phase-badge ${phase}`} role="status" aria-live="polite">
+      {formatPhase(phase)}
+    </div>
+  );
+}
+
+function statusTitle(phase: string) {
+  if (phase === "connected") {
+    return "Connected";
+  }
+  if (phase === "connecting") {
+    return "Connecting";
+  }
+  if (phase === "disconnecting") {
+    return "Disconnecting";
+  }
+  if (phase === "loading") {
+    return "Checking status";
+  }
+  if (phase === "error") {
+    return "Needs attention";
+  }
+  return "Ready to connect";
+}
+
+function formatPhase(phase: string) {
+  return phase.replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 function selectedProfileAddress(profile: ClientProfile | null) {
@@ -387,6 +569,19 @@ function runtimeMessage(connected: boolean, profile?: ClientProfile) {
     return `Connected with ${profile.name}.`;
   }
   return "Disconnected.";
+}
+
+function runtimeCopy(phase: string, profile: ClientProfile | null) {
+  if (phase === "connected" && profile) {
+    return `Sidecar running for ${profile.name}.`;
+  }
+  if (phase === "connecting") {
+    return "Starting packaged Skirk sidecar.";
+  }
+  if (phase === "disconnecting") {
+    return "Stopping packaged Skirk sidecar.";
+  }
+  return "Sidecar is stopped.";
 }
 
 function normalizeError(value: unknown) {

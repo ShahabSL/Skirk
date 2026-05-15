@@ -18,7 +18,10 @@ Confirm no local runtime artifacts are tracked:
 
 ```bash
 git status --short
-git ls-files probe_results cloud_resources sources zips skirk-kit skirk-config private
+git ls-files \
+  .skirk-runs private skirk-kit skirk-config bin dist cloud_resources probe_results sources zips \
+  application_default_credentials.json skirk.json client.json exit.json \
+  '*.skirk' '*.secret' '*.token' '*.pem' '*.key'
 ```
 
 The second command should print nothing.
@@ -40,9 +43,11 @@ This writes:
 
 Client release assets are built by GitHub Actions:
 
-- Android preview APK
 - Windows portable desktop zip
 - Windows desktop installer
+
+The Android workflow validates that a debug APK still builds, but debug-signed
+APKs are not uploaded as public release assets.
 
 ## Publish
 
@@ -67,9 +72,9 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SK
 
 ## Android Signing
 
-The preview APK can be debug-signed for sideload testing. A production Android
-release should use a release keystore through GitHub Actions secrets and publish
-a signed APK or AAB.
+Debug APKs are for local sideload testing only. A production Android release
+must use a release keystore through GitHub Actions secrets and publish a signed
+APK or AAB.
 
 ## Operational Validation
 

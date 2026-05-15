@@ -405,10 +405,6 @@ func (t *Tunnel) acquireUploadSlotBytes(ctx context.Context, priority bool) (fun
 	return t.limiter(true).AcquireBytes(ctx, priority)
 }
 
-func (t *Tunnel) acquireDownloadSlot(ctx context.Context, priority bool) (func(error), error) {
-	return t.limiter(false).Acquire(ctx, priority)
-}
-
 func (t *Tunnel) acquireDownloadSlotBytes(ctx context.Context, priority bool) (func(error, int64), error) {
 	return t.limiter(false).AcquireBytes(ctx, priority)
 }
@@ -772,10 +768,6 @@ func (c *deferredCleanup) add(task cleanupTask) {
 	}
 }
 
-func (c *deferredCleanup) FlushAsync() {
-	c.flushAsyncAfter(deferredCleanupDelay)
-}
-
 func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 	if c == nil || c.t == nil || len(c.tasks) == 0 {
 		return
@@ -890,10 +882,6 @@ func readChunkWithPolicy(reader io.Reader, buffer []byte, forceBulk bool) (int, 
 	return n, nil
 }
 
-func coalesceDelayForBytes(n int) time.Duration {
-	return coalesceDelayForBytesWithPolicy(n, false)
-}
-
 func coalesceDelayForBytesWithPolicy(n int, forceBulk bool) time.Duration {
 	if forceBulk {
 		return forcedBulkCoalesceDelay
@@ -905,10 +893,6 @@ func coalesceDelayForBytesWithPolicy(n int, forceBulk bool) time.Duration {
 		return mediumCoalesceDelay
 	}
 	return interactiveCoalesceDelay
-}
-
-func coalesceMaxAgeForBytes(n int) time.Duration {
-	return coalesceMaxAgeForBytesWithPolicy(n, false)
 }
 
 func coalesceMaxAgeForBytesWithPolicy(n int, forceBulk bool) time.Duration {

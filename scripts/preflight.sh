@@ -1,7 +1,13 @@
 #!/usr/bin/env sh
 set -eu
 
-tracked_runtime="$(git ls-files probe_results cloud_resources sources zips skirk-kit skirk-config private skirk_research_bundle 2>/dev/null || true)"
+tracked_runtime="$(git ls-files -- \
+  .skirk-runs private skirk-kit skirk-config bin dist \
+  cloud_resources probe_results sources zips skirk_research_bundle \
+  application_default_credentials.json google-services.json oauth-client.json \
+  skirk.json client.json exit.json \
+  '*.skirk' '*.secret' '*.token' '*.pem' '*.key' \
+  '*.jks' '*.keystore' '*.p12' '*.pfx' 2>/dev/null || true)"
 if [ -n "$tracked_runtime" ]; then
   echo "error: runtime/research artifacts are tracked:" >&2
   echo "$tracked_runtime" >&2
@@ -18,7 +24,7 @@ if git grep -IlEi '[[:alnum:]_.%+-]+@(gmail|googlemail|icloud|me|hotmail|outlook
   exit 1
 fi
 
-secret_pattern='ya29\.[A-Za-z0-9._-]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(refresh_token|client_secret)"[[:space:]]*:[[:space:]]*"[^"]{20,}"'
+secret_pattern='ya29\.[A-Za-z0-9._-]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(refresh_token|client_secret|private_key|client_email)"[[:space:]]*:[[:space:]]*"[^"]{20,}"'
 if git grep -IEn "$secret_pattern" -- . ':!scripts/preflight.sh' >"$secret_tmp" 2>/dev/null; then
   echo "error: tracked files look like they contain generated credentials:" >&2
   cat "$secret_tmp" >&2

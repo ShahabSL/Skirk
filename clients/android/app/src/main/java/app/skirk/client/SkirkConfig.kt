@@ -53,6 +53,8 @@ data class SkirkConfig(
             }
         }
 
+        fun normalizeRaw(raw: String): String = normalizeInlineConfig(raw) ?: raw.trim()
+
         private fun normalizeInlineConfig(raw: String): String? {
             var text = raw.trim()
             if (text.startsWith("SKIRK_CONFIG=")) {

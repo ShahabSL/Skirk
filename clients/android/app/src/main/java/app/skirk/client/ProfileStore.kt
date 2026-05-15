@@ -8,10 +8,12 @@ class ProfileStore(context: Context) {
 
     fun listProfiles(): List<ClientProfile> {
         val raw = prefs.getString(KEY_PROFILES, "[]") ?: "[]"
-        val array = JSONArray(raw)
+        val array = runCatching { JSONArray(raw) }.getOrElse { JSONArray() }
         return buildList {
             for (index in 0 until array.length()) {
-                add(ClientProfile.fromJson(array.getJSONObject(index)))
+                runCatching {
+                    add(ClientProfile.fromJson(array.getJSONObject(index)))
+                }
             }
         }
     }

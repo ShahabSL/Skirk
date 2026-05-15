@@ -168,8 +168,8 @@ Google Cloud Console منبع دقیق‌تر برای quota پروژه است.
 ## قطع کردن و پاکسازی
 
 در حالت عادی، runtime فایل‌های mailbox را بعد از پردازش حذف می‌کند. `serve-exit`
-هم یک janitor خودکار دارد که آبجکت‌های قدیمی `muxv4/`، مسیر legacy `muxv3/`،
-`control/` و `data/` را که بیشتر از ۲۴ ساعت مانده‌اند پاک می‌کند.
+هم یک janitor خودکار دارد که آبجکت‌های قدیمی مسیرهای transport mux را که
+بیشتر از ۲۴ ساعت مانده‌اند پاک می‌کند.
 
 پاکسازی دستی به صورت dry-run:
 
@@ -225,7 +225,10 @@ skirk serve-client \
 - [راهنمای نصب](docs/install.md)
 - [راهنمای راه‌اندازی](docs/setup.md)
 - [راهنمای کلاینت‌ها](docs/clients.md)
+- [معماری](docs/architecture.md)
 - [حالت‌های transport](docs/skirk_modes.md)
+- [تحقیق transport](docs/transport-research.md)
+- [راهنمای توسعه](docs/development.md)
 - [نکات CLI](docs/go_skirk.md)
 - [راهنمای release](docs/release.md)
 - [سیاست امنیتی](SECURITY.md)
