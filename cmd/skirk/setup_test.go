@@ -38,11 +38,9 @@ func TestGcloudArchiveNameRejectsUnsupportedOS(t *testing.T) {
 func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
 	got := gcloudLoginArgs()
 	want := []string{
-		"auth", "login",
+		"auth", "application-default", "login",
 		"--no-launch-browser",
-		"--enable-gdrive-access",
-		"--update-adc",
-		"--force",
+		"--scopes=" + defaultCustomOAuthScopes,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len(gcloudLoginArgs) = %d, want %d: %#v", len(got), len(want), got)
@@ -69,6 +67,16 @@ func TestGcloudBrokenIPv6ErrorExplainsRecovery(t *testing.T) {
 	}
 }
 
+func TestIsAppDataScopeError(t *testing.T) {
+	err := &staticError{text: `drive mailbox validation upload failed: drive upload failed status=403 body="The granted scopes do not allow use of the Application Data folder. reason=insufficientScopes"`}
+	if !isAppDataScopeError(err) {
+		t.Fatal("expected appDataFolder insufficientScopes error to be recognized")
+	}
+	if isAppDataScopeError(&staticError{text: "drive upload failed status=403 body=userRateLimitExceeded"}) {
+		t.Fatal("rate-limit errors must not trigger visible Drive folder fallback")
+	}
+}
+
 func TestGaiConfDataPrefersIPv4(t *testing.T) {
 	data := []byte(`#precedence ::ffff:0:0/96 100
 precedence  ::1/128       50
@@ -80,6 +88,14 @@ precedence ::ffff:0:0/96 100
 	if gaiConfDataPrefersIPv4([]byte("# precedence ::ffff:0:0/96 100\n")) {
 		t.Fatal("commented IPv4 precedence line should not count")
 	}
+}
+
+type staticError struct {
+	text string
+}
+
+func (e *staticError) Error() string {
+	return e.text
 }
 
 func TestAppendGaiIPv4Preference(t *testing.T) {

@@ -104,6 +104,84 @@ func TestDriveStoreGenerateObjectIDsUsesAppDataSpace(t *testing.T) {
 	}
 }
 
+func TestDriveStoreEnsureFolderUsesExistingVisibleFolder(t *testing.T) {
+	requests := 0
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if req.Method != http.MethodGet || req.URL.Path != "/drive/v3/files" {
+			t.Fatalf("request = %s %s, want Drive files lookup", req.Method, req.URL.String())
+		}
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := query.Get("q")
+		for _, want := range []string{
+			"trashed = false",
+			"mimeType = 'application/vnd.google-apps.folder'",
+			"name = 'skirk-mailbox-test'",
+		} {
+			if !strings.Contains(q, want) {
+				t.Fatalf("folder lookup query = %q, missing %q", q, want)
+			}
+		}
+		return stringResponse(http.StatusOK, `{"files":[{"id":"folder-id","name":"skirk-mailbox-test"}]}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{})
+
+	info, err := store.EnsureFolder(context.Background(), "skirk-mailbox-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != "folder-id" || info.Name != "skirk-mailbox-test" {
+		t.Fatalf("info = %+v, want existing folder", info)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want lookup only", requests)
+	}
+}
+
+func TestDriveStoreEnsureFolderCreatesVisibleFolder(t *testing.T) {
+	requests := 0
+	var metadata map[string]string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if req.Method != http.MethodGet || req.URL.Path != "/drive/v3/files" {
+				t.Fatalf("request = %s %s, want Drive files lookup", req.Method, req.URL.String())
+			}
+			return stringResponse(http.StatusOK, `{"files":[]}`), nil
+		case 2:
+			if req.Method != http.MethodPost || req.URL.Path != "/drive/v3/files" {
+				t.Fatalf("request = %s %s, want Drive folder create", req.Method, req.URL.String())
+			}
+			if got := req.Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
+				t.Fatalf("content type = %q, want JSON", got)
+			}
+			if err := json.NewDecoder(req.Body).Decode(&metadata); err != nil {
+				t.Fatal(err)
+			}
+			return stringResponse(http.StatusOK, `{"id":"created-folder","name":"skirk-mailbox-test"}`), nil
+		default:
+			t.Fatalf("unexpected request %d: %s %s", requests, req.Method, req.URL.String())
+			return nil, nil
+		}
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{})
+
+	info, err := store.EnsureFolder(context.Background(), "skirk-mailbox-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != "created-folder" || info.Name != "skirk-mailbox-test" {
+		t.Fatalf("info = %+v, want created folder", info)
+	}
+	if metadata["name"] != "skirk-mailbox-test" || metadata["mimeType"] != "application/vnd.google-apps.folder" {
+		t.Fatalf("metadata = %#v, want Drive folder metadata", metadata)
+	}
+}
+
 func TestDriveStorePutObjectWithIDIncludesGeneratedID(t *testing.T) {
 	var metadata map[string]any
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

@@ -74,12 +74,20 @@ This uses Google's device authorization flow directly with your OAuth client and
 requests only:
 
 ```text
-openid email https://www.googleapis.com/auth/drive.appdata
+openid email https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.appdata
 ```
 
-Drive `appDataFolder` is the default because Skirk stores encrypted app-private
+Drive `appDataFolder` is preferred because Skirk stores encrypted app-private
 mailbox objects, not user-visible files. Official Drive docs require the
 `drive.appdata` scope and `spaces=appDataFolder` for this storage area.
+Setup also requests full Drive access so it can create and validate a normal
+Drive mailbox folder if Google rejects `appDataFolder` access for the local ADC
+token.
+
+When Google returns an exact `insufficientScopes` error for `appDataFolder`,
+setup creates a normal Drive folder named `skirk-mailbox-<session>` and writes
+that folder ID into both generated configs. That fallback uses the broader Drive
+scope and keeps setup working without changing the runtime mux transport.
 
 ## Creating `oauth-client.json`
 

@@ -34,6 +34,7 @@ const defaultDriveCleanupMaxPages = 256
 const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 2 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
+const driveFolderMimeType = "application/vnd.google-apps.folder"
 
 type DriveCleanupOptions struct {
 	Prefix            string
@@ -200,6 +201,67 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 	}
 	size, _ := strconv.ParseInt(payload.Size, 10, 64)
 	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size}, nil
+}
+
+func (d *DriveStore) EnsureFolder(ctx context.Context, name string) (ObjectInfo, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ObjectInfo{}, errors.New("drive folder name is required")
+	}
+	if d.isAppData() {
+		return ObjectInfo{}, errors.New("drive visible folder creation is not available in appDataFolder mode")
+	}
+	values := url.Values{}
+	values.Set("pageSize", "10")
+	values.Set("fields", "files(id,name)")
+	values.Set("q", "trashed = false and mimeType = '"+driveFolderMimeType+"' and name = '"+escapeDriveQuery(name)+"'")
+	result, err := d.request(ctx, http.MethodGet, "/drive/v3/files?"+values.Encode(), nil, nil)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := require2xx(result, "drive folder lookup"); err != nil {
+		return ObjectInfo{}, err
+	}
+	var listPayload struct {
+		Files []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(result.Body, &listPayload); err != nil {
+		return ObjectInfo{}, err
+	}
+	for _, file := range listPayload.Files {
+		if strings.TrimSpace(file.ID) != "" {
+			return ObjectInfo{ID: file.ID, Name: file.Name}, nil
+		}
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"name":     name,
+		"mimeType": driveFolderMimeType,
+	})
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	result, err = d.request(ctx, http.MethodPost, "/drive/v3/files?fields=id,name", map[string]string{"Content-Type": "application/json; charset=UTF-8"}, body)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := require2xx(result, "drive folder create"); err != nil {
+		return ObjectInfo{}, err
+	}
+	var createPayload struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(result.Body, &createPayload); err != nil {
+		return ObjectInfo{}, err
+	}
+	if strings.TrimSpace(createPayload.ID) == "" {
+		return ObjectInfo{}, errors.New("drive folder create response missing id")
+	}
+	return ObjectInfo{ID: createPayload.ID, Name: createPayload.Name}, nil
 }
 
 func (d *DriveStore) getObjectInfoByID(ctx context.Context, fileID string) (ObjectInfo, error) {

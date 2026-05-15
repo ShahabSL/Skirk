@@ -33,7 +33,7 @@ type oauthClientCredentials struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive.appdata"
+const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/drive.appdata"
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -130,7 +130,6 @@ func setupInit(ctx context.Context, args []string) error {
 		creds.Account = "unknown"
 	}
 	auth := creds.AuthConfig()
-	folderID := "appDataFolder"
 
 	secret, err := skirk.RandomSecret()
 	if err != nil {
@@ -141,8 +140,8 @@ func setupInit(ctx context.Context, args []string) error {
 		return err
 	}
 	sessionID := skirk.SessionString(session)
-	baseDrive := skirk.DriveConfig{Space: "appDataFolder"}
-	if err := validateDriveMailbox(ctx, auth, baseDrive, *googleIP, sessionID); err != nil {
+	baseDrive, folderID, err := setupDriveMailbox(ctx, auth, *googleIP, sessionID)
+	if err != nil {
 		return err
 	}
 	clientCfg := skirk.Config{
@@ -235,11 +234,64 @@ func setupInit(ctx context.Context, args []string) error {
 			"client_route":        result.ClientRoute,
 			"exit_route":          result.ExitRoute,
 			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
-			"transport":           driveTransportName(baseDrive),
+			"transport":           result.Transport,
 		})
 	}
 	printSetupResult(result)
 	return nil
+}
+
+func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
+	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
+	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
+		if !isAppDataScopeError(err) {
+			return skirk.DriveConfig{}, "", err
+		}
+		fmt.Printf("Google ADC cannot access Drive appDataFolder; creating a normal Drive mailbox folder instead.\n\n")
+		folderName := "skirk-mailbox-" + sessionID
+		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, googleIP, folderName, sessionID)
+		if fallbackErr != nil {
+			return skirk.DriveConfig{}, "", fmt.Errorf("drive appDataFolder unavailable (%v); visible Drive folder fallback failed: %w", err, fallbackErr)
+		}
+		return folderDrive, folderID, nil
+	}
+	return appDataDrive, "appDataFolder", nil
+}
+
+func isAppDataScopeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "insufficientscopes") &&
+		(strings.Contains(text, "application data folder") || strings.Contains(text, "appdatafolder"))
+}
+
+func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, folderName, sessionID string) (skirk.DriveConfig, string, error) {
+	cfg := skirk.Config{
+		Secret: "setup-only",
+		Auth:   auth,
+		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
+	}
+	cfg.ApplyDefaults()
+	drive, err := skirk.StoresFromConfig(ctx, &cfg)
+	if err != nil {
+		return skirk.DriveConfig{}, "", err
+	}
+	info, err := drive.EnsureFolder(ctx, folderName)
+	if err != nil {
+		return skirk.DriveConfig{}, "", fmt.Errorf("drive mailbox folder create failed: %w", err)
+	}
+	folderID := strings.TrimSpace(info.ID)
+	if folderID == "" {
+		return skirk.DriveConfig{}, "", errors.New("drive mailbox folder create returned empty id")
+	}
+	driveCfg := skirk.DriveConfig{FolderID: folderID}
+	if err := validateDriveMailbox(ctx, auth, driveCfg, googleIP, sessionID); err != nil {
+		return skirk.DriveConfig{}, "", err
+	}
+	return driveCfg, folderID, nil
 }
 
 func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
@@ -343,11 +395,9 @@ func defaultADCPath() string {
 
 func gcloudLoginArgs() []string {
 	return []string{
-		"auth", "login",
+		"auth", "application-default", "login",
 		"--no-launch-browser",
-		"--enable-gdrive-access",
-		"--update-adc",
-		"--force",
+		"--scopes=" + defaultCustomOAuthScopes,
 	}
 }
 
