@@ -6,6 +6,8 @@
   folder when Google Cloud CLI ADC is missing the `drive.appdata` grant.
 - Updated setup login to request both full Drive and `drive.appdata` scopes for
   ADC so mailbox validation can recover cleanly.
+- Preserved Google Cloud CLI's default ADC scopes during setup login while
+  adding the Drive scopes needed by Skirk.
 - Clarified Windows release packaging so the portable desktop zip is the GUI
   app and `skirk-windows-amd64.zip` is documented as CLI-only.
 - Fixed setup on VPS hosts with broken IPv6 connectivity to Google OAuth by

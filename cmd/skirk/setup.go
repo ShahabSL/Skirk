@@ -33,7 +33,7 @@ type oauthClientCredentials struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-const defaultCustomOAuthScopes = "openid,email,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/drive.appdata"
+const defaultCustomOAuthScopes = "openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/sqlservice.login,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/drive.appdata"
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {

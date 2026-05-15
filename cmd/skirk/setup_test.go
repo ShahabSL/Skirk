@@ -127,6 +127,21 @@ func TestNormalizeOAuthScopes(t *testing.T) {
 	}
 }
 
+func TestDefaultOAuthScopesIncludeGcloudADCRequirements(t *testing.T) {
+	for _, want := range []string{
+		"openid",
+		"https://www.googleapis.com/auth/userinfo.email",
+		"https://www.googleapis.com/auth/cloud-platform",
+		"https://www.googleapis.com/auth/sqlservice.login",
+		"https://www.googleapis.com/auth/drive",
+		"https://www.googleapis.com/auth/drive.appdata",
+	} {
+		if !strings.Contains(defaultCustomOAuthScopes, want) {
+			t.Fatalf("defaultCustomOAuthScopes missing %q in %q", want, defaultCustomOAuthScopes)
+		}
+	}
+}
+
 func TestApplyTunnelOverridesConcurrencyDoesNotSetAutoProfileSplitCaps(t *testing.T) {
 	cfg := &skirk.Config{
 		Secret: "test-secret",
