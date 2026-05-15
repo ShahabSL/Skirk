@@ -27,8 +27,8 @@ plaintext for non-TLS application protocols, like any proxy or VPN exit.
 ## Google Drive Mailbox
 
 The production setup uses Drive `appDataFolder`. That keeps runtime objects out
-of the user's visible Drive files and allows the recommended setup flow to use
-the narrow `https://www.googleapis.com/auth/drive.appdata` OAuth scope.
+of the user's visible Drive files. The recommended setup flow uses
+`https://www.googleapis.com/auth/drive.appdata` for app-private storage.
 
 Drive is an object API, not a stream API. Every request/response path contains
 at least these carrier operations:

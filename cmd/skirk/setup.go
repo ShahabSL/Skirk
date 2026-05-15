@@ -7,11 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -33,7 +31,7 @@ type oauthClientCredentials struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-const defaultCustomOAuthScopes = "openid,https://www.googleapis.com/auth/userinfo.email,https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/sqlservice.login,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/drive.appdata"
+const defaultCustomOAuthScopes = "https://www.googleapis.com/auth/drive.appdata"
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -53,10 +51,10 @@ func setupInit(ctx context.Context, args []string) error {
 	outDir := fs.String("out", "skirk-kit", "directory for generated configs")
 	title := fs.String("title", defaultTitle, "kit title used in generated docs")
 	adcPath := fs.String("adc", "", "Application Default Credentials JSON path")
-	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of launching gcloud login if ADC is missing")
+	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of starting Google login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
-	resetGoogleLogin := fs.Bool("reset-google-login", false, "revoke local gcloud and ADC credentials before Google login")
-	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth TV/Limited Input client JSON; uses device login and your own OAuth project/quota")
+	resetGoogleLogin := fs.Bool("reset-google-login", false, "remove local ADC credentials before Google login")
+	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth client JSON for TVs and Limited Input devices; defaults to ./oauth-client.json when present")
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used with --oauth-client-file")
 	clientRoute := fs.String("client-route", "google_front", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
@@ -81,18 +79,18 @@ func setupInit(ctx context.Context, args []string) error {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
 	}
 
+	oauthPath := strings.TrimSpace(*oauthClientFile)
+	if oauthPath == "" && strings.TrimSpace(*adcPath) == "" {
+		if _, statErr := os.Stat("oauth-client.json"); statErr == nil {
+			oauthPath = "oauth-client.json"
+		}
+	}
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
-	loginRequested := *googleLogin || strings.TrimSpace(*oauthClientFile) != ""
+	loginRequested := *googleLogin || oauthPath != ""
 	if *resetGoogleLogin {
 		fmt.Printf("Resetting local Google credentials before login.\n\n")
-		if strings.TrimSpace(*oauthClientFile) != "" {
-			_ = os.Remove(credsPath)
-		} else {
-			if err := runGcloudCredentialReset(ctx); err != nil {
-				return err
-			}
-		}
+		_ = os.Remove(credsPath)
 		creds = adcCredentials{}
 		err = errors.New("Google login was reset")
 	}
@@ -100,30 +98,14 @@ func setupInit(ctx context.Context, args []string) error {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
-		if oauthPath := strings.TrimSpace(*oauthClientFile); oauthPath != "" {
-			fmt.Printf("Google login will use the device flow with your OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
+		if oauthPath != "" {
+			fmt.Printf("Google login will use your device OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
 			creds, err = runGoogleDeviceOAuth(ctx, oauthPath, *oauthScopes)
 			if err != nil {
 				return err
 			}
-		} else if *googleLogin && err == nil {
-			fmt.Printf("Google login was requested. Skirk will run gcloud and ask you to paste the browser code.\n\n")
-			if err := runGcloudLogin(ctx); err != nil {
-				return err
-			}
-			creds, err = readADCCredentials(credsPath)
-			if err != nil {
-				return fmt.Errorf("google ADC still unavailable at %s after login: %w", credsPath, err)
-			}
 		} else {
-			fmt.Printf("Google login is required. Skirk will run gcloud and ask you to paste the browser code.\n\n")
-			if err := runGcloudLogin(ctx); err != nil {
-				return err
-			}
-			creds, err = readADCCredentials(credsPath)
-			if err != nil {
-				return fmt.Errorf("google ADC still unavailable at %s after login: %w", credsPath, err)
-			}
+			return driveOAuthClientRequiredError(credsPath, err)
 		}
 	}
 	if strings.TrimSpace(creds.Account) == "" {
@@ -244,18 +226,16 @@ func setupInit(ctx context.Context, args []string) error {
 func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
 	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
 	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
-		if !isAppDataScopeError(err) {
-			return skirk.DriveConfig{}, "", err
-		}
-		fmt.Printf("Google ADC cannot access Drive appDataFolder; creating a normal Drive mailbox folder instead.\n\n")
-		folderName := "skirk-mailbox-" + sessionID
-		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, googleIP, folderName, sessionID)
-		if fallbackErr != nil {
-			return skirk.DriveConfig{}, "", fmt.Errorf("drive appDataFolder unavailable (%v); visible Drive folder fallback failed: %w", err, fallbackErr)
-		}
-		return folderDrive, folderID, nil
+		return skirk.DriveConfig{}, "", driveAppDataValidationError(err)
 	}
 	return appDataDrive, "appDataFolder", nil
+}
+
+func driveAppDataValidationError(err error) error {
+	if isAppDataScopeError(err) {
+		return fmt.Errorf("drive appDataFolder validation failed: the OAuth token did not grant https://www.googleapis.com/auth/drive.appdata; recreate the kit with --reset-google-login --oauth-client-file ./oauth-client.json after enabling Drive API and authorizing that scope: %w", err)
+	}
+	return fmt.Errorf("drive appDataFolder validation failed: %w", err)
 }
 
 func isAppDataScopeError(err error) bool {
@@ -265,33 +245,6 @@ func isAppDataScopeError(err error) bool {
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "insufficientscopes") &&
 		(strings.Contains(text, "application data folder") || strings.Contains(text, "appdatafolder"))
-}
-
-func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, folderName, sessionID string) (skirk.DriveConfig, string, error) {
-	cfg := skirk.Config{
-		Secret: "setup-only",
-		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
-		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
-	}
-	cfg.ApplyDefaults()
-	drive, err := skirk.StoresFromConfig(ctx, &cfg)
-	if err != nil {
-		return skirk.DriveConfig{}, "", err
-	}
-	info, err := drive.EnsureFolder(ctx, folderName)
-	if err != nil {
-		return skirk.DriveConfig{}, "", fmt.Errorf("drive mailbox folder create failed: %w", err)
-	}
-	folderID := strings.TrimSpace(info.ID)
-	if folderID == "" {
-		return skirk.DriveConfig{}, "", errors.New("drive mailbox folder create returned empty id")
-	}
-	driveCfg := skirk.DriveConfig{FolderID: folderID}
-	if err := validateDriveMailbox(ctx, auth, driveCfg, googleIP, sessionID); err != nil {
-		return skirk.DriveConfig{}, "", err
-	}
-	return driveCfg, folderID, nil
 }
 
 func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
@@ -333,15 +286,6 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 		cfg.DownloadConcurrency = downloadConcurrency
 	}
 	return cfg
-}
-
-func ensureGcloud(ctx context.Context) (string, error) {
-	gcloud, err := findGcloud()
-	if err == nil {
-		return gcloud, nil
-	}
-	fmt.Printf("Google Cloud CLI was not found. Skirk will install it under ~/google-cloud-sdk.\n\n")
-	return installGcloud(ctx)
 }
 
 func (c adcCredentials) AuthConfig() skirk.AuthConfig {
@@ -393,138 +337,16 @@ func defaultADCPath() string {
 	return filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
 }
 
-func gcloudLoginArgs() []string {
-	return []string{
-		"auth", "application-default", "login",
-		"--no-launch-browser",
-		"--scopes=" + defaultCustomOAuthScopes,
+func driveOAuthClientRequiredError(credsPath string, cause error) error {
+	if cause == nil {
+		cause = errors.New("Google login was requested without --oauth-client-file")
 	}
-}
-
-func runGcloudLogin(ctx context.Context) error {
-	gcloud, err := ensureGcloud(ctx)
-	if err != nil {
-		return err
-	}
-	if err := ensureGcloudOAuthNetwork(ctx); err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, gcloud, gcloudLoginArgs()...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = withGcloudPath(os.Environ())
-	return cmd.Run()
-}
-
-func ensureGcloudOAuthNetwork(ctx context.Context) error {
-	if os.Getenv("SKIRK_SKIP_GOOGLE_IPV6_PREFLIGHT") == "1" {
-		return nil
-	}
-	if gaiConfPrefersIPv4(defaultGaiConfPath) {
-		return nil
-	}
-	broken, reason := gcloudOAuthIPv6Broken(ctx)
-	if !broken {
-		return nil
-	}
-	if runtime.GOOS != "linux" {
-		return gcloudBrokenIPv6Error(reason, errors.New("automatic IPv4 preference is only supported on Linux"))
-	}
-	if err := appendGaiIPv4Preference(defaultGaiConfPath); err != nil {
-		return gcloudBrokenIPv6Error(reason, err)
-	}
-	fmt.Fprintln(os.Stderr, "Detected broken IPv6 to Google OAuth; updated /etc/gai.conf to prefer IPv4 before running gcloud.")
-	return nil
-}
-
-func gcloudOAuthIPv6Broken(ctx context.Context) (bool, string) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, "oauth2.googleapis.com")
-	if err != nil {
-		return false, ""
-	}
-	var ipv4, ipv6 string
-	for _, addr := range addrs {
-		if ip4 := addr.IP.To4(); ip4 != nil {
-			if ipv4 == "" {
-				ipv4 = ip4.String()
-			}
-			continue
-		}
-		if addr.IP.To16() != nil && ipv6 == "" {
-			ipv6 = addr.IP.String()
-		}
-	}
-	if ipv4 == "" || ipv6 == "" {
-		return false, ""
-	}
-	if err := probeTCP(ctx, "tcp4", net.JoinHostPort(ipv4, "443"), 1500*time.Millisecond); err != nil {
-		return false, ""
-	}
-	if err := probeTCP(ctx, "tcp6", net.JoinHostPort(ipv6, "443"), 1500*time.Millisecond); err != nil {
-		return true, err.Error()
-	}
-	return false, ""
-}
-
-const defaultGaiConfPath = "/etc/gai.conf"
-
-func gaiConfPrefersIPv4(path string) bool {
-	if runtime.GOOS != "linux" {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return gaiConfDataPrefersIPv4(data)
-}
-
-func gaiConfDataPrefersIPv4(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[0] == "precedence" && fields[1] == "::ffff:0:0/96" && fields[2] == "100" {
-			return true
-		}
-	}
-	return false
-}
-
-func appendGaiIPv4Preference(path string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString("\n# Prefer IPv4 when IPv6 connectivity is broken for OAuth/CLI tools.\nprecedence ::ffff:0:0/96 100\n")
-	return err
-}
-
-func probeTCP(ctx context.Context, network, address string, timeout time.Duration) error {
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(probeCtx, network, address)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
-}
-
-func gcloudBrokenIPv6Error(reason string, err error) error {
-	return fmt.Errorf("Google OAuth is reachable over IPv4, but IPv6 to oauth2.googleapis.com failed (%s).\n"+
-		"Google Cloud CLI can hang after you paste the browser code on hosts with broken IPv6.\n"+
-		"Skirk could not update /etc/gai.conf automatically: %w\n"+
-		"Run this once as root, then rerun setup:\n"+
-		"  sudo sh -c 'grep -q \"^precedence ::ffff:0:0/96 100\" /etc/gai.conf || echo \"precedence ::ffff:0:0/96 100\" >> /etc/gai.conf'\n"+
-		"Or use Skirk's device-flow setup with your OAuth client file:\n"+
-		"  skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json", reason, err)
+	return fmt.Errorf("Google Drive setup now requires your own OAuth client file.\n"+
+		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
+		"Create a Google Auth Platform OAuth client for TVs and Limited Input devices, save it as oauth-client.json in the current directory, then rerun:\n"+
+		"  skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json\n"+
+		"If you use the installer automation, set SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json.\n"+
+		"Current ADC path was %s; original credential error: %w", credsPath, cause)
 }
 
 func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {
@@ -704,134 +526,6 @@ func postOAuthForm(ctx context.Context, endpoint string, values url.Values, out 
 		return nil
 	}
 	return fmt.Errorf("OAuth request failed status=%d body=%q", resp.StatusCode, string(body))
-}
-
-func runGcloudCredentialReset(ctx context.Context) error {
-	gcloud, err := ensureGcloud(ctx)
-	if err != nil {
-		return err
-	}
-	commands := [][]string{
-		{"auth", "application-default", "revoke", "--quiet"},
-		{"auth", "revoke", "--all", "--quiet"},
-	}
-	for _, args := range commands {
-		cmd := exec.CommandContext(ctx, gcloud, args...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Env = withGcloudPath(os.Environ())
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: gcloud %s failed: %v\n", strings.Join(args, " "), err)
-		}
-	}
-	return nil
-}
-
-func findGcloud() (string, error) {
-	if path, err := exec.LookPath("gcloud"); err == nil {
-		return path, nil
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(home, "google-cloud-sdk", "bin", "gcloud")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", errors.New("gcloud not found; install Google Cloud CLI or run setup with --adc /path/to/application_default_credentials.json")
-}
-
-func installGcloud(ctx context.Context) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	archive, err := gcloudArchiveName(runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return "", err
-	}
-	tmp, err := os.MkdirTemp("", "skirk-gcloud-*")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(tmp)
-	archivePath := filepath.Join(tmp, archive)
-	url := "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/" + archive
-	fmt.Printf("Downloading Google Cloud CLI archive: %s\n", url)
-	if err := downloadFile(ctx, url, archivePath); err != nil {
-		return "", err
-	}
-	fmt.Printf("Extracting Google Cloud CLI to %s\n", home)
-	cmd := exec.CommandContext(ctx, "tar", "-xzf", archivePath, "-C", home)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = withGcloudPath(os.Environ())
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("Google Cloud CLI extract failed: %w", err)
-	}
-	gcloud := filepath.Join(home, "google-cloud-sdk", "bin", "gcloud")
-	if _, err := os.Stat(gcloud); err != nil {
-		return "", fmt.Errorf("Google Cloud CLI install finished but %s was not found: %w", gcloud, err)
-	}
-	return gcloud, nil
-}
-
-func gcloudArchiveName(goos, goarch string) (string, error) {
-	if goos != "linux" {
-		return "", fmt.Errorf("automatic Google Cloud CLI install is not supported on %s; install gcloud manually or run setup with --adc", goos)
-	}
-	switch goarch {
-	case "amd64":
-		return "google-cloud-cli-linux-x86_64.tar.gz", nil
-	case "arm64":
-		return "google-cloud-cli-linux-arm.tar.gz", nil
-	case "386":
-		return "google-cloud-cli-linux-x86.tar.gz", nil
-	default:
-		return "", fmt.Errorf("automatic Google Cloud CLI install does not support %s/%s; install gcloud manually or run setup with --adc", goos, goarch)
-	}
-}
-
-func downloadFile(ctx context.Context, url, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download failed status=%d", resp.StatusCode)
-	}
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
-}
-
-func withGcloudPath(env []string) []string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return env
-	}
-	bin := filepath.Join(home, "google-cloud-sdk", "bin")
-	path := os.Getenv("PATH")
-	path = bin + string(os.PathListSeparator) + path
-	out := make([]string, 0, len(env)+1)
-	for _, item := range env {
-		if strings.HasPrefix(item, "PATH=") {
-			continue
-		}
-		out = append(out, item)
-	}
-	return append(out, "PATH="+path)
 }
 
 func writeJSONFile(path string, value any) error {

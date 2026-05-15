@@ -52,23 +52,25 @@ sh install.sh
 
 Release archive installs do not require Go. Source builds require Go.
 
-## Google Cloud CLI
+## Google OAuth
 
 Client machines do not need Google Cloud CLI.
 
-The exit/setup machine may need it only for the easy `skirk setup init` login
-path. When missing on Linux, setup installs Google Cloud CLI under
-`~/google-cloud-sdk` and uses it to create Application Default Credentials with
-Drive access. Automatic Google Cloud CLI install is Linux-only.
-
-The recommended quota-owned setup path uses your OAuth client file and Google's
-device authorization flow directly:
+The exit/setup machine needs a Google OAuth client file for TVs and Limited
+Input devices when creating new Drive credentials. Google blocks the default
+Google Cloud SDK OAuth client when Drive scopes are requested, so Skirk uses
+Google's device-code OAuth flow with your OAuth client file instead. Create
+`oauth-client.json` as described in [setup.md](setup.md), then run:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-That path does not require `gcloud` to create the Skirk token.
+If the file lives elsewhere, pass it explicitly:
+
+```bash
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file /path/to/oauth-client.json
+```
 
 ### Headless SSH And Broken IPv6
 
@@ -78,8 +80,8 @@ Run setup from an interactive terminal. For SSH, force a TTY when needed:
 ssh -tt -p PORT user@host
 ```
 
-If Google Cloud CLI prints a browser URL, accepts the pasted verification code,
-and then appears to do nothing, check for broken IPv6 on the server:
+If setup cannot contact Google's OAuth endpoints, check for broken IPv6 on the
+server:
 
 ```bash
 curl -4 --connect-timeout 5 --max-time 15 https://oauth2.googleapis.com/token
@@ -94,13 +96,13 @@ sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "prece
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-This is a host networking fix, not a Skirk protocol setting. It prevents Python
-tools such as `gcloud` from choosing a blackholed IPv6 route for Google OAuth.
+This is a host networking fix, not a Skirk protocol setting. It prevents OAuth
+tools from choosing a blackholed IPv6 route for Google OAuth.
 
 ## Exit Machine Flow
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 "$HOME/.local/bin/skirk" serve-exit --config skirk-kit/exit.json
 ```
 
@@ -114,7 +116,7 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_INSTALL_SYSTEMD=1 \
   SKIRK_INSTALL_WIREPROXY=1 \
   SKIRK_ACCEPT_WARP_TOS=1 \
-  SKIRK_ADC=/path/to/application_default_credentials.json \
+  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 

@@ -8,62 +8,49 @@ import (
 	"testing"
 )
 
-func TestGcloudArchiveName(t *testing.T) {
-	cases := []struct {
-		goos string
-		arch string
-		want string
-	}{
-		{goos: "linux", arch: "amd64", want: "google-cloud-cli-linux-x86_64.tar.gz"},
-		{goos: "linux", arch: "arm64", want: "google-cloud-cli-linux-arm.tar.gz"},
-		{goos: "linux", arch: "386", want: "google-cloud-cli-linux-x86.tar.gz"},
-	}
-	for _, tc := range cases {
-		got, err := gcloudArchiveName(tc.goos, tc.arch)
-		if err != nil {
-			t.Fatalf("gcloudArchiveName(%q, %q): %v", tc.goos, tc.arch, err)
-		}
-		if got != tc.want {
-			t.Fatalf("gcloudArchiveName(%q, %q) = %q, want %q", tc.goos, tc.arch, got, tc.want)
-		}
-	}
-}
-
-func TestGcloudArchiveNameRejectsUnsupportedOS(t *testing.T) {
-	if _, err := gcloudArchiveName("windows", "amd64"); err == nil {
-		t.Fatal("expected unsupported OS error")
-	}
-}
-
-func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
-	got := gcloudLoginArgs()
-	want := []string{
-		"auth", "application-default", "login",
-		"--no-launch-browser",
-		"--scopes=" + defaultCustomOAuthScopes,
-	}
-	if len(got) != len(want) {
-		t.Fatalf("len(gcloudLoginArgs) = %d, want %d: %#v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("gcloudLoginArgs[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestGcloudBrokenIPv6ErrorExplainsRecovery(t *testing.T) {
-	got := gcloudBrokenIPv6Error("dial tcp6 timeout", os.ErrPermission).Error()
+func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
+	got := driveOAuthClientRequiredError("/tmp/adc.json", os.ErrNotExist).Error()
 	for _, want := range []string{
-		"broken IPv6",
-		"/etc/gai.conf",
+		"requires your own OAuth client file",
+		"This app is blocked",
 		"oauth-client.json",
-		"dial tcp6 timeout",
-		"permission denied",
+		"--oauth-client-file",
+		"SKIRK_OAUTH_CLIENT_FILE",
+		"/tmp/adc.json",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("warning missing %q in:\n%s", want, got)
+			t.Fatalf("error missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestReadOAuthClientCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-client.json")
+	if err := os.WriteFile(path, []byte(`{
+  "installed": {
+    "client_id": "client.apps.googleusercontent.com",
+    "client_secret": "secret"
+  }
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readOAuthClientCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "client.apps.googleusercontent.com" || got.ClientSecret != "secret" {
+		t.Fatalf("unexpected OAuth client credentials: %#v", got)
+	}
+	badPath := filepath.Join(t.TempDir(), "bad-oauth-client.json")
+	if err := os.WriteFile(badPath, []byte(`{"installed":{"client_secret":"secret"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readOAuthClientCredentials(badPath)
+	if err == nil {
+		t.Fatal("expected invalid OAuth client file error")
+	}
+	if !strings.Contains(err.Error(), "client_id") || !strings.Contains(err.Error(), "client_secret") {
+		t.Fatalf("invalid OAuth error should mention client_id and client_secret: %s", err)
 	}
 }
 
@@ -73,20 +60,13 @@ func TestIsAppDataScopeError(t *testing.T) {
 		t.Fatal("expected appDataFolder insufficientScopes error to be recognized")
 	}
 	if isAppDataScopeError(&staticError{text: "drive upload failed status=403 body=userRateLimitExceeded"}) {
-		t.Fatal("rate-limit errors must not trigger visible Drive folder fallback")
+		t.Fatal("rate-limit errors must not be treated as scope errors")
 	}
-}
-
-func TestGaiConfDataPrefersIPv4(t *testing.T) {
-	data := []byte(`#precedence ::ffff:0:0/96 100
-precedence  ::1/128       50
-precedence ::ffff:0:0/96 100
-`)
-	if !gaiConfDataPrefersIPv4(data) {
-		t.Fatal("expected active IPv4 precedence line to be detected")
-	}
-	if gaiConfDataPrefersIPv4([]byte("# precedence ::ffff:0:0/96 100\n")) {
-		t.Fatal("commented IPv4 precedence line should not count")
+	got := driveAppDataValidationError(err).Error()
+	for _, want := range []string{"drive.appdata", "--oauth-client-file", "appDataFolder"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("validation error missing %q in:\n%s", want, got)
+		}
 	}
 }
 
@@ -96,23 +76,6 @@ type staticError struct {
 
 func (e *staticError) Error() string {
 	return e.text
-}
-
-func TestAppendGaiIPv4Preference(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "gai.conf")
-	if err := os.WriteFile(path, []byte("# defaults\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := appendGaiIPv4Preference(path); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !gaiConfDataPrefersIPv4(data) {
-		t.Fatalf("expected IPv4 preference after append:\n%s", string(data))
-	}
 }
 
 func TestNormalizeOAuthScopes(t *testing.T) {
@@ -127,18 +90,14 @@ func TestNormalizeOAuthScopes(t *testing.T) {
 	}
 }
 
-func TestDefaultOAuthScopesIncludeGcloudADCRequirements(t *testing.T) {
-	for _, want := range []string{
-		"openid",
-		"https://www.googleapis.com/auth/userinfo.email",
-		"https://www.googleapis.com/auth/cloud-platform",
-		"https://www.googleapis.com/auth/sqlservice.login",
-		"https://www.googleapis.com/auth/drive",
-		"https://www.googleapis.com/auth/drive.appdata",
-	} {
-		if !strings.Contains(defaultCustomOAuthScopes, want) {
-			t.Fatalf("defaultCustomOAuthScopes missing %q in %q", want, defaultCustomOAuthScopes)
-		}
+func TestDefaultOAuthScopesIncludeDriveSetupRequirements(t *testing.T) {
+	if got, want := defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.appdata"; got != want {
+		t.Fatalf("defaultCustomOAuthScopes = %q, want %q", got, want)
+	}
+	if strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive,") ||
+		strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.file") ||
+		strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/cloud-platform") {
+		t.Fatalf("defaultCustomOAuthScopes should not request extra scopes: %q", defaultCustomOAuthScopes)
 	}
 }
 

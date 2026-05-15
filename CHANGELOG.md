@@ -2,16 +2,12 @@
 
 ## Unreleased
 
-- Added a setup fallback from Drive `appDataFolder` to a normal Drive mailbox
-  folder when Google Cloud CLI ADC is missing the `drive.appdata` grant.
-- Updated setup login to request both full Drive and `drive.appdata` scopes for
-  ADC so mailbox validation can recover cleanly.
-- Preserved Google Cloud CLI's default ADC scopes during setup login while
-  adding the Drive scopes needed by Skirk.
+- Stopped new setup runs from launching the blocked default Google Cloud SDK
+  OAuth client for Drive scopes; new Drive credentials now use a user-owned
+  device OAuth client file through Google's URL/code device flow.
+- Simplified setup OAuth to remove the legacy visible Drive folder fallback.
 - Clarified Windows release packaging so the portable desktop zip is the GUI
   app and `skirk-windows-amd64.zip` is documented as CLI-only.
-- Fixed setup on VPS hosts with broken IPv6 connectivity to Google OAuth by
-  automatically preferring IPv4 for `gcloud` login when possible.
 - Clarified install commands to use the absolute installed binary path when
   shell `PATH` propagation is unreliable.
 - Added donation placeholders to the README.
@@ -26,7 +22,7 @@
 - Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
   benchmarks, quota telemetry, and Drive Changes based discovery.
 - Updated setup docs around one-line `skirk:` profiles, `serve-client`,
-  `serve-exit`, custom OAuth device-flow setup, and Drive `appDataFolder`.
+  `serve-exit`, custom OAuth setup, and Drive `appDataFolder`.
 - Removed stale references to alternate runtime control lanes and visible Drive
   folder cleanup from user-facing docs.
 

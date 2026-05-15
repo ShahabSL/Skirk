@@ -9,7 +9,7 @@
 ## Donate
 
 If Skirk is useful to you, donations help fund testing infrastructure and
-maintenance. :
+maintenance:
 
 - USDT: `0x5d0b46d821910a5a5503de78e230f9a5e9c52c2f`
 - BTC: `bc1q8qsxlp7pzgdqkhu2aj5ss3krnkrecyrh6hedpj`
@@ -31,6 +31,8 @@ Cloudflare, GitHub, Microsoft, Android, or any other provider. Read
 - One exit machine with working internet egress. A VPS is best for uptime, but a
   laptop or home server works while it stays online.
 - One Google account for the Drive mailbox.
+- One `oauth-client.json` file in the setup directory. See
+  [docs/setup.md](docs/setup.md).
 - One generated `skirk:...` client profile to share with client devices.
 
 Clients do not need Google login, `gcloud`, or a Google Cloud project. The exit
@@ -52,16 +54,13 @@ export PATH="$HOME/.local/bin:$PATH"
 Create a kit:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-If Google login is needed, setup starts a browser-code login. On Linux, Skirk can
-install Google Cloud CLI under `~/google-cloud-sdk` when it is missing. For the
-most reliable quota ownership, use your own Google OAuth client:
-
-```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
-```
+New installs need your own Google OAuth client JSON for TVs and Limited Input
+devices. Google blocks the default Google Cloud SDK OAuth client when Drive
+scopes are requested. If `oauth-client.json` is in the current directory, setup
+uses it automatically and prints a URL plus short code to enter in the browser.
 
 Run the exit:
 
@@ -189,7 +188,7 @@ The Linux installer can perform VPS setup non-interactively:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_SERVER_SETUP=1 \
-  SKIRK_ADC=/path/to/application_default_credentials.json \
+  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 
@@ -246,7 +245,7 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_INSTALL_SYSTEMD=1 \
   SKIRK_INSTALL_WIREPROXY=1 \
   SKIRK_ACCEPT_WARP_TOS=1 \
-  SKIRK_ADC=/path/to/application_default_credentials.json \
+  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 

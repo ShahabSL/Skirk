@@ -85,7 +85,7 @@ Before tagging, validate the public setup flow from a clean Linux machine:
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
 export PATH="$HOME/.local/bin:$PATH"
 skirk version
-skirk setup init --out skirk-kit
+skirk setup init --out skirk-kit --reset-google-login
 skirk serve-exit --config skirk-kit/exit.json
 ```
 

@@ -8,7 +8,7 @@ Skirk's core transport lives in `cmd/skirk` and `internal/skirk`.
 skirk help
 skirk version
 skirk keygen
-skirk setup init --out skirk-kit
+skirk setup init --out skirk-kit --reset-google-login
 skirk serve-exit --config skirk-kit/exit.json
 skirk serve-client --config skirk-kit/client.skirk --listen 127.0.0.1:18080
 skirk bench-live --config skirk-kit/client.skirk
@@ -30,7 +30,7 @@ go run ./cmd/skirk sample-config --out skirk.json
 Generate a production kit:
 
 ```bash
-go run ./cmd/skirk setup init --out skirk-kit
+go run ./cmd/skirk setup init --out skirk-kit --reset-google-login
 ```
 
 Important fields:
@@ -63,8 +63,8 @@ protocol experiments and promotion gates, see
 ## Drive AppData
 
 Skirk uses Drive `appDataFolder` for encrypted runtime objects. That keeps data
-out of the user's visible Drive files and lets the recommended setup path use
-the narrow `drive.appdata` OAuth scope.
+out of the user's visible Drive files. The recommended setup path uses only
+`drive.appdata` for the app-private mailbox.
 
 Drive is still an object API. Runtime discovery uses fresh prefix listing;
 latency comes from upload, object visibility, download, and cleanup operations.
