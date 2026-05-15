@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -355,12 +356,125 @@ func runGcloudLogin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureGcloudOAuthNetwork(ctx); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, gcloud, gcloudLoginArgs()...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = withGcloudPath(os.Environ())
 	return cmd.Run()
+}
+
+func ensureGcloudOAuthNetwork(ctx context.Context) error {
+	if os.Getenv("SKIRK_SKIP_GOOGLE_IPV6_PREFLIGHT") == "1" {
+		return nil
+	}
+	if gaiConfPrefersIPv4(defaultGaiConfPath) {
+		return nil
+	}
+	broken, reason := gcloudOAuthIPv6Broken(ctx)
+	if !broken {
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		return gcloudBrokenIPv6Error(reason, errors.New("automatic IPv4 preference is only supported on Linux"))
+	}
+	if err := appendGaiIPv4Preference(defaultGaiConfPath); err != nil {
+		return gcloudBrokenIPv6Error(reason, err)
+	}
+	fmt.Fprintln(os.Stderr, "Detected broken IPv6 to Google OAuth; updated /etc/gai.conf to prefer IPv4 before running gcloud.")
+	return nil
+}
+
+func gcloudOAuthIPv6Broken(ctx context.Context) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, "oauth2.googleapis.com")
+	if err != nil {
+		return false, ""
+	}
+	var ipv4, ipv6 string
+	for _, addr := range addrs {
+		if ip4 := addr.IP.To4(); ip4 != nil {
+			if ipv4 == "" {
+				ipv4 = ip4.String()
+			}
+			continue
+		}
+		if addr.IP.To16() != nil && ipv6 == "" {
+			ipv6 = addr.IP.String()
+		}
+	}
+	if ipv4 == "" || ipv6 == "" {
+		return false, ""
+	}
+	if err := probeTCP(ctx, "tcp4", net.JoinHostPort(ipv4, "443"), 1500*time.Millisecond); err != nil {
+		return false, ""
+	}
+	if err := probeTCP(ctx, "tcp6", net.JoinHostPort(ipv6, "443"), 1500*time.Millisecond); err != nil {
+		return true, err.Error()
+	}
+	return false, ""
+}
+
+const defaultGaiConfPath = "/etc/gai.conf"
+
+func gaiConfPrefersIPv4(path string) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return gaiConfDataPrefersIPv4(data)
+}
+
+func gaiConfDataPrefersIPv4(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "precedence" && fields[1] == "::ffff:0:0/96" && fields[2] == "100" {
+			return true
+		}
+	}
+	return false
+}
+
+func appendGaiIPv4Preference(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString("\n# Prefer IPv4 when IPv6 connectivity is broken for OAuth/CLI tools.\nprecedence ::ffff:0:0/96 100\n")
+	return err
+}
+
+func probeTCP(ctx context.Context, network, address string, timeout time.Duration) error {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(probeCtx, network, address)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+func gcloudBrokenIPv6Error(reason string, err error) error {
+	return fmt.Errorf("Google OAuth is reachable over IPv4, but IPv6 to oauth2.googleapis.com failed (%s).\n"+
+		"Google Cloud CLI can hang after you paste the browser code on hosts with broken IPv6.\n"+
+		"Skirk could not update /etc/gai.conf automatically: %w\n"+
+		"Run this once as root, then rerun setup:\n"+
+		"  sudo sh -c 'grep -q \"^precedence ::ffff:0:0/96 100\" /etc/gai.conf || echo \"precedence ::ffff:0:0/96 100\" >> /etc/gai.conf'\n"+
+		"Or use Skirk's device-flow setup with your OAuth client file:\n"+
+		"  skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json", reason, err)
 }
 
 func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {

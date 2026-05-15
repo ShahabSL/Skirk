@@ -54,6 +54,51 @@ func TestGcloudLoginArgsUseBuiltInDriveLoginByDefault(t *testing.T) {
 	}
 }
 
+func TestGcloudBrokenIPv6ErrorExplainsRecovery(t *testing.T) {
+	got := gcloudBrokenIPv6Error("dial tcp6 timeout", os.ErrPermission).Error()
+	for _, want := range []string{
+		"broken IPv6",
+		"/etc/gai.conf",
+		"oauth-client.json",
+		"dial tcp6 timeout",
+		"permission denied",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("warning missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestGaiConfDataPrefersIPv4(t *testing.T) {
+	data := []byte(`#precedence ::ffff:0:0/96 100
+precedence  ::1/128       50
+precedence ::ffff:0:0/96 100
+`)
+	if !gaiConfDataPrefersIPv4(data) {
+		t.Fatal("expected active IPv4 precedence line to be detected")
+	}
+	if gaiConfDataPrefersIPv4([]byte("# precedence ::ffff:0:0/96 100\n")) {
+		t.Fatal("commented IPv4 precedence line should not count")
+	}
+}
+
+func TestAppendGaiIPv4Preference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gai.conf")
+	if err := os.WriteFile(path, []byte("# defaults\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendGaiIPv4Preference(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gaiConfDataPrefersIPv4(data) {
+		t.Fatalf("expected IPv4 preference after append:\n%s", string(data))
+	}
+}
+
 func TestNormalizeOAuthScopes(t *testing.T) {
 	got := normalizeOAuthScopes("openid,email https://www.googleapis.com/auth/drive.appdata openid")
 	for _, want := range []string{"openid", "email", "https://www.googleapis.com/auth/drive.appdata"} {

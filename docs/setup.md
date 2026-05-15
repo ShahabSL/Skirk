@@ -16,7 +16,7 @@ port because both sides exchange encrypted objects through Google Drive.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-skirk version
+"$HOME/.local/bin/skirk" version
 ```
 
 From a source checkout:
@@ -31,7 +31,7 @@ make build
 Easy path:
 
 ```bash
-skirk setup init --out skirk-kit
+"$HOME/.local/bin/skirk" setup init --out skirk-kit
 ```
 
 If Application Default Credentials are missing, setup runs Google Cloud CLI with
@@ -45,10 +45,29 @@ That prints a browser login flow. Open the URL, approve the Google account, and
 paste the code back into the terminal. On Linux, setup can install Google Cloud
 CLI under `~/google-cloud-sdk` if `gcloud` is missing.
 
+Run setup from an interactive terminal. For SSH, use `ssh -tt -p PORT user@host`
+if the server does not allocate a TTY by default.
+
+If Google Cloud CLI accepts the pasted verification code and then appears to
+hang, the most common VPS cause is broken IPv6: the server resolves Google OAuth
+to IPv6 addresses but cannot actually connect over IPv6. Check it on the server:
+
+```bash
+curl -4 --connect-timeout 5 --max-time 15 https://oauth2.googleapis.com/token
+curl -6 --connect-timeout 5 --max-time 15 https://oauth2.googleapis.com/token
+```
+
+If IPv4 returns quickly but IPv6 times out, prefer IPv4 before rerunning setup:
+
+```bash
+sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf'
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+```
+
 Recommended quota-owned path:
 
 ```bash
-skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
 This uses Google's device authorization flow directly with your OAuth client and
@@ -77,7 +96,7 @@ project instead of the shared Google Cloud CLI OAuth client:
 Then run:
 
 ```bash
-skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
 If Google blocks an OAuth client, use your own OAuth project/client and keep the

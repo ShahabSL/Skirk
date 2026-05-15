@@ -332,10 +332,10 @@ main() {
   echo "Installed: $install_dir/skirk"
   case ":$PATH:" in
     *":$install_dir:"*) ;;
-    *) echo "Add this to your shell profile if skirk is not found: export PATH=\"$install_dir:\$PATH\"" ;;
+    *) echo "Current shell may not find skirk yet. Run: export PATH=\"$install_dir:\$PATH\"" ;;
   esac
   echo
-  echo "Next: run 'skirk' for the operator menu, or 'skirk setup init --out skirk-kit'."
+  echo "Next: run '$install_dir/skirk' for the operator menu, or '$install_dir/skirk setup init --out skirk-kit'."
   echo "Server setup will check/install Google Cloud CLI if Google login is needed."
 
   run_server_setup

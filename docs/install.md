@@ -7,10 +7,12 @@ Use this on a Linux exit machine, Linux client, VPS, laptop, or home server:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-skirk version
+"$HOME/.local/bin/skirk" version
 ```
 
-The installer puts `skirk` in `$HOME/.local/bin` by default.
+The installer puts `skirk` in `$HOME/.local/bin` by default. The `export PATH`
+line makes `skirk` available in the current shell, but scripts and fresh SSH
+sessions can always use the absolute path: `$HOME/.local/bin/skirk`.
 
 ## Installer Options
 
@@ -63,16 +65,43 @@ The recommended quota-owned setup path uses your OAuth client file and Google's
 device authorization flow directly:
 
 ```bash
-skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
 That path does not require `gcloud` to create the Skirk token.
 
+### Headless SSH And Broken IPv6
+
+Run setup from an interactive terminal. For SSH, force a TTY when needed:
+
+```bash
+ssh -tt -p PORT user@host
+```
+
+If Google Cloud CLI prints a browser URL, accepts the pasted verification code,
+and then appears to do nothing, check for broken IPv6 on the server:
+
+```bash
+curl -4 --connect-timeout 5 --max-time 15 https://oauth2.googleapis.com/token
+curl -6 --connect-timeout 5 --max-time 15 https://oauth2.googleapis.com/token
+```
+
+If IPv4 returns quickly but IPv6 times out, make the host prefer IPv4 before
+rerunning setup:
+
+```bash
+sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf'
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+```
+
+This is a host networking fix, not a Skirk protocol setting. It prevents Python
+tools such as `gcloud` from choosing a blackholed IPv6 route for Google OAuth.
+
 ## Exit Machine Flow
 
 ```bash
-skirk setup init --out skirk-kit
-skirk serve-exit --config skirk-kit/exit.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit
+"$HOME/.local/bin/skirk" serve-exit --config skirk-kit/exit.json
 ```
 
 Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
