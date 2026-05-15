@@ -60,6 +60,20 @@ jobs:
         working-directory: clients/android
         run: ./gradlew :app:assembleDebug -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
 
+      - name: Prepare Android release APK
+        run: |
+          mkdir -p dist/android
+          cp clients/android/app/build/outputs/apk/debug/app-debug.apk dist/android/skirk-android-arm64.apk
+          sha256sum dist/android/skirk-android-arm64.apk > dist/android/skirk-android-arm64.apk.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            dist/android/skirk-android-arm64.apk
+            dist/android/skirk-android-arm64.apk.sha256
+          if-no-files-found: error
+
   windows-desktop:
     name: Build Windows Desktop Client
     runs-on: windows-latest
