@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,9 +76,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -275,11 +278,11 @@ fun ConfigScreen() {
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                             color = Color.White,
                         ) {
-                            Text(
-                                "S",
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                                color = Color.Black,
-                                fontWeight = FontWeight.Black,
+                            Image(
+                                painter = painterResource(R.drawable.logo_mark),
+                                contentDescription = "Skirk",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.padding(5.dp),
                             )
                         }
                         Column {
