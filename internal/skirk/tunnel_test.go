@@ -1,6 +1,7 @@
 package skirk
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -1465,6 +1466,228 @@ func TestMuxStreamReassemblyOverflowClosesStream(t *testing.T) {
 		t.Fatal("stream did not close after reassembly overflow")
 	}
 }
+
+func TestMuxReadBufferScalesTowardDriveEfficientObjects(t *testing.T) {
+	tests := []struct {
+		name      string
+		chunkSize int
+		want      int
+	}{
+		{name: "small", chunkSize: 64 * 1024, want: 32 * 1024},
+		{name: "default", chunkSize: 8 * 1024 * 1024, want: 2 * 1024 * 1024},
+		{name: "max", chunkSize: 16 * 1024 * 1024, want: muxMaxBatch - muxBatchHeaderSize - muxFrameHeaderSize},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := &driveMux{t: &Tunnel{ChunkSize: tt.chunkSize}}
+			if got := mux.readBufferSize(); got != tt.want {
+				t.Fatalf("readBufferSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSendDataPayloadLargeNormalFrameFitsNormalBatch(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{t: &Tunnel{ChunkSize: 16 * 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
+	for i := range mux.lanes {
+		mux.lanes[i] = newMuxLane(mux, i)
+	}
+	stream := &muxStream{id: 1, clientID: "client-a", runID: "run-a", mux: mux}
+	stream.sendSeq.Store(muxInitialPriorityFrames)
+
+	payload := make([]byte, mux.readBufferSize())
+	if err := mux.sendDataPayload(ctx, stream, payload); err != nil {
+		t.Fatalf("sendDataPayload: %v", err)
+	}
+	lane := mux.lanes[mux.frameLane(muxFrame{StreamID: stream.id})]
+	batch, ok := lane.takeNormalBatch(ctx)
+	if !ok {
+		t.Fatal("takeNormalBatch returned false")
+	}
+	raw, err := encodeMuxBatch(batch)
+	if err != nil {
+		t.Fatalf("encodeMuxBatch: %v", err)
+	}
+	if got, want := len(raw), mux.normalBatchBytes(); got > want {
+		t.Fatalf("encoded batch bytes = %d, want <= %d", got, want)
+	}
+}
+
+func TestReadChunkCoalesceClassBudgets(t *testing.T) {
+	tests := []struct {
+		name      string
+		bytes     int
+		wantDelay time.Duration
+		wantAge   time.Duration
+	}{
+		{name: "interactive", bytes: 1, wantDelay: interactiveCoalesceDelay, wantAge: interactiveCoalesceMaxAge},
+		{name: "medium", bytes: mediumDataThreshold, wantDelay: mediumCoalesceDelay, wantAge: mediumCoalesceMaxAge},
+		{name: "bulk", bytes: inlineDataThreshold, wantDelay: bulkCoalesceDelay, wantAge: bulkCoalesceMaxAge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := coalesceDelayForBytes(tt.bytes); got != tt.wantDelay {
+				t.Fatalf("coalesceDelayForBytes(%d) = %s, want %s", tt.bytes, got, tt.wantDelay)
+			}
+			if got := coalesceMaxAgeForBytes(tt.bytes); got != tt.wantAge {
+				t.Fatalf("coalesceMaxAgeForBytes(%d) = %s, want %s", tt.bytes, got, tt.wantAge)
+			}
+		})
+	}
+}
+
+func TestReadChunkFastBulkFillsScaledBuffer(t *testing.T) {
+	buffer := make([]byte, 2*1024*1024)
+	input := bytes.NewReader(make([]byte, len(buffer)))
+	n, err := readChunk(input, buffer)
+	if err != nil {
+		t.Fatalf("readChunk: %v", err)
+	}
+	if n != len(buffer) {
+		t.Fatalf("readChunk bytes = %d, want %d", n, len(buffer))
+	}
+}
+
+func TestReadChunkInteractiveTrickleRespectsMaxAge(t *testing.T) {
+	reader := &trickleDeadlineReader{
+		initialChunk: 1,
+		nextChunk:    1,
+		nextDelay:    time.Millisecond,
+	}
+	buffer := make([]byte, 32*1024)
+	started := time.Now()
+	n, err := readChunk(reader, buffer)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("readChunk: %v", err)
+	}
+	if n >= mediumDataThreshold {
+		t.Fatalf("readChunk bytes = %d, want interactive partial chunk", n)
+	}
+	if elapsed < interactiveCoalesceMaxAge-5*time.Millisecond || elapsed > 200*time.Millisecond {
+		t.Fatalf("readChunk elapsed = %s, want around interactive max age %s", elapsed, interactiveCoalesceMaxAge)
+	}
+}
+
+func TestReadChunkBulkTrickleRespectsMaxAge(t *testing.T) {
+	reader := &trickleDeadlineReader{
+		initialChunk: inlineDataThreshold,
+		nextChunk:    1024,
+		nextDelay:    10 * time.Millisecond,
+	}
+	buffer := make([]byte, 2*1024*1024)
+	started := time.Now()
+	n, err := readChunk(reader, buffer)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("readChunk: %v", err)
+	}
+	if n <= inlineDataThreshold || n >= len(buffer) {
+		t.Fatalf("readChunk bytes = %d, want partial bulk chunk", n)
+	}
+	if elapsed < bulkCoalesceMaxAge-25*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("readChunk elapsed = %s, want around bulk max age %s", elapsed, bulkCoalesceMaxAge)
+	}
+}
+
+func TestNormalMuxSchedulerWindowWithMaxBatchObjects(t *testing.T) {
+	ctx := context.Background()
+	mux := &driveMux{
+		recvNormalReady:       make(chan muxStreamKey, muxNormalStreamInflight+1),
+		recvNormalFlows:       map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive:      map[muxStreamKey]int{},
+		recvNormalActiveBytes: map[muxStreamKey]int{},
+		recvNormalSent:        map[muxStreamKey]bool{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 9}
+	for seq := uint64(1); seq <= 5; seq++ {
+		meta := muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: seq, PlainBytes: muxMaxBatch}
+		if !mux.enqueueNormalMuxObject(ctx, meta) {
+			t.Fatalf("enqueue seq %d failed", seq)
+		}
+	}
+	for want := uint64(1); want <= 3; want++ {
+		select {
+		case ready := <-mux.recvNormalReady:
+			got, ok := mux.takeNormalMuxObject(ctx, ready)
+			if !ok {
+				t.Fatal("ready stream had no object")
+			}
+			if got.Seq != want {
+				t.Fatalf("got seq %d, want %d", got.Seq, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for seq %d", want)
+		}
+	}
+	select {
+	case ready := <-mux.recvNormalReady:
+		t.Fatalf("received extra ready token while max-batch byte window is full: %+v", ready)
+	default:
+	}
+}
+
+type trickleDeadlineReader struct {
+	initialChunk int
+	nextChunk    int
+	nextDelay    time.Duration
+
+	mu       sync.Mutex
+	deadline time.Time
+	reads    int
+}
+
+func (r *trickleDeadlineReader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	r.reads++
+	readIndex := r.reads
+	deadline := r.deadline
+	r.mu.Unlock()
+
+	chunk := r.nextChunk
+	delay := r.nextDelay
+	if readIndex == 1 {
+		chunk = r.initialChunk
+		delay = 0
+	}
+	if chunk <= 0 {
+		chunk = 1
+	}
+	if chunk > len(p) {
+		chunk = len(p)
+	}
+	if delay > 0 {
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return 0, timeoutError{}
+			}
+			if remaining < delay {
+				time.Sleep(remaining)
+				return 0, timeoutError{}
+			}
+		}
+		time.Sleep(delay)
+	}
+	for i := 0; i < chunk; i++ {
+		p[i] = byte(i)
+	}
+	return chunk, nil
+}
+
+func (r *trickleDeadlineReader) SetReadDeadline(deadline time.Time) error {
+	r.mu.Lock()
+	r.deadline = deadline
+	r.mu.Unlock()
+	return nil
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
 
 func TestCleanupForegroundBusyState(t *testing.T) {
 	tunnel := &Tunnel{}

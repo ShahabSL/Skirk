@@ -20,6 +20,7 @@ import (
 const (
 	muxMagic                     = "SKM4"
 	muxVersion                   = byte(4)
+	muxBatchHeaderSize           = 7
 	muxFrameHeaderSize           = 21
 	muxFrameOpen                 = byte(1)
 	muxFrameData                 = byte(2)
@@ -2278,12 +2279,16 @@ func isDrivePageTokenRejected(err error) bool {
 }
 
 func (m *driveMux) readBufferSize() int {
-	size := m.t.ChunkSize / 8
+	size := m.t.ChunkSize / 4
 	if size < 32*1024 {
 		size = 32 * 1024
 	}
-	if size > 256*1024 {
-		size = 256 * 1024
+	maxPayload := m.normalBatchBytes() - muxBatchHeaderSize - muxFrameHeaderSize
+	if maxPayload < 32*1024 {
+		maxPayload = 32 * 1024
+	}
+	if size > maxPayload {
+		size = maxPayload
 	}
 	return size
 }

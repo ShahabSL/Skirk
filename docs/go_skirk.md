@@ -47,7 +47,9 @@ Important fields:
 - `route.google_ip`: Google edge IP for pinned route modes.
 - `drive.space`: `appDataFolder` for the production mailbox.
 - `tunnel.profile`: `auto` by default.
-- `tunnel.chunk_size`: maximum mux object payload size.
+- `tunnel.chunk_size`: transport coalescing target. Defaults to 16 MiB; v4
+  still caps an individual Drive mux object at about 4 MiB to stay under the
+  measured stable Drive object size.
 - `tunnel.poll_interval_ms`: baseline mailbox poll interval.
 - `tunnel.upload_concurrency` / `tunnel.download_concurrency`: optional manual
   caps; leave unset for auto profile.

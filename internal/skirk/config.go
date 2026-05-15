@@ -288,7 +288,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.ExitIPFamily = "prefer_ipv4"
 	}
 	if c.Tunnel.ChunkSize == 0 {
-		c.Tunnel.ChunkSize = 8 * 1024 * 1024
+		c.Tunnel.ChunkSize = 16 * 1024 * 1024
 	}
 	if c.Tunnel.PollIntervalMS == 0 {
 		c.Tunnel.PollIntervalMS = 100

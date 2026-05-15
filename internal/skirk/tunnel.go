@@ -22,6 +22,9 @@ const (
 	interactiveCoalesceDelay      = 5 * time.Millisecond
 	mediumCoalesceDelay           = 50 * time.Millisecond
 	bulkCoalesceDelay             = 75 * time.Millisecond
+	interactiveCoalesceMaxAge     = 15 * time.Millisecond
+	mediumCoalesceMaxAge          = 75 * time.Millisecond
+	bulkCoalesceMaxAge            = 250 * time.Millisecond
 	deferredCleanupDelay          = 5 * time.Second
 	deferredCleanupFlushThreshold = 128
 	idleOpenPollInterval          = 1 * time.Second
@@ -816,12 +819,18 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 		return n, err
 	}
 	defer deadlineConn.SetReadDeadline(time.Time{})
+	started := time.Now()
 	for n < len(buffer) {
-		delay := interactiveCoalesceDelay
-		if n >= inlineDataThreshold {
-			delay = bulkCoalesceDelay
-		} else if n >= mediumDataThreshold {
-			delay = mediumCoalesceDelay
+		delay := coalesceDelayForBytes(n)
+		maxAge := coalesceMaxAgeForBytes(n)
+		if maxAge > 0 {
+			remaining := maxAge - time.Since(started)
+			if remaining <= 0 {
+				return n, nil
+			}
+			if delay > remaining {
+				delay = remaining
+			}
 		}
 		deadline := time.Now().Add(delay)
 		if err := deadlineConn.SetReadDeadline(deadline); err != nil {
@@ -842,6 +851,26 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func coalesceDelayForBytes(n int) time.Duration {
+	if n >= inlineDataThreshold {
+		return bulkCoalesceDelay
+	}
+	if n >= mediumDataThreshold {
+		return mediumCoalesceDelay
+	}
+	return interactiveCoalesceDelay
+}
+
+func coalesceMaxAgeForBytes(n int) time.Duration {
+	if n >= inlineDataThreshold {
+		return bulkCoalesceMaxAge
+	}
+	if n >= mediumDataThreshold {
+		return mediumCoalesceMaxAge
+	}
+	return interactiveCoalesceMaxAge
 }
 
 func readInitialClientData(conn net.Conn, limit int, wait time.Duration) ([]byte, error) {
