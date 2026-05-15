@@ -6,6 +6,16 @@
   <img src="assets/logo.png" alt="Skirk logo" width="160">
 </p>
 
+## Donate
+
+If Skirk is useful to you, donations help fund testing infrastructure and
+maintenance. :
+
+- USDT: `0x5d0b46d821910a5a5503de78e230f9a5e9c52c2f`
+- BTC: `bc1q8qsxlp7pzgdqkhu2aj5ss3krnkrecyrh6hedpj`
+- ETH: `0x5d0b46d821910a5a5503de78e230f9a5e9c52c2f`
+- TON: `UQAO9dEwEVIrrTwoWzCd3Rksb6r3qFSs80Xa7yp3nkO4CPyp`
+
 Skirk is a Go-first transport for restricted-network testing. It exposes a local
 SOCKS5 proxy, optional HTTP proxy, or Android VPN frontend, then moves encrypted
 TCP stream frames through a Google Drive `appDataFolder` mailbox to an exit
@@ -36,12 +46,13 @@ Install Skirk on the exit machine:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+"$HOME/.local/bin/skirk" version
 ```
 
 Create a kit:
 
 ```bash
-skirk setup init --out skirk-kit
+"$HOME/.local/bin/skirk" setup init --out skirk-kit
 ```
 
 If Google login is needed, setup starts a browser-code login. On Linux, Skirk can
@@ -49,13 +60,13 @@ install Google Cloud CLI under `~/google-cloud-sdk` when it is missing. For the
 most reliable quota ownership, use your own Google OAuth client:
 
 ```bash
-skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
 Run the exit:
 
 ```bash
-skirk serve-exit --config skirk-kit/exit.json
+"$HOME/.local/bin/skirk" serve-exit --config skirk-kit/exit.json
 ```
 
 Copy the one-line text from `skirk-kit/client.skirk` and use it on a client.
@@ -67,7 +78,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 read -r SKIRK_CLIENT_CONFIG
 # paste the skirk:... profile, press Enter, then run:
-skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
+"$HOME/.local/bin/skirk" serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
 Test the local SOCKS proxy:
