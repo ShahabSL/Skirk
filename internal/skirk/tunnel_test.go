@@ -81,6 +81,115 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}
 }
 
+func TestTunnelMuxV5BBulkPlaneRoundTripWithMemoryStore(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+
+	data := NewMemoryStore()
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-v5", RunID: "run-v5"},
+		Tunnel: TunnelConfig{
+			Listen:           freeTCPAddr(t),
+			Transport:        "muxv5b",
+			ChunkSize:        4 * 1024 * 1024,
+			PollIntervalMS:   5,
+			CleanupProcessed: false,
+		},
+	}
+	cfg.ApplyDefaults()
+	clientTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitTunnel, err := NewTunnel(data, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = exitTunnel.ServeExit(ctx) }()
+	go func() { _ = clientTunnel.ServeClient(ctx, cfg.Tunnel.Listen) }()
+	time.Sleep(75 * time.Millisecond)
+
+	conn, err := dialViaSOCKS5(context.Background(), "socks5h://"+cfg.Tunnel.Listen, echo.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := make([]byte, 768*1024)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := conn.Write(payload)
+		writeErr <- err
+	}()
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("v5a echo payload mismatch")
+	}
+
+	upBulkPrefix := muxV5DirPrefix(clientTunnel.SessionID, DirectionUp, muxV5PlaneBulk, cfg.Client.ID, cfg.Client.RunID)
+	upObjects, err := data.List(context.Background(), upBulkPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upObjects) == 0 {
+		t.Fatalf("expected muxv5 bulk-plane objects under %s", upBulkPrefix)
+	}
+	for _, object := range upObjects {
+		if object.ID == "" {
+			t.Fatalf("expected bulk object %s to carry generated id", object.Name)
+		}
+	}
+	controlPrefix := muxV5DirPrefix(clientTunnel.SessionID, DirectionUp, muxV5PlaneControl, cfg.Client.ID, cfg.Client.RunID)
+	controlObjects, err := data.List(context.Background(), controlPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(controlObjects) == 0 {
+		t.Fatalf("expected muxv5 control-plane objects under %s", controlPrefix)
+	}
+	for _, object := range controlObjects {
+		if object.ID == "" {
+			t.Fatalf("expected control object %s to carry generated id", object.Name)
+		}
+	}
+}
+
 func TestTunnelExitProxyWithMemoryStores(t *testing.T) {
 	proxyTargets := make(chan string, 1)
 	proxy := SOCKSServer{
@@ -381,9 +490,14 @@ func TestAdaptiveLimiterBacksOffOnSlowSuccess(t *testing.T) {
 func TestAdaptiveLimiterUsesByteAwareSlowThresholdForBulk(t *testing.T) {
 	limiter := newAdaptiveLimiter(4, 8, 5*time.Second, "test", nil)
 	limiter.inFlight = 1
-	limiter.release(false, nil, 6*time.Second, 4*1024*1024)
+	limiter.release(false, nil, 4*time.Second, 4*1024*1024)
 	if limiter.limit != 4 {
 		t.Fatalf("bulk transfer at acceptable byte rate limit = %d, want 4", limiter.limit)
+	}
+	limiter.inFlight = 1
+	limiter.release(false, nil, 6*time.Second, 4*1024*1024)
+	if limiter.limit != 3 {
+		t.Fatalf("slow bulk transfer limit = %d, want 3", limiter.limit)
 	}
 	limiter.inFlight = 1
 	limiter.release(false, nil, 20*time.Second, 4*1024*1024)
@@ -445,11 +559,89 @@ func TestAdaptiveLimiterPriorityCanUseReserveAfterNormalShrink(t *testing.T) {
 	}
 }
 
-func TestExitAutoProfileStartsAtFullWorkerWindows(t *testing.T) {
-	tunnel := &Tunnel{Profile: "auto", role: "exit"}
-	if got, want := tunnel.initialUploadWindow(tunnel.uploadWorkerCount()), 32; got != want {
-		t.Fatalf("exit auto initial upload window = %d, want %d", got, want)
+func TestAdaptiveLimiterBulkFloorReservesPrioritySlots(t *testing.T) {
+	limiter := newAdaptiveLimiter(32, 32, time.Second, "test", nil)
+	for limiter.limit > limiter.minimumLimitLocked() {
+		limiter.inFlight = 1
+		limiter.release(false, nil, 7*time.Second, 4*1024*1024)
 	}
+	if got, want := limiter.limit, 5; got != want {
+		t.Fatalf("slow bulk floor limit = %d, want %d", got, want)
+	}
+	if got, want := limiter.priorityReserveLocked(), 4; got != want {
+		t.Fatalf("priority reserve at bulk floor = %d, want %d", got, want)
+	}
+	limiter.inFlight = 1
+	if limiter.canAcquireLocked(false) {
+		t.Fatal("normal bulk traffic should stop after the single non-reserved floor slot is occupied")
+	}
+	limiter.inFlight = limiter.limit
+	limiter.priorityBusy = limiter.priorityReserveLocked() - 1
+	if !limiter.canAcquireLocked(true) {
+		t.Fatal("priority traffic should still use reserved capacity at the bulk floor")
+	}
+	limiter.priorityBusy = limiter.priorityReserveLocked()
+	if limiter.canAcquireLocked(true) {
+		t.Fatal("priority traffic should stop after consuming the floor reserve")
+	}
+}
+
+func TestAutoProfileUsesConservativeUploadWindows(t *testing.T) {
+	tests := []struct {
+		name        string
+		role        string
+		routeProxy  string
+		wantWorkers int
+		wantInitial int
+	}{
+		{
+			name:        "client direct",
+			role:        "client",
+			wantWorkers: autoClientUploadWorkers,
+			wantInitial: autoClientUploadWindow,
+		},
+		{
+			name:        "client proxy",
+			role:        "client",
+			routeProxy:  "socks5h://127.0.0.1:1080",
+			wantWorkers: autoClientProxyUploadWorkers,
+			wantInitial: autoClientProxyUploadWindow,
+		},
+		{
+			name:        "exit",
+			role:        "exit",
+			wantWorkers: autoExitUploadWorkers,
+			wantInitial: autoExitUploadWindow,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			tunnel := &Tunnel{Profile: "auto", role: tt.role, RouteProxy: tt.routeProxy}
+			max := tunnel.uploadWorkerCount()
+			if max != tt.wantWorkers {
+				t.Fatalf("auto upload workers = %d, want %d", max, tt.wantWorkers)
+			}
+			if got := tunnel.initialUploadWindow(max); got != tt.wantInitial {
+				t.Fatalf("auto initial upload window = %d, want %d", got, tt.wantInitial)
+			}
+		})
+	}
+}
+
+func TestExplicitUploadConcurrencyStartsAtRequestedWindow(t *testing.T) {
+	tunnel := &Tunnel{Profile: "auto", role: "exit", UploadConcurrency: 20}
+	max := tunnel.uploadWorkerCount()
+	if max != 20 {
+		t.Fatalf("explicit upload workers = %d, want 20", max)
+	}
+	if got := tunnel.initialUploadWindow(max); got != 20 {
+		t.Fatalf("explicit initial upload window = %d, want 20", got)
+	}
+}
+
+func TestExitAutoProfileKeepsFullDownloadWindow(t *testing.T) {
+	tunnel := &Tunnel{Profile: "auto", role: "exit"}
 	if got, want := tunnel.initialDownloadWindow(tunnel.downloadWorkerCount()), 16; got != want {
 		t.Fatalf("exit auto initial download window = %d, want %d", got, want)
 	}
@@ -626,6 +818,10 @@ func TestMuxPriorityFrameKeepsLargeFirstDataNormal(t *testing.T) {
 	if muxPriorityFrame(frame) {
 		t.Fatal("large first data frame should not consume priority capacity")
 	}
+	frame.PriorityHint = true
+	if muxPriorityFrame(frame) {
+		t.Fatal("priority hint should not promote frames larger than the priority chunk")
+	}
 	frame.Payload = make([]byte, inlineDataThreshold)
 	if !muxPriorityFrame(frame) {
 		t.Fatal("small first data frame should be priority")
@@ -681,6 +877,43 @@ func TestMuxSendDataPayloadSplitsInitialPriorityChunks(t *testing.T) {
 	}
 	if muxPriorityFrame(normal[0]) {
 		t.Fatal("remainder should stay normal")
+	}
+}
+
+func TestMuxSendDataPayloadPromotesIdleBurst(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
+	for i := range mux.lanes {
+		mux.lanes[i] = newMuxLane(mux, i)
+	}
+	stream := &muxStream{
+		id:         1,
+		clientID:   "client-a",
+		runID:      "run-a",
+		mux:        mux,
+		lastSendAt: time.Now().Add(-muxIdlePriorityGap - time.Second),
+	}
+	stream.sendSeq.Store(10)
+
+	if err := mux.sendDataPayload(context.Background(), stream, make([]byte, 3*muxPriorityDataChunk)); err != nil {
+		t.Fatalf("send data payload: %v", err)
+	}
+
+	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
+	if got := len(lane.urgent); got != muxIdlePriorityChunks {
+		t.Fatalf("urgent frames = %d, want %d idle chunks", got, muxIdlePriorityChunks)
+	}
+	first := <-lane.urgent
+	second := <-lane.urgent
+	if first.Seq != 11 || second.Seq != 12 || !first.PriorityHint || !second.PriorityHint {
+		t.Fatalf("idle burst priority frames = (%d,%t),(%d,%t)", first.Seq, first.PriorityHint, second.Seq, second.PriorityHint)
+	}
+
+	lane.normalMu.Lock()
+	normal := append([]muxFrame(nil), lane.normalQueues[stream.key()]...)
+	queued := lane.normalQueuedFrames
+	lane.normalMu.Unlock()
+	if queued != 1 || len(normal) != 1 || normal[0].Seq != 13 || normal[0].PriorityHint {
+		t.Fatalf("normal queue = queued %d frames %+v, want one non-priority seq 13", queued, normal)
 	}
 }
 

@@ -32,8 +32,14 @@ const (
 	directDriveSlowThreshold      = 5 * time.Second
 	proxyDriveSlowThreshold       = 10 * time.Second
 	limiterBulkByteThreshold      = 1 * 1024 * 1024
-	limiterDirectBulkBytesPerSec  = 512 * 1024
-	limiterProxyBulkBytesPerSec   = 256 * 1024
+	limiterDirectBulkBytesPerSec  = 2 * 1024 * 1024
+	limiterProxyBulkBytesPerSec   = 1 * 1024 * 1024
+	autoClientUploadWorkers       = 8
+	autoClientProxyUploadWorkers  = 4
+	autoExitUploadWorkers         = 16
+	autoClientUploadWindow        = 4
+	autoClientProxyUploadWindow   = 2
+	autoExitUploadWindow          = 8
 	exitFamilyPreferenceTimeout   = 2 * time.Second
 	cleanupQuietWindow            = 2 * time.Second
 	cleanupMaxForegroundDelay     = 2 * time.Minute
@@ -49,6 +55,7 @@ type Tunnel struct {
 	ClientID             string
 	RunID                string
 	ChunkSize            int
+	Transport            string
 	Concurrency          int
 	UploadConcurrency    int
 	DownloadConcurrency  int
@@ -87,6 +94,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		ClientID:            strings.TrimSpace(cfg.Client.ID),
 		RunID:               strings.TrimSpace(cfg.Client.RunID),
 		ChunkSize:           cfg.Tunnel.ChunkSize,
+		Transport:           strings.TrimSpace(cfg.Tunnel.Transport),
 		Concurrency:         cfg.Tunnel.Concurrency,
 		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,
 		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
@@ -346,11 +354,11 @@ func (t *Tunnel) uploadWorkerCount() int {
 		switch t.role {
 		case "client":
 			if t.RouteProxy != "" {
-				return 8
+				return autoClientProxyUploadWorkers
 			}
-			return 16
+			return autoClientUploadWorkers
 		case "exit":
-			return 32
+			return autoExitUploadWorkers
 		}
 	}
 	return clampWorkers(t.Concurrency)
@@ -436,13 +444,13 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 	switch t.role {
 	case "client":
 		if t.RouteProxy != "" {
-			return minInt(4, max)
+			return minInt(autoClientProxyUploadWindow, max)
 		}
-		return minInt(8, max)
+		return minInt(autoClientUploadWindow, max)
 	case "exit":
-		return max
+		return minInt(autoExitUploadWindow, max)
 	default:
-		return minInt(8, max)
+		return minInt(autoClientUploadWindow, max)
 	}
 }
 
@@ -607,12 +615,9 @@ func (l *adaptiveLimiter) priorityReserveLocked() int {
 	if l.limit <= 1 || l.reserve <= 0 {
 		return 0
 	}
-	reserve := l.limit / 8
-	if reserve < 1 {
-		reserve = 1
-	}
-	if reserve > l.reserve {
-		reserve = l.reserve
+	reserve := l.reserve
+	if reserve > l.limit-1 {
+		reserve = l.limit - 1
 	}
 	return reserve
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -11,15 +13,49 @@ import (
 
 func TestSummarizeHTTPSamples(t *testing.T) {
 	got := summarizeHTTPSamples([]benchHTTPResult{
-		{Status: 200, Bytes: 1000, TTFBMS: 30, TotalMS: 100, Mbps: 0.08},
-		{Status: 200, Bytes: 2000, TTFBMS: 10, TotalMS: 200, Mbps: 0.08},
-		{Status: 500, Bytes: 3000, TTFBMS: 50, TotalMS: 300, Mbps: 0.08},
+		{OK: true, Status: 200, Bytes: 1000, TTFBMS: 30, TotalMS: 100, Mbps: 0.08},
+		{OK: true, Status: 200, Bytes: 2000, TTFBMS: 10, TotalMS: 200, Mbps: 0.08},
+		{Status: 500, Bytes: 3000, TTFBMS: 50, TotalMS: 300, Mbps: 0.08, Error: "http_status_500"},
 	})
-	if got.Samples != 3 || got.Successes != 2 || got.Bytes != 6000 {
+	if got.Samples != 3 || got.Successes != 2 || got.Failures != 1 || got.Bytes != 6000 {
 		t.Fatalf("summary = %+v, want sample/success/byte counts", got)
 	}
-	if got.P50TTFBMS != 30 || got.P95TTFBMS != 50 || got.P50TotalMS != 200 || got.P95TotalMS != 300 {
-		t.Fatalf("summary = %+v, want percentile latency values", got)
+	if got.P50TTFBMS != 30 || got.P95TTFBMS != 30 || got.P99TTFBMS != 30 || got.P50TotalMS != 200 || got.P95TotalMS != 200 || got.P99TotalMS != 200 {
+		t.Fatalf("summary = %+v, want success-only percentile latency values", got)
+	}
+	if got.Errors["http_status_500"] != 1 {
+		t.Fatalf("summary errors = %+v, want one HTTP 500", got.Errors)
+	}
+}
+
+func TestBenchLiveResultFailsOnStall(t *testing.T) {
+	result := benchLiveResult{
+		Small: benchHTTPSummary{Samples: 1, Failures: 1, Stalls: 1},
+	}
+	err := result.benchmarkFailure()
+	if err == nil || !strings.Contains(err.Error(), "stalls=1") {
+		t.Fatalf("benchmarkFailure error = %v, want stall failure", err)
+	}
+}
+
+func TestBenchLiveResultPassesWithoutHTTPFailures(t *testing.T) {
+	result := benchLiveResult{
+		Small: benchHTTPSummary{Samples: 1, Successes: 1},
+		Bulk:  &benchHTTPSummary{Samples: 2, Successes: 2},
+	}
+	if err := result.benchmarkFailure(); err != nil {
+		t.Fatalf("benchmarkFailure = %v, want nil", err)
+	}
+}
+
+func TestCopyResponseBodyWithGuardsDetectsStall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reader := &blockingAfterFirstByteReader{ctx: ctx}
+
+	n, stalled, slow, err := copyResponseBodyWithGuards(ctx, cancel, reader, 50*time.Millisecond, 0, 0)
+	if n != 1 || !stalled || slow || !errors.Is(err, errDownloadStalled) {
+		t.Fatalf("copy result n=%d stalled=%t slow=%t err=%v, want stalled after first byte", n, stalled, slow, err)
 	}
 }
 
@@ -78,4 +114,19 @@ func TestEnvBool(t *testing.T) {
 	if envBool("SKIRK_TEST_BOOL") {
 		t.Fatal("envBool should reject no")
 	}
+}
+
+type blockingAfterFirstByteReader struct {
+	ctx  context.Context
+	sent bool
+}
+
+func (r *blockingAfterFirstByteReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		p[0] = 'x'
+		return 1, nil
+	}
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
 }

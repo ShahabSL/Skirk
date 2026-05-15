@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,7 @@ type DriveConfig struct {
 type TunnelConfig struct {
 	Listen              string `json:"listen,omitempty"`
 	Profile             string `json:"profile,omitempty"`
+	Transport           string `json:"transport,omitempty"`
 	ExitProxy           string `json:"exit_proxy,omitempty"`
 	ExitIPFamily        string `json:"exit_ip_family,omitempty"`
 	BurstPoll           bool   `json:"burst_poll,omitempty"`
@@ -284,6 +286,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Tunnel.Profile == "" {
 		c.Tunnel.Profile = "auto"
 	}
+	if c.Tunnel.Transport == "" {
+		c.Tunnel.Transport = "muxv4"
+	}
 	if c.Tunnel.ExitIPFamily == "" {
 		c.Tunnel.ExitIPFamily = "prefer_ipv4"
 	}
@@ -329,6 +334,11 @@ func (c *Config) Validate() error {
 	case "", "auto", "fixed":
 	default:
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
+	}
+	switch strings.TrimSpace(c.Tunnel.Transport) {
+	case "", "muxv4", "muxv5a", "muxv5b":
+	default:
+		return fmt.Errorf("config.tunnel.transport must be muxv4, muxv5a, or muxv5b")
 	}
 	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
 	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":
@@ -516,11 +526,16 @@ func (a AuthConfig) tokenFromCommand(ctx context.Context) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/C", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-lc", command)
+	}
 	path := os.Getenv("PATH")
 	home := os.Getenv("HOME")
 	if home != "" {
-		path = home + "/google-cloud-sdk/bin:" + path
+		path = home + "/google-cloud-sdk/bin" + string(os.PathListSeparator) + path
 	}
 	cmd.Env = append(os.Environ(), "PATH="+path)
 	out, err := cmd.Output()

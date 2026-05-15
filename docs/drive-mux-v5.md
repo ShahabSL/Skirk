@@ -100,12 +100,24 @@ discovery candidates until live gates prove the better default:
 - opt-in broader-scope variant: move data objects to another Drive corpus and
   keep appDataFolder control, accepting security and setup tradeoffs.
 
-As of the 2026-05-14 `google_front_pinned` primitive benchmark, v5a is the
-leading default candidate: control-prefix `files.list` observed all generated-ID
-control objects in one call at roughly 200 ms, while `changes.list` required
-10-18 calls and 2.6-4.5 s for the same objects because data object creations
-polluted the change stream. v5b remains a recovery or opt-in candidate until it
-beats v5a under the same bulk load.
+As of the 2026-05-14 `google_front_pinned` primitive benchmark,
+control-prefix `files.list` observed generated-ID control objects in one call at
+roughly 200-350 ms, while `changes.list` required seconds for the same objects
+because data object creations polluted the change stream. That made v5a the
+right architecture to prototype first.
+
+The later 2026-05-14 live mixed gate did not justify changing the default:
+
+- muxv4: 128 MiB bulk at about 47.7 Mbps, TTFB about 4.5 s, small p95 about
+  5.9 s.
+- muxv5a: about 30.4 Mbps, TTFB about 5.1 s, small p95 about 6.0 s.
+- muxv5b: about 44.2 Mbps, TTFB about 5.1 s, small p95 about 7.0 s.
+
+v5a protected discovery but paid an extra data/control upload cost. v5b
+recovered much of the bulk throughput but reintroduced data-volume discovery
+pressure through a second bulk prefix. Both remain experimental until ACK/credit,
+range-readable multi-record slabs, and per-client byte fairness produce a live
+win over muxv4.
 
 ### Control Record
 

@@ -2,6 +2,9 @@ package skirk
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,6 +28,7 @@ func TestMuxV5ControlPageSealOpenRoundTrip(t *testing.T) {
 				StreamID:        11,
 				StreamSeqMin:    0,
 				StreamSeqMax:    0,
+				InlineData:      encodeMuxOpenPayload("example.com:443", []byte("GET / HTTP/1.1\r\n\r\n")),
 				CreatedUnixNano: time.Date(2026, 5, 14, 1, 0, 0, 0, time.UTC).UnixNano(),
 			},
 			{
@@ -36,6 +40,7 @@ func TestMuxV5ControlPageSealOpenRoundTrip(t *testing.T) {
 				PlainBytes:      1024,
 				SealedBytes:     1100,
 				DataFileID:      "drive-file-id",
+				DataObjectName:  "muxv5/session/down/d/client/run/epoch-a/s000000000000000b/l02/0000000000000011.data",
 				DataOffset:      4096,
 				DataLength:      1100,
 				FrameCount:      16,
@@ -58,8 +63,15 @@ func TestMuxV5ControlPageSealOpenRoundTrip(t *testing.T) {
 	if opened.ControlSeq != page.ControlSeq || opened.Direction != page.Direction || opened.ClientID != page.ClientID || opened.RunID != page.RunID || opened.Epoch != page.Epoch {
 		t.Fatalf("opened page = %+v, want header from %+v", opened, page)
 	}
-	if len(opened.Records) != 2 || opened.Records[1].DataFileID != "drive-file-id" || opened.Records[1].DataOffset != 4096 || opened.Records[1].FrameCount != 16 {
+	if len(opened.Records) != 2 || opened.Records[1].DataFileID != "drive-file-id" || opened.Records[1].DataObjectName == "" || opened.Records[1].DataOffset != 4096 || opened.Records[1].FrameCount != 16 {
 		t.Fatalf("opened records = %+v, want data manifest record", opened.Records)
+	}
+	target, initial, err := decodeMuxOpenPayload(opened.Records[0].InlineData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "example.com:443" || string(initial) != "GET / HTTP/1.1\r\n\r\n" {
+		t.Fatalf("inline open = target %q initial %q", target, string(initial))
 	}
 }
 
@@ -205,6 +217,31 @@ func TestMuxV5DataRecordRangeOpenAuthenticatesManifest(t *testing.T) {
 	}
 }
 
+func TestSealMuxV5DataSlabRejectsNonSequentialRecordIndexes(t *testing.T) {
+	sid := [16]byte{1, 2, 3}
+	key, err := DeriveMuxDataKeyV5("secret", sid, DirectionDown, "client-a", "run-a", "epoch-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = sealMuxV5DataSlab(key, muxV5DataSlab{
+		Direction:  DirectionDown,
+		ClientID:   "client-a",
+		RunID:      "run-a",
+		Epoch:      "epoch-a",
+		DataFileID: "drive-file-id",
+		ObjectName: "muxv5/session/down/client/run/d/epoch-a/0/0001.data",
+		Lane:       1,
+		SlabSeq:    5,
+		Records: []muxV5DataRecord{
+			{RecordIndex: 0, PriorityClass: muxV5ClassBulk, StreamID: 22, StreamSeqMin: 10, StreamSeqMax: 12, Plaintext: []byte("first")},
+			{RecordIndex: 0, PriorityClass: muxV5ClassBulk, StreamID: 22, StreamSeqMin: 13, StreamSeqMax: 14, Plaintext: []byte("second")},
+		},
+	})
+	if err == nil {
+		t.Fatal("slab with duplicate record indexes sealed successfully")
+	}
+}
+
 func TestDeriveMuxV5KeysSeparateEpochAndPurpose(t *testing.T) {
 	sid := [16]byte{1, 2, 3}
 	controlA, err := DeriveMuxControlKeyV5("secret", sid, DirectionDown, "client-a", "run-a", "epoch-a")
@@ -249,4 +286,319 @@ func TestMuxV5ControlPageRejectsTrailingBytes(t *testing.T) {
 	if _, err := decodeMuxV5ControlPage(raw); err == nil {
 		t.Fatal("control page with trailing bytes decoded successfully")
 	}
+}
+
+func TestMuxV5ControlPageRejectsTruncatedInlineData(t *testing.T) {
+	raw, err := encodeMuxV5ControlPage(muxV5ControlPage{
+		Direction:  DirectionDown,
+		ClientID:   "client-a",
+		RunID:      "run-a",
+		Epoch:      "epoch-a",
+		ControlSeq: 1,
+		Records: []muxV5ControlRecord{
+			{Type: muxV5RecordData, PriorityClass: muxV5ClassInteractive, StreamID: 1, InlineData: []byte("hello")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = raw[:len(raw)-1]
+	if _, err := decodeMuxV5ControlPage(raw); err == nil {
+		t.Fatal("control page with truncated inline data decoded successfully")
+	}
+}
+
+func TestMuxV5ControlObjectNameRoundTrip(t *testing.T) {
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	name := muxV5ControlObjectName(sid, DirectionDown, "client-a", "run-a", "epoch-a", 0x1234, 2, 9, 3, 4, 6, 4096, true)
+	wantPrefix := "muxv5/aabbcc00000000000000000000000000/down/c/client-a/run-a/epoch-a/p0/s0000000000001234/l02/"
+	if len(name) <= len(wantPrefix) || name[:len(wantPrefix)] != wantPrefix {
+		t.Fatalf("name = %q, want prefix %q", name, wantPrefix)
+	}
+	meta, ok := parseMuxV5ControlObjectInfo(ObjectInfo{Name: name, ID: "control-file-id", Size: 512})
+	if !ok {
+		t.Fatalf("parseMuxV5ControlObjectInfo(%q) failed", name)
+	}
+	if meta.ID != "control-file-id" || meta.ClientID != "client-a" || meta.RunID != "run-a" || meta.Epoch != "epoch-a" || meta.StreamID != 0x1234 || meta.Lane != 2 || meta.Seq != 9 || !meta.Priority {
+		t.Fatalf("meta = %+v, want v5 control identity", meta)
+	}
+	if !meta.FrameRangeKnown || meta.FrameMinSeq != 4 || meta.FrameMaxSeq != 6 || meta.PlainBytes != 4096 {
+		t.Fatalf("meta range/bytes = %+v, want parsed frame range and bytes", meta)
+	}
+}
+
+func TestMuxV5BulkObjectNameRoundTrip(t *testing.T) {
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	name := muxV5BulkObjectName(sid, DirectionDown, "client-a", "run-a", "epoch-a", 0x1234, 2, 9, 3, 4, 6, 4096, false)
+	wantPrefix := "muxv5/aabbcc00000000000000000000000000/down/b/client-a/run-a/epoch-a/p1/s0000000000001234/l02/"
+	if len(name) <= len(wantPrefix) || name[:len(wantPrefix)] != wantPrefix {
+		t.Fatalf("name = %q, want prefix %q", name, wantPrefix)
+	}
+	meta, ok := parseMuxV5BulkObjectInfo(ObjectInfo{Name: name, ID: "bulk-file-id", Size: 512})
+	if !ok {
+		t.Fatalf("parseMuxV5BulkObjectInfo(%q) failed", name)
+	}
+	if meta.ID != "bulk-file-id" || meta.ClientID != "client-a" || meta.RunID != "run-a" || meta.Epoch != "epoch-a" || meta.StreamID != 0x1234 || meta.Lane != 2 || meta.Seq != 9 || meta.Priority {
+		t.Fatalf("meta = %+v, want v5 bulk identity", meta)
+	}
+	if !meta.FrameRangeKnown || meta.FrameMinSeq != 4 || meta.FrameMaxSeq != 6 || meta.PlainBytes != 4096 {
+		t.Fatalf("meta range/bytes = %+v, want parsed frame range and bytes", meta)
+	}
+}
+
+func TestMuxV5ControlPrefixExcludesDataAndBulkPlanes(t *testing.T) {
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	controlPrefix := muxV5DirPrefix(sid, DirectionUp, muxV5PlaneControl, "", "")
+	dataName := muxV5DataObjectName(sid, DirectionUp, "client-a", "run-a", "epoch-a", 1, 0, 1)
+	if len(dataName) >= len(controlPrefix) && dataName[:len(controlPrefix)] == controlPrefix {
+		t.Fatalf("data name %q matched control prefix %q", dataName, controlPrefix)
+	}
+	bulkName := muxV5BulkObjectName(sid, DirectionUp, "client-a", "run-a", "epoch-a", 1, 0, 1, 1, 1, 1, 4096, false)
+	if len(bulkName) >= len(controlPrefix) && bulkName[:len(controlPrefix)] == controlPrefix {
+		t.Fatalf("bulk name %q matched control prefix %q", bulkName, controlPrefix)
+	}
+}
+
+func TestMuxV5IDBatchSizeIsConservative(t *testing.T) {
+	tests := []struct {
+		name              string
+		uploadConcurrency int
+		want              int
+	}{
+		{name: "minimum", uploadConcurrency: 1, want: 8},
+		{name: "typical", uploadConcurrency: 16, want: 32},
+		{name: "maximum", uploadConcurrency: 64, want: 128},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := &driveMux{t: &Tunnel{UploadConcurrency: tt.uploadConcurrency}}
+			if got := mux.v5IDBatchSize(); got != tt.want {
+				t.Fatalf("v5IDBatchSize() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMuxV5ObjectIDReservationSingleflightsEmptyPool(t *testing.T) {
+	store := newMuxV5IDReserveTestStore()
+	mux := &driveMux{t: &Tunnel{Data: store, UploadConcurrency: 8}}
+
+	const reservations = 12
+	start := make(chan struct{})
+	ids := make(chan string, reservations)
+	errs := make(chan error, reservations)
+	var wg sync.WaitGroup
+	for i := 0; i < reservations; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			id, err := mux.reserveMuxV5ObjectID(context.Background())
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- id
+		}()
+	}
+
+	close(start)
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		close(store.release)
+		wg.Wait()
+		t.Fatal("GenerateObjectIDs was not called")
+	}
+	extraBeforeRelease := false
+	select {
+	case <-store.entered:
+		extraBeforeRelease = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(store.release)
+	wg.Wait()
+	close(ids)
+	close(errs)
+
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if extraBeforeRelease {
+		t.Fatal("more than one GenerateObjectIDs call entered before the first reservation batch completed")
+	}
+	if got := store.callCount(); got != 1 {
+		t.Fatalf("GenerateObjectIDs calls = %d, want 1", got)
+	}
+	if got := store.maxConcurrentCalls(); got != 1 {
+		t.Fatalf("concurrent GenerateObjectIDs calls = %d, want 1", got)
+	}
+	if got, want := store.firstCount(), mux.v5IDBatchSize(); got != want {
+		t.Fatalf("GenerateObjectIDs count = %d, want %d", got, want)
+	}
+	seen := map[string]struct{}{}
+	for id := range ids {
+		if id == "" {
+			t.Fatal("empty generated id returned")
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate generated id returned: %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != reservations {
+		t.Fatalf("reserved ids = %d, want %d", len(seen), reservations)
+	}
+}
+
+func TestMuxV5BBulkPrefixPollSkipsAfterControlWorkWithoutStarving(t *testing.T) {
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	store := &muxV5PollPressureStore{
+		MemoryStore: NewMemoryStore(),
+		sid:         sid,
+		now:         now,
+	}
+	mux := &driveMux{
+		t:                &Tunnel{Data: store, SessionID: sid, ClientID: "client-a", RunID: "run-a"},
+		role:             "client",
+		recvDir:          DirectionDown,
+		transport:        "muxv5b",
+		startedAt:        now.Add(-time.Minute),
+		seen:             map[string]struct{}{},
+		queued:           map[string]struct{}{},
+		recvUrgent:       make(chan muxObjectMeta, muxV5BulkPollAfterControl+1),
+		recvNormalReady:  make(chan muxStreamKey, 1),
+		recvNormalFlows:  map[muxStreamKey][]muxObjectMeta{},
+		recvNormalActive: map[muxStreamKey]int{},
+		recvNormalSent:   map[muxStreamKey]bool{},
+	}
+
+	for i := 0; i < muxV5BulkPollAfterControl; i++ {
+		if !mux.pollMuxV5Objects(context.Background()) {
+			t.Fatalf("poll %d returned no work", i+1)
+		}
+		_, bulkCalls := store.counts()
+		if i < muxV5BulkPollAfterControl-1 && bulkCalls != 0 {
+			t.Fatalf("bulk prefix was polled after %d control polls, want defer until poll %d", i+1, muxV5BulkPollAfterControl)
+		}
+	}
+	controlCalls, bulkCalls := store.counts()
+	if controlCalls != muxV5BulkPollAfterControl {
+		t.Fatalf("control prefix calls = %d, want %d", controlCalls, muxV5BulkPollAfterControl)
+	}
+	if bulkCalls != 1 {
+		t.Fatalf("bulk prefix calls = %d, want 1 after bounded deferral", bulkCalls)
+	}
+}
+
+type muxV5IDReserveTestStore struct {
+	*MemoryStore
+
+	mu        sync.Mutex
+	calls     int
+	inFlight  int
+	maxFlight int
+	counts    []int
+	next      int
+	entered   chan struct{}
+	release   chan struct{}
+}
+
+func newMuxV5IDReserveTestStore() *muxV5IDReserveTestStore {
+	return &muxV5IDReserveTestStore{
+		MemoryStore: NewMemoryStore(),
+		entered:     make(chan struct{}, 32),
+		release:     make(chan struct{}),
+	}
+}
+
+func (s *muxV5IDReserveTestStore) GenerateObjectIDs(ctx context.Context, count int) ([]string, error) {
+	s.mu.Lock()
+	s.calls++
+	s.inFlight++
+	if s.inFlight > s.maxFlight {
+		s.maxFlight = s.inFlight
+	}
+	s.counts = append(s.counts, count)
+	s.mu.Unlock()
+
+	s.entered <- struct{}{}
+	defer func() {
+		s.mu.Lock()
+		s.inFlight--
+		s.mu.Unlock()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		s.next++
+		ids = append(ids, fmt.Sprintf("reserved-id-%03d", s.next))
+	}
+	return ids, nil
+}
+
+func (s *muxV5IDReserveTestStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func (s *muxV5IDReserveTestStore) maxConcurrentCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.maxFlight
+}
+
+func (s *muxV5IDReserveTestStore) firstCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.counts) == 0 {
+		return 0
+	}
+	return s.counts[0]
+}
+
+type muxV5PollPressureStore struct {
+	*MemoryStore
+
+	mu           sync.Mutex
+	sid          [16]byte
+	now          time.Time
+	controlCalls int
+	bulkCalls    int
+}
+
+func (s *muxV5PollPressureStore) List(_ context.Context, prefix string) ([]ObjectInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	controlPrefix := muxV5DirPrefix(s.sid, DirectionDown, muxV5PlaneControl, "client-a", "run-a")
+	bulkPrefix := muxV5DirPrefix(s.sid, DirectionDown, muxV5PlaneBulk, "client-a", "run-a")
+	switch prefix {
+	case controlPrefix:
+		s.controlCalls++
+		seq := uint64(s.controlCalls)
+		name := muxV5ControlObjectName(s.sid, DirectionDown, "client-a", "run-a", "epoch-a", 0x1234, 0, seq, 1, seq, seq, 256, true)
+		return []ObjectInfo{{Name: name, ID: fmt.Sprintf("control-id-%d", seq), Updated: s.now.Format(time.RFC3339Nano)}}, nil
+	case bulkPrefix:
+		s.bulkCalls++
+		return nil, nil
+	default:
+		return nil, nil
+	}
+}
+
+func (s *muxV5PollPressureStore) counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.controlCalls, s.bulkCalls
 }
