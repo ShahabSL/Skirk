@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"skirk/internal/skirk"
@@ -115,6 +117,58 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "client_id") || !strings.Contains(err.Error(), "client_secret") {
 		t.Fatalf("invalid OAuth error should mention client_id and client_secret: %s", err)
+	}
+}
+
+func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-client.json")
+	input := strings.Join([]string{
+		"",  // accept default path
+		"2", // paste credentials
+		"client-id.apps.googleusercontent.com",
+		"client-secret",
+		"", // save to default path
+		"",
+	}, "\n")
+	gotPath, err := promptPersonalOAuthClientFile(context.Background(), bufio.NewReader(strings.NewReader(input)), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != path {
+		t.Fatalf("path = %q, want %q", gotPath, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("oauth client file mode = %o, want 0600", info.Mode().Perm())
+	}
+	creds, err := readOAuthClientCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.ClientID != "client-id.apps.googleusercontent.com" || creds.ClientSecret != "client-secret" {
+		t.Fatalf("unexpected pasted credentials: %#v", creds)
+	}
+}
+
+func TestResolvePersonalOAuthDoesNotFallBackToBuiltIn(t *testing.T) {
+	oldID, oldSecret := defaultOAuthClientID, defaultOAuthClientSecret
+	t.Cleanup(func() {
+		defaultOAuthClientID = oldID
+		defaultOAuthClientSecret = oldSecret
+	})
+	defaultOAuthClientID = "builtin-client"
+	defaultOAuthClientSecret = "builtin-secret"
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "")
+	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "")
+	_, _, err := resolveOAuthClientCredentialsForMode("", false)
+	if err == nil {
+		t.Fatal("expected personal OAuth mode to require personal credentials")
+	}
+	if !strings.Contains(err.Error(), "personal OAuth mode needs") {
+		t.Fatalf("unexpected personal OAuth error: %s", err)
 	}
 }
 

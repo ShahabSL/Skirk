@@ -55,8 +55,9 @@ Create a kit and start the exit service:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-Setup prints a Google URL plus a short code. Open the URL, enter the code in
-the browser, approve Drive access, and the terminal continues.
+Interactive setup first lets you choose easy Skirk OAuth or a personal Google
+OAuth project. Setup then prints a Google URL plus a short code. Open the URL,
+enter the code in the browser, approve Drive access, and the terminal continues.
 On Linux, setup also installs/enables `skirk-exit.service` and starts the exit
 immediately. Use `--start-exit=false` if you only want the config files.
 
@@ -65,7 +66,7 @@ Heavy users can instead use their own Google Cloud OAuth client so Drive API
 traffic is charged to their own project quota:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
 This is the same operational model used by tools such as rclone: shared OAuth

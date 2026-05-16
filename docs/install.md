@@ -72,10 +72,14 @@ Google's device-code OAuth flow with Skirk's own OAuth client instead:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
+In an interactive terminal this opens the setup picker for easy Skirk OAuth or a
+personal Google OAuth project. Non-interactive runs default to easy mode unless
+`--oauth-mode personal` or `--oauth-client-file` is passed.
+
 Source builds and forks can use an OAuth override when needed:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file /path/to/oauth-client.json
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
 ## OAuth And Drive Quota Modes
@@ -101,7 +105,7 @@ Personal quota mode:
 "$HOME/.local/bin/skirk" setup init \
   --out skirk-kit \
   --reset-google-login \
-  --oauth-client-file ./oauth-client.json
+  --oauth-mode personal
 ```
 
 This is the same pattern used by mature Drive tools such as rclone: a shared

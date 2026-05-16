@@ -151,7 +151,7 @@ func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMod
 		fmt.Println("Google OAuth: easy Skirk OAuth client")
 	case "personal":
 		fmt.Println("Google OAuth: personal Google OAuth project")
-		oauthFile, err := prompt(ctx, reader, "OAuth client JSON", "oauth-client.json")
+		oauthFile, err := promptPersonalOAuthClientFile(ctx, reader, "oauth-client.json")
 		if err != nil {
 			return err
 		}

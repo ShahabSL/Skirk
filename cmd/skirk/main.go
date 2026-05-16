@@ -111,7 +111,7 @@ func usage() {
   version
   keygen
   sample-config --out skirk.json --secret SECRET
-  setup init --out skirk-kit --reset-google-login [--start-exit=false] [--exit-service-name skirk-exit] [--oauth-client-file oauth-client.json]
+  setup init --out skirk-kit --reset-google-login [--oauth-mode easy|personal] [--start-exit=false] [--exit-service-name skirk-exit] [--oauth-client-file oauth-client.json]
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]

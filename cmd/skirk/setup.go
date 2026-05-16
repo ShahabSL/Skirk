@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,7 @@ func setupInit(ctx context.Context, args []string) error {
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of starting Google login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
 	resetGoogleLogin := fs.Bool("reset-google-login", false, "remove local ADC credentials before Google login")
+	oauthMode := fs.String("oauth-mode", "auto", "Google OAuth mode: auto, easy, or personal")
 	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON for TVs and Limited Input devices")
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used for Google OAuth login")
 	clientRoute := fs.String("client-route", "google_front", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
@@ -88,7 +90,27 @@ func setupInit(ctx context.Context, args []string) error {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
 	}
 
-	oauthClient, oauthSource, oauthErr := resolveOAuthClientCredentials(strings.TrimSpace(*oauthClientFile))
+	selectedOAuthMode, err := normalizeOAuthMode(*oauthMode)
+	if err != nil {
+		return err
+	}
+	oauthClientFileValue := strings.TrimSpace(*oauthClientFile)
+	if shouldPromptOAuthMode(*adcPath, *noLogin, *jsonOut, selectedOAuthMode, oauthClientFileValue) {
+		reader := bufio.NewReader(os.Stdin)
+		selectedOAuthMode, oauthClientFileValue, err = promptSetupOAuthMode(ctx, reader)
+		if err != nil {
+			return err
+		}
+	}
+	if selectedOAuthMode == "personal" && oauthClientFileValue == "" && os.Getenv("SKIRK_OAUTH_CLIENT_ID") == "" {
+		reader := bufio.NewReader(os.Stdin)
+		oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, reader, "oauth-client.json")
+		if err != nil {
+			return err
+		}
+	}
+
+	oauthClient, oauthSource, oauthErr := resolveOAuthClientCredentialsForMode(oauthClientFileValue, selectedOAuthMode != "personal")
 	if oauthErr != nil {
 		return oauthErr
 	}
@@ -427,6 +449,10 @@ func driveOAuthClientRequiredError(credsPath string, cause error) error {
 }
 
 func resolveOAuthClientCredentials(path string) (oauthClientCredentials, string, error) {
+	return resolveOAuthClientCredentialsForMode(path, true)
+}
+
+func resolveOAuthClientCredentialsForMode(path string, allowBuiltIn bool) (oauthClientCredentials, string, error) {
 	if path != "" {
 		creds, err := readOAuthClientCredentials(path)
 		if err != nil {
@@ -440,11 +466,13 @@ func resolveOAuthClientCredentials(path string) (oauthClientCredentials, string,
 		}
 		return creds, "the OAuth client configured in SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET", nil
 	}
-	if creds, ok, err := builtInOAuthClient(); err != nil || ok {
-		if err != nil {
-			return oauthClientCredentials{}, "", err
+	if allowBuiltIn {
+		if creds, ok, err := builtInOAuthClient(); err != nil || ok {
+			if err != nil {
+				return oauthClientCredentials{}, "", err
+			}
+			return creds, "Skirk's built-in OAuth client", nil
 		}
-		return creds, "Skirk's built-in OAuth client", nil
 	}
 	if _, statErr := os.Stat("oauth-client.json"); statErr == nil {
 		creds, err := readOAuthClientCredentials("oauth-client.json")
@@ -452,6 +480,9 @@ func resolveOAuthClientCredentials(path string) (oauthClientCredentials, string,
 			return oauthClientCredentials{}, "", err
 		}
 		return creds, "the OAuth client file oauth-client.json", nil
+	}
+	if !allowBuiltIn {
+		return oauthClientCredentials{}, "", errors.New("personal OAuth mode needs --oauth-client-file, oauth-client.json, or SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET")
 	}
 	return oauthClientCredentials{}, "", nil
 }

@@ -120,6 +120,15 @@ Then run:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
+The guided equivalent is:
+
+```bash
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
+```
+
+If `oauth-client.json` is missing, setup offers to paste the client ID and
+client secret and writes the ignored local `oauth-client.json` file for you.
+
 Or set environment variables for local builds:
 
 ```bash
