@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
+    io::{Read, Write},
     net::{IpAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -517,7 +518,7 @@ impl DesktopRuntime {
 
         let socks_probe_address = loopback_probe_address(&socks_address);
         let http_probe_address = loopback_probe_address(&http_address);
-        if !wait_for_tcp_endpoint(&socks_probe_address, Duration::from_secs(10)) {
+        if !wait_for_socks5_endpoint(&socks_probe_address, Duration::from_secs(10)) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
@@ -647,16 +648,11 @@ impl DesktopRuntime {
         let mut child = command
             .spawn()
             .map_err(|error| format!("failed to start VPN sidecar: {error}"))?;
-        if !wait_for_log_marker(
-            &mut child,
-            &log_path,
-            &["sing-box started", "started at"],
-            Duration::from_secs(15),
-        ) {
+        if let Err(error) = wait_for_process_start(&mut child, &log_path, Duration::from_secs(2)) {
             terminate_child(&mut child);
             return Err(format!(
-                "VPN sidecar did not become ready\n{}",
-                read_log_tail(&log_path, 80)
+                "VPN sidecar failed to start: {error}\n{}",
+                read_log_tail(&log_path, 120)
             ));
         }
         Ok(ManagedTunnel {
@@ -1029,27 +1025,52 @@ fn wait_for_tcp_endpoint(address: &str, timeout: Duration) -> bool {
     false
 }
 
-fn wait_for_log_marker(
-    child: &mut Child,
-    path: &Path,
-    markers: &[&str],
-    timeout: Duration,
-) -> bool {
+fn wait_for_socks5_endpoint(address: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return false;
-        }
-        let tail = read_log_tail(path, 120).to_ascii_lowercase();
-        if markers
-            .iter()
-            .any(|marker| tail.contains(&marker.to_ascii_lowercase()))
-        {
+        if socks5_no_auth_probe(address) {
             return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+fn socks5_no_auth_probe(address: &str) -> bool {
+    let Ok(mut stream) = TcpStream::connect(address) else {
+        return false;
+    };
+    let timeout = Some(Duration::from_millis(500));
+    let _ = stream.set_read_timeout(timeout);
+    let _ = stream.set_write_timeout(timeout);
+    if stream.write_all(&[0x05, 0x01, 0x00]).is_err() {
+        return false;
+    }
+    let mut response = [0u8; 2];
+    stream.read_exact(&mut response).is_ok() && response == [0x05, 0x00]
+}
+
+fn wait_for_process_start(
+    child: &mut Child,
+    path: &Path,
+    stable_for: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + stable_for;
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let tail = read_log_tail(path, 120);
+                return Err(format!("process exited early with {status}; log: {tail}"));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let tail = read_log_tail(path, 120);
+                return Err(format!("process status failed: {error}; log: {tail}"));
+            }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    false
+    Ok(())
 }
 
 fn connected_message(mode: &ConnectionMode) -> String {
