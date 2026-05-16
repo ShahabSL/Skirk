@@ -16,13 +16,14 @@ func menu(ctx context.Context) error {
 	for {
 		fmt.Println()
 		fmt.Print(skirkBanner)
-		fmt.Println("1. Create Google kit")
-		fmt.Println("2. Run exit in this terminal")
-		fmt.Println("3. Run client SOCKS in this terminal")
-		fmt.Println("4. Run optional desktop dashboard")
-		fmt.Println("5. Manage exit service")
-		fmt.Println("6. Revoke, clean, or delete kit")
-		fmt.Println("7. Show commands")
+		fmt.Println("1. Create Google kit (easy Skirk OAuth)")
+		fmt.Println("2. Create Google kit (personal Google OAuth project)")
+		fmt.Println("3. Run exit in this terminal")
+		fmt.Println("4. Run client SOCKS in this terminal")
+		fmt.Println("5. Run optional desktop dashboard")
+		fmt.Println("6. Manage exit service")
+		fmt.Println("7. Revoke, clean, or delete kit")
+		fmt.Println("8. Show commands")
 		fmt.Println("0. Quit")
 		choice, err := prompt(ctx, reader, "Select", "1")
 		if err != nil {
@@ -33,51 +34,16 @@ func menu(ctx context.Context) error {
 		}
 		switch choice {
 		case "1":
-			out, err := prompt(ctx, reader, "Output directory", "skirk-kit")
-			if err != nil {
-				return err
-			}
-			title, err := prompt(ctx, reader, "Kit title", "")
-			if err != nil {
-				return err
-			}
-			args := []string{"--out", out}
-			if title != "" {
-				args = append(args, "--title", title)
-			}
-			reset, err := promptYesNo(ctx, reader, "Reset Google login before setup", true)
-			if err != nil {
-				return err
-			}
-			if reset {
-				args = append(args, "--reset-google-login")
-			}
-			oauthMode, err := promptChoice(ctx, reader, "Google OAuth mode", "easy", []string{"easy", "personal"})
-			if err != nil {
-				return err
-			}
-			if oauthMode == "personal" {
-				oauthFile, err := prompt(ctx, reader, "OAuth client JSON", "oauth-client.json")
-				if err != nil {
-					return err
-				}
-				args = append(args, "--oauth-client-file", oauthFile)
-			}
-			startExit, err := promptYesNo(ctx, reader, "Install and start exit service after setup", runtime.GOOS == "linux")
-			if err != nil {
-				return err
-			}
-			if !startExit {
-				args = append(args, "--start-exit=false")
-			}
-			return setupInit(ctx, args)
+			return createGoogleKitFromMenu(ctx, reader, "easy")
 		case "2":
+			return createGoogleKitFromMenu(ctx, reader, "personal")
+		case "3":
 			config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
 			if err != nil {
 				return err
 			}
 			return serveExit(ctx, []string{"--config", config})
-		case "3":
+		case "4":
 			config, err := prompt(ctx, reader, "Client config or pasted text", "skirk-kit/client.skirk")
 			if err != nil {
 				return err
@@ -87,7 +53,7 @@ func menu(ctx context.Context) error {
 				return err
 			}
 			return serveClient(ctx, []string{"--config", config, "--listen", listen})
-		case "4":
+		case "5":
 			config, err := prompt(ctx, reader, "Client config or pasted text", "skirk-kit/client.skirk")
 			if err != nil {
 				return err
@@ -101,11 +67,11 @@ func menu(ctx context.Context) error {
 				return err
 			}
 			return clientUI(ctx, []string{"--config", config, "--socks", socks, "--ui", ui})
-		case "5":
+		case "6":
 			if err := serviceMenu(ctx, reader); err != nil {
 				return err
 			}
-		case "6":
+		case "7":
 			config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
 			if err != nil {
 				return err
@@ -150,7 +116,7 @@ func menu(ctx context.Context) error {
 					return err
 				}
 			}
-		case "7":
+		case "8":
 			usage()
 		case "0", "q", "quit", "exit":
 			return nil
@@ -158,6 +124,49 @@ func menu(ctx context.Context) error {
 			fmt.Println("Unknown selection")
 		}
 	}
+}
+
+func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMode string) error {
+	out, err := prompt(ctx, reader, "Output directory", "skirk-kit")
+	if err != nil {
+		return err
+	}
+	title, err := prompt(ctx, reader, "Kit title", "")
+	if err != nil {
+		return err
+	}
+	args := []string{"--out", out}
+	if title != "" {
+		args = append(args, "--title", title)
+	}
+	reset, err := promptYesNo(ctx, reader, "Reset Google login before setup", true)
+	if err != nil {
+		return err
+	}
+	if reset {
+		args = append(args, "--reset-google-login")
+	}
+	switch oauthMode {
+	case "easy":
+		fmt.Println("Google OAuth: easy Skirk OAuth client")
+	case "personal":
+		fmt.Println("Google OAuth: personal Google OAuth project")
+		oauthFile, err := prompt(ctx, reader, "OAuth client JSON", "oauth-client.json")
+		if err != nil {
+			return err
+		}
+		args = append(args, "--oauth-client-file", oauthFile)
+	default:
+		return fmt.Errorf("unknown OAuth mode %q", oauthMode)
+	}
+	startExit, err := promptYesNo(ctx, reader, "Install and start exit service after setup", runtime.GOOS == "linux")
+	if err != nil {
+		return err
+	}
+	if !startExit {
+		args = append(args, "--start-exit=false")
+	}
+	return setupInit(ctx, args)
 }
 
 func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
@@ -214,24 +223,6 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 		return serviceCommand(ctx, []string{"uninstall", "--name", name})
 	default:
 		return fmt.Errorf("unknown service action %q", choice)
-	}
-}
-
-func promptChoice(ctx context.Context, reader *bufio.Reader, label, fallback string, allowed []string) (string, error) {
-	allowedMap := make(map[string]string, len(allowed))
-	for _, value := range allowed {
-		allowedMap[strings.ToLower(value)] = value
-	}
-	for {
-		text, err := prompt(ctx, reader, label, fallback)
-		if err != nil {
-			return "", err
-		}
-		key := strings.ToLower(strings.TrimSpace(text))
-		if value, ok := allowedMap[key]; ok {
-			return value, nil
-		}
-		fmt.Printf("Please choose one of: %s\n", strings.Join(allowed, ", "))
 	}
 }
 
