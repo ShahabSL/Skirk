@@ -1,14 +1,19 @@
+mod system_proxy;
+
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
+    time::{Duration, Instant},
 };
 use tauri::{Manager, State};
+
+use system_proxy::SystemProxyManager;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -24,6 +29,10 @@ struct ClientProfile {
     config_path: String,
     socks_host: String,
     socks_port: u16,
+    #[serde(default = "default_http_host")]
+    http_host: String,
+    #[serde(default = "default_http_port")]
+    http_port: u16,
     #[serde(default)]
     share_lan: bool,
     route_mode: String,
@@ -41,15 +50,44 @@ enum ConnectionPhase {
     Error,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ConnectionMode {
+    Proxy,
+    System,
+    Vpn,
+}
+
+impl Default for ConnectionMode {
+    fn default() -> Self {
+        Self::Proxy
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionStatus {
     phase: ConnectionPhase,
+    mode: ConnectionMode,
     active_profile_id: Option<String>,
     pid: Option<u32>,
+    tunnel_pid: Option<u32>,
     socks_address: Option<String>,
+    http_address: Option<String>,
     lan_addresses: Vec<String>,
+    system_proxy_enabled: bool,
+    tunnel_active: bool,
+    tunnel_interface_name: Option<String>,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformCapabilities {
+    system_proxy_supported: bool,
+    vpn_mode_supported: bool,
+    vpn_requires_admin: bool,
+    vpn_sidecar_present: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,24 +99,37 @@ struct DesktopSnapshot {
     logs_dir: String,
     config_dir: String,
     log_tail: String,
+    tunnel_log_tail: String,
     platform: String,
+    capabilities: PlatformCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Settings {
     selected_profile_id: Option<String>,
+    #[serde(default)]
+    connection_mode: ConnectionMode,
 }
 
 struct ManagedClient {
     child: Child,
     profile_id: String,
+    mode: ConnectionMode,
     socks_address: String,
+    http_address: String,
+    system_proxy_enabled: bool,
+}
+
+struct ManagedTunnel {
+    child: Child,
+    interface_name: String,
 }
 
 #[derive(Default)]
 struct RuntimeState {
     client: Option<ManagedClient>,
+    tunnel: Option<ManagedTunnel>,
     phase: ConnectionPhase,
     message: String,
 }
@@ -87,6 +138,14 @@ impl Default for ConnectionPhase {
     fn default() -> Self {
         Self::Disconnected
     }
+}
+
+fn default_http_host() -> String {
+    "127.0.0.1".into()
+}
+
+fn default_http_port() -> u16 {
+    18081
 }
 
 struct DesktopRuntime {
@@ -98,6 +157,7 @@ struct DesktopRuntime {
 #[derive(Clone)]
 struct AppPaths {
     config_dir: PathBuf,
+    runtime_dir: PathBuf,
     logs_dir: PathBuf,
     profiles_file: PathBuf,
     settings_file: PathBuf,
@@ -127,23 +187,38 @@ impl DesktopRuntime {
         }
 
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        refresh_state(&mut state);
+        refresh_state(&mut state, &self.paths);
         let connection = if let Some(client) = state.client.as_ref() {
             ConnectionStatus {
                 phase: state.phase.clone(),
+                mode: client.mode.clone(),
                 active_profile_id: Some(client.profile_id.clone()),
                 pid: Some(client.child.id()),
+                tunnel_pid: state.tunnel.as_ref().map(|tunnel| tunnel.child.id()),
                 socks_address: Some(client.socks_address.clone()),
+                http_address: Some(client.http_address.clone()),
                 lan_addresses: share_addresses(&client.socks_address),
+                system_proxy_enabled: client.system_proxy_enabled,
+                tunnel_active: state.tunnel.is_some(),
+                tunnel_interface_name: state
+                    .tunnel
+                    .as_ref()
+                    .map(|tunnel| tunnel.interface_name.clone()),
                 message: state.message.clone(),
             }
         } else {
             ConnectionStatus {
                 phase: state.phase.clone(),
+                mode: settings.connection_mode.clone(),
                 active_profile_id: None,
                 pid: None,
+                tunnel_pid: None,
                 socks_address: None,
+                http_address: None,
                 lan_addresses: Vec::new(),
+                system_proxy_enabled: false,
+                tunnel_active: false,
+                tunnel_interface_name: None,
                 message: state.message.clone(),
             }
         };
@@ -155,7 +230,9 @@ impl DesktopRuntime {
             logs_dir: self.paths.logs_dir.display().to_string(),
             config_dir: self.paths.config_dir.display().to_string(),
             log_tail: read_log_tail(&client_log_path(&self.paths), 80),
+            tunnel_log_tail: read_log_tail(&tunnel_log_path(&self.paths), 80),
             platform: std::env::consts::OS.to_string(),
+            capabilities: self.platform_capabilities(),
         })
     }
 
@@ -164,6 +241,7 @@ impl DesktopRuntime {
         name: String,
         raw_config: String,
         socks_port: u16,
+        http_port: u16,
         share_lan: bool,
     ) -> Result<(), String> {
         let raw_config = raw_config.trim();
@@ -191,6 +269,9 @@ impl DesktopRuntime {
         if drive_space != "appDataFolder" && drive_folder_id.is_empty() {
             return Err("client config is missing a Drive mailbox".into());
         }
+        if socks_port == http_port {
+            return Err("SOCKS and HTTP proxy ports must be different".into());
+        }
         let id = format!("profile-{}", epoch_millis());
         let config_path = self
             .paths
@@ -217,6 +298,12 @@ impl DesktopRuntime {
                 "127.0.0.1".into()
             },
             socks_port,
+            http_host: if share_lan {
+                "0.0.0.0".into()
+            } else {
+                "127.0.0.1".into()
+            },
+            http_port,
             share_lan,
             route_mode,
             drive_space,
@@ -230,6 +317,7 @@ impl DesktopRuntime {
             &self.paths,
             &Settings {
                 selected_profile_id: Some(id),
+                ..load_settings(&self.paths)?
             },
         )
     }
@@ -292,17 +380,42 @@ impl DesktopRuntime {
     }
 
     fn select_profile(&self, profile_id: Option<String>) -> Result<(), String> {
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        refresh_state(&mut state, &self.paths);
+        if state.client.is_some() {
+            return Err("disconnect before switching profiles".into());
+        }
+        drop(state);
         save_settings(
             &self.paths,
             &Settings {
                 selected_profile_id: profile_id,
+                ..load_settings(&self.paths)?
             },
         )
     }
 
+    fn set_connection_mode(&self, mode: ConnectionMode) -> Result<(), String> {
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        refresh_state(&mut state, &self.paths);
+        if state.client.is_some() {
+            return Err("disconnect before changing connection mode".into());
+        }
+        drop(state);
+        if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
+            return Err("system proxy mode is only available on Windows".into());
+        }
+        if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
+            return Err(vpn_unavailable_message());
+        }
+        let mut settings = load_settings(&self.paths)?;
+        settings.connection_mode = mode;
+        save_settings(&self.paths, &settings)
+    }
+
     fn connect(&self) -> Result<(), String> {
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        refresh_state(&mut state);
+        refresh_state(&mut state, &self.paths);
         if state.client.is_some() {
             return Ok(());
         }
@@ -319,10 +432,20 @@ impl DesktopRuntime {
             .or_else(|| profiles.first())
             .ok_or_else(|| "no profile selected".to_string())?
             .clone();
+        let mode = settings.connection_mode;
+        if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
+            return Err("system proxy mode is only available on Windows".into());
+        }
+        if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
+            return Err(vpn_unavailable_message());
+        }
         let socks_address = format!("{}:{}", profile.socks_host, profile.socks_port);
+        let http_address = format!("{}:{}", profile.http_host, profile.http_port);
         let route_mode = "google_front_pinned";
         ensure_port_free(&socks_address)?;
+        ensure_port_free(&http_address)?;
         let skirk = self.resolve_sidecar()?;
+        let sidecar_process_path = process_path_for_rules(&skirk);
         let log_path = client_log_path(&self.paths);
         let log = OpenOptions::new()
             .create(true)
@@ -339,6 +462,8 @@ impl DesktopRuntime {
             .arg(&profile.config_path)
             .arg("--listen")
             .arg(&socks_address)
+            .arg("--http-proxy-listen")
+            .arg(&http_address)
             .arg("--client-id")
             .arg(&profile.id)
             .arg("--route-mode")
@@ -352,28 +477,267 @@ impl DesktopRuntime {
         let child = command
             .spawn()
             .map_err(|error| format!("failed to start skirk: {error}"))?;
+        let mut child = child;
+
+        let socks_probe_address = loopback_probe_address(&socks_address);
+        let http_probe_address = loopback_probe_address(&http_address);
+        if !wait_for_tcp_endpoint(&socks_probe_address, Duration::from_secs(10)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Skirk did not open SOCKS endpoint {socks_address}\n{}",
+                read_log_tail(&log_path, 80)
+            ));
+        }
+        if !wait_for_tcp_endpoint(&http_probe_address, Duration::from_secs(10)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "Skirk did not open HTTP proxy endpoint {http_address}\n{}",
+                read_log_tail(&log_path, 80)
+            ));
+        }
+
+        let mut tunnel = None;
+        if matches!(mode, ConnectionMode::Vpn) {
+            match self.spawn_tunnel(profile.socks_port, &sidecar_process_path) {
+                Ok(next_tunnel) => {
+                    tunnel = Some(next_tunnel);
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
+            }
+        }
+        let system_proxy_enabled = if matches!(mode, ConnectionMode::System) {
+            if let Err(error) = SystemProxyManager::enable(&self.paths, profile.http_port) {
+                if let Some(mut tunnel) = tunnel {
+                    terminate_child(&mut tunnel.child);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            true
+        } else {
+            false
+        };
 
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         state.client = Some(ManagedClient {
             child,
             profile_id: profile.id,
+            mode: mode.clone(),
             socks_address,
+            http_address,
+            system_proxy_enabled,
         });
+        state.tunnel = tunnel;
         state.phase = ConnectionPhase::Connected;
-        state.message = "Connected".into();
+        state.message = connected_message(&mode);
         Ok(())
     }
 
     fn disconnect(&self) -> Result<(), String> {
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         state.phase = ConnectionPhase::Disconnecting;
-        if let Some(mut client) = state.client.take() {
-            let _ = client.child.kill();
-            let _ = client.child.wait();
-        }
+        stop_runtime(&mut state, &self.paths);
         state.phase = ConnectionPhase::Disconnected;
         state.message = "Disconnected".into();
         Ok(())
+    }
+
+    fn cleanup_for_exit(&self) {
+        if let Ok(mut state) = self.inner.lock() {
+            stop_runtime(&mut state, &self.paths);
+            state.phase = ConnectionPhase::Disconnected;
+            state.message = "Disconnected".into();
+        }
+    }
+
+    fn platform_capabilities(&self) -> PlatformCapabilities {
+        let vpn_sidecar_present = self.resolve_tunnel_sidecar().is_ok();
+        let vpn_requires_admin = cfg!(windows);
+        PlatformCapabilities {
+            system_proxy_supported: cfg!(windows),
+            vpn_mode_supported: cfg!(windows) && vpn_sidecar_present && windows_is_admin(),
+            vpn_requires_admin,
+            vpn_sidecar_present,
+        }
+    }
+
+    fn spawn_tunnel(
+        &self,
+        socks_port: u16,
+        sidecar_process_path: &str,
+    ) -> Result<ManagedTunnel, String> {
+        if !cfg!(windows) {
+            return Err("VPN mode is only available on Windows".into());
+        }
+        if !windows_is_admin() {
+            return Err(
+                "VPN mode needs Administrator privileges to create the Windows TUN adapter".into(),
+            );
+        }
+        let tunnel = self.resolve_tunnel_sidecar()?;
+        let log_path = tunnel_log_path(&self.paths);
+        let config_path = tunnel_config_path(&self.paths);
+        let config = json!({
+            "log": {
+                "level": "info",
+                "timestamp": true
+            },
+            "dns": {
+                "servers": [
+                    {
+                        "type": "local",
+                        "tag": "local"
+                    }
+                ],
+                "final": "local",
+                "strategy": "prefer_ipv4"
+            },
+            "inbounds": [
+                {
+                    "type": "tun",
+                    "tag": "tun-in",
+                    "interface_name": tunnel_interface_name(),
+                    "address": [
+                        "172.19.0.1/30",
+                        "fdfe:dcba:9876::1/126"
+                    ],
+                    "auto_route": true,
+                    "strict_route": true,
+                    "stack": "mixed",
+                    "sniff": true,
+                    "sniff_override_destination": true,
+                    "route_exclude_address": [
+                        "127.0.0.0/8",
+                        "10.0.0.0/8",
+                        "100.64.0.0/10",
+                        "169.254.0.0/16",
+                        "172.16.0.0/12",
+                        "192.168.0.0/16",
+                        "224.0.0.0/4",
+                        "::1/128",
+                        "fc00::/7",
+                        "fe80::/10"
+                    ]
+                }
+            ],
+            "outbounds": [
+                {
+                    "type": "socks",
+                    "tag": "proxy",
+                    "server": "127.0.0.1",
+                    "server_port": socks_port,
+                    "version": "5"
+                },
+                {
+                    "type": "direct",
+                    "tag": "direct"
+                }
+            ],
+            "route": {
+                "rules": [
+                    {
+                        "action": "sniff"
+                    },
+                    {
+                        "type": "logical",
+                        "mode": "or",
+                        "rules": [
+                            {
+                                "process_name": [
+                                    "skirk-sidecar.exe",
+                                    "skirk.exe",
+                                    "skirk-windows-amd64.exe"
+                                ]
+                            },
+                            {
+                                "process_path": [
+                                    sidecar_process_path
+                                ]
+                            }
+                        ],
+                        "action": "route",
+                        "outbound": "direct"
+                    },
+                    {
+                        "type": "logical",
+                        "mode": "or",
+                        "rules": [
+                            {
+                                "protocol": "dns"
+                            },
+                            {
+                                "port": 53
+                            }
+                        ],
+                        "action": "hijack-dns"
+                    },
+                    {
+                        "network": "udp",
+                        "action": "reject"
+                    },
+                    {
+                        "ip_is_private": true,
+                        "action": "route",
+                        "outbound": "direct"
+                    }
+                ],
+                "final": "proxy",
+                "auto_detect_interface": true,
+                "find_process": true,
+                "default_domain_resolver": "local"
+            }
+        });
+        fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&config)
+                .map_err(|error| format!("failed to serialize VPN config: {error}"))?,
+        )
+        .map_err(|error| format!("failed to write VPN config: {error}"))?;
+
+        let log = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&log_path)
+            .map_err(|error| format!("failed to open VPN log: {error}"))?;
+        let log_err = log
+            .try_clone()
+            .map_err(|error| format!("failed to clone VPN log: {error}"))?;
+        let mut command = Command::new(tunnel);
+        command
+            .arg("run")
+            .arg("-c")
+            .arg(&config_path)
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err));
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("failed to start VPN sidecar: {error}"))?;
+        if !wait_for_log_marker(
+            &mut child,
+            &log_path,
+            &["sing-box started", "started at"],
+            Duration::from_secs(15),
+        ) {
+            terminate_child(&mut child);
+            return Err(format!(
+                "VPN sidecar did not become ready\n{}",
+                read_log_tail(&log_path, 80)
+            ));
+        }
+        Ok(ManagedTunnel {
+            child,
+            interface_name: tunnel_interface_name(),
+        })
     }
 
     fn resolve_sidecar(&self) -> Result<PathBuf, String> {
@@ -391,6 +755,23 @@ impl DesktopRuntime {
             .find(|path| path.is_file())
             .cloned()
             .ok_or_else(|| sidecar_not_found_message(&candidates))
+    }
+
+    fn resolve_tunnel_sidecar(&self) -> Result<PathBuf, String> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+        let current_dir = std::env::current_dir().ok();
+        let candidates = tunnel_sidecar_candidate_paths(
+            exe_dir.as_deref(),
+            self.resource_dir.as_deref(),
+            current_dir.as_deref(),
+        );
+        candidates
+            .iter()
+            .find(|path| path.is_file())
+            .cloned()
+            .ok_or_else(|| tunnel_sidecar_not_found_message(&candidates))
     }
 }
 
@@ -474,6 +855,84 @@ fn sidecar_candidate_paths(
     candidates
 }
 
+fn tunnel_sidecar_candidate_paths(
+    exe_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
+    current_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["skirk-tunnel.exe", "sing-box.exe"]
+    } else {
+        &["skirk-tunnel", "sing-box"]
+    };
+    let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+    let mut candidates = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for var in ["SKIRK_TUNNEL_SIDECAR", "SKIRK_DESKTOP_TUNNEL"] {
+        if let Ok(path) = std::env::var(var) {
+            if !path.trim().is_empty() {
+                push_sidecar_candidate(&mut candidates, &mut seen, PathBuf::from(path));
+            }
+        }
+    }
+
+    if let Some(dir) = exe_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("sidecars").join(os_dir).join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("resources")
+                    .join("sidecars")
+                    .join(os_dir)
+                    .join(name),
+            );
+            push_sidecar_candidate(&mut candidates, &mut seen, dir.join(name));
+        }
+    }
+
+    if let Some(dir) = resource_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("sidecars").join(os_dir).join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                dir.join("resources")
+                    .join("sidecars")
+                    .join(os_dir)
+                    .join(name),
+            );
+        }
+    }
+
+    if let Some(current) = current_dir {
+        for name in names {
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                current.join("../../bin").join(name),
+            );
+            push_sidecar_candidate(
+                &mut candidates,
+                &mut seen,
+                current.join("../bin").join(name),
+            );
+            push_sidecar_candidate(&mut candidates, &mut seen, current.join("bin").join(name));
+        }
+    }
+
+    candidates
+}
+
 fn push_sidecar_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut BTreeSet<PathBuf>,
@@ -494,6 +953,16 @@ fn sidecar_not_found_message(candidates: &[PathBuf]) -> String {
     "skirk sidecar not found; place skirk-sidecar.exe under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
         .to_string()
         + &searched
+}
+
+fn tunnel_sidecar_not_found_message(candidates: &[PathBuf]) -> String {
+    let searched = candidates
+        .iter()
+        .take(12)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join("; ");
+    "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe. searched: ".to_string() + &searched
 }
 
 fn looks_like_inline_config(raw_config: &str) -> bool {
@@ -566,16 +1035,31 @@ fn is_raw_url_base64_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
 }
 
-fn refresh_state(state: &mut RuntimeState) {
+fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
     let Some(client) = state.client.as_mut() else {
         if !matches!(state.phase, ConnectionPhase::Error) {
             state.phase = ConnectionPhase::Disconnected;
         }
         return;
     };
+    let tunnel_died = if let Some(tunnel) = state.tunnel.as_mut() {
+        match tunnel.child.try_wait() {
+            Ok(Some(status)) => Some(format!("VPN sidecar exited: {status}")),
+            Ok(None) => None,
+            Err(error) => Some(format!("VPN status failed: {error}")),
+        }
+    } else {
+        None
+    };
+    if let Some(message) = tunnel_died {
+        stop_runtime(state, paths);
+        state.phase = ConnectionPhase::Error;
+        state.message = message;
+        return;
+    }
     match client.child.try_wait() {
         Ok(Some(status)) => {
-            state.client = None;
+            stop_runtime(state, paths);
             state.phase = ConnectionPhase::Error;
             state.message = format!("Skirk exited: {status}");
         }
@@ -583,11 +1067,135 @@ fn refresh_state(state: &mut RuntimeState) {
             state.phase = ConnectionPhase::Connected;
         }
         Err(error) => {
-            state.client = None;
+            stop_runtime(state, paths);
             state.phase = ConnectionPhase::Error;
             state.message = format!("Skirk status failed: {error}");
         }
     }
+}
+
+fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) {
+    if let Some(mut tunnel) = state.tunnel.take() {
+        terminate_child(&mut tunnel.child);
+    }
+    if let Some(mut client) = state.client.take() {
+        if client.system_proxy_enabled {
+            let _ = SystemProxyManager::disable(paths);
+        }
+        terminate_child(&mut client.child);
+    } else {
+        let _ = SystemProxyManager::cleanup_stale_proxy(paths);
+    }
+}
+
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn wait_for_tcp_endpoint(address: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if TcpStream::connect(address).is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+fn wait_for_log_marker(
+    child: &mut Child,
+    path: &Path,
+    markers: &[&str],
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return false;
+        }
+        let tail = read_log_tail(path, 120).to_ascii_lowercase();
+        if markers
+            .iter()
+            .any(|marker| tail.contains(&marker.to_ascii_lowercase()))
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn connected_message(mode: &ConnectionMode) -> String {
+    match mode {
+        ConnectionMode::Proxy => "Connected in local proxy mode".into(),
+        ConnectionMode::System => "Connected and Windows system proxy is enabled".into(),
+        ConnectionMode::Vpn => "Connected in VPN mode".into(),
+    }
+}
+
+fn vpn_unavailable_message() -> String {
+    if !cfg!(windows) {
+        return "VPN mode is only available on Windows".into();
+    }
+    if !windows_is_admin() {
+        return "VPN mode needs Administrator privileges".into();
+    }
+    "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe".into()
+}
+
+fn tunnel_log_path(paths: &AppPaths) -> PathBuf {
+    paths.logs_dir.join("skirk-tunnel.log")
+}
+
+fn tunnel_config_path(paths: &AppPaths) -> PathBuf {
+    paths.runtime_dir.join("skirk-tunnel.json")
+}
+
+fn tunnel_interface_name() -> String {
+    "Skirk Tunnel".into()
+}
+
+fn loopback_probe_address(address: &str) -> String {
+    address
+        .strip_prefix("0.0.0.0:")
+        .map(|port| format!("127.0.0.1:{port}"))
+        .unwrap_or_else(|| address.to_string())
+}
+
+fn process_path_for_rules(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
+#[cfg(windows)]
+fn windows_is_admin() -> bool {
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match output {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_is_admin() -> bool {
+    false
 }
 
 #[tauri::command]
@@ -601,9 +1209,10 @@ async fn import_config(
     name: String,
     raw_config: String,
     socks_port: u16,
+    http_port: u16,
     share_lan: bool,
 ) -> Result<DesktopSnapshot, String> {
-    runtime.import_config(name, raw_config, socks_port, share_lan)?;
+    runtime.import_config(name, raw_config, socks_port, http_port, share_lan)?;
     runtime.snapshot()
 }
 
@@ -626,6 +1235,15 @@ async fn select_profile(
 }
 
 #[tauri::command]
+async fn set_connection_mode(
+    runtime: State<'_, DesktopRuntime>,
+    mode: ConnectionMode,
+) -> Result<DesktopSnapshot, String> {
+    runtime.set_connection_mode(mode)?;
+    runtime.snapshot()
+}
+
+#[tauri::command]
 async fn connect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapshot, String> {
     runtime.connect()?;
     runtime.snapshot()
@@ -641,6 +1259,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let paths = AppPaths::resolve(&app.handle())?;
+            let _ = SystemProxyManager::cleanup_stale_proxy(&paths);
             let resource_dir = app.path().resource_dir().ok();
             app.manage(DesktopRuntime::new(paths, resource_dir));
             Ok(())
@@ -650,11 +1269,18 @@ pub fn run() {
             import_config,
             delete_profile,
             select_profile,
+            set_connection_mode,
             connect,
             disconnect
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Skirk desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Skirk desktop")
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                app.state::<DesktopRuntime>().cleanup_for_exit();
+            }
+            _ => {}
+        });
 }
 
 impl AppPaths {
@@ -680,6 +1306,7 @@ impl AppPaths {
             profiles_file: config_dir.join("profiles.json"),
             settings_file: config_dir.join("settings.json"),
             config_dir,
+            runtime_dir,
             logs_dir,
         })
     }

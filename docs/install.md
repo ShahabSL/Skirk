@@ -14,6 +14,15 @@ The installer puts `skirk` in `$HOME/.local/bin` by default. The `export PATH`
 line makes `skirk` available in the current shell, but scripts and fresh SSH
 sessions can always use the absolute path: `$HOME/.local/bin/skirk`.
 
+After install, run `skirk` for the operator menu or run setup directly:
+
+```bash
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+```
+
+On Linux, setup installs/enables `skirk-exit.service` and starts it after Google
+approval. Pass `--start-exit=false` when you only want to generate configs.
+
 ## Installer Options
 
 Install a specific release:
@@ -135,7 +144,7 @@ tools from choosing a blackholed IPv6 route for Google OAuth.
 
 ```bash
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
-"$HOME/.local/bin/skirk" serve-exit --config skirk-kit/exit.json
+"$HOME/.local/bin/skirk" service status
 ```
 
 Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
@@ -146,7 +155,8 @@ The same operations are available in the interactive operator menu:
 "$HOME/.local/bin/skirk"
 ```
 
-For a persistent Linux exit service:
+If you used `--start-exit=false`, install the persistent Linux exit service
+later:
 
 ```bash
 "$HOME/.local/bin/skirk" service install --config skirk-kit/exit.json
@@ -154,7 +164,7 @@ For a persistent Linux exit service:
 ```
 
 Use `service stop`, `service restart`, or `service uninstall` with
-`--name skirk-exit` if you changed the service name.
+`--name NAME` if you changed the service name.
 
 To also install Cloudflare WARP through wireproxy and point exit traffic at it:
 

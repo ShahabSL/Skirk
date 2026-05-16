@@ -54,6 +54,22 @@ def main() -> int:
         return 1
     for sidecar_dir in sidecar_dirs:
         shutil.copy2(sidecar, sidecar_dir / "skirk-sidecar.exe")
+    tunnel_candidates = [
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "skirk-tunnel.exe",
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "sing-box.exe",
+    ]
+    tunnel = next((path for path in tunnel_candidates if path.exists()), None)
+    if tunnel is not None:
+        for sidecar_dir in sidecar_dirs:
+            shutil.copy2(tunnel, sidecar_dir / "skirk-tunnel.exe")
+    tunnel_license_candidates = [
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "sing-box-LICENSE.txt",
+        desktop / "src-tauri" / "resources" / "sidecars" / "windows" / "LICENSE",
+    ]
+    tunnel_license = next((path for path in tunnel_license_candidates if path.exists()), None)
+    if tunnel_license is not None:
+        (out_dir / "third_party").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tunnel_license, out_dir / "third_party" / "sing-box-LICENSE.txt")
     for relative in ("LICENSE", "DISCLAIMER.md", "SECURITY.md", "third_party/NOTICE.md"):
         source = repo / relative
         if source.exists():
@@ -63,7 +79,8 @@ def main() -> int:
     (out_dir / "skirk-portable").write_text("portable mode marker\n", encoding="utf-8")
     (out_dir / "START_HERE.txt").write_text(
         "Open Skirk.exe to use the Skirk desktop app.\n"
-        "The files under sidecars/ are internal engine binaries and are not the app UI.\n",
+        "The files under sidecars/ are internal engine binaries and are not the app UI.\n"
+        "VPN mode needs Administrator approval because it creates a Windows TUN adapter.\n",
         encoding="utf-8",
     )
     (out_dir / "portable-data" / "README.txt").write_text(

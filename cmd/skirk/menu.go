@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -50,6 +51,24 @@ func menu(ctx context.Context) error {
 			}
 			if reset {
 				args = append(args, "--reset-google-login")
+			}
+			oauthMode, err := promptChoice(ctx, reader, "Google OAuth mode", "easy", []string{"easy", "personal"})
+			if err != nil {
+				return err
+			}
+			if oauthMode == "personal" {
+				oauthFile, err := prompt(ctx, reader, "OAuth client JSON", "oauth-client.json")
+				if err != nil {
+					return err
+				}
+				args = append(args, "--oauth-client-file", oauthFile)
+			}
+			startExit, err := promptYesNo(ctx, reader, "Install and start exit service after setup", runtime.GOOS == "linux")
+			if err != nil {
+				return err
+			}
+			if !startExit {
+				args = append(args, "--start-exit=false")
 			}
 			return setupInit(ctx, args)
 		case "2":
@@ -195,6 +214,24 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 		return serviceCommand(ctx, []string{"uninstall", "--name", name})
 	default:
 		return fmt.Errorf("unknown service action %q", choice)
+	}
+}
+
+func promptChoice(ctx context.Context, reader *bufio.Reader, label, fallback string, allowed []string) (string, error) {
+	allowedMap := make(map[string]string, len(allowed))
+	for _, value := range allowed {
+		allowedMap[strings.ToLower(value)] = value
+	}
+	for {
+		text, err := prompt(ctx, reader, label, fallback)
+		if err != nil {
+			return "", err
+		}
+		key := strings.ToLower(strings.TrimSpace(text))
+		if value, ok := allowedMap[key]; ok {
+			return value, nil
+		}
+		fmt.Printf("Please choose one of: %s\n", strings.Join(allowed, ", "))
 	}
 }
 

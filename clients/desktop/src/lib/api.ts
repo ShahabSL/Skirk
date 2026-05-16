@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type ConnectionPhase = "disconnected" | "connecting" | "connected" | "disconnecting" | "error";
+export type ConnectionMode = "proxy" | "system" | "vpn";
 
 export type ClientProfile = {
   id: string;
@@ -8,6 +9,8 @@ export type ClientProfile = {
   configPath: string;
   socksHost: string;
   socksPort: number;
+  httpHost: string;
+  httpPort: number;
   shareLan: boolean;
   routeMode: string;
   driveSpace: string;
@@ -19,16 +22,29 @@ export type DesktopSnapshot = {
   selectedProfileId: string | null;
   connection: {
     phase: ConnectionPhase;
+    mode: ConnectionMode;
     activeProfileId: string | null;
     pid: number | null;
+    tunnelPid: number | null;
     socksAddress: string | null;
+    httpAddress: string | null;
     lanAddresses: string[];
+    systemProxyEnabled: boolean;
+    tunnelActive: boolean;
+    tunnelInterfaceName: string | null;
     message: string;
   };
   logsDir: string;
   configDir: string;
   logTail: string;
+  tunnelLogTail: string;
   platform: string;
+  capabilities: {
+    systemProxySupported: boolean;
+    vpnModeSupported: boolean;
+    vpnRequiresAdmin: boolean;
+    vpnSidecarPresent: boolean;
+  };
 };
 
 const isTauriRuntime =
@@ -43,6 +59,8 @@ let mockProfiles: ClientProfile[] = [
     configPath: "portable-data/config/mock.skirk",
     socksHost: "127.0.0.1",
     socksPort: 18080,
+    httpHost: "127.0.0.1",
+    httpPort: 18081,
     shareLan: false,
     routeMode: "google_front_pinned",
     driveSpace: "appDataFolder",
@@ -60,35 +78,49 @@ function mockSnapshot(): DesktopSnapshot {
     selectedProfileId: profile?.id ?? null,
     connection: {
       phase: mockConnected ? "connected" : "disconnected",
+      mode: mockMode,
       activeProfileId: mockConnected ? profile?.id ?? null : null,
       pid: mockConnected ? 4242 : null,
+      tunnelPid: mockConnected && mockMode === "vpn" ? 4243 : null,
       socksAddress: mockConnected ? socksAddress : null,
+      httpAddress: mockConnected && profile ? `127.0.0.1:${profile.httpPort}` : null,
       lanAddresses: mockConnected && profile?.shareLan ? [`192.168.1.20:${profile.socksPort}`] : [],
-      message: mockConnected ? "Connected" : "Disconnected",
+      systemProxyEnabled: mockConnected && mockMode === "system",
+      tunnelActive: mockConnected && mockMode === "vpn",
+      tunnelInterfaceName: mockConnected && mockMode === "vpn" ? "Skirk Tunnel" : null,
+      message: mockConnected ? `Connected in ${modeLabel(mockMode)} mode` : "Disconnected",
     },
     logsDir: "portable-data/logs",
     configDir: "portable-data/config",
     logTail: mockConnected
       ? "skirk client SOCKS5 listening on 127.0.0.1:18080\\nmailbox download direction=down status=ok duration=452ms"
       : "",
+    tunnelLogTail: mockConnected && mockMode === "vpn" ? "sing-box started\\nTUN interface Skirk Tunnel ready" : "",
     platform: "windows",
+    capabilities: {
+      systemProxySupported: true,
+      vpnModeSupported: true,
+      vpnRequiresAdmin: true,
+      vpnSidecarPresent: true,
+    },
   };
 }
 
 const tauriApi = {
   loadSnapshot: () => invoke<DesktopSnapshot>("load_snapshot"),
-  importConfig: (name: string, rawConfig: string, socksPort: number, shareLan: boolean) =>
-    invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, shareLan }),
+  importConfig: (name: string, rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) =>
+    invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, httpPort, shareLan }),
   deleteProfile: (profileId: string) => invoke<DesktopSnapshot>("delete_profile", { profileId }),
   selectProfile: (profileId: string | null) =>
     invoke<DesktopSnapshot>("select_profile", { profileId }),
+  setConnectionMode: (mode: ConnectionMode) => invoke<DesktopSnapshot>("set_connection_mode", { mode }),
   connect: () => invoke<DesktopSnapshot>("connect"),
   disconnect: () => invoke<DesktopSnapshot>("disconnect"),
 };
 
 const browserPreviewApi = {
   loadSnapshot: async () => mockSnapshot(),
-  importConfig: async (name: string, _rawConfig: string, socksPort: number, shareLan: boolean) => {
+  importConfig: async (name: string, _rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) => {
     const id = `mock-${Date.now()}`;
     mockProfiles = [
       ...mockProfiles,
@@ -98,6 +130,8 @@ const browserPreviewApi = {
         configPath: `portable-data/config/${id}.skirk`,
         socksHost: shareLan ? "0.0.0.0" : "127.0.0.1",
         socksPort,
+        httpHost: shareLan ? "0.0.0.0" : "127.0.0.1",
+        httpPort,
         shareLan,
         routeMode: "google_front_pinned",
         driveSpace: "appDataFolder",
@@ -118,6 +152,10 @@ const browserPreviewApi = {
     mockSelectedProfileId = profileId;
     return mockSnapshot();
   },
+  setConnectionMode: async (mode: ConnectionMode) => {
+    mockMode = mode;
+    return mockSnapshot();
+  },
   connect: async () => {
     mockConnected = true;
     return mockSnapshot();
@@ -129,3 +167,15 @@ const browserPreviewApi = {
 };
 
 export const desktopApi = useBrowserPreview ? browserPreviewApi : tauriApi;
+
+let mockMode: ConnectionMode = "proxy";
+
+function modeLabel(mode: ConnectionMode) {
+  if (mode === "system") {
+    return "system proxy";
+  }
+  if (mode === "vpn") {
+    return "VPN";
+  }
+  return "proxy";
+}

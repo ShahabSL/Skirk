@@ -1,7 +1,8 @@
 # Third-Party Notices
 
 This directory contains source code redistributed with Skirk for Android VPN
-support. Keep this notice in sync with vendored source changes.
+support plus notes for external binaries staged by release builds. Keep this
+notice in sync with vendored source changes.
 
 ## hev-socks5-tunnel
 
@@ -13,6 +14,20 @@ support. Keep this notice in sync with vendored source changes.
 
 Skirk builds this project into `libhev-socks5-tunnel.so` and uses it as the
 Android TUN-to-SOCKS packet bridge behind `VpnService`.
+
+## sing-box
+
+- Project: `sing-box`
+- Upstream: https://github.com/SagerNet/sing-box
+- Release artifact used by Skirk Windows releases: `sing-box-1.13.12-windows-amd64.zip`
+- Release SHA-256: `e93fc531134eb1beb4efa3c74990a24e48456098a31c03b60d5ddf17f223cf98`
+- License: GPL-3.0-or-later
+- License file included in Windows portable releases: `third_party/sing-box-LICENSE.txt`
+- Corresponding source: https://github.com/SagerNet/sing-box/tree/v1.13.12
+
+Skirk Windows portable releases stage the `sing-box.exe` release binary as
+`skirk-tunnel.exe` and run it as a separate VPN/TUN sidecar process for Windows
+VPN mode. The Skirk repository does not vendor sing-box source code.
 
 ## Nested Components
 

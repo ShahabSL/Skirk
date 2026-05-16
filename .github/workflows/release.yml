@@ -118,6 +118,32 @@ jobs:
           }
           go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk-sidecar.exe ./cmd/skirk
 
+      - name: Stage Windows VPN sidecar
+        shell: pwsh
+        run: |
+          $version = "1.13.12"
+          $expectedSha256 = "e93fc531134eb1beb4efa3c74990a24e48456098a31c03b60d5ddf17f223cf98"
+          $zip = "$env:RUNNER_TEMP\sing-box-$version-windows-amd64.zip"
+          $url = "https://github.com/SagerNet/sing-box/releases/download/v$version/sing-box-$version-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actualSha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "sing-box checksum mismatch: expected $expectedSha256 got $actualSha256"
+          }
+          $extract = "$env:RUNNER_TEMP\sing-box"
+          New-Item -ItemType Directory -Force $extract | Out-Null
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $exe = Get-ChildItem -Path $extract -Recurse -Filter "sing-box.exe" | Select-Object -First 1
+          if (-not $exe) {
+            throw "sing-box.exe was not found in $zip"
+          }
+          Copy-Item $exe.FullName clients/desktop/src-tauri/resources/sidecars/windows/skirk-tunnel.exe -Force
+          $license = Get-ChildItem -Path $extract -Recurse -Filter "LICENSE*" | Select-Object -First 1
+          if (-not $license) {
+            throw "sing-box license was not found in $zip"
+          }
+          Copy-Item $license.FullName clients/desktop/src-tauri/resources/sidecars/windows/sing-box-LICENSE.txt -Force
+
       - name: Build Tauri desktop app
         working-directory: clients/desktop
         run: |
@@ -167,7 +193,7 @@ jobs:
             echo "no release assets found" >&2
             exit 1
           fi
-          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n'
+          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n'
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
             gh release edit "${GITHUB_REF_NAME}" --notes "$release_notes"

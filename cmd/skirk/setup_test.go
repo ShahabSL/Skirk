@@ -228,7 +228,7 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		"skirk serve-exit --config skirk-kit/exit.json",
+		"skirk service install --config skirk-kit/exit.json --name skirk-exit",
 		"skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080",
 		"skirk cleanup --config skirk-kit/exit.json --older-than 2h",
 		"skirk revoke --config skirk-kit/exit.json --revoke-oauth",
@@ -239,5 +239,43 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 	}
 	if strings.Contains(text, "%!") {
 		t.Fatalf("generated README has fmt mismatch:\n%s", text)
+	}
+}
+
+func TestWriteSetupReadmeDocumentsStartedServiceName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "README.md")
+	err := writeSetupReadme(path, setupSummary{
+		Title:             "test-kit",
+		ADCPath:           "/tmp/adc.json",
+		Account:           "user@example.com",
+		ClientPath:        "skirk-kit/client.json",
+		ClientTextPath:    "skirk-kit/client.skirk",
+		ClientCommandPath: "skirk-kit/client-command.txt",
+		ExitPath:          "skirk-kit/exit.json",
+		DriveFolderID:     "folder",
+		Transport:         "drive_folder",
+		ClientRoute:       "google_front",
+		ExitRoute:         "direct",
+		Listen:            "127.0.0.1:18080",
+		StartExit:         true,
+		ServiceName:       "skirk-custom",
+		Platform:          "linux",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"Setup starts the exit as skirk-custom.service",
+		"skirk service status --name skirk-custom",
+		"skirk service restart --name skirk-custom",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated README missing %q:\n%s", want, text)
+		}
 	}
 }

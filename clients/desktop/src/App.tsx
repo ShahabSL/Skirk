@@ -7,28 +7,32 @@ import {
   HardDrive,
   Laptop,
   Loader2,
+  MonitorCog,
   Moon,
+  Network,
   Play,
   Power,
   RefreshCw,
   Server,
   Shield,
+  ShieldCheck,
   Sun,
   Trash2,
   Upload,
 } from "lucide-react";
 
-import { desktopApi, type ClientProfile, type DesktopSnapshot } from "./lib/api";
+import { desktopApi, type ClientProfile, type ConnectionMode, type DesktopSnapshot } from "./lib/api";
 import logoMark from "./assets/logo-mark.png";
 
 type Theme = "light" | "dark";
-type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete";
+type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode";
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
   const [rawConfig, setRawConfig] = useState("");
   const [profileName, setProfileName] = useState("Skirk profile");
   const [socksPort, setSocksPort] = useState("18080");
+  const [httpPort, setHttpPort] = useState("18081");
   const [shareLan, setShareLan] = useState(false);
   const [theme, setTheme] = useState<Theme>(() =>
     window.localStorage.getItem("skirk-theme") === "dark" ? "dark" : "light",
@@ -38,7 +42,9 @@ function App() {
   const [copyStatus, setCopyStatus] = useState("");
   const profileNameId = useId();
   const socksPortId = useId();
+  const httpPortId = useId();
   const socksPortHelpId = useId();
+  const httpPortHelpId = useId();
   const rawConfigId = useId();
 
   const refresh = useCallback(async () => {
@@ -91,10 +97,14 @@ function App() {
   const busy = busyAction !== null;
   const runtimeBusy = busy || connecting || disconnecting;
   const portNumber = Number(socksPort);
+  const httpPortNumber = Number(httpPort);
   const portValid = Number.isInteger(portNumber) && portNumber >= 1024 && portNumber <= 65535;
-  const importDisabled = busy || rawConfig.trim() === "" || !portValid;
+  const httpPortValid = Number.isInteger(httpPortNumber) && httpPortNumber >= 1024 && httpPortNumber <= 65535 && httpPortNumber !== portNumber;
+  const importDisabled = busy || rawConfig.trim() === "" || !portValid || !httpPortValid;
   const phase = snapshot?.connection.phase ?? (initialLoading ? "loading" : "disconnected");
   const socksAddress = snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile);
+  const httpAddress = snapshot?.connection.httpAddress ?? selectedProfileHTTPAddress(selectedProfile);
+  const selectedMode = snapshot?.connection.mode ?? "proxy";
   const runtimeProfile = activeProfile ?? selectedProfile;
   const profileStatusLabel = activeProfile
     ? "Active profile"
@@ -109,8 +119,8 @@ function App() {
   const lanAddressValue = initialLoading
     ? "Loading..."
     : snapshot?.connection.lanAddresses.join(", ") || "-";
-  const pidValue = initialLoading ? "Loading..." : snapshot?.connection.pid?.toString() ?? "-";
   const endpointValue = initialLoading ? "Loading..." : socksAddress;
+  const httpEndpointValue = initialLoading ? "Loading..." : httpAddress;
   const copyDisabled = !selectedProfile || socksAddress === "-";
   const runtimeStatusMessage =
     copyStatus ||
@@ -153,6 +163,13 @@ function App() {
       setCopyStatus("");
       setError(normalizeError(nextError));
     }
+  }
+
+  async function changeMode(mode: ConnectionMode) {
+    if (mode === selectedMode || runtimeBusy) {
+      return;
+    }
+    await run("mode", () => desktopApi.setConnectionMode(mode));
   }
 
   return (
@@ -237,6 +254,30 @@ function App() {
             <small>{profileDetail}</small>
           </div>
 
+          <div className="mode-selector" aria-label="Connection mode">
+            <ModeButton
+              active={selectedMode === "proxy"}
+              disabled={runtimeBusy || connected}
+              icon={<Network />}
+              label="Proxy"
+              onClick={() => void changeMode("proxy")}
+            />
+            <ModeButton
+              active={selectedMode === "system"}
+              disabled={runtimeBusy || connected || !snapshot?.capabilities.systemProxySupported}
+              icon={<MonitorCog />}
+              label="System proxy"
+              onClick={() => void changeMode("system")}
+            />
+            <ModeButton
+              active={selectedMode === "vpn"}
+              disabled={runtimeBusy || connected || !snapshot?.capabilities.vpnModeSupported}
+              icon={<ShieldCheck />}
+              label="VPN"
+              onClick={() => void changeMode("vpn")}
+            />
+          </div>
+
           <div className="command-row" aria-label="Connection actions">
             {disconnectAvailable ? (
               <button
@@ -271,8 +312,9 @@ function App() {
 
           <div className="metric-grid" aria-label="Runtime details">
             <Metric label="SOCKS endpoint" value={endpointValue} />
+            <Metric label="HTTP endpoint" value={httpEndpointValue} />
             <Metric label="LAN endpoints" value={lanAddressValue} />
-            <Metric label="Process ID" value={pidValue} />
+            <Metric label="Runtime" value={runtimeMetric(snapshot)} />
           </div>
         </section>
 
@@ -356,6 +398,21 @@ function App() {
                     Use a local port from 1024 to 65535.
                   </small>
                 </label>
+
+                <label htmlFor={httpPortId}>
+                  <span>HTTP proxy port</span>
+                  <input
+                    id={httpPortId}
+                    inputMode="numeric"
+                    aria-describedby={httpPortHelpId}
+                    aria-invalid={!httpPortValid}
+                    value={httpPort}
+                    onChange={(event) => setHttpPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  />
+                  <small id={httpPortHelpId} className={httpPortValid ? "field-help" : "field-error"}>
+                    Use a different local port from 1024 to 65535.
+                  </small>
+                </label>
               </div>
 
               <label htmlFor={rawConfigId}>
@@ -387,7 +444,7 @@ function App() {
                   disabled={importDisabled}
                   onClick={() =>
                     void run("import", () =>
-                      desktopApi.importConfig(profileName, rawConfig, portNumber, shareLan),
+                      desktopApi.importConfig(profileName, rawConfig, portNumber, httpPortNumber, shareLan),
                     )
                   }
                 >
@@ -405,7 +462,7 @@ function App() {
           <details className="panel disclosure-panel logs-panel" id="logs">
             <DisclosureSummary icon={<HardDrive />} title="Logs" detail={snapshot?.logsDir ?? "-"} />
             <pre aria-label="Runtime log output" tabIndex={0}>
-              {initialLoading ? "Loading logs..." : snapshot?.logTail || "No log output yet."}
+              {initialLoading ? "Loading logs..." : combinedLogs(snapshot)}
             </pre>
           </details>
         </div>
@@ -507,6 +564,33 @@ function ProfileRow({
   );
 }
 
+function ModeButton({
+  active,
+  disabled,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  disabled: boolean;
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={active ? "mode-button active" : "mode-button"}
+      disabled={disabled}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function StatusCard({ phase, address }: { phase: string; address: string }) {
   return (
     <div className={`status-card ${phase}`} aria-live="polite">
@@ -562,6 +646,45 @@ function selectedProfileAddress(profile: ClientProfile | null) {
     return "-";
   }
   return `${profile.shareLan ? "0.0.0.0" : "127.0.0.1"}:${profile.socksPort}`;
+}
+
+function selectedProfileHTTPAddress(profile: ClientProfile | null) {
+  if (!profile) {
+    return "-";
+  }
+  return `${profile.shareLan ? "0.0.0.0" : "127.0.0.1"}:${profile.httpPort}`;
+}
+
+function runtimeMetric(snapshot: DesktopSnapshot | null) {
+  if (!snapshot) {
+    return "Loading...";
+  }
+  const connection = snapshot.connection;
+  if (connection.phase !== "connected") {
+    return "-";
+  }
+  const parts = [`PID ${connection.pid ?? "-"}`];
+  if (connection.systemProxyEnabled) {
+    parts.push("Windows proxy");
+  }
+  if (connection.tunnelActive) {
+    parts.push(connection.tunnelInterfaceName ?? "VPN");
+  }
+  return parts.join(" · ");
+}
+
+function combinedLogs(snapshot: DesktopSnapshot | null) {
+  if (!snapshot) {
+    return "Loading logs...";
+  }
+  const parts = [];
+  if (snapshot.logTail) {
+    parts.push(`[client]\n${snapshot.logTail}`);
+  }
+  if (snapshot.tunnelLogTail) {
+    parts.push(`[vpn]\n${snapshot.tunnelLogTail}`);
+  }
+  return parts.join("\n\n") || "No log output yet.";
 }
 
 function runtimeMessage(connected: boolean, profile?: ClientProfile) {

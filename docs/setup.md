@@ -5,7 +5,7 @@ This is the operator flow:
 1. Install `skirk` on the exit/setup machine.
 2. Run `skirk setup init --out skirk-kit --reset-google-login`.
 3. Open the Google URL printed by setup, enter the short code, and approve.
-4. Start `skirk serve-exit --config skirk-kit/exit.json`.
+4. Setup installs/enables `skirk-exit.service` and starts the exit on Linux.
 5. Send only `skirk-kit/client.skirk` or its one-line text to clients.
 
 The exit machine needs outbound internet access. It does not need an inbound
@@ -33,6 +33,12 @@ Reliable new-install path:
 ```bash
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
+
+On Linux this starts the exit as `skirk-exit.service` after Google login and
+kit generation. Use `--start-exit=false` for config-only setup,
+`--exit-service-name NAME` to choose a different systemd unit name,
+`--exit-service-user USER` to run the service as a specific account, or
+`--exit-service-enable=false` to start it now without enabling boot startup.
 
 Google blocks the default Google Cloud SDK OAuth client when a third-party app
 requests Drive scopes. That is the browser page that says "This app is blocked".
@@ -162,12 +168,15 @@ secret. Do not commit them or paste them into public logs.
 ## Run The Exit
 
 ```bash
-skirk serve-exit --config skirk-kit/exit.json
+skirk service status
 ```
 
 Useful exit options:
 
 ```bash
+# If setup was run with --start-exit=false, start manually.
+skirk serve-exit --config skirk-kit/exit.json
+
 # Send exit traffic through another local proxy.
 skirk serve-exit --config skirk-kit/exit.json --exit-proxy socks5h://127.0.0.1:40000
 

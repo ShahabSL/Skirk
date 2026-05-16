@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +66,7 @@ type serviceInstallOptions struct {
 	User       string
 	Start      bool
 	Enable     bool
+	Quiet      bool
 }
 
 func installSystemdService(ctx context.Context, opts serviceInstallOptions) error {
@@ -113,23 +115,23 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	}
 
 	unitPath := filepath.Join("/etc/systemd/system", unit)
-	if err := runPrivileged(ctx, "install", "-m", "0644", tmpPath, unitPath); err != nil {
+	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "install", "-m", "0644", tmpPath, unitPath); err != nil {
 		return err
 	}
-	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
+	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
 	if opts.Enable {
-		if err := runPrivileged(ctx, "systemctl", "enable", unit); err != nil {
+		if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "enable", unit); err != nil {
 			return err
 		}
 	}
 	if opts.Start {
-		if err := runPrivileged(ctx, "systemctl", "restart", unit); err != nil {
+		if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "restart", unit); err != nil {
 			return err
 		}
 	}
-	fmt.Printf("Installed systemd service %s using %s\n", unit, configPath)
+	fmt.Fprintf(commandStdout(opts.Quiet), "Installed systemd service %s using %s\n", unit, configPath)
 	return nil
 }
 
@@ -222,19 +224,34 @@ func currentUsername(ctx context.Context) (string, error) {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
+	return runCommandWithStdout(ctx, os.Stdout, name, args...)
+}
+
+func runCommandWithStdout(ctx context.Context, stdout io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	return cmd.Run()
 }
 
 func runPrivileged(ctx context.Context, name string, args ...string) error {
+	return runPrivilegedWithStdout(ctx, os.Stdout, name, args...)
+}
+
+func runPrivilegedWithStdout(ctx context.Context, stdout io.Writer, name string, args ...string) error {
 	if os.Geteuid() == 0 {
-		return runCommand(ctx, name, args...)
+		return runCommandWithStdout(ctx, stdout, name, args...)
 	}
 	if _, err := exec.LookPath("sudo"); err != nil {
 		return fmt.Errorf("root privileges are required for %s; rerun as root or install sudo", name)
 	}
-	return runCommand(ctx, "sudo", append([]string{name}, args...)...)
+	return runCommandWithStdout(ctx, stdout, "sudo", append([]string{name}, args...)...)
+}
+
+func commandStdout(quiet bool) io.Writer {
+	if quiet {
+		return os.Stderr
+	}
+	return os.Stdout
 }

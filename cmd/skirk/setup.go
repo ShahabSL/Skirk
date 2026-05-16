@@ -73,6 +73,10 @@ func setupInit(ctx context.Context, args []string) error {
 	clientDownloadConcurrency := fs.Int("client-download-concurrency", 0, "client Drive download concurrency; 0 uses auto profile")
 	exitUploadConcurrency := fs.Int("exit-upload-concurrency", 0, "exit Drive upload concurrency; 0 uses auto profile")
 	exitDownloadConcurrency := fs.Int("exit-download-concurrency", 0, "exit Drive download concurrency; 0 uses auto profile")
+	startExit := fs.Bool("start-exit", runtime.GOOS == "linux", "install and start the exit service after generating the kit on Linux")
+	exitServiceName := fs.String("exit-service-name", defaultServiceName, "systemd service name used when --start-exit is true")
+	exitServiceUser := fs.String("exit-service-user", "", "user to run the exit service as; defaults to the current user")
+	exitServiceEnable := fs.Bool("exit-service-enable", true, "enable the exit service at boot when --start-exit is true")
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON instead of the copy-paste setup summary")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -185,6 +189,9 @@ func setupInit(ctx context.Context, args []string) error {
 		Listen:            *listen,
 		ClientRoute:       *clientRoute,
 		ExitRoute:         *exitRoute,
+		StartExit:         *startExit,
+		ServiceName:       *exitServiceName,
+		Platform:          runtime.GOOS,
 	}); err != nil {
 		return err
 	}
@@ -204,6 +211,13 @@ func setupInit(ctx context.Context, args []string) error {
 		ExitRoute:         *exitRoute,
 		Listen:            *listen,
 	}
+	if *startExit {
+		runtimeStatus, err := startExitAfterSetup(ctx, result.ExitPath, *exitServiceName, *exitServiceUser, *exitServiceEnable, *jsonOut)
+		if err != nil {
+			return err
+		}
+		result.ExitRuntime = runtimeStatus
+	}
 	if *jsonOut {
 		return printJSON(map[string]any{
 			"result":              "ok",
@@ -220,10 +234,36 @@ func setupInit(ctx context.Context, args []string) error {
 			"exit_route":          result.ExitRoute,
 			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
 			"transport":           result.Transport,
+			"exit_runtime":        result.ExitRuntime,
 		})
 	}
 	printSetupResult(result)
 	return nil
+}
+
+func startExitAfterSetup(ctx context.Context, exitPath, serviceName, serviceUser string, enable bool, quiet bool) (string, error) {
+	if runtime.GOOS != "linux" {
+		return "", fmt.Errorf("--start-exit is only supported on Linux; run serve-exit manually on %s", runtime.GOOS)
+	}
+	name := strings.TrimSpace(serviceName)
+	if name == "" {
+		name = defaultServiceName
+	}
+	if err := installSystemdService(ctx, serviceInstallOptions{
+		Name:       name,
+		ConfigPath: exitPath,
+		User:       serviceUser,
+		Start:      true,
+		Enable:     enable,
+		Quiet:      quiet,
+	}); err != nil {
+		return "", fmt.Errorf("exit service start failed after setup: %w", err)
+	}
+	unit, err := normalizeSystemdServiceName(name)
+	if err != nil {
+		return "", err
+	}
+	return unit + " started", nil
 }
 
 func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
@@ -637,6 +677,9 @@ type setupSummary struct {
 	Listen            string
 	ClientRoute       string
 	ExitRoute         string
+	StartExit         bool
+	ServiceName       string
+	Platform          string
 }
 
 type setupResult struct {
@@ -653,6 +696,7 @@ type setupResult struct {
 	ClientRoute       string
 	ExitRoute         string
 	Listen            string
+	ExitRuntime       string
 }
 
 func printSetupResult(result setupResult) {
@@ -668,10 +712,15 @@ func printSetupResult(result setupResult) {
 		fmt.Printf("Data folder: %s\n", result.DriveFolderID)
 	}
 	fmt.Println()
-	fmt.Println("Run this on the exit machine:")
-	fmt.Println()
-	fmt.Printf("skirk serve-exit --config %s\n", result.ExitPath)
-	fmt.Println()
+	if strings.TrimSpace(result.ExitRuntime) != "" {
+		fmt.Printf("Exit runtime: %s\n", result.ExitRuntime)
+		fmt.Println()
+	} else {
+		fmt.Println("Run this on the exit machine:")
+		fmt.Println()
+		fmt.Printf("skirk serve-exit --config %s\n", result.ExitPath)
+		fmt.Println()
+	}
 	fmt.Println("Copy and send this one-line client config:")
 	fmt.Println()
 	fmt.Println(result.ClientText)
@@ -685,6 +734,15 @@ func printSetupResult(result setupResult) {
 }
 
 func writeSetupReadme(path string, summary setupSummary) error {
+	serviceName := strings.TrimSpace(summary.ServiceName)
+	if serviceName == "" {
+		serviceName = defaultServiceName
+	}
+	serviceUnit, err := normalizeSystemdServiceName(serviceName)
+	if err != nil {
+		return err
+	}
+	serviceSection := setupReadmeServiceSection(summary, serviceName, serviceUnit)
 	content := fmt.Sprintf(`# Skirk Generated Kit
 
 Created kit: %s
@@ -698,11 +756,7 @@ Exit route: %s
 
 ## What To Run
 
-On the machine with normal internet egress, run the exit:
-
-`+"```bash"+`
-skirk serve-exit --config %s
-`+"```"+`
+%s
 
 On the client machine, run the SOCKS proxy:
 
@@ -762,8 +816,48 @@ To immediately invalidate every config generated from this OAuth login, revoke t
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, summary.ExitPath, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath)
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath)
 	return os.WriteFile(path, []byte(content), 0600)
+}
+
+func setupReadmeServiceSection(summary setupSummary, serviceName, serviceUnit string) string {
+	if summary.Platform != "" && summary.Platform != "linux" {
+		return fmt.Sprintf(`Service auto-start is only available on Linux/systemd. Run the exit manually on this machine:
+
+`+"```bash"+`
+skirk serve-exit --config %s
+`+"```"+`
+
+On a Linux exit machine, install the service with:
+
+`+"```bash"+`
+skirk service install --config %s --name %s
+`+"```", summary.ExitPath, summary.ExitPath, serviceName)
+	}
+	if summary.StartExit {
+		return fmt.Sprintf(`Setup starts the exit as %s by default. Check it with:
+
+`+"```bash"+`
+skirk service status --name %s
+`+"```"+`
+
+Restart it after changing config:
+
+`+"```bash"+`
+skirk service restart --name %s
+`+"```", serviceUnit, serviceName, serviceName)
+	}
+	return fmt.Sprintf(`Setup was run with `+"`--start-exit=false`"+`. Start the exit later:
+
+`+"```bash"+`
+skirk service install --config %s --name %s
+`+"```"+`
+
+Or run it in the foreground:
+
+`+"```bash"+`
+skirk serve-exit --config %s
+`+"```", summary.ExitPath, serviceName, summary.ExitPath)
 }
 
 func driveTransportName(drive skirk.DriveConfig) string {
