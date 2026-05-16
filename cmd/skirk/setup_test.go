@@ -123,8 +123,7 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oauth-client.json")
 	input := strings.Join([]string{
-		"",  // accept default path
-		"2", // paste credentials
+		"1", // paste credentials
 		"client-id.apps.googleusercontent.com",
 		"client-secret",
 		"", // save to default path

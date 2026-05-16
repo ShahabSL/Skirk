@@ -98,8 +98,9 @@ Personal quota mode:
 - uses a Google OAuth client created in the user's own Google Cloud project;
 - charges Drive API usage to that user's project quota instead of Skirk's shared
   project quota;
-- requires the user to create a Google Cloud project, enable Drive API, create a
-  `TVs and Limited Input devices` OAuth client, and pass the JSON file to setup:
+- guides the user through creating a Google Cloud project, enabling Drive API,
+  configuring consent, and creating a `TVs and Limited Input devices` OAuth
+  client:
 
 ```bash
 "$HOME/.local/bin/skirk" setup init \

@@ -126,8 +126,17 @@ The guided equivalent is:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
-If `oauth-client.json` is missing, setup offers to paste the client ID and
-client secret and writes the ignored local `oauth-client.json` file for you.
+The personal OAuth wizard prints the exact Google Cloud pages to open:
+
+1. Create or select a Google Cloud project.
+2. Enable Google Drive API.
+3. Configure the OAuth consent screen and add your Google account as a test user
+   if the app stays in testing mode.
+4. Create an OAuth client with application type `TVs and Limited Input devices`.
+5. Paste the client ID and client secret into Skirk, or download the JSON.
+
+If you paste the client ID and secret, setup writes the ignored local
+`oauth-client.json` file for you.
 
 Or set environment variables for local builds:
 
