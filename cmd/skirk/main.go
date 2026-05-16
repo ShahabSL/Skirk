@@ -81,6 +81,8 @@ func run(args []string) error {
 		return cleanup(ctx, args[2:])
 	case "config":
 		return configCommand(args[2:])
+	case "service":
+		return serviceCommand(ctx, args[2:])
 	case "bench-live":
 		return benchLive(ctx, args[2:])
 	case "bench-drive":
@@ -113,6 +115,8 @@ func usage() {
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
+  service install --config skirk-kit/exit.json [--name skirk-exit]
+  service status|start|stop|restart|uninstall [--name skirk-exit]
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
   revoke --config skirk-kit/exit.json [--revoke-oauth]

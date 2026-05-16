@@ -297,13 +297,23 @@ skirk cleanup --config skirk-kit/exit.json --prefix muxv4/ --older-than 1s --del
 
 Stop the client and exit processes first.
 
+If the exit is running as a systemd service:
+
+```bash
+skirk service stop --name skirk-exit
+```
+
 Revoke the OAuth refresh token embedded in the generated config:
 
 ```bash
 skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
-Then remove local generated files:
+Delete stale Drive mailbox objects and then remove local generated files:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --older-than 0s --delete
+```
 
 ```bash
 rm -rf skirk-kit
@@ -311,6 +321,9 @@ rm -rf skirk-kit
 
 OAuth revocation invalidates configs generated from that token. If you no longer
 have the config, revoke the app from the Google account security page.
+
+The interactive menu (`skirk` with no arguments) exposes the same setup,
+service, cleanup, revoke, and local delete actions.
 
 ## Learning Notes
 

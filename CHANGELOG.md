@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `skirk service` and expanded the operator menu for setup, systemd
+  service lifecycle, Drive cleanup, OAuth revocation, and local kit deletion.
 - Stopped new setup runs from launching the blocked default Google Cloud SDK
   OAuth client for Drive scopes; release builds can now use Skirk's built-in
   device OAuth client through Google's URL/code device flow.

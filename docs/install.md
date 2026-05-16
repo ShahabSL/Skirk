@@ -105,6 +105,22 @@ tools from choosing a blackholed IPv6 route for Google OAuth.
 
 Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
 
+The same operations are available in the interactive operator menu:
+
+```bash
+"$HOME/.local/bin/skirk"
+```
+
+For a persistent Linux exit service:
+
+```bash
+"$HOME/.local/bin/skirk" service install --config skirk-kit/exit.json
+"$HOME/.local/bin/skirk" service status
+```
+
+Use `service stop`, `service restart`, or `service uninstall` with
+`--name skirk-exit` if you changed the service name.
+
 To also install Cloudflare WARP through wireproxy and point exit traffic at it:
 
 ```bash

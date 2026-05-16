@@ -64,6 +64,20 @@ Run the exit:
 "$HOME/.local/bin/skirk" serve-exit --config skirk-kit/exit.json
 ```
 
+Or run the operator menu and choose setup, service, cleanup, or revoke actions
+from one place:
+
+```bash
+"$HOME/.local/bin/skirk"
+```
+
+To keep the exit running after the SSH session closes:
+
+```bash
+"$HOME/.local/bin/skirk" service install --config skirk-kit/exit.json
+"$HOME/.local/bin/skirk" service status
+```
+
 Copy the one-line text from `skirk-kit/client.skirk` and use it on a client.
 From a Linux client:
 

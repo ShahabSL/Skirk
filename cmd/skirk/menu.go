@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,11 +16,12 @@ func menu(ctx context.Context) error {
 		fmt.Println()
 		fmt.Print(skirkBanner)
 		fmt.Println("1. Create Google kit")
-		fmt.Println("2. Run exit")
-		fmt.Println("3. Run client SOCKS")
+		fmt.Println("2. Run exit in this terminal")
+		fmt.Println("3. Run client SOCKS in this terminal")
 		fmt.Println("4. Run optional desktop dashboard")
-		fmt.Println("5. Revoke/delete kit")
-		fmt.Println("6. Show commands")
+		fmt.Println("5. Manage exit service")
+		fmt.Println("6. Revoke, clean, or delete kit")
+		fmt.Println("7. Show commands")
 		fmt.Println("0. Quit")
 		choice, err := prompt(ctx, reader, "Select", "1")
 		if err != nil {
@@ -41,6 +43,13 @@ func menu(ctx context.Context) error {
 			args := []string{"--out", out}
 			if title != "" {
 				args = append(args, "--title", title)
+			}
+			reset, err := promptYesNo(ctx, reader, "Reset Google login before setup", true)
+			if err != nil {
+				return err
+			}
+			if reset {
+				args = append(args, "--reset-google-login")
 			}
 			return setupInit(ctx, args)
 		case "2":
@@ -74,20 +83,55 @@ func menu(ctx context.Context) error {
 			}
 			return clientUI(ctx, []string{"--config", config, "--socks", socks, "--ui", ui})
 		case "5":
+			if err := serviceMenu(ctx, reader); err != nil {
+				return err
+			}
+		case "6":
 			config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
 			if err != nil {
 				return err
 			}
-			revokeOAuth, err := prompt(ctx, reader, "Also revoke Google OAuth token? Type yes to revoke all configs from this login", "no")
+			stopService, err := promptYesNo(ctx, reader, "Stop exit service first", false)
 			if err != nil {
 				return err
 			}
-			args := []string{"--config", config}
-			if strings.EqualFold(revokeOAuth, "yes") {
-				args = append(args, "--revoke-oauth")
+			if stopService {
+				name, err := prompt(ctx, reader, "Service name", defaultServiceName)
+				if err != nil {
+					return err
+				}
+				if err := serviceCommand(ctx, []string{"stop", "--name", name}); err != nil {
+					return err
+				}
 			}
-			return revoke(ctx, args)
-		case "6":
+			deleteDrive, err := promptYesNo(ctx, reader, "Delete stale Drive mailbox objects now", false)
+			if err != nil {
+				return err
+			}
+			if deleteDrive {
+				if err := cleanup(ctx, []string{"--config", config, "--older-than", "0s", "--delete"}); err != nil {
+					return err
+				}
+			}
+			revokeOAuth, err := promptYesNo(ctx, reader, "Revoke Google OAuth token and invalidate generated configs", false)
+			if err != nil {
+				return err
+			}
+			if revokeOAuth {
+				if err := revoke(ctx, []string{"--config", config, "--revoke-oauth"}); err != nil {
+					return err
+				}
+			}
+			deleteLocal, err := promptYesNo(ctx, reader, "Delete local kit directory", false)
+			if err != nil {
+				return err
+			}
+			if deleteLocal {
+				if err := deleteKitDirectory(config); err != nil {
+					return err
+				}
+			}
+		case "7":
 			usage()
 		case "0", "q", "quit", "exit":
 			return nil
@@ -95,6 +139,109 @@ func menu(ctx context.Context) error {
 			fmt.Println("Unknown selection")
 		}
 	}
+}
+
+func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
+	fmt.Println()
+	fmt.Println("1. Install or update exit service")
+	fmt.Println("2. Service status")
+	fmt.Println("3. Start service")
+	fmt.Println("4. Stop service")
+	fmt.Println("5. Restart service")
+	fmt.Println("6. Uninstall service")
+	fmt.Println("0. Back")
+	choice, err := prompt(ctx, reader, "Service action", "1")
+	if err != nil {
+		return err
+	}
+	if choice == "0" || strings.EqualFold(choice, "back") {
+		return nil
+	}
+	name, err := prompt(ctx, reader, "Service name", defaultServiceName)
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case "1":
+		config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+		if err != nil {
+			return err
+		}
+		user, err := prompt(ctx, reader, "Run service as user (blank=current user)", "")
+		if err != nil {
+			return err
+		}
+		args := []string{"install", "--name", name, "--config", config}
+		if strings.TrimSpace(user) != "" {
+			args = append(args, "--user", user)
+		}
+		return serviceCommand(ctx, args)
+	case "2":
+		return serviceCommand(ctx, []string{"status", "--name", name})
+	case "3":
+		return serviceCommand(ctx, []string{"start", "--name", name})
+	case "4":
+		return serviceCommand(ctx, []string{"stop", "--name", name})
+	case "5":
+		return serviceCommand(ctx, []string{"restart", "--name", name})
+	case "6":
+		confirm, err := promptYesNo(ctx, reader, "Uninstall service", false)
+		if err != nil {
+			return err
+		}
+		if !confirm {
+			return nil
+		}
+		return serviceCommand(ctx, []string{"uninstall", "--name", name})
+	default:
+		return fmt.Errorf("unknown service action %q", choice)
+	}
+}
+
+func promptYesNo(ctx context.Context, reader *bufio.Reader, label string, fallback bool) (bool, error) {
+	fallbackText := "no"
+	if fallback {
+		fallbackText = "yes"
+	}
+	for {
+		text, err := prompt(ctx, reader, label+" (yes/no)", fallbackText)
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(text)) {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		default:
+			fmt.Println("Please answer yes or no.")
+		}
+	}
+}
+
+func deleteKitDirectory(configPath string) error {
+	absConfig, err := filepath.Abs(configPath)
+	if err != nil {
+		return err
+	}
+	if filepath.Base(absConfig) != "exit.json" {
+		return fmt.Errorf("refusing to delete kit directory: %s is not an exit.json path", absConfig)
+	}
+	dir := filepath.Dir(absConfig)
+	if dir == string(filepath.Separator) || dir == "." {
+		return fmt.Errorf("refusing to delete unsafe kit directory %q", dir)
+	}
+	required := []string{"exit.json", "client.skirk", "client.json"}
+	for _, name := range required {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("refusing to delete %s: expected generated kit file %s is missing: %w", dir, name, err)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	fmt.Printf("Deleted local kit directory: %s\n", dir)
+	return nil
 }
 
 const skirkBanner = `             ##################
