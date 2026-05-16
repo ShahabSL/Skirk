@@ -335,8 +335,8 @@ main() {
     *) echo "Current shell may not find skirk yet. Run: export PATH=\"$install_dir:\$PATH\"" ;;
   esac
   echo
-  echo "Next: put oauth-client.json in this directory, then run '$install_dir/skirk setup init --out skirk-kit --reset-google-login'."
-  echo "Setup uses oauth-client.json automatically for the Google device-code login flow."
+  echo "Next: run '$install_dir/skirk setup init --out skirk-kit --reset-google-login'."
+  echo "Setup prints a Google URL and short code for the device-code login flow."
 
   run_server_setup
 }

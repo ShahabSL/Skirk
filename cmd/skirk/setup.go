@@ -31,7 +31,12 @@ type oauthClientCredentials struct {
 	ClientSecret string `json:"client_secret"`
 }
 
-const defaultCustomOAuthScopes = "https://www.googleapis.com/auth/drive.appdata"
+const defaultCustomOAuthScopes = "https://www.googleapis.com/auth/drive.file"
+
+var (
+	defaultOAuthClientID     string
+	defaultOAuthClientSecret string
+)
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -54,8 +59,8 @@ func setupInit(ctx context.Context, args []string) error {
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of starting Google login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
 	resetGoogleLogin := fs.Bool("reset-google-login", false, "remove local ADC credentials before Google login")
-	oauthClientFile := fs.String("oauth-client-file", "", "Google OAuth client JSON for TVs and Limited Input devices; defaults to ./oauth-client.json when present")
-	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used with --oauth-client-file")
+	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON for TVs and Limited Input devices")
+	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used for Google OAuth login")
 	clientRoute := fs.String("client-route", "google_front", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
@@ -79,15 +84,13 @@ func setupInit(ctx context.Context, args []string) error {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
 	}
 
-	oauthPath := strings.TrimSpace(*oauthClientFile)
-	if oauthPath == "" && strings.TrimSpace(*adcPath) == "" {
-		if _, statErr := os.Stat("oauth-client.json"); statErr == nil {
-			oauthPath = "oauth-client.json"
-		}
+	oauthClient, oauthSource, oauthErr := resolveOAuthClientCredentials(strings.TrimSpace(*oauthClientFile))
+	if oauthErr != nil {
+		return oauthErr
 	}
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
-	loginRequested := *googleLogin || oauthPath != ""
+	loginRequested := *googleLogin || oauthSource != ""
 	if *resetGoogleLogin {
 		fmt.Printf("Resetting local Google credentials before login.\n\n")
 		_ = os.Remove(credsPath)
@@ -98,9 +101,9 @@ func setupInit(ctx context.Context, args []string) error {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
-		if oauthPath != "" {
-			fmt.Printf("Google login will use your device OAuth client file, so Drive API quota is charged to your own Google project.\n\n")
-			creds, err = runGoogleDeviceOAuth(ctx, oauthPath, *oauthScopes)
+		if oauthSource != "" {
+			fmt.Printf("Google login will use %s.\n\n", oauthSource)
+			creds, err = runGoogleDeviceOAuth(ctx, oauthClient, *oauthScopes)
 			if err != nil {
 				return err
 			}
@@ -226,14 +229,23 @@ func setupInit(ctx context.Context, args []string) error {
 func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
 	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
 	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
-		return skirk.DriveConfig{}, "", driveAppDataValidationError(err)
+		if !isAppDataScopeError(err) {
+			return skirk.DriveConfig{}, "", err
+		}
+		fmt.Printf("Google OAuth cannot access Drive appDataFolder with the current scope; creating a Skirk-owned Drive mailbox folder instead.\n\n")
+		folderName := "skirk-mailbox-" + sessionID
+		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, googleIP, folderName, sessionID)
+		if fallbackErr != nil {
+			return skirk.DriveConfig{}, "", fmt.Errorf("drive appDataFolder unavailable (%v); Drive folder mailbox setup failed: %w", err, fallbackErr)
+		}
+		return folderDrive, folderID, nil
 	}
 	return appDataDrive, "appDataFolder", nil
 }
 
 func driveAppDataValidationError(err error) error {
 	if isAppDataScopeError(err) {
-		return fmt.Errorf("drive appDataFolder validation failed: the OAuth token did not grant https://www.googleapis.com/auth/drive.appdata; recreate the kit with --reset-google-login --oauth-client-file ./oauth-client.json after enabling Drive API and authorizing that scope: %w", err)
+		return fmt.Errorf("drive appDataFolder validation failed: the OAuth token did not grant https://www.googleapis.com/auth/drive.appdata; rerun setup with --reset-google-login after enabling Drive API and authorizing that scope: %w", err)
 	}
 	return fmt.Errorf("drive appDataFolder validation failed: %w", err)
 }
@@ -245,6 +257,33 @@ func isAppDataScopeError(err error) bool {
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "insufficientscopes") &&
 		(strings.Contains(text, "application data folder") || strings.Contains(text, "appdatafolder"))
+}
+
+func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, folderName, sessionID string) (skirk.DriveConfig, string, error) {
+	cfg := skirk.Config{
+		Secret: "setup-only",
+		Auth:   auth,
+		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
+	}
+	cfg.ApplyDefaults()
+	drive, err := skirk.StoresFromConfig(ctx, &cfg)
+	if err != nil {
+		return skirk.DriveConfig{}, "", err
+	}
+	info, err := drive.EnsureFolder(ctx, folderName)
+	if err != nil {
+		return skirk.DriveConfig{}, "", fmt.Errorf("drive mailbox folder create failed: %w", err)
+	}
+	folderID := strings.TrimSpace(info.ID)
+	if folderID == "" {
+		return skirk.DriveConfig{}, "", errors.New("drive mailbox folder create returned empty id")
+	}
+	driveCfg := skirk.DriveConfig{FolderID: folderID}
+	if err := validateDriveMailbox(ctx, auth, driveCfg, googleIP, sessionID); err != nil {
+		return skirk.DriveConfig{}, "", err
+	}
+	return driveCfg, folderID, nil
 }
 
 func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
@@ -339,14 +378,62 @@ func defaultADCPath() string {
 
 func driveOAuthClientRequiredError(credsPath string, cause error) error {
 	if cause == nil {
-		cause = errors.New("Google login was requested without --oauth-client-file")
+		cause = errors.New("Google login was requested without an OAuth client")
 	}
-	return fmt.Errorf("Google Drive setup now requires your own OAuth client file.\n"+
+	return fmt.Errorf("Google Drive setup needs a Google OAuth client.\n"+
 		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
-		"Create a Google Auth Platform OAuth client for TVs and Limited Input devices, save it as oauth-client.json in the current directory, then rerun:\n"+
-		"  skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json\n"+
-		"If you use the installer automation, set SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json.\n"+
+		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET, or pass --oauth-client-file for testing.\n"+
 		"Current ADC path was %s; original credential error: %w", credsPath, cause)
+}
+
+func resolveOAuthClientCredentials(path string) (oauthClientCredentials, string, error) {
+	if path != "" {
+		creds, err := readOAuthClientCredentials(path)
+		if err != nil {
+			return oauthClientCredentials{}, "", err
+		}
+		return creds, "the OAuth client file " + path, nil
+	}
+	if creds, ok, err := oauthClientFromEnv(); err != nil || ok {
+		if err != nil {
+			return oauthClientCredentials{}, "", err
+		}
+		return creds, "the OAuth client configured in SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET", nil
+	}
+	if creds, ok, err := builtInOAuthClient(); err != nil || ok {
+		if err != nil {
+			return oauthClientCredentials{}, "", err
+		}
+		return creds, "Skirk's built-in OAuth client", nil
+	}
+	if _, statErr := os.Stat("oauth-client.json"); statErr == nil {
+		creds, err := readOAuthClientCredentials("oauth-client.json")
+		if err != nil {
+			return oauthClientCredentials{}, "", err
+		}
+		return creds, "the OAuth client file oauth-client.json", nil
+	}
+	return oauthClientCredentials{}, "", nil
+}
+
+func oauthClientFromEnv() (oauthClientCredentials, bool, error) {
+	return oauthClientFromPair(os.Getenv("SKIRK_OAUTH_CLIENT_ID"), os.Getenv("SKIRK_OAUTH_CLIENT_SECRET"), "SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET")
+}
+
+func builtInOAuthClient() (oauthClientCredentials, bool, error) {
+	return oauthClientFromPair(defaultOAuthClientID, defaultOAuthClientSecret, "built-in OAuth client")
+}
+
+func oauthClientFromPair(clientID, clientSecret, source string) (oauthClientCredentials, bool, error) {
+	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
+	if clientID == "" && clientSecret == "" {
+		return oauthClientCredentials{}, false, nil
+	}
+	if clientID == "" || clientSecret == "" {
+		return oauthClientCredentials{}, true, fmt.Errorf("%s must provide both client_id and client_secret", source)
+	}
+	return oauthClientCredentials{ClientID: clientID, ClientSecret: clientSecret}, true, nil
 }
 
 func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {
@@ -397,11 +484,7 @@ func normalizeOAuthScopes(scopes string) string {
 	return strings.Join(clean, " ")
 }
 
-func runGoogleDeviceOAuth(ctx context.Context, oauthClientFile, oauthScopes string) (adcCredentials, error) {
-	client, err := readOAuthClientCredentials(oauthClientFile)
-	if err != nil {
-		return adcCredentials{}, err
-	}
+func runGoogleDeviceOAuth(ctx context.Context, client oauthClientCredentials, oauthScopes string) (adcCredentials, error) {
 	scopes := normalizeOAuthScopes(oauthScopes)
 	code, err := requestDeviceCode(ctx, client.ClientID, scopes)
 	if err != nil {

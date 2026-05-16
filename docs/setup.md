@@ -3,8 +3,8 @@
 This is the operator flow:
 
 1. Install `skirk` on the exit/setup machine.
-2. Create or download `oauth-client.json` into the current directory.
-3. Run `skirk setup init --out skirk-kit --reset-google-login`.
+2. Run `skirk setup init --out skirk-kit --reset-google-login`.
+3. Open the Google URL printed by setup, enter the short code, and approve.
 4. Start `skirk serve-exit --config skirk-kit/exit.json`.
 5. Send only `skirk-kit/client.skirk` or its one-line text to clients.
 
@@ -34,14 +34,13 @@ Reliable new-install path:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-Place `oauth-client.json` in the current directory first. Setup auto-detects it;
-otherwise pass `--oauth-client-file /path/to/oauth-client.json`.
-
 Google blocks the default Google Cloud SDK OAuth client when a third-party app
 requests Drive scopes. That is the browser page that says "This app is blocked".
 Skirk therefore does not launch the default `gcloud` Drive-scope login for new
-credentials. Use your own OAuth client file, or pass `--adc` with credentials
-you created yourself.
+credentials. Official release builds use Skirk's OAuth client directly. Source
+or development builds can set `SKIRK_OAUTH_CLIENT_ID` and
+`SKIRK_OAUTH_CLIENT_SECRET`, pass `--oauth-client-file`, or pass `--adc` with
+credentials you created yourself.
 
 Run setup from an interactive terminal. For SSH, use `ssh -tt -p PORT user@host`
 if the server does not allocate a TTY by default.
@@ -62,8 +61,7 @@ sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "prece
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-This uses Google's OAuth device authorization flow with your OAuth client file.
-If `oauth-client.json` is in the current directory, setup uses it automatically.
+This uses Google's OAuth device authorization flow.
 The terminal prints a URL and a short code. Open the URL in your browser, enter
 the code there, approve Drive access, and the terminal continues without a
 paste-back step.
@@ -71,22 +69,20 @@ paste-back step.
 Skirk requests only the Drive mailbox scope it needs:
 
 ```text
-https://www.googleapis.com/auth/drive.appdata
+https://www.googleapis.com/auth/drive.file
 ```
 
-Drive `appDataFolder` is preferred because Skirk stores encrypted app-private
-mailbox objects, not user-visible files. Official Drive docs require the
-`drive.appdata` scope and `spaces=appDataFolder` for this storage area.
-If Google returns `insufficientScopes` for `appDataFolder`, setup fails and tells
-you to recreate the kit with the OAuth client file after enabling Drive API and
-granting the `drive.appdata` scope. Skirk does not fall back to visible Drive
-folders for new kits.
+The Google device-code flow accepts `drive.file`, which lets Skirk create and
+manage only files and folders created by the Skirk app. Setup creates a
+`skirk-mailbox-...` Drive folder and writes that folder ID into the generated
+exit and client configs. This is the public easy-install path because it avoids
+the blocked Google Cloud SDK OAuth client and does not require each user to
+create an OAuth app.
 
-## Creating `oauth-client.json`
+## Developer OAuth Override
 
-Use this so Drive API quota is associated with your own Google Cloud project,
-and so Google does not block Skirk through the shared Google Cloud SDK OAuth
-client:
+Normal users should not need this once the release build includes Skirk's OAuth
+client. Use this only for source builds, forks, or OAuth debugging:
 
 1. Create or select a Google Cloud project.
 2. Enable Google Drive API.
@@ -101,10 +97,11 @@ Then run:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
-If the file is named `oauth-client.json` and is in the current directory, this
-short form is equivalent:
+Or set environment variables for local builds:
 
 ```bash
+SKIRK_OAUTH_CLIENT_ID='...' \
+SKIRK_OAUTH_CLIENT_SECRET='...' \
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 

@@ -24,6 +24,10 @@ jobs:
           python-version: "3.13"
 
       - name: Build release archives
+        env:
+          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
+          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
         run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
 
       - uses: actions/upload-artifact@v4
@@ -94,11 +98,24 @@ jobs:
 
       - name: Build Skirk Windows sidecar
         shell: pwsh
+        env:
+          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
+          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
         run: |
           New-Item -ItemType Directory -Force clients/desktop/src-tauri/resources/sidecars/windows | Out-Null
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $commit = "${env:GITHUB_SHA}".Substring(0, 7)
           $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
+          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET)) {
+            throw "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET"
+          }
+          if ($env:SKIRK_OAUTH_CLIENT_ID -or $env:SKIRK_OAUTH_CLIENT_SECRET) {
+            if (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET) {
+              throw "SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together"
+            }
+            $ldflags = "$ldflags -X main.defaultOAuthClientID=$env:SKIRK_OAUTH_CLIENT_ID -X main.defaultOAuthClientSecret=$env:SKIRK_OAUTH_CLIENT_SECRET"
+          }
           go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk-sidecar.exe ./cmd/skirk
 
       - name: Build Tauri desktop app

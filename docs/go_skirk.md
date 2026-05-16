@@ -45,7 +45,8 @@ Important fields:
 - `route.mode`: Google API route mode.
 - `route.proxy`: optional upstream proxy for the client Google API path.
 - `route.google_ip`: Google edge IP for pinned route modes.
-- `drive.space`: `appDataFolder` for the production mailbox.
+- `drive.folder_id`: generated setup kits use a Skirk-created Drive mailbox
+  folder for the public device-login flow.
 - `tunnel.profile`: `auto` by default.
 - `tunnel.chunk_size`: transport coalescing target. Defaults to 16 MiB; v4
   still caps an individual Drive mux object at about 4 MiB to stay under the
@@ -60,11 +61,12 @@ For the production transport design, see [Architecture](architecture.md). For
 protocol experiments and promotion gates, see
 [Transport Research](transport-research.md).
 
-## Drive AppData
+## Drive Mailbox
 
-Skirk uses Drive `appDataFolder` for encrypted runtime objects. That keeps data
-out of the user's visible Drive files. The recommended setup path uses only
-`drive.appdata` for the app-private mailbox.
+Skirk setup creates a Drive mailbox folder for encrypted runtime objects. The
+recommended public setup path uses only `drive.file`, so Skirk can manage files
+and folders created by the Skirk OAuth app without requesting broad Drive
+access.
 
 Drive is still an object API. Runtime discovery uses fresh prefix listing;
 latency comes from upload, object visibility, download, and cleanup operations.

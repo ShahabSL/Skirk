@@ -34,6 +34,21 @@ Choose the release version explicitly:
 VERSION=vX.Y.Z make package-release
 ```
 
+Official release builds must include the Skirk OAuth client so setup does not
+ask users for `oauth-client.json`. The GitHub release workflow fails unless
+these repository secrets are configured before tagging:
+
+- `SKIRK_OAUTH_CLIENT_ID`
+- `SKIRK_OAUTH_CLIENT_SECRET`
+
+Local release smoke builds can use the same variables:
+
+```bash
+SKIRK_OAUTH_CLIENT_ID='...' \
+SKIRK_OAUTH_CLIENT_SECRET='...' \
+VERSION=vX.Y.Z make package-release
+```
+
 This writes:
 
 - `dist/skirk-linux-amd64.tar.gz`
@@ -109,5 +124,6 @@ OAuth revocation:
 skirk revoke --config skirk-kit/exit.json --revoke-oauth
 ```
 
-`revoke` invalidates the embedded OAuth token. It does not delete a visible
-Drive folder because the production mailbox uses Drive `appDataFolder`.
+`revoke` invalidates the embedded OAuth token. Delete the generated
+`skirk-mailbox-...` Drive folder manually if you want to remove mailbox
+leftovers immediately.

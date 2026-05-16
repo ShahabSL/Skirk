@@ -6,6 +6,19 @@ commit="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 date="${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 dist="${DIST_DIR:-dist}"
 ldflags="-s -w -X main.version=$version -X main.commit=$commit -X main.date=$date"
+oauth_client_id="${SKIRK_OAUTH_CLIENT_ID:-}"
+oauth_client_secret="${SKIRK_OAUTH_CLIENT_SECRET:-}"
+if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH:-0}" = "1" ] && { [ -z "$oauth_client_id" ] || [ -z "$oauth_client_secret" ]; }; then
+  echo "error: release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET" >&2
+  exit 1
+fi
+if [ -n "$oauth_client_id" ] || [ -n "$oauth_client_secret" ]; then
+  if [ -z "$oauth_client_id" ] || [ -z "$oauth_client_secret" ]; then
+    echo "error: SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together" >&2
+    exit 1
+  fi
+  ldflags="$ldflags -X main.defaultOAuthClientID=$oauth_client_id -X main.defaultOAuthClientSecret=$oauth_client_secret"
+fi
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {

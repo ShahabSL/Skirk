@@ -18,7 +18,7 @@ maintenance:
 
 Skirk is a Go-first transport for restricted-network testing. It exposes a local
 SOCKS5 proxy, optional HTTP proxy, or Android VPN frontend, then moves encrypted
-TCP stream frames through a Google Drive `appDataFolder` mailbox to an exit
+TCP stream frames through a Google Drive mailbox folder to an exit
 machine with normal internet egress.
 
 Skirk is for lawful, authorized, owned-account and owned-network use only. It is
@@ -31,8 +31,6 @@ Cloudflare, GitHub, Microsoft, Android, or any other provider. Read
 - One exit machine with working internet egress. A VPS is best for uptime, but a
   laptop or home server works while it stays online.
 - One Google account for the Drive mailbox.
-- One `oauth-client.json` file in the setup directory. See
-  [docs/setup.md](docs/setup.md).
 - One generated `skirk:...` client profile to share with client devices.
 
 Clients do not need Google login, `gcloud`, or a Google Cloud project. The exit
@@ -57,10 +55,8 @@ Create a kit:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-New installs need your own Google OAuth client JSON for TVs and Limited Input
-devices. Google blocks the default Google Cloud SDK OAuth client when Drive
-scopes are requested. If `oauth-client.json` is in the current directory, setup
-uses it automatically and prints a URL plus short code to enter in the browser.
+Setup prints a Google URL plus a short code. Open the URL, enter the code in
+the browser, approve Drive access, and the terminal continues.
 
 Run the exit:
 
@@ -188,7 +184,6 @@ The Linux installer can perform VPS setup non-interactively:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_SERVER_SETUP=1 \
-  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 
@@ -245,7 +240,6 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_INSTALL_SYSTEMD=1 \
   SKIRK_INSTALL_WIREPROXY=1 \
   SKIRK_ACCEPT_WARP_TOS=1 \
-  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 

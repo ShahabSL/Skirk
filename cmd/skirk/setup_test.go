@@ -11,16 +11,80 @@ import (
 func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
 	got := driveOAuthClientRequiredError("/tmp/adc.json", os.ErrNotExist).Error()
 	for _, want := range []string{
-		"requires your own OAuth client file",
+		"needs a Google OAuth client",
 		"This app is blocked",
-		"oauth-client.json",
+		"SKIRK_OAUTH_CLIENT_ID",
+		"SKIRK_OAUTH_CLIENT_SECRET",
 		"--oauth-client-file",
-		"SKIRK_OAUTH_CLIENT_FILE",
 		"/tmp/adc.json",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+func TestResolveOAuthClientCredentialsPrefersExplicitFileThenEnvThenBuiltIn(t *testing.T) {
+	oldID, oldSecret := defaultOAuthClientID, defaultOAuthClientSecret
+	t.Cleanup(func() {
+		defaultOAuthClientID = oldID
+		defaultOAuthClientSecret = oldSecret
+	})
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "env-client")
+	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "env-secret")
+	defaultOAuthClientID = "builtin-client"
+	defaultOAuthClientSecret = "builtin-secret"
+
+	path := filepath.Join(t.TempDir(), "oauth-client.json")
+	if err := os.WriteFile(path, []byte(`{"installed":{"client_id":"file-client","client_secret":"file-secret"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, source, err := resolveOAuthClientCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "file-client" || !strings.Contains(source, path) {
+		t.Fatalf("explicit file was not preferred: creds=%#v source=%q", got, source)
+	}
+
+	got, source, err = resolveOAuthClientCredentials("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "env-client" || !strings.Contains(source, "SKIRK_OAUTH_CLIENT_ID") {
+		t.Fatalf("env credentials were not preferred: creds=%#v source=%q", got, source)
+	}
+}
+
+func TestResolveOAuthClientCredentialsUsesBuiltInWithoutFile(t *testing.T) {
+	oldID, oldSecret := defaultOAuthClientID, defaultOAuthClientSecret
+	t.Cleanup(func() {
+		defaultOAuthClientID = oldID
+		defaultOAuthClientSecret = oldSecret
+	})
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "")
+	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "")
+	defaultOAuthClientID = "builtin-client"
+	defaultOAuthClientSecret = "builtin-secret"
+
+	got, source, err := resolveOAuthClientCredentials("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "builtin-client" || !strings.Contains(source, "built-in") {
+		t.Fatalf("built-in credentials were not used: creds=%#v source=%q", got, source)
+	}
+}
+
+func TestResolveOAuthClientCredentialsRejectsPartialEnv(t *testing.T) {
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "env-client")
+	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "")
+	_, _, err := resolveOAuthClientCredentials("")
+	if err == nil {
+		t.Fatal("expected partial env credential error")
+	}
+	if !strings.Contains(err.Error(), "client_secret") {
+		t.Fatalf("partial env error should mention client_secret: %s", err)
 	}
 }
 
@@ -63,7 +127,7 @@ func TestIsAppDataScopeError(t *testing.T) {
 		t.Fatal("rate-limit errors must not be treated as scope errors")
 	}
 	got := driveAppDataValidationError(err).Error()
-	for _, want := range []string{"drive.appdata", "--oauth-client-file", "appDataFolder"} {
+	for _, want := range []string{"drive.appdata", "--reset-google-login", "appDataFolder"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("validation error missing %q in:\n%s", want, got)
 		}
@@ -91,11 +155,11 @@ func TestNormalizeOAuthScopes(t *testing.T) {
 }
 
 func TestDefaultOAuthScopesIncludeDriveSetupRequirements(t *testing.T) {
-	if got, want := defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.appdata"; got != want {
+	if got, want := defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.file"; got != want {
 		t.Fatalf("defaultCustomOAuthScopes = %q, want %q", got, want)
 	}
 	if strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive,") ||
-		strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.file") ||
+		strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/drive.appdata") ||
 		strings.Contains(defaultCustomOAuthScopes, "https://www.googleapis.com/auth/cloud-platform") {
 		t.Fatalf("defaultCustomOAuthScopes should not request extra scopes: %q", defaultCustomOAuthScopes)
 	}

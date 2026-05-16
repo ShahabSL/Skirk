@@ -54,19 +54,16 @@ Release archive installs do not require Go. Source builds require Go.
 
 ## Google OAuth
 
-Client machines do not need Google Cloud CLI.
-
-The exit/setup machine needs a Google OAuth client file for TVs and Limited
-Input devices when creating new Drive credentials. Google blocks the default
+Client machines do not need Google Cloud CLI. The exit/setup machine also does
+not need Google Cloud CLI for the normal release flow. Google blocks the default
 Google Cloud SDK OAuth client when Drive scopes are requested, so Skirk uses
-Google's device-code OAuth flow with your OAuth client file instead. Create
-`oauth-client.json` as described in [setup.md](setup.md), then run:
+Google's device-code OAuth flow with Skirk's own OAuth client instead:
 
 ```bash
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
 
-If the file lives elsewhere, pass it explicitly:
+Source builds and forks can use an OAuth override when needed:
 
 ```bash
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file /path/to/oauth-client.json
@@ -116,7 +113,6 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   SKIRK_INSTALL_SYSTEMD=1 \
   SKIRK_INSTALL_WIREPROXY=1 \
   SKIRK_ACCEPT_WARP_TOS=1 \
-  SKIRK_OAUTH_CLIENT_FILE=/path/to/oauth-client.json \
   sh
 ```
 

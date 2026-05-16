@@ -5,7 +5,7 @@ Skirk has one production transport:
 ```text
 local SOCKS5 / HTTP proxy / Android VPN
 -> encrypted Drive Mux v4 objects
--> Google Drive appDataFolder mailbox
+-> Google Drive mailbox folder
 -> Skirk exit
 -> target TCP
 ```
@@ -14,10 +14,10 @@ Older alternate-carrier experiments are not part of the production path.
 
 ## Drive Mux v4
 
-Drive Mux v4 is the default live tunnel transport. It uses Drive
-`appDataFolder`, so setup needs only Drive API access and the
-`https://www.googleapis.com/auth/drive.appdata` OAuth scope when using the
-recommended custom OAuth path.
+Drive Mux v4 is the default live tunnel transport. Public setup uses a
+Skirk-created Drive mailbox folder and the
+`https://www.googleapis.com/auth/drive.file` OAuth scope, which works with
+Google's device-code login flow.
 
 The transport groups active TCP streams into bounded mux lanes:
 
@@ -35,7 +35,7 @@ This is the current best shape for Drive because it minimizes object count and
 avoids one Drive polling loop per browser connection.
 
 Current protocol lab results show muxv4 as the best proven default under the
-current appDataFolder, single-mailbox, Google-fronted/pinned-route constraints.
+current single-mailbox, Google-fronted/pinned-route constraints.
 That conclusion is workload-based: candidates must preserve browsing and media
 behavior during bulk transfers, not only improve one bulk download.
 

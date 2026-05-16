@@ -26,9 +26,10 @@ plaintext for non-TLS application protocols, like any proxy or VPN exit.
 
 ## Google Drive Mailbox
 
-The production setup uses Drive `appDataFolder`. That keeps runtime objects out
-of the user's visible Drive files. The recommended setup flow uses
-`https://www.googleapis.com/auth/drive.appdata` for app-private storage.
+The public setup flow uses a Skirk-created Drive mailbox folder with
+`https://www.googleapis.com/auth/drive.file`. That scope lets Skirk manage only
+files and folders created by the Skirk app, while keeping the Google device-code
+login flow available for normal users.
 
 Drive is an object API, not a stream API. Every request/response path contains
 at least these carrier operations:

@@ -3,9 +3,11 @@
 ## Unreleased
 
 - Stopped new setup runs from launching the blocked default Google Cloud SDK
-  OAuth client for Drive scopes; new Drive credentials now use a user-owned
-  device OAuth client file through Google's URL/code device flow.
-- Simplified setup OAuth to remove the legacy visible Drive folder fallback.
+  OAuth client for Drive scopes; release builds can now use Skirk's built-in
+  device OAuth client through Google's URL/code device flow.
+- Switched the public device-code setup scope to `drive.file` and a
+  Skirk-created Drive mailbox folder, because Google rejects `drive.appdata`
+  during the tested device-code request.
 - Clarified Windows release packaging so the portable desktop zip is the GUI
   app and `skirk-windows-amd64.zip` is documented as CLI-only.
 - Clarified install commands to use the absolute installed binary path when
@@ -22,7 +24,7 @@
 - Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
   benchmarks, quota telemetry, and Drive Changes based discovery.
 - Updated setup docs around one-line `skirk:` profiles, `serve-client`,
-  `serve-exit`, custom OAuth setup, and Drive `appDataFolder`.
+  `serve-exit`, custom OAuth setup, and Drive mailbox folders.
 - Removed stale references to alternate runtime control lanes and visible Drive
   folder cleanup from user-facing docs.
 
