@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,7 +37,8 @@ func TestSystemdUnitText(t *testing.T) {
 	unit := systemdUnitText("/usr/local/bin/skirk", "/opt/skirk-kit/exit.json", "root")
 	for _, want := range []string{
 		"Description=Skirk exit",
-		"WorkingDirectory=\"/opt/skirk-kit\"",
+		"User=root",
+		"WorkingDirectory=/opt/skirk-kit",
 		"ExecStart=\"/usr/local/bin/skirk\" serve-exit --config \"/opt/skirk-kit/exit.json\"",
 		"Restart=always",
 		"NoNewPrivileges=true",
@@ -42,5 +46,56 @@ func TestSystemdUnitText(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("systemd unit missing %q:\n%s", want, unit)
 		}
+	}
+}
+
+func TestSystemdUnitTextEscapesWorkingDirectorySpaces(t *testing.T) {
+	unit := systemdUnitText("/opt/skirk bin/skirk", "/opt/skirk kit/exit.json", "root")
+	for _, want := range []string{
+		"WorkingDirectory=/opt/skirk\\skit",
+		"ExecStart=\"/opt/skirk bin/skirk\" serve-exit --config \"/opt/skirk kit/exit.json\"",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("systemd unit missing %q:\n%s", want, unit)
+		}
+	}
+}
+
+func TestValidateSystemdUserRejectsUnsafeValues(t *testing.T) {
+	for _, input := range []string{"", "bad user", "bad\"user", "bad\\user"} {
+		if err := validateSystemdUser(input); err == nil {
+			t.Fatalf("validateSystemdUser(%q) = nil, want error", input)
+		}
+	}
+}
+
+func TestSystemdUnitTextPassesSystemdAnalyzeVerify(t *testing.T) {
+	if _, err := exec.LookPath("systemd-analyze"); err != nil {
+		t.Skip("systemd-analyze is not installed")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "skirk bin")
+	kitDir := filepath.Join(dir, "skirk kit")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(kitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(binDir, "skirk")
+	config := filepath.Join(kitDir, "exit.json")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(dir, "skirk-exit.service")
+	if err := os.WriteFile(unitPath, []byte(systemdUnitText(exe, config, "root")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command("systemd-analyze", "verify", unitPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("systemd-analyze verify failed: %v\n%s", err, output)
 	}
 }

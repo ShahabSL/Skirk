@@ -99,6 +99,9 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 			return err
 		}
 	}
+	if err := validateSystemdUser(user); err != nil {
+		return err
+	}
 	unitText := systemdUnitText(exe, configPath, user)
 	tmp, err := os.CreateTemp("", "skirk-*.service")
 	if err != nil {
@@ -111,6 +114,9 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := verifySystemdUnit(ctx, tmpPath); err != nil {
 		return err
 	}
 
@@ -204,11 +210,52 @@ NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
-`, systemdQuote(serviceUser), systemdQuote(workDir), systemdQuote(exePath), systemdQuote(configPath))
+`, systemdUnitValue(serviceUser), systemdUnitValue(workDir), systemdExecArg(exePath), systemdExecArg(configPath))
 }
 
-func systemdQuote(value string) string {
-	return strconv.Quote(value)
+func verifySystemdUnit(ctx context.Context, path string) error {
+	if _, err := exec.LookPath("systemd-analyze"); err != nil {
+		return nil
+	}
+	if err := runCommandWithStdout(ctx, os.Stderr, "systemd-analyze", "verify", path); err != nil {
+		return fmt.Errorf("generated systemd service unit is invalid: %w", err)
+	}
+	return nil
+}
+
+func validateSystemdUser(user string) error {
+	if user == "" {
+		return fmt.Errorf("systemd service user is required")
+	}
+	for _, r := range user {
+		if r <= ' ' || r == '"' || r == '\'' || r == '\\' {
+			return fmt.Errorf("systemd service user %q contains unsupported character %q", user, r)
+		}
+	}
+	return nil
+}
+
+func systemdUnitValue(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch r {
+		case ' ':
+			b.WriteString(`\s`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '%':
+			b.WriteString(`%%`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func systemdExecArg(value string) string {
+	return strconv.Quote(strings.ReplaceAll(value, "%", "%%"))
 }
 
 func currentUsername(ctx context.Context) (string, error) {
