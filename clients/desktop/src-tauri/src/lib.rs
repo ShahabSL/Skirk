@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
-    net::{TcpListener, TcpStream},
+    net::{IpAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -43,6 +43,8 @@ struct ClientProfile {
     #[serde(default)]
     share_lan: bool,
     route_mode: String,
+    #[serde(default = "default_google_ip")]
+    google_ip: String,
     drive_space: String,
     drive_folder_id: String,
 }
@@ -156,6 +158,10 @@ fn default_http_port() -> u16 {
     18081
 }
 
+fn default_google_ip() -> String {
+    "216.239.38.120".into()
+}
+
 struct DesktopRuntime {
     paths: AppPaths,
     resource_dir: Option<PathBuf>,
@@ -264,6 +270,11 @@ impl DesktopRuntime {
             .and_then(Value::as_str)
             .unwrap_or("direct")
             .to_string();
+        let google_ip = parsed
+            .pointer("/route/google_ip")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let google_ip = canonical_google_ip(google_ip)?;
         let drive_space = parsed
             .pointer("/drive/space")
             .and_then(Value::as_str)
@@ -314,6 +325,7 @@ impl DesktopRuntime {
             http_port,
             share_lan,
             route_mode,
+            google_ip,
             drive_space,
             drive_folder_id,
         };
@@ -450,6 +462,7 @@ impl DesktopRuntime {
         let socks_address = format!("{}:{}", profile.socks_host, profile.socks_port);
         let http_address = format!("{}:{}", profile.http_host, profile.http_port);
         let route_mode = "google_front_pinned";
+        let google_ip = canonical_google_ip(&profile.google_ip)?;
         ensure_port_free(&socks_address)?;
         ensure_port_free(&http_address)?;
         let skirk = self.resolve_sidecar()?;
@@ -476,6 +489,8 @@ impl DesktopRuntime {
             .arg(&profile.id)
             .arg("--route-mode")
             .arg(route_mode)
+            .arg("--google-ip")
+            .arg(&google_ip)
             .arg("--poll-ms")
             .arg("100")
             .stdout(Stdio::from(log))
@@ -508,7 +523,7 @@ impl DesktopRuntime {
 
         let mut tunnel = None;
         if matches!(mode, ConnectionMode::Vpn) {
-            match self.spawn_tunnel(profile.socks_port, &sidecar_process_path) {
+            match self.spawn_tunnel(profile.socks_port, &sidecar_process_path, &google_ip) {
                 Ok(next_tunnel) => {
                     tunnel = Some(next_tunnel);
                 }
@@ -582,6 +597,7 @@ impl DesktopRuntime {
         &self,
         socks_port: u16,
         sidecar_process_path: &str,
+        google_ip: &str,
     ) -> Result<ManagedTunnel, String> {
         if !cfg!(windows) {
             return Err("VPN mode is only available on Windows".into());
@@ -594,7 +610,7 @@ impl DesktopRuntime {
         let tunnel = self.resolve_tunnel_sidecar()?;
         let log_path = tunnel_log_path(&self.paths);
         let config_path = tunnel_config_path(&self.paths);
-        let config = tunnel_config(socks_port, sidecar_process_path);
+        let config = tunnel_config(socks_port, sidecar_process_path, google_ip);
         fs::write(
             &config_path,
             serde_json::to_vec_pretty(&config)
@@ -1072,7 +1088,38 @@ fn process_path_for_rules(path: &Path) -> String {
         .to_string()
 }
 
-fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
+fn parse_google_ip(value: &str) -> Result<IpAddr, String> {
+    let value = value.trim();
+    let value = if value.is_empty() {
+        default_google_ip()
+    } else {
+        value.to_string()
+    };
+    value
+        .parse::<IpAddr>()
+        .map_err(|_| "profile route.google_ip must be an IP address".to_string())
+}
+
+fn canonical_google_ip(value: &str) -> Result<String, String> {
+    Ok(parse_google_ip(value)?.to_string())
+}
+
+fn google_control_cidr(google_ip: &str) -> String {
+    let ip =
+        parse_google_ip(google_ip).expect("Google control IP must be canonical before routing");
+    if ip.is_ipv4() {
+        format!("{ip}/32")
+    } else {
+        format!("{ip}/128")
+    }
+}
+
+fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -> Value {
+    let google_control_cidr = google_control_cidr(google_ip);
+    let google_control_route_cidr = google_control_cidr.clone();
+    // The sidecar's Drive control plane must stay outside the TUN path. Windows
+    // process matching is best-effort, so the pinned Google edge also needs a
+    // destination route exclusion to prevent Skirk from proxying itself.
     json!({
         "log": {
             "level": "info",
@@ -1109,7 +1156,8 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
                     "224.0.0.0/4",
                     "::1/128",
                     "fc00::/7",
-                    "fe80::/10"
+                    "fe80::/10",
+                    google_control_cidr
                 ]
             }
         ],
@@ -1128,6 +1176,15 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
         ],
         "route": {
             "rules": [
+                {
+                    "ip_cidr": [
+                        google_control_route_cidr
+                    ],
+                    "network": "tcp",
+                    "port": 443,
+                    "action": "route",
+                    "outbound": "direct"
+                },
                 {
                     "type": "logical",
                     "mode": "or",
@@ -1506,7 +1563,7 @@ mod tests {
 
     #[test]
     fn tunnel_config_uses_sing_box_1_13_tun_fields() {
-        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe");
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "216.239.38.120");
         let inbound = config
             .pointer("/inbounds/0")
             .and_then(Value::as_object)
@@ -1536,35 +1593,95 @@ mod tests {
             config.pointer("/dns/strategy").and_then(Value::as_str),
             Some("ipv4_only")
         );
+        assert!(config
+            .pointer("/inbounds/0/route_exclude_address")
+            .and_then(Value::as_array)
+            .expect("route_exclude_address")
+            .iter()
+            .any(|value| value.as_str() == Some("216.239.38.120/32")));
         assert_eq!(
             config
-                .pointer("/route/rules/3/action")
+                .pointer("/route/rules/0/ip_cidr/0")
                 .and_then(Value::as_str),
-            Some("reject")
+            Some("216.239.38.120/32")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/3/network")
+                .pointer("/route/rules/0/outbound")
                 .and_then(Value::as_str),
-            Some("udp")
+            Some("direct")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/3/no_drop")
-                .and_then(Value::as_bool),
-            Some(true)
+                .pointer("/route/rules/0/network")
+                .and_then(Value::as_str),
+            Some("tcp")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/0/port")
+                .and_then(Value::as_i64),
+            Some(443)
         );
         assert_eq!(
             config
                 .pointer("/route/rules/4/action")
                 .and_then(Value::as_str),
+            Some("reject")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/4/network")
+                .and_then(Value::as_str),
+            Some("udp")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/4/no_drop")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/5/action")
+                .and_then(Value::as_str),
             Some("sniff")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/4/inbound")
+                .pointer("/route/rules/5/inbound")
                 .and_then(Value::as_str),
             Some("tun-in")
         );
+    }
+
+    #[test]
+    fn tunnel_config_uses_custom_google_control_ip() {
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "8.8.8.8");
+        assert!(config
+            .pointer("/inbounds/0/route_exclude_address")
+            .and_then(Value::as_array)
+            .expect("route_exclude_address")
+            .iter()
+            .any(|value| value.as_str() == Some("8.8.8.8/32")));
+        assert_eq!(
+            config
+                .pointer("/route/rules/0/ip_cidr/0")
+                .and_then(Value::as_str),
+            Some("8.8.8.8/32")
+        );
+    }
+
+    #[test]
+    fn google_control_ip_is_canonicalized() {
+        assert_eq!(
+            canonical_google_ip("").expect("default Google IP"),
+            "216.239.38.120"
+        );
+        assert_eq!(
+            canonical_google_ip(" 8.8.8.8 ").expect("custom Google IP"),
+            "8.8.8.8"
+        );
+        assert!(canonical_google_ip("not-an-ip").is_err());
     }
 }

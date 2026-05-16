@@ -13,6 +13,7 @@ export type ClientProfile = {
   httpPort: number;
   shareLan: boolean;
   routeMode: string;
+  googleIp: string;
   driveSpace: string;
   driveFolderId: string;
 };
@@ -64,6 +65,7 @@ let mockProfiles: ClientProfile[] = [
     httpPort: 18081,
     shareLan: false,
     routeMode: "google_front_pinned",
+    googleIp: "216.239.38.120",
     driveSpace: "appDataFolder",
     driveFolderId: "",
   },
@@ -136,6 +138,7 @@ const browserPreviewApi = {
         httpPort,
         shareLan,
         routeMode: "google_front_pinned",
+        googleIp: "216.239.38.120",
         driveSpace: "appDataFolder",
         driveFolderId: "",
       },
