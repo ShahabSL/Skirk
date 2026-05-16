@@ -116,15 +116,15 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := verifySystemdUnit(ctx, tmpPath); err != nil {
-		return err
-	}
 
 	unitPath := filepath.Join("/etc/systemd/system", unit)
 	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "install", "-m", "0644", tmpPath, unitPath); err != nil {
 		return err
 	}
 	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	if err := verifySystemdUnit(ctx, unitPath); err != nil {
 		return err
 	}
 	if opts.Enable {
@@ -217,8 +217,9 @@ func verifySystemdUnit(ctx context.Context, path string) error {
 	if _, err := exec.LookPath("systemd-analyze"); err != nil {
 		return nil
 	}
-	if err := runCommandWithStdout(ctx, os.Stderr, "systemd-analyze", "verify", path); err != nil {
-		return fmt.Errorf("generated systemd service unit is invalid: %w", err)
+	output, err := exec.CommandContext(ctx, "systemd-analyze", "verify", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("generated systemd service unit is invalid: %w\n%s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
