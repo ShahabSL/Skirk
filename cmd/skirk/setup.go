@@ -94,17 +94,22 @@ func setupInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	var setupReader *bufio.Reader
+	getSetupReader := func() *bufio.Reader {
+		if setupReader == nil {
+			setupReader = bufio.NewReader(os.Stdin)
+		}
+		return setupReader
+	}
 	oauthClientFileValue := strings.TrimSpace(*oauthClientFile)
 	if shouldPromptOAuthMode(*adcPath, *noLogin, *jsonOut, selectedOAuthMode, oauthClientFileValue) {
-		reader := bufio.NewReader(os.Stdin)
-		selectedOAuthMode, oauthClientFileValue, err = promptSetupOAuthMode(ctx, reader)
+		selectedOAuthMode, oauthClientFileValue, err = promptSetupOAuthMode(ctx, getSetupReader())
 		if err != nil {
 			return err
 		}
 	}
 	if selectedOAuthMode == "personal" && oauthClientFileValue == "" && os.Getenv("SKIRK_OAUTH_CLIENT_ID") == "" {
-		reader := bufio.NewReader(os.Stdin)
-		oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, reader, "oauth-client.json")
+		oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, getSetupReader(), "oauth-client.json")
 		if err != nil {
 			return err
 		}
@@ -113,6 +118,11 @@ func setupInit(ctx context.Context, args []string) error {
 	oauthClient, oauthSource, oauthErr := resolveOAuthClientCredentialsForMode(oauthClientFileValue, selectedOAuthMode != "personal")
 	if oauthErr != nil {
 		return oauthErr
+	}
+	if selectedOAuthMode == "personal" && isInteractiveTerminal() && !*jsonOut {
+		if err := confirmPersonalOAuthConsentReady(ctx, getSetupReader()); err != nil {
+			return err
+		}
 	}
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
@@ -646,13 +656,21 @@ func pollDeviceToken(ctx context.Context, client oauthClientCredentials, code de
 			continue
 		}
 		if out.Error != "" {
-			return out, fmt.Errorf("device token request failed: %s %s", out.Error, out.ErrorDesc)
+			return out, deviceTokenError(out)
 		}
 		if err != nil {
 			return out, err
 		}
 		return out, errors.New("device token response did not include a refresh token")
 	}
+}
+
+func deviceTokenError(out deviceTokenResponse) error {
+	if out.Error == "access_denied" {
+		return fmt.Errorf("device token request failed: access_denied %s\n\n"+
+			"Google blocked the OAuth consent step. If your personal OAuth app is in Testing, open https://console.cloud.google.com/auth/audience and add the exact Google account you used at google.com/device under Test users, then rerun setup. You can also publish the app to Production. This is not fixed by adding more scopes; Skirk requests drive.file automatically.", out.ErrorDesc)
+	}
+	return fmt.Errorf("device token request failed: %s %s", out.Error, out.ErrorDesc)
 }
 
 func postOAuthForm(ctx context.Context, endpoint string, values url.Values, out any) error {

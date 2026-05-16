@@ -138,6 +138,13 @@ The personal OAuth wizard prints the exact Google Cloud pages to open:
 If you paste the client ID and secret, setup writes the ignored local
 `oauth-client.json` file for you.
 
+If Google shows `Access blocked` and says the app is currently being tested,
+open `https://console.cloud.google.com/auth/audience`, add the exact Google
+account shown on the blocked page under Test users, then rerun setup. Publishing
+the app to Production also removes the Testing allowlist block, although Google
+can still show unverified-app warnings and user caps until verification. Do not
+add extra scopes for this error; Skirk requests `drive.file` during device login.
+
 Or set environment variables for local builds:
 
 ```bash

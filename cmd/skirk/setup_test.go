@@ -152,6 +152,15 @@ func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	}
 }
 
+func TestDeviceTokenAccessDeniedExplainsTestUsers(t *testing.T) {
+	err := deviceTokenError(deviceTokenResponse{Error: "access_denied", ErrorDesc: "Forbidden"})
+	for _, want := range []string{"auth/audience", "Test users", "exact Google account", "not fixed by adding more scopes", "drive.file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("access denied error missing %q in:\n%s", want, err)
+		}
+	}
+}
+
 func TestResolvePersonalOAuthDoesNotFallBackToBuiltIn(t *testing.T) {
 	oldID, oldSecret := defaultOAuthClientID, defaultOAuthClientSecret
 	t.Cleanup(func() {

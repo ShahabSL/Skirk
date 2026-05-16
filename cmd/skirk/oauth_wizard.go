@@ -115,8 +115,9 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println("   Choose External unless this is a Google Workspace-only project.")
 	fmt.Println("   App name example: Skirk Personal")
 	fmt.Println("   Support email and developer contact: your Google email.")
-	fmt.Println("   If the app stays in Testing, add the Google account you will log in with")
-	fmt.Println("   under Audience/Test users.")
+	fmt.Println("   Then open Audience/Test users and add the exact Google account")
+	fmt.Println("   you will use at google.com/device. This is required while")
+	fmt.Println("   Publishing status is Testing.")
 	fmt.Println()
 	fmt.Println("4. Create the OAuth client")
 	fmt.Println("   Open: https://console.cloud.google.com/auth/clients")
@@ -131,6 +132,33 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println()
 	fmt.Println("Skirk will then open Google's device-code approval flow and generate the kit.")
 	fmt.Println()
+}
+
+func confirmPersonalOAuthConsentReady(ctx context.Context, reader *bufio.Reader) error {
+	fmt.Println()
+	fmt.Println("Before Skirk opens Google device approval:")
+	fmt.Println()
+	fmt.Println("Open: https://console.cloud.google.com/auth/audience")
+	fmt.Println()
+	fmt.Println("If Publishing status is Testing, add the exact Google account you will")
+	fmt.Println("approve with under Test users. This is the fix for Google's message:")
+	fmt.Println("\"the app is currently being tested and can only be accessed by")
+	fmt.Println("developer-approved testers.\"")
+	fmt.Println()
+	fmt.Println("Alternative: publish the app to Production. Google may still show an")
+	fmt.Println("unverified-app warning/user cap until verification, but the Testing")
+	fmt.Println("allowlist block goes away.")
+	fmt.Println()
+	fmt.Println("Do not add more scopes for this error. Skirk requests drive.file during")
+	fmt.Println("device login; this error is about OAuth app audience access.")
+	ready, err := promptYesNo(ctx, reader, "I added the account as a test user or published the app", false)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return errors.New("finish Google OAuth Audience/Test users setup, then rerun setup")
+	}
+	return nil
 }
 
 func promptExistingOAuthClientFile(ctx context.Context, reader *bufio.Reader, fallback string) (string, error) {
