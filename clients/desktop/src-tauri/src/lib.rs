@@ -1086,7 +1086,7 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
                 }
             ],
             "final": "local",
-            "strategy": "prefer_ipv4"
+            "strategy": "ipv4_only"
         },
         "inbounds": [
             {
@@ -1094,8 +1094,7 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
                 "tag": "tun-in",
                 "interface_name": tunnel_interface_name(),
                 "address": [
-                    "172.19.0.1/30",
-                    "fdfe:dcba:9876::1/126"
+                    "172.19.0.1/30"
                 ],
                 "auto_route": true,
                 "strict_route": true,
@@ -1130,11 +1129,6 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
         "route": {
             "rules": [
                 {
-                    "inbound": "tun-in",
-                    "action": "sniff",
-                    "timeout": "1s"
-                },
-                {
                     "type": "logical",
                     "mode": "or",
                     "rules": [
@@ -1168,13 +1162,20 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
                     "action": "hijack-dns"
                 },
                 {
-                    "network": "udp",
-                    "action": "reject"
-                },
-                {
                     "ip_is_private": true,
                     "action": "route",
                     "outbound": "direct"
+                },
+                {
+                    "network": "udp",
+                    "action": "reject",
+                    "method": "default",
+                    "no_drop": true
+                },
+                {
+                    "inbound": "tun-in",
+                    "action": "sniff",
+                    "timeout": "1s"
                 }
             ],
             "final": "proxy",
@@ -1516,7 +1517,15 @@ mod tests {
                 .get("address")
                 .and_then(Value::as_array)
                 .map(Vec::len),
-            Some(2)
+            Some(1)
+        );
+        assert_eq!(
+            inbound
+                .get("address")
+                .and_then(Value::as_array)
+                .and_then(|addresses| addresses.first())
+                .and_then(Value::as_str),
+            Some("172.19.0.1/30")
         );
         assert!(inbound.get("sniff").is_none());
         assert!(inbound.get("sniff_override_destination").is_none());
@@ -1524,14 +1533,36 @@ mod tests {
         assert!(inbound.get("inet6_address").is_none());
 
         assert_eq!(
+            config.pointer("/dns/strategy").and_then(Value::as_str),
+            Some("ipv4_only")
+        );
+        assert_eq!(
             config
-                .pointer("/route/rules/0/action")
+                .pointer("/route/rules/3/action")
+                .and_then(Value::as_str),
+            Some("reject")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/3/network")
+                .and_then(Value::as_str),
+            Some("udp")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/3/no_drop")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/4/action")
                 .and_then(Value::as_str),
             Some("sniff")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/0/inbound")
+                .pointer("/route/rules/4/inbound")
                 .and_then(Value::as_str),
             Some("tun-in")
         );
