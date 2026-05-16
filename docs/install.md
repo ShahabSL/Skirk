@@ -69,6 +69,41 @@ Source builds and forks can use an OAuth override when needed:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file /path/to/oauth-client.json
 ```
 
+## OAuth And Drive Quota Modes
+
+Skirk supports two OAuth modes:
+
+Default easy mode:
+
+- uses Skirk's built-in OAuth client;
+- gives users the one-command device-code setup flow;
+- charges Drive API usage to Skirk's Google Cloud project quota;
+- still keeps each Google account under Google's per-user-per-project quota.
+
+Personal quota mode:
+
+- uses a Google OAuth client created in the user's own Google Cloud project;
+- charges Drive API usage to that user's project quota instead of Skirk's shared
+  project quota;
+- requires the user to create a Google Cloud project, enable Drive API, create a
+  `TVs and Limited Input devices` OAuth client, and pass the JSON file to setup:
+
+```bash
+"$HOME/.local/bin/skirk" setup init \
+  --out skirk-kit \
+  --reset-google-login \
+  --oauth-client-file ./oauth-client.json
+```
+
+This is the same pattern used by mature Drive tools such as rclone: a shared
+client is convenient for new users, while serious or high-volume users should
+bring their own OAuth client to avoid shared-project contention.
+
+Google Drive API project limits can be increased for some quota types from the
+Google Cloud Quotas page, but approval is not guaranteed. Google also enforces
+non-adjustable constraints such as the per-user Drive upload limit and the daily
+billing threshold described in the Drive API limits documentation.
+
 ### Headless SSH And Broken IPv6
 
 Run setup from an interactive terminal. For SSH, force a TTY when needed:

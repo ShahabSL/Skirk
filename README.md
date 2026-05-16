@@ -58,6 +58,17 @@ Create a kit:
 Setup prints a Google URL plus a short code. Open the URL, enter the code in
 the browser, approve Drive access, and the terminal continues.
 
+By default this uses Skirk's built-in OAuth client for the easiest install.
+Heavy users can instead use their own Google Cloud OAuth client so Drive API
+traffic is charged to their own project quota:
+
+```bash
+"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+```
+
+This is the same operational model used by tools such as rclone: shared OAuth
+is convenient, personal OAuth isolates quota.
+
 Run the exit:
 
 ```bash

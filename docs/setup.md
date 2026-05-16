@@ -79,14 +79,31 @@ exit and client configs. This is the public easy-install path because it avoids
 the blocked Google Cloud SDK OAuth client and does not require each user to
 create an OAuth app.
 
-## Developer OAuth Override
+## Personal Quota Mode
 
-Normal users should not need this once the release build includes Skirk's OAuth
-client. Use this only for source builds, forks, or OAuth debugging:
+Normal users can stay on the built-in Skirk OAuth client. Heavy users, forks,
+and deployments that do not want to share Skirk's Google Cloud project quota
+should create their own OAuth client and pass it to setup.
+
+With the built-in client:
+
+- setup is easiest;
+- Drive API usage is charged to Skirk's Google Cloud project quota;
+- each Google account still has its own per-user-per-project quota bucket.
+
+With a personal OAuth client:
+
+- setup uses the user's own Google Cloud project;
+- Drive API usage is charged to that project quota;
+- the generated Skirk configs still use only the same `drive.file` mailbox
+  scope.
+
+To create a personal Skirk OAuth client:
 
 1. Create or select a Google Cloud project.
 2. Enable Google Drive API.
-3. Configure the OAuth consent screen.
+3. Configure the OAuth consent screen and publish it if you want refresh tokens
+   that do not expire after the testing window.
 4. Add your Google account as a test user if the app is in testing mode.
 5. Create an OAuth client ID for `TVs and Limited Input devices`.
 6. Download the client JSON as `oauth-client.json`.
@@ -109,6 +126,14 @@ If Google blocks your OAuth client, enable the Google Drive API, configure the
 OAuth consent screen, add the signing-in Google account as a test user while the
 app is in testing, or publish/verify the app according to Google policy. Skirk
 cannot bypass a Google account or OAuth enforcement decision.
+
+Google Drive API project limits can be increased for some quota types from the
+Google Cloud Quotas page, but increases are not guaranteed. Some limits are not
+adjustable, including Google's per-user Drive upload limit and the daily billing
+threshold documented for the Drive API.
+
+This split mirrors mature Drive tools such as rclone: default shared OAuth keeps
+setup easy, while personal OAuth isolates quota for high-volume users.
 
 ## Generated Files
 
