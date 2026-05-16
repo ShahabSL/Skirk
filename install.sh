@@ -20,6 +20,26 @@ wireproxy_version="${SKIRK_WIREPROXY_VERSION:-v1.1.2}"
 wgcf_bin="${SKIRK_WGCF_BIN:-/usr/local/bin/wgcf}"
 wgcf_version="${SKIRK_WGCF_VERSION:-v2.2.30}"
 
+normalize_service_unit() {
+  name="$1"
+  case "$name" in
+    ""|*/*|*..*|*" "*|*"'"*|*'"'*|*\\*)
+      echo "error: unsafe service name: $name" >&2
+      exit 1
+      ;;
+  esac
+  case "$name" in
+    *.service) printf '%s\n' "$1" ;;
+    *) printf '%s.service\n' "$1" ;;
+  esac
+}
+
+is_skirk_unit_file() {
+  unit_path="$1"
+  [ -f "$unit_path" ] || return 1
+  grep -Eq 'Managed by Skirk|Wireproxy WARP SOCKS proxy for Skirk exit|ExecStart=.* serve-exit .* --config ' "$unit_path"
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "error: missing required command: $1" >&2
@@ -64,6 +84,55 @@ run_root() {
     echo "error: this step needs root or sudo: $*" >&2
     exit 1
   fi
+}
+
+uninstall_skirk() {
+  remove_service=1
+  remove_binary=1
+  dry_run=0
+  for arg in "$@"; do
+    case "$arg" in
+      --service=false) remove_service=0 ;;
+      --binary=false) remove_binary=0 ;;
+      --dry-run) dry_run=1 ;;
+    esac
+  done
+  service_unit="$(normalize_service_unit "$service_name")"
+  skirk_bin="$install_dir/skirk"
+  if [ -x "$skirk_bin" ]; then
+    "$skirk_bin" uninstall --yes --name "$service_name" --bin "$skirk_bin" "$@"
+    return 0
+  fi
+
+  echo "Skirk binary was not found at $skirk_bin; running fallback uninstall."
+  if command -v systemctl >/dev/null 2>&1 && [ "$remove_service" = "1" ]; then
+    unit_path="/etc/systemd/system/$service_unit"
+    if [ -e "$unit_path" ]; then
+      if ! is_skirk_unit_file "$unit_path"; then
+        echo "error: refusing to remove $unit_path because it is not managed by Skirk" >&2
+        exit 1
+      fi
+      if [ "$dry_run" = "1" ]; then
+        echo "Would remove systemd service: $service_unit"
+      else
+        run_root systemctl disable --now "$service_unit" 2>/dev/null || true
+        run_root rm -f "$unit_path"
+        run_root systemctl daemon-reload || true
+        echo "Removed systemd service: $service_unit"
+      fi
+    else
+      echo "Systemd service file already absent: $unit_path"
+    fi
+  fi
+  if [ "$remove_binary" = "1" ]; then
+    if [ "$dry_run" = "1" ]; then
+      echo "Would remove installed binary: $skirk_bin"
+    else
+      rm -f "$skirk_bin"
+      echo "Removed installed binary: $skirk_bin"
+    fi
+  fi
+  echo "Skirk uninstall complete."
 }
 
 install_from_release() {
@@ -168,6 +237,7 @@ EOF
     cat >"$wireproxy_unit" <<EOF
 [Unit]
 Description=Wireproxy WARP SOCKS proxy for Skirk exit
+# Managed by Skirk
 After=network-online.target
 Wants=network-online.target
 
@@ -273,6 +343,7 @@ install_exit_service() {
   cat >"$tmp_unit" <<EOF
 [Unit]
 Description=Skirk exit
+# Managed by Skirk
 After=network-online.target
 Wants=network-online.target
 
@@ -316,6 +387,14 @@ EOF
 }
 
 main() {
+  if [ "${SKIRK_UNINSTALL:-}" = "1" ] || [ "${1:-}" = "uninstall" ] || [ "${1:-}" = "--uninstall" ]; then
+    case "${1:-}" in
+      uninstall|--uninstall) shift ;;
+    esac
+    uninstall_skirk "$@"
+    return 0
+  fi
+
   need uname
   need tar
   platform="$(detect_platform)"

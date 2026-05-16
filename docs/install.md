@@ -171,6 +171,46 @@ later:
 Use `service stop`, `service restart`, or `service uninstall` with
 `--name NAME` if you changed the service name.
 
+## Uninstall
+
+From the installed binary:
+
+```bash
+"$HOME/.local/bin/skirk" uninstall --dry-run
+"$HOME/.local/bin/skirk" uninstall --yes
+```
+
+From the installer script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh -s -- uninstall
+```
+
+Default uninstall behavior is intentionally conservative: it removes the
+`skirk-exit.service` systemd unit when systemd is available and removes the
+installed `skirk` binary. It does not delete generated kits, revoke Google
+OAuth, delete Drive mailbox data, or remove WARP wireproxy unless you explicitly
+ask for those actions.
+
+Common complete cleanup:
+
+```bash
+"$HOME/.local/bin/skirk" uninstall --yes \
+  --delete-drive \
+  --revoke-oauth \
+  --delete-kit \
+  --kit skirk-kit
+```
+
+If you installed Skirk to a custom directory or used a custom service name:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
+  SKIRK_INSTALL_DIR=/usr/local/bin \
+  SKIRK_SERVICE_NAME=my-skirk-exit \
+  sh -s -- uninstall
+```
+
 To also install Cloudflare WARP through wireproxy and point exit traffic at it:
 
 ```bash

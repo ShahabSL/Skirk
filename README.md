@@ -85,6 +85,15 @@ from one place:
 "$HOME/.local/bin/skirk"
 ```
 
+Uninstall from Linux:
+
+```bash
+"$HOME/.local/bin/skirk" uninstall --dry-run
+"$HOME/.local/bin/skirk" uninstall --yes
+# or:
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh -s -- uninstall
+```
+
 If you generated a kit with `--start-exit=false`, start the exit manually or
 install the service later:
 

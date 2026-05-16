@@ -37,6 +37,7 @@ func TestSystemdUnitText(t *testing.T) {
 	unit := systemdUnitText("/usr/local/bin/skirk", "/opt/skirk-kit/exit.json", "root")
 	for _, want := range []string{
 		"Description=Skirk exit",
+		"# Managed by Skirk",
 		"User=root",
 		"WorkingDirectory=/opt/skirk-kit",
 		"ExecStart=\"/usr/local/bin/skirk\" serve-exit --config \"/opt/skirk-kit/exit.json\"",
@@ -46,6 +47,24 @@ func TestSystemdUnitText(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("systemd unit missing %q:\n%s", want, unit)
 		}
+	}
+}
+
+func TestIsSkirkSystemdUnitText(t *testing.T) {
+	if !isSkirkSystemdUnitText(systemdUnitText("/usr/local/bin/skirk", "/opt/skirk-kit/exit.json", "root")) {
+		t.Fatal("generated Skirk unit should be recognized")
+	}
+	legacy := `[Service]
+ExecStart="/usr/local/bin/skirk" serve-exit --config "/opt/skirk-kit/exit.json"
+`
+	if !isSkirkSystemdUnitText(legacy) {
+		t.Fatal("legacy Skirk unit should be recognized by ExecStart")
+	}
+	if !isSkirkSystemdUnitText("[Unit]\nDescription=Wireproxy WARP SOCKS proxy for Skirk exit\n") {
+		t.Fatal("legacy Skirk wireproxy unit should be recognized")
+	}
+	if isSkirkSystemdUnitText("[Service]\nExecStart=/usr/sbin/sshd -D\n") {
+		t.Fatal("non-Skirk unit should not be recognized")
 	}
 }
 

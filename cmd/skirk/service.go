@@ -145,10 +145,22 @@ func uninstallSystemdService(ctx context.Context, unit string) error {
 	if err := requireSystemd(); err != nil {
 		return err
 	}
+	unitPath := filepath.Join("/etc/systemd/system", unit)
+	owned, err := isSkirkSystemdUnitFile(unitPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("Systemd service file already absent: %s\n", unitPath)
+			return nil
+		}
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("refusing to remove %s: unit file is not managed by Skirk", unitPath)
+	}
 	if err := runPrivileged(ctx, "systemctl", "disable", "--now", unit); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: systemctl disable --now failed for %s: %v\n", unit, err)
 	}
-	if err := runPrivileged(ctx, "rm", "-f", filepath.Join("/etc/systemd/system", unit)); err != nil {
+	if err := runPrivileged(ctx, "rm", "-f", unitPath); err != nil {
 		return err
 	}
 	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -156,6 +168,14 @@ func uninstallSystemdService(ctx context.Context, unit string) error {
 	}
 	fmt.Printf("Removed systemd service %s\n", unit)
 	return nil
+}
+
+func isSkirkSystemdUnitFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return isSkirkSystemdUnitText(string(data)), nil
 }
 
 func requireSystemd() error {
@@ -194,6 +214,7 @@ func systemdUnitText(exePath, configPath, serviceUser string) string {
 	workDir := filepath.Dir(configPath)
 	return fmt.Sprintf(`[Unit]
 Description=Skirk exit
+# Managed by Skirk
 After=network-online.target
 Wants=network-online.target
 
@@ -211,6 +232,18 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 `, systemdUnitValue(serviceUser), systemdUnitValue(workDir), systemdExecArg(exePath), systemdExecArg(configPath))
+}
+
+func isSkirkSystemdUnitText(text string) bool {
+	if strings.Contains(text, "Managed by Skirk") {
+		return true
+	}
+	if strings.Contains(text, "Wireproxy WARP SOCKS proxy for Skirk exit") {
+		return true
+	}
+	return strings.Contains(text, "ExecStart=") &&
+		strings.Contains(text, " serve-exit ") &&
+		strings.Contains(text, " --config ")
 }
 
 func verifySystemdUnit(ctx context.Context, path string) error {

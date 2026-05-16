@@ -858,14 +858,22 @@ To revoke the embedded OAuth token:
 skirk revoke --config %s --revoke-oauth
 `+"```"+`
 
-Then delete the local kit directory when you no longer need it.
+To remove Skirk from this Linux machine:
+
+`+"```bash"+`
+skirk uninstall --dry-run
+skirk uninstall --yes --name %s
+`+"```"+`
+
+Then delete the local kit directory when you no longer need it, or include
+`+"`--delete-kit --kit <kit-directory>`"+` in the uninstall command.
 
 To immediately invalidate every config generated from this OAuth login, revoke the app token from the Google account security page or run Google's OAuth revocation endpoint against the refresh token.
 
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath)
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, serviceName)
 	return os.WriteFile(path, []byte(content), 0600)
 }
 

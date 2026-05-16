@@ -294,6 +294,7 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 		"skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080",
 		"skirk cleanup --config skirk-kit/exit.json --older-than 2h",
 		"skirk revoke --config skirk-kit/exit.json --revoke-oauth",
+		"skirk uninstall --yes --name skirk-exit",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated README missing %q:\n%s", want, text)
@@ -335,6 +336,7 @@ func TestWriteSetupReadmeDocumentsStartedServiceName(t *testing.T) {
 		"Setup starts the exit as skirk-custom.service",
 		"skirk service status --name skirk-custom",
 		"skirk service restart --name skirk-custom",
+		"skirk uninstall --yes --name skirk-custom",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated README missing %q:\n%s", want, text)

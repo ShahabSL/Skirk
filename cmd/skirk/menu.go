@@ -24,6 +24,9 @@ func menu(ctx context.Context) error {
 		fmt.Println("6. Manage exit service")
 		fmt.Println("7. Revoke, clean, or delete kit")
 		fmt.Println("8. Show commands")
+		if runtime.GOOS == "linux" {
+			fmt.Println("9. Uninstall Skirk from this Linux machine")
+		}
 		fmt.Println("0. Quit")
 		choice, err := prompt(ctx, reader, "Select", "1")
 		if err != nil {
@@ -94,7 +97,7 @@ func menu(ctx context.Context) error {
 				return err
 			}
 			if deleteDrive {
-				if err := cleanup(ctx, []string{"--config", config, "--older-than", "0s", "--delete"}); err != nil {
+				if err := cleanup(ctx, []string{"--config", config, "--older-than", "1ns", "--delete"}); err != nil {
 					return err
 				}
 			}
@@ -118,12 +121,95 @@ func menu(ctx context.Context) error {
 			}
 		case "8":
 			usage()
+		case "9":
+			if runtime.GOOS != "linux" {
+				fmt.Println("Unknown selection")
+				continue
+			}
+			return uninstallFromMenu(ctx, reader)
 		case "0", "q", "quit", "exit":
 			return nil
 		default:
 			fmt.Println("Unknown selection")
 		}
 	}
+}
+
+func uninstallFromMenu(ctx context.Context, reader *bufio.Reader) error {
+	fmt.Println()
+	fmt.Println("Linux uninstall can remove the exit service and installed binary.")
+	fmt.Println("Drive cleanup, OAuth revocation, local kit deletion, and WARP wireproxy removal are optional.")
+	serviceName, err := prompt(ctx, reader, "Service name", defaultServiceName)
+	if err != nil {
+		return err
+	}
+	removeService, err := promptYesNo(ctx, reader, "Remove exit systemd service", true)
+	if err != nil {
+		return err
+	}
+	binPath, err := prompt(ctx, reader, "Installed binary path", defaultUninstallBinaryPath())
+	if err != nil {
+		return err
+	}
+	removeBinary, err := promptYesNo(ctx, reader, "Remove installed binary", true)
+	if err != nil {
+		return err
+	}
+	configPath, err := prompt(ctx, reader, "Exit config for optional cleanup/revoke", "skirk-kit/exit.json")
+	if err != nil {
+		return err
+	}
+	deleteDrive, err := promptYesNo(ctx, reader, "Delete Drive mailbox objects", false)
+	if err != nil {
+		return err
+	}
+	revokeOAuth, err := promptYesNo(ctx, reader, "Revoke Google OAuth token", false)
+	if err != nil {
+		return err
+	}
+	deleteKit, err := promptYesNo(ctx, reader, "Delete local kit directory", false)
+	if err != nil {
+		return err
+	}
+	kitDir := "skirk-kit"
+	if deleteKit {
+		kitDir, err = prompt(ctx, reader, "Kit directory", filepath.Dir(configPath))
+		if err != nil {
+			return err
+		}
+	}
+	removeWireproxy, err := promptYesNo(ctx, reader, "Remove Skirk-installed WARP wireproxy", false)
+	if err != nil {
+		return err
+	}
+	confirm, err := promptYesNo(ctx, reader, "Proceed with uninstall", false)
+	if err != nil {
+		return err
+	}
+	if !confirm {
+		return nil
+	}
+
+	args := []string{"--yes", "--name", serviceName, "--bin", binPath, "--config", configPath, "--kit", kitDir}
+	if !removeService {
+		args = append(args, "--service=false")
+	}
+	if !removeBinary {
+		args = append(args, "--binary=false")
+	}
+	if deleteDrive {
+		args = append(args, "--delete-drive")
+	}
+	if revokeOAuth {
+		args = append(args, "--revoke-oauth")
+	}
+	if deleteKit {
+		args = append(args, "--delete-kit")
+	}
+	if removeWireproxy {
+		args = append(args, "--wireproxy")
+	}
+	return uninstallCommand(ctx, args)
 }
 
 func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMode string) error {
@@ -176,7 +262,7 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 	fmt.Println("3. Start service")
 	fmt.Println("4. Stop service")
 	fmt.Println("5. Restart service")
-	fmt.Println("6. Uninstall service")
+	fmt.Println("6. Uninstall exit service only")
 	fmt.Println("0. Back")
 	choice, err := prompt(ctx, reader, "Service action", "1")
 	if err != nil {
@@ -259,6 +345,12 @@ func deleteKitDirectory(configPath string) error {
 	if dir == string(filepath.Separator) || dir == "." {
 		return fmt.Errorf("refusing to delete unsafe kit directory %q", dir)
 	}
+	if cwd, err := os.Getwd(); err == nil && sameCleanPath(dir, cwd) {
+		return fmt.Errorf("refusing to delete current working directory as a kit: %s", dir)
+	}
+	if home, err := os.UserHomeDir(); err == nil && sameCleanPath(dir, home) {
+		return fmt.Errorf("refusing to delete home directory as a kit: %s", dir)
+	}
 	required := []string{"exit.json", "client.skirk", "client.json"}
 	for _, name := range required {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
@@ -270,6 +362,10 @@ func deleteKitDirectory(configPath string) error {
 	}
 	fmt.Printf("Deleted local kit directory: %s\n", dir)
 	return nil
+}
+
+func sameCleanPath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 const skirkBanner = `             ##################
