@@ -25,7 +25,7 @@ import { desktopApi, type ClientProfile, type ConnectionMode, type DesktopSnapsh
 import logoMark from "./assets/logo-mark.png";
 
 type Theme = "light" | "dark";
-type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode";
+type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode" | "elevate";
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -105,6 +105,10 @@ function App() {
   const socksAddress = snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile);
   const httpAddress = snapshot?.connection.httpAddress ?? selectedProfileHTTPAddress(selectedProfile);
   const selectedMode = snapshot?.connection.mode ?? "proxy";
+  const vpnNeedsAdmin =
+    selectedMode === "vpn" &&
+    Boolean(snapshot?.capabilities.vpnRequiresAdmin) &&
+    !snapshot?.capabilities.vpnAdmin;
   const runtimeProfile = activeProfile ?? selectedProfile;
   const profileStatusLabel = activeProfile
     ? "Active profile"
@@ -126,6 +130,8 @@ function App() {
     copyStatus ||
     (initialLoading
       ? "Loading runtime status..."
+      : vpnNeedsAdmin
+        ? "VPN mode needs Administrator privileges. Restart Skirk as admin to connect."
       : snapshot?.connection.message || runtimeMessage(connected, activeProfile));
 
   async function run(actionName: BusyAction, action: () => Promise<DesktopSnapshot>) {
@@ -170,6 +176,17 @@ function App() {
       return;
     }
     await run("mode", () => desktopApi.setConnectionMode(mode));
+  }
+
+  async function restartAsAdmin() {
+    setBusyAction("elevate");
+    try {
+      await desktopApi.relaunchAsAdmin();
+      setError("");
+    } catch (nextError) {
+      setError(normalizeError(nextError));
+      setBusyAction(null);
+    }
   }
 
   return (
@@ -294,10 +311,20 @@ function App() {
                 type="button"
                 className="primary"
                 disabled={runtimeBusy || !selectedProfile}
-                onClick={() => void run("connect", () => desktopApi.connect())}
+                onClick={() =>
+                  vpnNeedsAdmin
+                    ? void restartAsAdmin()
+                    : void run("connect", () => desktopApi.connect())
+                }
               >
-                {busyAction === "connect" || connecting ? <Loader2 className="spin" /> : <Play />}
-                Connect
+                {busyAction === "connect" || busyAction === "elevate" || connecting ? (
+                  <Loader2 className="spin" />
+                ) : vpnNeedsAdmin ? (
+                  <ShieldCheck />
+                ) : (
+                  <Play />
+                )}
+                {vpnNeedsAdmin ? "Restart as admin" : "Connect"}
               </button>
             )}
             <button

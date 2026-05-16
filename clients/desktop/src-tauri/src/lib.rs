@@ -87,6 +87,7 @@ struct PlatformCapabilities {
     system_proxy_supported: bool,
     vpn_mode_supported: bool,
     vpn_requires_admin: bool,
+    vpn_admin: bool,
     vpn_sidecar_present: bool,
 }
 
@@ -560,10 +561,12 @@ impl DesktopRuntime {
     fn platform_capabilities(&self) -> PlatformCapabilities {
         let vpn_sidecar_present = self.resolve_tunnel_sidecar().is_ok();
         let vpn_requires_admin = cfg!(windows);
+        let vpn_admin = windows_is_admin();
         PlatformCapabilities {
             system_proxy_supported: cfg!(windows),
-            vpn_mode_supported: cfg!(windows) && vpn_sidecar_present && windows_is_admin(),
+            vpn_mode_supported: cfg!(windows) && vpn_sidecar_present,
             vpn_requires_admin,
+            vpn_admin,
             vpn_sidecar_present,
         }
     }
@@ -584,116 +587,7 @@ impl DesktopRuntime {
         let tunnel = self.resolve_tunnel_sidecar()?;
         let log_path = tunnel_log_path(&self.paths);
         let config_path = tunnel_config_path(&self.paths);
-        let config = json!({
-            "log": {
-                "level": "info",
-                "timestamp": true
-            },
-            "dns": {
-                "servers": [
-                    {
-                        "type": "local",
-                        "tag": "local"
-                    }
-                ],
-                "final": "local",
-                "strategy": "prefer_ipv4"
-            },
-            "inbounds": [
-                {
-                    "type": "tun",
-                    "tag": "tun-in",
-                    "interface_name": tunnel_interface_name(),
-                    "address": [
-                        "172.19.0.1/30",
-                        "fdfe:dcba:9876::1/126"
-                    ],
-                    "auto_route": true,
-                    "strict_route": true,
-                    "stack": "mixed",
-                    "sniff": true,
-                    "sniff_override_destination": true,
-                    "route_exclude_address": [
-                        "127.0.0.0/8",
-                        "10.0.0.0/8",
-                        "100.64.0.0/10",
-                        "169.254.0.0/16",
-                        "172.16.0.0/12",
-                        "192.168.0.0/16",
-                        "224.0.0.0/4",
-                        "::1/128",
-                        "fc00::/7",
-                        "fe80::/10"
-                    ]
-                }
-            ],
-            "outbounds": [
-                {
-                    "type": "socks",
-                    "tag": "proxy",
-                    "server": "127.0.0.1",
-                    "server_port": socks_port,
-                    "version": "5"
-                },
-                {
-                    "type": "direct",
-                    "tag": "direct"
-                }
-            ],
-            "route": {
-                "rules": [
-                    {
-                        "action": "sniff"
-                    },
-                    {
-                        "type": "logical",
-                        "mode": "or",
-                        "rules": [
-                            {
-                                "process_name": [
-                                    "skirk-sidecar.exe",
-                                    "skirk.exe",
-                                    "skirk-windows-amd64.exe"
-                                ]
-                            },
-                            {
-                                "process_path": [
-                                    sidecar_process_path
-                                ]
-                            }
-                        ],
-                        "action": "route",
-                        "outbound": "direct"
-                    },
-                    {
-                        "type": "logical",
-                        "mode": "or",
-                        "rules": [
-                            {
-                                "protocol": "dns"
-                            },
-                            {
-                                "port": 53
-                            }
-                        ],
-                        "action": "hijack-dns"
-                    },
-                    {
-                        "network": "udp",
-                        "action": "reject"
-                    },
-                    {
-                        "ip_is_private": true,
-                        "action": "route",
-                        "outbound": "direct"
-                    }
-                ],
-                "final": "proxy",
-                "auto_detect_interface": true,
-                "find_process": true,
-                "default_domain_resolver": "local"
-            }
-        });
+        let config = tunnel_config(socks_port, sidecar_process_path);
         fs::write(
             &config_path,
             serde_json::to_vec_pretty(&config)
@@ -1171,6 +1065,157 @@ fn process_path_for_rules(path: &Path) -> String {
         .to_string()
 }
 
+fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
+    json!({
+        "log": {
+            "level": "info",
+            "timestamp": true
+        },
+        "dns": {
+            "servers": [
+                {
+                    "type": "local",
+                    "tag": "local"
+                }
+            ],
+            "final": "local",
+            "strategy": "prefer_ipv4"
+        },
+        "inbounds": [
+            {
+                "type": "tun",
+                "tag": "tun-in",
+                "interface_name": tunnel_interface_name(),
+                "address": [
+                    "172.19.0.1/30",
+                    "fdfe:dcba:9876::1/126"
+                ],
+                "auto_route": true,
+                "strict_route": true,
+                "stack": "mixed",
+                "route_exclude_address": [
+                    "127.0.0.0/8",
+                    "10.0.0.0/8",
+                    "100.64.0.0/10",
+                    "169.254.0.0/16",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                    "224.0.0.0/4",
+                    "::1/128",
+                    "fc00::/7",
+                    "fe80::/10"
+                ]
+            }
+        ],
+        "outbounds": [
+            {
+                "type": "socks",
+                "tag": "proxy",
+                "server": "127.0.0.1",
+                "server_port": socks_port,
+                "version": "5"
+            },
+            {
+                "type": "direct",
+                "tag": "direct"
+            }
+        ],
+        "route": {
+            "rules": [
+                {
+                    "inbound": "tun-in",
+                    "action": "sniff",
+                    "timeout": "1s"
+                },
+                {
+                    "type": "logical",
+                    "mode": "or",
+                    "rules": [
+                        {
+                            "process_name": [
+                                "skirk-sidecar.exe",
+                                "skirk.exe",
+                                "skirk-windows-amd64.exe"
+                            ]
+                        },
+                        {
+                            "process_path": [
+                                sidecar_process_path
+                            ]
+                        }
+                    ],
+                    "action": "route",
+                    "outbound": "direct"
+                },
+                {
+                    "type": "logical",
+                    "mode": "or",
+                    "rules": [
+                        {
+                            "protocol": "dns"
+                        },
+                        {
+                            "port": 53
+                        }
+                    ],
+                    "action": "hijack-dns"
+                },
+                {
+                    "network": "udp",
+                    "action": "reject"
+                },
+                {
+                    "ip_is_private": true,
+                    "action": "route",
+                    "outbound": "direct"
+                }
+            ],
+            "final": "proxy",
+            "auto_detect_interface": true,
+            "find_process": true,
+            "default_domain_resolver": "local"
+        }
+    })
+}
+
+#[cfg(windows)]
+fn relaunch_current_app_as_admin() -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("failed to resolve current executable: {error}"))?;
+    let workdir = exe
+        .parent()
+        .ok_or_else(|| "failed to resolve application directory".to_string())?;
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Start-Process -FilePath $args[0] -WorkingDirectory $args[1] -Verb RunAs",
+            "--",
+        ])
+        .arg(&exe)
+        .arg(workdir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| format!("failed to request Administrator relaunch: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Administrator relaunch request failed with status {status}"
+        ));
+    }
+    std::process::exit(0);
+}
+
+#[cfg(not(windows))]
+fn relaunch_current_app_as_admin() -> Result<(), String> {
+    Err("Administrator relaunch is only available on Windows".into())
+}
+
 #[cfg(windows)]
 fn windows_is_admin() -> bool {
     let output = Command::new("powershell")
@@ -1255,6 +1300,11 @@ async fn disconnect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapsho
     runtime.snapshot()
 }
 
+#[tauri::command]
+async fn relaunch_as_admin() -> Result<(), String> {
+    relaunch_current_app_as_admin()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -1271,7 +1321,8 @@ pub fn run() {
             select_profile,
             set_connection_mode,
             connect,
-            disconnect
+            disconnect,
+            relaunch_as_admin
         ])
         .build(tauri::generate_context!())
         .expect("error while building Skirk desktop")
@@ -1488,5 +1539,39 @@ mod tests {
                 .join(os_dir)
                 .join(sidecar_name)
         ));
+    }
+
+    #[test]
+    fn tunnel_config_uses_sing_box_1_13_tun_fields() {
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe");
+        let inbound = config
+            .pointer("/inbounds/0")
+            .and_then(Value::as_object)
+            .expect("tun inbound object");
+
+        assert_eq!(
+            inbound
+                .get("address")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert!(inbound.get("sniff").is_none());
+        assert!(inbound.get("sniff_override_destination").is_none());
+        assert!(inbound.get("inet4_address").is_none());
+        assert!(inbound.get("inet6_address").is_none());
+
+        assert_eq!(
+            config
+                .pointer("/route/rules/0/action")
+                .and_then(Value::as_str),
+            Some("sniff")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/0/inbound")
+                .and_then(Value::as_str),
+            Some("tun-in")
+        );
     }
 }
