@@ -21,6 +21,13 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::CloseHandle,
+    Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ClientProfile {
@@ -1179,62 +1186,23 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str) -> Value {
 }
 
 #[cfg(windows)]
-fn relaunch_current_app_as_admin() -> Result<(), String> {
-    let exe = std::env::current_exe()
-        .map_err(|error| format!("failed to resolve current executable: {error}"))?;
-    let workdir = exe
-        .parent()
-        .ok_or_else(|| "failed to resolve application directory".to_string())?;
-    let status = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "Start-Process -FilePath $args[0] -WorkingDirectory $args[1] -Verb RunAs",
-            "--",
-        ])
-        .arg(&exe)
-        .arg(workdir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map_err(|error| format!("failed to request Administrator relaunch: {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "Administrator relaunch request failed with status {status}"
-        ));
-    }
-    std::process::exit(0);
-}
-
-#[cfg(not(windows))]
-fn relaunch_current_app_as_admin() -> Result<(), String> {
-    Err("Administrator relaunch is only available on Windows".into())
-}
-
-#[cfg(windows)]
 fn windows_is_admin() -> bool {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-    match output {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .eq_ignore_ascii_case("true"),
-        _ => false,
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            &mut elevation as *mut TOKEN_ELEVATION as *mut _,
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        ok != 0 && elevation.TokenIsElevated != 0
     }
 }
 
@@ -1300,11 +1268,6 @@ async fn disconnect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapsho
     runtime.snapshot()
 }
 
-#[tauri::command]
-async fn relaunch_as_admin() -> Result<(), String> {
-    relaunch_current_app_as_admin()
-}
-
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -1321,8 +1284,7 @@ pub fn run() {
             select_profile,
             set_connection_mode,
             connect,
-            disconnect,
-            relaunch_as_admin
+            disconnect
         ])
         .build(tauri::generate_context!())
         .expect("error while building Skirk desktop")

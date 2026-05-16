@@ -25,7 +25,7 @@ import { desktopApi, type ClientProfile, type ConnectionMode, type DesktopSnapsh
 import logoMark from "./assets/logo-mark.png";
 
 type Theme = "light" | "dark";
-type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode" | "elevate";
+type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode";
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -131,7 +131,7 @@ function App() {
     (initialLoading
       ? "Loading runtime status..."
       : vpnNeedsAdmin
-        ? "VPN mode needs Administrator privileges. Restart Skirk as admin to connect."
+        ? "VPN mode needs Administrator privileges. Close Skirk and open Skirk.exe with Run as administrator."
       : snapshot?.connection.message || runtimeMessage(connected, activeProfile));
 
   async function run(actionName: BusyAction, action: () => Promise<DesktopSnapshot>) {
@@ -176,17 +176,6 @@ function App() {
       return;
     }
     await run("mode", () => desktopApi.setConnectionMode(mode));
-  }
-
-  async function restartAsAdmin() {
-    setBusyAction("elevate");
-    try {
-      await desktopApi.relaunchAsAdmin();
-      setError("");
-    } catch (nextError) {
-      setError(normalizeError(nextError));
-      setBusyAction(null);
-    }
   }
 
   return (
@@ -310,21 +299,17 @@ function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={runtimeBusy || !selectedProfile}
-                onClick={() =>
-                  vpnNeedsAdmin
-                    ? void restartAsAdmin()
-                    : void run("connect", () => desktopApi.connect())
-                }
+                disabled={runtimeBusy || !selectedProfile || vpnNeedsAdmin}
+                onClick={() => void run("connect", () => desktopApi.connect())}
               >
-                {busyAction === "connect" || busyAction === "elevate" || connecting ? (
+                {busyAction === "connect" || connecting ? (
                   <Loader2 className="spin" />
                 ) : vpnNeedsAdmin ? (
                   <ShieldCheck />
                 ) : (
                   <Play />
                 )}
-                {vpnNeedsAdmin ? "Restart as admin" : "Connect"}
+                {vpnNeedsAdmin ? "Run as administrator" : "Connect"}
               </button>
             )}
             <button

@@ -118,7 +118,6 @@ const tauriApi = {
   setConnectionMode: (mode: ConnectionMode) => invoke<DesktopSnapshot>("set_connection_mode", { mode }),
   connect: () => invoke<DesktopSnapshot>("connect"),
   disconnect: () => invoke<DesktopSnapshot>("disconnect"),
-  relaunchAsAdmin: () => invoke<void>("relaunch_as_admin"),
 };
 
 const browserPreviewApi = {
@@ -167,7 +166,6 @@ const browserPreviewApi = {
     mockConnected = false;
     return mockSnapshot();
   },
-  relaunchAsAdmin: async () => undefined,
 };
 
 export const desktopApi = useBrowserPreview ? browserPreviewApi : tauriApi;
