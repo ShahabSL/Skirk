@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.1.41 - 2026-05-17
+
+- Refreshed the release workflow onto GitHub's Node 24 artifact actions so
+  the latest release is produced without Node 20 deprecation warnings.
+- Kept the Android release path on `assembleRelease` with required keystore
+  secrets, signature verification, checksums, and artifact attestations.
+
 ## v0.1.40 - 2026-05-17
 
 - Added `skirk service` and expanded the operator menu for setup, systemd
