@@ -108,6 +108,20 @@ func TestConfigRejectsNonPositiveFixedPollInterval(t *testing.T) {
 	}
 }
 
+func TestConfigAutoProfileRespectsExplicitSlowerPollInterval(t *testing.T) {
+	cfg := &Config{
+		Secret: strings.Repeat("a", 64),
+		Tunnel: TunnelConfig{
+			Profile:        "auto",
+			PollIntervalMS: 750,
+		},
+	}
+	cfg.ApplyDefaults()
+	if got, want := cfg.PollInterval(), 750*time.Millisecond; got != want {
+		t.Fatalf("PollInterval() = %s, want %s", got, want)
+	}
+}
+
 func TestConfigRejectsExperimentalTransport(t *testing.T) {
 	cfg := &Config{
 		Secret: strings.Repeat("a", 64),

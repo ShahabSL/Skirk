@@ -273,6 +273,7 @@ func serveClient(ctx context.Context, args []string) error {
 	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
 	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling after local uploads")
+	noBurstPoll := fs.Bool("no-burst-poll", false, "disable bounded adaptive burst polling even if enabled in config")
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
@@ -329,6 +330,9 @@ func serveClient(ctx context.Context, args []string) error {
 	}
 	if *burstPoll {
 		cfg.Tunnel.BurstPoll = true
+	}
+	if *noBurstPoll {
+		cfg.Tunnel.BurstPoll = false
 	}
 	if *burstPollMS > 0 {
 		cfg.Tunnel.BurstPollMS = *burstPollMS
@@ -409,8 +413,9 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 2 * time.Minute
-const mailboxJanitorDefaultInterval = time.Minute
+const mailboxJanitorDefaultOlderThan = 10 * time.Minute
+const mailboxJanitorDefaultInterval = 2 * time.Minute
+const mailboxJanitorDefaultDeleteConcurrency = 2
 
 var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
 
@@ -444,7 +449,7 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
 			Prefix:            prefix,
 			OlderThan:         olderThan,
-			DeleteConcurrency: 8,
+			DeleteConcurrency: mailboxJanitorDefaultDeleteConcurrency,
 			MaxPages:          20000,
 		})
 		cancel()

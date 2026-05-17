@@ -236,9 +236,11 @@ connectivity.
 
 ## Cleanup And Disconnect
 
-Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
-automatic janitor every minute that deletes stale Skirk transport objects older
-than 2 minutes.
+Normal runtime deletes processed mailbox objects. `serve-exit` also starts a
+conservative automatic janitor at startup and then every 2 minutes. It deletes
+stale Skirk transport objects older than 10 minutes with low delete concurrency,
+so long VPN or multi-client sessions cannot starve stale-object cleanup
+indefinitely.
 
 Manual cleanup is dry-run by default:
 

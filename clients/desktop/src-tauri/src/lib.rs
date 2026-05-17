@@ -26,6 +26,9 @@ const DESKTOP_CLIENT_POLL_MS: &str = "100";
 const DESKTOP_CLIENT_BURST_POLL_MS: &str = "25";
 const DESKTOP_CLIENT_BURST_POLL_WINDOW_MS: &str = "10000";
 const DESKTOP_CLIENT_CONCURRENCY: &str = "32";
+const DESKTOP_VPN_CLIENT_POLL_MS: &str = "500";
+const DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY: &str = "4";
+const DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -495,16 +498,29 @@ impl DesktopRuntime {
             .arg("--route-mode")
             .arg(route_mode)
             .arg("--google-ip")
-            .arg(&google_ip)
-            .arg("--poll-ms")
-            .arg(DESKTOP_CLIENT_POLL_MS)
-            .arg("--burst-poll")
-            .arg("--burst-poll-ms")
-            .arg(DESKTOP_CLIENT_BURST_POLL_MS)
-            .arg("--burst-poll-window-ms")
-            .arg(DESKTOP_CLIENT_BURST_POLL_WINDOW_MS)
-            .arg("--concurrency")
-            .arg(DESKTOP_CLIENT_CONCURRENCY)
+            .arg(&google_ip);
+        if matches!(mode, ConnectionMode::Vpn) {
+            command
+                .arg("--no-burst-poll")
+                .arg("--poll-ms")
+                .arg(DESKTOP_VPN_CLIENT_POLL_MS)
+                .arg("--upload-concurrency")
+                .arg(DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY)
+                .arg("--download-concurrency")
+                .arg(DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY);
+        } else {
+            command
+                .arg("--poll-ms")
+                .arg(DESKTOP_CLIENT_POLL_MS)
+                .arg("--burst-poll")
+                .arg("--burst-poll-ms")
+                .arg(DESKTOP_CLIENT_BURST_POLL_MS)
+                .arg("--burst-poll-window-ms")
+                .arg(DESKTOP_CLIENT_BURST_POLL_WINDOW_MS)
+                .arg("--concurrency")
+                .arg(DESKTOP_CLIENT_CONCURRENCY);
+        }
+        command
             .arg("--watch-parent-pid")
             .arg(std::process::id().to_string())
             .stdout(Stdio::from(log))
@@ -1228,7 +1244,7 @@ fn tunnel_config(socks_port: u16, google_ip: &str) -> Value {
                     "network": "udp",
                     "action": "reject",
                     "method": "default",
-                    "no_drop": false
+                    "no_drop": true
                 }
             ],
             "final": "proxy",
@@ -1638,7 +1654,7 @@ mod tests {
             config
                 .pointer("/route/rules/3/no_drop")
                 .and_then(Value::as_bool),
-            Some(false)
+            Some(true)
         );
         assert!(config.pointer("/route/find_process").is_none());
         assert!(!config

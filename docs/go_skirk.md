@@ -113,9 +113,14 @@ priority over deleting old objects.
 
 `serve-exit` also starts a janitor:
 
-- default age: 2 minutes;
-- default interval: 1 minute;
+- default age: 10 minutes;
+- default interval: startup, then every 2 minutes;
 - prefixes: mux transport, Drive benchmark, and setup marker prefixes.
+
+The janitor is for crash leftovers. Runtime cleanup already deletes consumed
+mux objects and yields to active traffic, while the janitor uses a stale-object
+age window and low delete concurrency so cleanup still runs during long VPN or
+multi-client sessions without treating transient Drive delay as stale data.
 
 Environment controls:
 

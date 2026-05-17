@@ -141,17 +141,33 @@ class AndroidSkirkEngine(
             profile.id,
             "--route-mode",
             routeMode,
-            "--poll-ms",
-            "100",
-            "--burst-poll",
-            "--burst-poll-ms",
-            "25",
-            "--burst-poll-window-ms",
-            "10000",
-            "--upload-concurrency",
-            "16",
-            "--download-concurrency",
-            "32",
+        )
+        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+            args += listOf(
+                "--no-burst-poll",
+                "--poll-ms",
+                "500",
+                "--upload-concurrency",
+                "4",
+                "--download-concurrency",
+                "16",
+            )
+        } else {
+            args += listOf(
+                "--poll-ms",
+                "100",
+                "--burst-poll",
+                "--burst-poll-ms",
+                "25",
+                "--burst-poll-window-ms",
+                "10000",
+                "--upload-concurrency",
+                "16",
+                "--download-concurrency",
+                "32",
+            )
+        }
+        args += listOf(
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )

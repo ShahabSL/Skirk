@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.1.46 - 2026-05-17
+
+- Reduced Drive mailbox quota pressure in VPN mode by disabling burst polling
+  for Android and Windows VPN sidecars, lowering VPN worker concurrency, and
+  pacing normal active polling while keeping proxy mode aggressive.
+- Hardened mux v4 under long-running and multi-client traffic with bounded
+  bootstrap priority data, idempotent reserved-ID normal uploads when available,
+  stale Drive object handling, and receive-gap timeout/repair behavior.
+- Made Drive cleanup less disruptive by tightening janitor defaults and
+  avoiding foreground stalls from cleanup pressure.
+- Fixed Android VPN connect/disconnect lifecycle races so repeated connect
+  taps are idempotent and disconnect closes the Android TUN descriptor before
+  stopping tun2socks and the Skirk sidecar.
+- Added regression coverage for stale Drive objects, reserved upload IDs, and
+  Drive ID-generation fallback.
+
 ## v0.1.45 - 2026-05-17
 
 - Switched personal Google OAuth setup to the Desktop app authorization-code

@@ -53,19 +53,27 @@ class SkirkVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        startForegroundCompat("Connecting")
+        startForegroundCompat(if (vpnInterface == null) "Connecting" else "Connected")
+        if (workerStarted) {
+            if (vpnInterface == null) {
+                connectionState.connecting(profile, "VPN connecting")
+            } else {
+                connectionState.connected(profile, "VPN connected")
+            }
+            Log.i(TAG, "Ignoring duplicate VPN start while worker is active")
+            return START_STICKY
+        }
+
         connectionState.connecting(profile, "VPN connecting")
         stopRequested = false
         stopOnce.set(false)
-        if (!workerStarted) {
-            workerStarted = true
-            thread(name = "skirk-vpn-start", start = true) {
-                runCatching { startTunnel(profile) }
-                    .onFailure { error ->
-                        Log.e(TAG, "VPN start failed", error)
-                        stopTunnel("VPN failed: ${error.message ?: "start failed"}", failed = true)
-                    }
-            }
+        workerStarted = true
+        thread(name = "skirk-vpn-start", start = true) {
+            runCatching { startTunnel(profile) }
+                .onFailure { error ->
+                    Log.e(TAG, "VPN start failed", error)
+                    stopTunnel("VPN failed: ${error.message ?: "start failed"}", failed = true)
+                }
         }
         return START_STICKY
     }
@@ -76,14 +84,7 @@ class SkirkVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        if (!stopRequested) {
-            stopTunnel("service destroyed")
-        } else {
-            runCatching { vpnInterface?.close() }
-            vpnInterface = null
-            engine.stop()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        }
+        stopTunnel("service destroyed", stopService = false)
         super.onDestroy()
     }
 
@@ -144,17 +145,20 @@ class SkirkVpnService : VpnService() {
         Log.i(TAG, "VPN connected through SOCKS 127.0.0.1:${localProfile.socksPort}")
     }
 
-    private fun stopTunnel(reason: String, failed: Boolean = false) {
+    private fun stopTunnel(reason: String, failed: Boolean = false, stopService: Boolean = true) {
         if (!stopOnce.compareAndSet(false, true)) {
             return
         }
         stopRequested = true
         Log.i(TAG, "Stopping VPN: $reason")
+
+        val activeInterface = vpnInterface
+        vpnInterface = null
+        runCatching { activeInterface?.close() }
+            .onFailure { Log.w(TAG, "VPN interface close failed", it) }
+
         runCatching { tunnel.TProxyStopService() }
             .onFailure { Log.w(TAG, "tun2socks stop failed", it) }
-        runCatching { vpnInterface?.close() }
-            .onFailure { Log.w(TAG, "VPN interface close failed", it) }
-        vpnInterface = null
         engine.stop()
         workerStarted = false
         if (failed) {
@@ -162,8 +166,10 @@ class SkirkVpnService : VpnService() {
         } else {
             connectionState.stopped(reason)
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        if (stopService) {
+            stopSelf()
+        }
     }
 
     private fun writeTunnelConfig(socksPort: Int): File {

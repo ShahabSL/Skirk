@@ -83,8 +83,13 @@ promotion gates.
 
 ## Operations
 
-Generated configs enable runtime cleanup. The exit also runs a stale-object
-janitor for interrupted clients and crashed exits.
+Generated configs enable runtime cleanup. The exit also runs a conservative
+stale-object janitor at startup and then every 2 minutes for interrupted
+clients and crashed exits. The janitor is not the primary hot-path cleanup:
+consumed mux objects are deleted by foreground-aware runtime cleanup, while the
+janitor uses a 10 minute age window and low delete concurrency so Drive stalls
+do not make live frames look stale and long-running VPN sessions do not prevent
+stale-object cleanup forever.
 
 Operators should monitor:
 

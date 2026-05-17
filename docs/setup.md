@@ -234,9 +234,13 @@ When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs wgcf/wireproxy,
 starts `wireproxy.service`, and defaults `SKIRK_EXIT_PROXY` to that local SOCKS
 listener. `SKIRK_ACCEPT_WARP_TOS=1` makes the WARP registration noninteractive.
 
-`serve-exit` starts a mailbox janitor automatically. It removes stale mux
-transport, benchmark, and setup-marker objects older than 2 minutes. Override
-with:
+`serve-exit` starts a mailbox janitor automatically. It runs at startup and then
+every 2 minutes, removing stale mux transport, benchmark, and setup-marker
+objects older than 10 minutes. Normal processed mux objects are deleted by the
+foreground-aware runtime cleanup path; the janitor is intentionally conservative
+and uses low delete concurrency so slow Drive uploads cannot cause live stream
+frames to be deleted as stale, but long VPN or multi-client sessions still get
+stale-object cleanup. Override with:
 
 ```bash
 SKIRK_JANITOR_OLDER_THAN=6h SKIRK_JANITOR_INTERVAL=1h skirk serve-exit --config skirk-kit/exit.json

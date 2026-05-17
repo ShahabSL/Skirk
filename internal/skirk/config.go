@@ -761,7 +761,7 @@ func firstNonEmptyString(values ...string) string {
 func (c Config) PollInterval() time.Duration {
 	interval := c.Tunnel.PollIntervalMS
 	if strings.TrimSpace(c.Tunnel.Profile) == "" || strings.TrimSpace(c.Tunnel.Profile) == "auto" {
-		if interval <= 0 || interval > 100 {
+		if interval <= 0 {
 			interval = 100
 		}
 	}
