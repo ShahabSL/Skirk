@@ -32,7 +32,7 @@ jobs:
           SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
         run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-release
           path: |
@@ -98,7 +98,7 @@ jobs:
           cp clients/android/app/build/outputs/apk/release/app-release.apk dist/android/skirk-android-arm64.apk
           (cd dist/android && sha256sum skirk-android-arm64.apk > skirk-android-arm64.apk.sha256)
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-release
           path: |
@@ -188,7 +188,7 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $(Split-Path $zip -Leaf)" | Set-Content "$zip.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-desktop-release
           path: |
@@ -208,7 +208,7 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist-release
           merge-multiple: true
