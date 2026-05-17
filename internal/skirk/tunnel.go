@@ -16,43 +16,44 @@ import (
 )
 
 const (
-	inlineDataThreshold           = 64 * 1024
-	mediumDataThreshold           = 8 * 1024
-	bulkStreamCoalesceAfter       = 256 * 1024
-	initialOpenDataWait           = 15 * time.Millisecond
-	interactiveCoalesceDelay      = 5 * time.Millisecond
-	mediumCoalesceDelay           = 50 * time.Millisecond
-	bulkCoalesceDelay             = 75 * time.Millisecond
-	forcedBulkCoalesceDelay       = 100 * time.Millisecond
-	interactiveCoalesceMaxAge     = 15 * time.Millisecond
-	mediumCoalesceMaxAge          = 75 * time.Millisecond
-	bulkCoalesceMaxAge            = 250 * time.Millisecond
-	forcedBulkCoalesceMaxAge      = 1 * time.Second
-	deferredCleanupDelay          = 5 * time.Second
-	deferredCleanupFlushThreshold = 128
-	idleOpenPollInterval          = 1 * time.Second
-	openPollWarmWindow            = 45 * time.Second
-	directDriveSlowThreshold      = 5 * time.Second
-	proxyDriveSlowThreshold       = 10 * time.Second
-	limiterBulkByteThreshold      = 1 * 1024 * 1024
-	limiterDirectBulkBytesPerSec  = 2 * 1024 * 1024
-	limiterProxyBulkBytesPerSec   = 1 * 1024 * 1024
-	limiterBackoffCooldown        = 2 * time.Second
-	limiterMinNormalSlots         = 2
-	autoClientUploadWorkers       = 8
-	autoClientProxyUploadWorkers  = 4
-	autoExitUploadWorkers         = 16
-	autoExitUploadMaxWorkers      = 32
-	autoClientUploadWindow        = 4
-	autoClientProxyUploadWindow   = 2
-	autoExitUploadWindow          = 8
-	autoExitExplicitUploadWindow  = 16
-	exitFamilyPreferenceTimeout   = 2 * time.Second
-	cleanupQuietWindow            = 2 * time.Second
-	cleanupMaxForegroundDelay     = 2 * time.Minute
-	exitDialTimeout               = 30 * time.Second
-	burstSlowListThreshold        = 3 * time.Second
-	burstCooldownAfterSlow        = 20 * time.Second
+	inlineDataThreshold            = 64 * 1024
+	mediumDataThreshold            = 8 * 1024
+	bulkStreamCoalesceAfter        = 256 * 1024
+	initialOpenDataWait            = 15 * time.Millisecond
+	interactiveCoalesceDelay       = 5 * time.Millisecond
+	mediumCoalesceDelay            = 50 * time.Millisecond
+	bulkCoalesceDelay              = 75 * time.Millisecond
+	forcedBulkCoalesceDelay        = 100 * time.Millisecond
+	interactiveCoalesceMaxAge      = 15 * time.Millisecond
+	mediumCoalesceMaxAge           = 75 * time.Millisecond
+	bulkCoalesceMaxAge             = 250 * time.Millisecond
+	forcedBulkCoalesceMaxAge       = 1 * time.Second
+	deferredCleanupDelay           = 5 * time.Second
+	deferredCleanupFlushThreshold  = 128
+	idleOpenPollInterval           = 1 * time.Second
+	openPollWarmWindow             = 45 * time.Second
+	directDriveSlowThreshold       = 5 * time.Second
+	proxyDriveSlowThreshold        = 10 * time.Second
+	limiterBulkByteThreshold       = 1 * 1024 * 1024
+	limiterDirectBulkBytesPerSec   = 2 * 1024 * 1024
+	limiterProxyBulkBytesPerSec    = 1 * 1024 * 1024
+	limiterBackoffCooldown         = 2 * time.Second
+	limiterMinNormalSlots          = 2
+	autoClientUploadWorkers        = 8
+	autoClientProxyUploadWorkers   = 4
+	autoExitUploadWorkers          = 16
+	autoExitUploadMaxWorkers       = 32
+	autoClientUploadWindow         = 4
+	autoClientProxyUploadWindow    = 2
+	autoClientExplicitUploadWindow = 16
+	autoExitUploadWindow           = 8
+	autoExitExplicitUploadWindow   = 16
+	exitFamilyPreferenceTimeout    = 2 * time.Second
+	cleanupQuietWindow             = 2 * time.Second
+	cleanupMaxForegroundDelay      = 2 * time.Minute
+	exitDialTimeout                = 30 * time.Second
+	burstSlowListThreshold         = 3 * time.Second
+	burstCooldownAfterSlow         = 20 * time.Second
 )
 
 type Tunnel struct {
@@ -450,6 +451,9 @@ func (t *Tunnel) initialUploadWindow(max int) int {
 	}
 	switch t.role {
 	case "client":
+		if t.UploadConcurrency > 0 {
+			return minInt(autoClientExplicitUploadWindow, max)
+		}
 		if t.RouteProxy != "" {
 			return minInt(autoClientProxyUploadWindow, max)
 		}
@@ -504,6 +508,7 @@ type adaptiveLimiter struct {
 	max           int
 	reserve       int
 	priorityWait  int
+	normalWait    int
 	inFlight      int
 	priorityBusy  int
 	successes     int
@@ -560,17 +565,21 @@ func (l *adaptiveLimiter) Acquire(ctx context.Context, priority bool) (func(erro
 func (l *adaptiveLimiter) AcquireBytes(ctx context.Context, priority bool) (func(error, int64), error) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	registeredPriority := false
+	registeredWait := false
 	for {
 		l.mu.Lock()
-		if priority && !registeredPriority {
-			l.priorityWait++
-			registeredPriority = true
+		if !registeredWait {
+			if priority {
+				l.priorityWait++
+			} else {
+				l.normalWait++
+			}
+			registeredWait = true
 		}
 		if l.canAcquireLocked(priority) {
-			if registeredPriority && l.priorityWait > 0 {
-				l.priorityWait--
-				registeredPriority = false
+			if registeredWait {
+				l.unregisterWaiterLocked(priority)
+				registeredWait = false
 			}
 			l.inFlight++
 			if priority {
@@ -588,11 +597,9 @@ func (l *adaptiveLimiter) AcquireBytes(ctx context.Context, priority bool) (func
 		l.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			if registeredPriority {
+			if registeredWait {
 				l.mu.Lock()
-				if l.priorityWait > 0 {
-					l.priorityWait--
-				}
+				l.unregisterWaiterLocked(priority)
 				l.mu.Unlock()
 			}
 			return nil, ctx.Err()
@@ -604,6 +611,15 @@ func (l *adaptiveLimiter) AcquireBytes(ctx context.Context, priority bool) (func
 func (l *adaptiveLimiter) canAcquireLocked(priority bool) bool {
 	if priority {
 		if l.inFlight < l.limit {
+			if l.normalWait > 0 {
+				priorityLimit := l.limit - l.normalReserveLocked()
+				if priorityLimit < 1 {
+					priorityLimit = 1
+				}
+				if l.priorityBusy >= priorityLimit {
+					return false
+				}
+			}
 			return true
 		}
 		reserve := l.priorityReserveLocked()
@@ -612,14 +628,27 @@ func (l *adaptiveLimiter) canAcquireLocked(priority bool) bool {
 	if l.inFlight >= l.limit {
 		return false
 	}
-	if l.priorityWait > 0 {
-		return false
-	}
 	normalLimit := l.limit - l.priorityReserveLocked()
 	if normalLimit < 1 {
 		normalLimit = 1
 	}
-	return l.inFlight < normalLimit
+	normalBusy := l.inFlight - l.priorityBusy
+	if normalBusy < 0 {
+		normalBusy = 0
+	}
+	return normalBusy < normalLimit
+}
+
+func (l *adaptiveLimiter) unregisterWaiterLocked(priority bool) {
+	if priority {
+		if l.priorityWait > 0 {
+			l.priorityWait--
+		}
+		return
+	}
+	if l.normalWait > 0 {
+		l.normalWait--
+	}
 }
 
 func (l *adaptiveLimiter) priorityReserveLocked() int {
@@ -627,6 +656,20 @@ func (l *adaptiveLimiter) priorityReserveLocked() int {
 		return 0
 	}
 	reserve := l.reserve
+	if reserve > l.limit-1 {
+		reserve = l.limit - 1
+	}
+	return reserve
+}
+
+func (l *adaptiveLimiter) normalReserveLocked() int {
+	if l.limit <= 1 {
+		return 0
+	}
+	reserve := limiterMinNormalSlots
+	if reserve < 1 {
+		reserve = 1
+	}
 	if reserve > l.limit-1 {
 		reserve = l.limit - 1
 	}
