@@ -4,7 +4,8 @@ import android.content.Context
 import org.json.JSONArray
 
 class ProfileStore(context: Context) {
-    private val prefs = context.getSharedPreferences("skirk_profiles", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("skirk_profiles", Context.MODE_PRIVATE)
 
     fun listProfiles(): List<ClientProfile> {
         val raw = prefs.getString(KEY_PROFILES, "[]") ?: "[]"
@@ -41,10 +42,12 @@ class ProfileStore(context: Context) {
         writeProfiles(next)
         val nextSelected = if (selectedProfileId() == profileId) next.firstOrNull()?.id else selectedProfileId()
         prefs.edit().putString(KEY_SELECTED, nextSelected).apply()
+        AndroidSkirkEngine.deleteRuntimeConfig(appContext, profileId)
     }
 
     fun deleteAll() {
         prefs.edit().clear().apply()
+        AndroidSkirkEngine.deleteAllRuntimeConfigs(appContext)
     }
 
     private fun writeProfiles(profiles: List<ClientProfile>) {

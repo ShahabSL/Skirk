@@ -162,9 +162,8 @@ class AndroidSkirkEngine(
     }
 
     private fun writeRuntimeConfig(profile: ClientProfile): File {
-        val configsDir = File(context.filesDir, "configs").apply { mkdirs() }
         val suffix = if (profile.rawConfig.trim().startsWith("skirk:")) "skirk" else "json"
-        val configFile = File(configsDir, "${profile.id}.$suffix")
+        val configFile = runtimeConfigFile(context, profile.id, suffix)
         configFile.writeText(profile.rawConfig)
         return configFile
     }
@@ -173,11 +172,41 @@ class AndroidSkirkEngine(
         private const val TAG = "SkirkEngine"
         private const val ENGINE_NAME = "libskirk.so"
 
+        fun deleteRuntimeConfig(context: Context, profileId: String) {
+            if (profileId.isBlank()) {
+                return
+            }
+            val configsDir = runtimeConfigsDir(context)
+            if (!configsDir.exists()) {
+                return
+            }
+            listOf("skirk", "json").forEach { suffix ->
+                runCatching { File(configsDir, "$profileId.$suffix").delete() }
+            }
+        }
+
+        fun deleteAllRuntimeConfigs(context: Context) {
+            val configsDir = runtimeConfigsDir(context)
+            if (!configsDir.exists()) {
+                return
+            }
+            configsDir.listFiles()
+                ?.filter { it.isFile && (it.name.endsWith(".skirk") || it.name.endsWith(".json")) }
+                ?.forEach { file -> runCatching { file.delete() } }
+        }
+
         private fun appendLogLine(logFile: File, message: String) {
             runCatching {
                 logFile.appendText("${Instant.now()} $message\n")
             }
         }
+
+        private fun runtimeConfigFile(context: Context, profileId: String, suffix: String): File {
+            val configsDir = runtimeConfigsDir(context).apply { mkdirs() }
+            return File(configsDir, "$profileId.$suffix")
+        }
+
+        private fun runtimeConfigsDir(context: Context): File = File(context.filesDir, "configs")
 
         fun lanAddresses(port: Int): List<String> =
             runCatching { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty() }

@@ -44,6 +44,9 @@ then tap `Connect`. Android shows the standard VPN consent dialog the first
 time. After approval, ordinary apps should use Skirk without per-app proxy
 settings.
 
+Android VPN mode works best for TCP traffic. Apps that rely heavily on UDP,
+QUIC/HTTP3, or IPv6 may need to fall back to TCP or may not work reliably.
+
 For Telegram, turn Telegram's built-in proxy setting off when using Skirk VPN
 mode. If Telegram's own proxy is enabled, Telegram may keep testing its internal
 proxy entry instead of relying on Android's VPN routing.
