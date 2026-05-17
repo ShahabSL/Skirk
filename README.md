@@ -154,6 +154,8 @@ Android users should use the Android app. Import the same one-line profile,
 select `VPN`, and tap `Connect`. Android asks for VPN consent on first use.
 `Proxy` mode is available when an app or another LAN device explicitly supports
 SOCKS5.
+Android VPN mode works best for TCP traffic; apps that rely heavily on UDP,
+QUIC/HTTP3, or IPv6 may not work reliably.
 
 See [docs/clients.md](docs/clients.md) for build and release details.
 

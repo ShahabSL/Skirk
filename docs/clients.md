@@ -127,6 +127,9 @@ Use:
 4. Tap `Connect`.
 5. Approve Android's VPN permission prompt the first time.
 
+Android VPN mode works best for TCP traffic. Apps that rely heavily on UDP,
+QUIC/HTTP3, or IPv6 may need to fall back to TCP or may not work reliably.
+
 Proxy/LAN sharing is explicit. In `Proxy` mode, enable LAN sharing only when
 another device should use the phone as a SOCKS5 proxy.
 

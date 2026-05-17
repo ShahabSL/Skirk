@@ -490,7 +490,11 @@ private fun ConnectionPanel(
                 onCheckedChange = onProxyShareLanChange,
             )
         } else {
-            InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
+            InfoRow(
+                Icons.Rounded.VpnKey,
+                "VPN mode",
+                "Best for TCP traffic. Some UDP, QUIC, and IPv6-heavy apps may not work reliably.",
+            )
         }
     }
 }
