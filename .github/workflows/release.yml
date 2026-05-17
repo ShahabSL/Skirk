@@ -15,6 +15,9 @@ jobs:
     name: Build CLI Release
     runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
@@ -45,6 +48,9 @@ jobs:
     name: Build Signed Android Client
     runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
@@ -110,6 +116,9 @@ jobs:
     name: Build Windows Desktop Client
     runs-on: windows-2022
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
@@ -208,10 +217,20 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: dist-release
-          merge-multiple: true
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist-release
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --dir dist-release \
+            --name cli-release \
+            --name android-release \
+            --name windows-desktop-release
+          find dist-release -mindepth 2 -type f -print0 | while IFS= read -r -d '' file; do
+            mv "$file" "dist-release/$(basename "$file")"
+          done
+          find dist-release -mindepth 1 -type d -empty -delete
 
       - name: Generate artifact checksums
         run: |

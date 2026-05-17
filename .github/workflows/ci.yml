@@ -14,6 +14,9 @@ jobs:
     name: Core
     runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
@@ -27,6 +30,9 @@ jobs:
     name: Desktop Web Shell
     runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
@@ -45,6 +51,9 @@ jobs:
     name: Android Client
     runs-on: ubuntu-24.04
     steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6

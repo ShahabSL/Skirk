@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.1.43 - 2026-05-17
+
+- Removed the release publish job's `actions/download-artifact` dependency and
+  switched to GitHub CLI artifact download to avoid a Node deprecation warning
+  emitted by that action.
+- Suppressed Git checkout initialization hints by configuring the default branch
+  before checkout in CI and release jobs.
+
 ## v0.1.42 - 2026-05-17
 
 - Pinned GitHub Actions CI and release runners to explicit stable images
