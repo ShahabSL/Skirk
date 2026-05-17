@@ -13,7 +13,7 @@ permissions:
 jobs:
   release:
     name: Build CLI Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -43,7 +43,7 @@ jobs:
 
   android:
     name: Build Signed Android Client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -108,7 +108,7 @@ jobs:
 
   windows-desktop:
     name: Build Windows Desktop Client
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
 
@@ -198,7 +198,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - release
       - android

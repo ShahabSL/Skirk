@@ -12,7 +12,7 @@ permissions:
 jobs:
   core:
     name: Core
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -25,7 +25,7 @@ jobs:
 
   desktop:
     name: Desktop Web Shell
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -43,7 +43,7 @@ jobs:
 
   android:
     name: Android Client
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 

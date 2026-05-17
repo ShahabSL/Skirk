@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.1.42 - 2026-05-17
+
+- Pinned GitHub Actions CI and release runners to explicit stable images
+  (`ubuntu-24.04` and `windows-2022`) to avoid floating-runner migration
+  notices in release builds.
+
 ## v0.1.41 - 2026-05-17
 
 - Refreshed the release workflow onto GitHub's Node 24 artifact actions so
