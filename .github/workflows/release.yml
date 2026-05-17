@@ -144,8 +144,8 @@ jobs:
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $commit = "${env:GITHUB_SHA}".Substring(0, 7)
           $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
-          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and -not $env:SKIRK_OAUTH_CLIENT_ID) {
-            throw "release builds require SKIRK_OAUTH_CLIENT_ID; SKIRK_OAUTH_CLIENT_SECRET is optional for public OAuth clients"
+          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET)) {
+            throw "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET for the built-in device-code OAuth client"
           }
           if ($env:SKIRK_OAUTH_CLIENT_ID -or $env:SKIRK_OAUTH_CLIENT_SECRET) {
             if (-not $env:SKIRK_OAUTH_CLIENT_ID) {

@@ -8,9 +8,11 @@ dist="${DIST_DIR:-dist}"
 ldflags="-s -w -X main.version=$version -X main.commit=$commit -X main.date=$date"
 oauth_client_id="${SKIRK_OAUTH_CLIENT_ID:-}"
 oauth_client_secret="${SKIRK_OAUTH_CLIENT_SECRET:-}"
-if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH:-0}" = "1" ] && [ -z "$oauth_client_id" ]; then
-  echo "error: release builds require SKIRK_OAUTH_CLIENT_ID; SKIRK_OAUTH_CLIENT_SECRET is optional for public OAuth clients" >&2
-  exit 1
+if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH:-0}" = "1" ]; then
+  if [ -z "$oauth_client_id" ] || [ -z "$oauth_client_secret" ]; then
+    echo "error: release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET for the built-in device-code OAuth client" >&2
+    exit 1
+  fi
 fi
 if [ -n "$oauth_client_id" ] || [ -n "$oauth_client_secret" ]; then
   if [ -z "$oauth_client_id" ]; then

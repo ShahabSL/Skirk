@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.1.45 - 2026-05-17
+
+- Switched personal Google OAuth setup to the Desktop app authorization-code
+  flow with PKCE and VPS paste-back support for redirected localhost URLs.
+- Kept easy Skirk OAuth on Google's device-code flow and restored the built-in
+  release requirement for both OAuth client ID and client secret.
+- Updated setup docs and wizard text to stop recommending TV/Limited Input
+  clients for personal OAuth unless a client secret is available and
+  `--oauth-flow device` is explicitly selected.
+
 ## v0.1.44 - 2026-05-17
 
 - Allowed personal Google OAuth clients to use a client ID without a client

@@ -29,7 +29,8 @@ type adcCredentials struct {
 
 type oauthClientCredentials struct {
 	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	Flow         string `json:"skirk_oauth_flow,omitempty"`
 }
 
 const defaultCustomOAuthScopes = "https://www.googleapis.com/auth/drive.file"
@@ -61,7 +62,8 @@ func setupInit(ctx context.Context, args []string) error {
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
 	resetGoogleLogin := fs.Bool("reset-google-login", false, "remove local ADC credentials before Google login")
 	oauthMode := fs.String("oauth-mode", "auto", "Google OAuth mode: auto, easy, or personal")
-	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON for TVs and Limited Input devices")
+	oauthFlow := fs.String("oauth-flow", "auto", "Google OAuth flow: auto, device, or desktop")
+	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON")
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used for Google OAuth login")
 	clientRoute := fs.String("client-route", "google_front", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
@@ -94,6 +96,10 @@ func setupInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	selectedOAuthFlow, err := normalizeOAuthFlow(*oauthFlow)
+	if err != nil {
+		return err
+	}
 	var setupReader *bufio.Reader
 	getSetupReader := func() *bufio.Reader {
 		if setupReader == nil {
@@ -119,6 +125,10 @@ func setupInit(ctx context.Context, args []string) error {
 	if oauthErr != nil {
 		return oauthErr
 	}
+	selectedOAuthFlow, err = resolveSetupOAuthFlow(selectedOAuthMode, selectedOAuthFlow, oauthClient)
+	if err != nil {
+		return err
+	}
 	if selectedOAuthMode == "personal" && isInteractiveTerminal() && !*jsonOut {
 		if err := confirmPersonalOAuthConsentReady(ctx, getSetupReader()); err != nil {
 			return err
@@ -138,8 +148,8 @@ func setupInit(ctx context.Context, args []string) error {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
 		}
 		if oauthSource != "" {
-			fmt.Printf("Google login will use %s.\n\n", oauthSource)
-			creds, err = runGoogleDeviceOAuth(ctx, oauthClient, *oauthScopes)
+			fmt.Printf("Google login will use %s (%s OAuth flow).\n\n", oauthSource, selectedOAuthFlow)
+			creds, err = runGoogleOAuth(ctx, oauthClient, *oauthScopes, selectedOAuthFlow, getSetupReader())
 			if err != nil {
 				return err
 			}
@@ -579,7 +589,7 @@ func driveOAuthClientRequiredError(credsPath string, cause error) error {
 	}
 	return fmt.Errorf("Google Drive setup needs a Google OAuth client.\n"+
 		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
-		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID, optionally SKIRK_OAUTH_CLIENT_SECRET, or pass --oauth-client-file for testing.\n"+
+		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_FLOW=desktop, or pass --oauth-client-file for testing.\n"+
 		"Current ADC path was %s; original credential error: %w", credsPath, cause)
 }
 
@@ -627,11 +637,27 @@ func resolveOAuthClientCredentialsForMode(path string, allowBuiltIn bool) (oauth
 }
 
 func oauthClientFromEnv() (oauthClientCredentials, bool, error) {
-	return oauthClientFromPair(os.Getenv("SKIRK_OAUTH_CLIENT_ID"), os.Getenv("SKIRK_OAUTH_CLIENT_SECRET"), "SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET")
+	creds, ok, err := oauthClientFromPair(os.Getenv("SKIRK_OAUTH_CLIENT_ID"), os.Getenv("SKIRK_OAUTH_CLIENT_SECRET"), "SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET")
+	if err != nil || !ok {
+		return creds, ok, err
+	}
+	flow, err := normalizeOAuthFlow(os.Getenv("SKIRK_OAUTH_FLOW"))
+	if err != nil {
+		return oauthClientCredentials{}, true, err
+	}
+	if flow != "auto" {
+		creds.Flow = flow
+	}
+	return creds, true, nil
 }
 
 func builtInOAuthClient() (oauthClientCredentials, bool, error) {
-	return oauthClientFromPair(defaultOAuthClientID, defaultOAuthClientSecret, "built-in OAuth client")
+	creds, ok, err := oauthClientFromPair(defaultOAuthClientID, defaultOAuthClientSecret, "built-in OAuth client")
+	if err != nil || !ok {
+		return creds, ok, err
+	}
+	creds.Flow = "device"
+	return creds, true, nil
 }
 
 func oauthClientFromPair(clientID, clientSecret, source string) (oauthClientCredentials, bool, error) {
@@ -651,28 +677,62 @@ func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {
 	if err != nil {
 		return oauthClientCredentials{}, err
 	}
+	type oauthClientJSON struct {
+		ClientID     string   `json:"client_id"`
+		ClientSecret string   `json:"client_secret"`
+		Flow         string   `json:"skirk_oauth_flow"`
+		RedirectURIs []string `json:"redirect_uris"`
+	}
 	var raw struct {
-		Installed *oauthClientCredentials `json:"installed"`
-		Web       *oauthClientCredentials `json:"web"`
-		ClientID  string                  `json:"client_id"`
-		Secret    string                  `json:"client_secret"`
+		Installed *oauthClientJSON `json:"installed"`
+		Web       *oauthClientJSON `json:"web"`
+		ClientID  string           `json:"client_id"`
+		Secret    string           `json:"client_secret"`
+		Flow      string           `json:"skirk_oauth_flow"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return oauthClientCredentials{}, err
 	}
-	creds := oauthClientCredentials{ClientID: raw.ClientID, ClientSecret: raw.Secret}
+	creds := oauthClientCredentials{ClientID: raw.ClientID, ClientSecret: raw.Secret, Flow: raw.Flow}
 	if raw.Installed != nil {
-		creds = *raw.Installed
+		creds = oauthClientCredentials{ClientID: raw.Installed.ClientID, ClientSecret: raw.Installed.ClientSecret, Flow: firstNonEmpty(raw.Flow, raw.Installed.Flow)}
+		if creds.Flow == "" && hasLoopbackRedirect(raw.Installed.RedirectURIs) {
+			creds.Flow = "desktop"
+		}
 	}
 	if raw.Web != nil && creds.ClientID == "" {
-		creds = *raw.Web
+		creds = oauthClientCredentials{ClientID: raw.Web.ClientID, ClientSecret: raw.Web.ClientSecret, Flow: firstNonEmpty(raw.Flow, raw.Web.Flow)}
 	}
 	creds.ClientID = strings.TrimSpace(creds.ClientID)
 	creds.ClientSecret = strings.TrimSpace(creds.ClientSecret)
+	creds.Flow = strings.TrimSpace(creds.Flow)
 	if creds.ClientID == "" {
 		return oauthClientCredentials{}, errors.New("OAuth client JSON must contain client_id")
 	}
+	if creds.Flow != "" {
+		flow, err := normalizeOAuthFlow(creds.Flow)
+		if err != nil {
+			return oauthClientCredentials{}, err
+		}
+		if flow != "auto" {
+			creds.Flow = flow
+		}
+	}
 	return creds, nil
+}
+
+func hasLoopbackRedirect(redirectURIs []string) bool {
+	for _, raw := range redirectURIs {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		host := strings.Trim(u.Hostname(), "[]")
+		if host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1" {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeOAuthScopes(scopes string) string {
@@ -697,6 +757,9 @@ func normalizeOAuthScopes(scopes string) string {
 }
 
 func runGoogleDeviceOAuth(ctx context.Context, client oauthClientCredentials, oauthScopes string) (adcCredentials, error) {
+	if strings.TrimSpace(client.ClientSecret) == "" {
+		return adcCredentials{}, errors.New("Google device-code OAuth requires a client_secret. Create a Google OAuth client with application type \"Desktop app\" and use Skirk's personal desktop flow, or use a TVs and Limited Input client only if Google provides its client secret.")
+	}
 	scopes := normalizeOAuthScopes(oauthScopes)
 	code, err := requestDeviceCode(ctx, client.ClientID, scopes)
 	if err != nil {

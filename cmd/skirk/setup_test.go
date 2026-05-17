@@ -16,7 +16,7 @@ func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
 		"needs a Google OAuth client",
 		"This app is blocked",
 		"SKIRK_OAUTH_CLIENT_ID",
-		"optionally SKIRK_OAUTH_CLIENT_SECRET",
+		"SKIRK_OAUTH_FLOW=desktop",
 		"--oauth-client-file",
 		"/tmp/adc.json",
 	} {
@@ -81,11 +81,12 @@ func TestResolveOAuthClientCredentialsUsesBuiltInWithoutFile(t *testing.T) {
 func TestResolveOAuthClientCredentialsAllowsEnvClientIDOnly(t *testing.T) {
 	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "env-client")
 	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "")
+	t.Setenv("SKIRK_OAUTH_FLOW", "desktop")
 	got, source, err := resolveOAuthClientCredentials("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ClientID != "env-client" || got.ClientSecret != "" || !strings.Contains(source, "SKIRK_OAUTH_CLIENT_ID") {
+	if got.ClientID != "env-client" || got.ClientSecret != "" || got.Flow != "desktop" || !strings.Contains(source, "SKIRK_OAUTH_CLIENT_ID") {
 		t.Fatalf("unexpected env client-id-only credentials: creds=%#v source=%q", got, source)
 	}
 }
@@ -116,8 +117,19 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ClientID != "client.apps.googleusercontent.com" || got.ClientSecret != "secret" {
+	if got.ClientID != "client.apps.googleusercontent.com" || got.ClientSecret != "secret" || got.Flow != "" {
 		t.Fatalf("unexpected OAuth client credentials: %#v", got)
+	}
+	desktopPath := filepath.Join(t.TempDir(), "desktop-oauth-client.json")
+	if err := os.WriteFile(desktopPath, []byte(`{"installed":{"client_id":"desktop.apps.googleusercontent.com","client_secret":"secret","redirect_uris":["http://localhost"]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = readOAuthClientCredentials(desktopPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "desktop.apps.googleusercontent.com" || got.ClientSecret != "secret" || got.Flow != "desktop" {
+		t.Fatalf("unexpected desktop OAuth client credentials: %#v", got)
 	}
 	idOnlyPath := filepath.Join(t.TempDir(), "id-only-oauth-client.json")
 	if err := os.WriteFile(idOnlyPath, []byte(`{"installed":{"client_id":"public-client.apps.googleusercontent.com"}}`), 0600); err != nil {
@@ -173,6 +185,9 @@ func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	if creds.ClientID != "client-id.apps.googleusercontent.com" || creds.ClientSecret != "client-secret" {
 		t.Fatalf("unexpected pasted credentials: %#v", creds)
 	}
+	if creds.Flow != "desktop" {
+		t.Fatalf("pasted credentials flow = %q, want desktop", creds.Flow)
+	}
 }
 
 func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
@@ -198,6 +213,9 @@ func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
 	if creds.ClientID != "client-id.apps.googleusercontent.com" || creds.ClientSecret != "" {
 		t.Fatalf("unexpected client-id-only pasted credentials: %#v", creds)
 	}
+	if creds.Flow != "desktop" {
+		t.Fatalf("client-id-only pasted credentials flow = %q, want desktop", creds.Flow)
+	}
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -207,19 +225,24 @@ func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
 	}
 }
 
-func TestDeviceTokenFormTreatsClientSecretAsOptional(t *testing.T) {
-	withoutSecret := deviceTokenForm(oauthClientCredentials{ClientID: "client-id"}, "device-code")
-	if got := withoutSecret.Get("client_id"); got != "client-id" {
+func TestDeviceOAuthRequiresClientSecret(t *testing.T) {
+	_, err := runGoogleDeviceOAuth(context.Background(), oauthClientCredentials{ClientID: "client-id"}, defaultCustomOAuthScopes)
+	if err == nil {
+		t.Fatal("expected device OAuth without client secret to fail before network")
+	}
+	if !strings.Contains(err.Error(), "client_secret") || !strings.Contains(err.Error(), "Desktop app") {
+		t.Fatalf("unexpected missing device secret error: %s", err)
+	}
+}
+
+func TestDeviceTokenFormIncludesClientSecret(t *testing.T) {
+	withSecret := deviceTokenForm(oauthClientCredentials{ClientID: "client-id", ClientSecret: "secret"}, "device-code")
+	if got := withSecret.Get("client_id"); got != "client-id" {
 		t.Fatalf("client_id = %q, want client-id", got)
 	}
-	if _, ok := withoutSecret["client_secret"]; ok {
-		t.Fatalf("client_secret should be omitted when empty: %v", withoutSecret)
-	}
-	if got := withoutSecret.Get("grant_type"); got != "urn:ietf:params:oauth:grant-type:device_code" {
+	if got := withSecret.Get("grant_type"); got != "urn:ietf:params:oauth:grant-type:device_code" {
 		t.Fatalf("grant_type = %q", got)
 	}
-
-	withSecret := deviceTokenForm(oauthClientCredentials{ClientID: "client-id", ClientSecret: "secret"}, "device-code")
 	if got := withSecret.Get("client_secret"); got != "secret" {
 		t.Fatalf("client_secret = %q, want secret", got)
 	}
@@ -250,6 +273,57 @@ func TestResolvePersonalOAuthDoesNotFallBackToBuiltIn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "personal OAuth mode needs") {
 		t.Fatalf("unexpected personal OAuth error: %s", err)
+	}
+}
+
+func TestResolveSetupOAuthFlow(t *testing.T) {
+	got, err := resolveSetupOAuthFlow("personal", "auto", oauthClientCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "desktop" {
+		t.Fatalf("personal auto flow = %q, want desktop", got)
+	}
+	got, err = resolveSetupOAuthFlow("easy", "auto", oauthClientCredentials{Flow: "device"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "device" {
+		t.Fatalf("easy built-in flow = %q, want device", got)
+	}
+	if _, err := resolveSetupOAuthFlow("easy", "desktop", oauthClientCredentials{}); err == nil {
+		t.Fatal("expected easy desktop flow to be rejected")
+	}
+}
+
+func TestDesktopOAuthHelpers(t *testing.T) {
+	verifier := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	challenge := pkceChallenge(verifier)
+	if challenge == "" || strings.ContainsAny(challenge, "+/=") {
+		t.Fatalf("PKCE challenge is not raw-url-safe base64: %q", challenge)
+	}
+	authURL := desktopOAuthURL("client-id", "scope-a scope-b", "http://127.0.0.1:49152/", "state-1", verifier)
+	for _, want := range []string{"https://accounts.google.com/o/oauth2/v2/auth?", "access_type=offline", "prompt=consent", "code_challenge_method=S256"} {
+		if !strings.Contains(authURL, want) {
+			t.Fatalf("desktop auth URL missing %q: %s", want, authURL)
+		}
+	}
+	code, err := parseOAuthRedirectInput("http://127.0.0.1:49152/?state=state-1&code=abc123", "state-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != "abc123" {
+		t.Fatalf("parsed code = %q, want abc123", code)
+	}
+	code, err = parseOAuthRedirectInput("4/0AbCdEf", "state-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != "4/0AbCdEf" {
+		t.Fatalf("raw code = %q", code)
+	}
+	if _, err := parseOAuthRedirectInput("http://127.0.0.1:49152/?state=stale&code=abc123", "state-1"); err == nil {
+		t.Fatal("expected stale state to fail")
 	}
 }
 

@@ -56,8 +56,9 @@ Create a kit and start the exit service:
 ```
 
 Interactive setup first lets you choose easy Skirk OAuth or a personal Google
-OAuth project. Setup then prints a Google URL plus a short code. Open the URL,
-enter the code in the browser, approve Drive access, and the terminal continues.
+OAuth project. Easy mode prints a Google device URL plus a short code; open the
+URL, enter the code in the browser, approve Drive access, and the terminal
+continues.
 On Linux, setup also installs/enables `skirk-exit.service` and starts the exit
 immediately. Use `--start-exit=false` if you only want the config files.
 
@@ -69,8 +70,10 @@ traffic is charged to their own project quota:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
-For personal OAuth, paste the Google client ID. If Google also shows a client
-secret, paste it too; newer public clients may only show a client ID.
+For personal OAuth, create a Google OAuth client with application type
+`Desktop app`, paste its client ID and client secret, approve the printed Google
+URL, then paste the redirected localhost URL back into the VPS terminal if the
+browser cannot reach it locally.
 
 This is the same operational model used by tools such as rclone: shared OAuth
 is convenient, personal OAuth isolates quota.

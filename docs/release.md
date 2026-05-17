@@ -39,7 +39,7 @@ ask users for `oauth-client.json`. The GitHub release workflow fails unless
 these repository secrets are configured before tagging:
 
 - `SKIRK_OAUTH_CLIENT_ID`
-- `SKIRK_OAUTH_CLIENT_SECRET` when Google provides one for the OAuth client
+- `SKIRK_OAUTH_CLIENT_SECRET`
 - `SKIRK_ANDROID_KEYSTORE_BASE64`
 - `SKIRK_ANDROID_KEYSTORE_PASSWORD`
 - `SKIRK_ANDROID_KEY_ALIAS`
@@ -49,11 +49,12 @@ Local release smoke builds can use the same variables:
 
 ```bash
 SKIRK_OAUTH_CLIENT_ID='...' \
+SKIRK_OAUTH_CLIENT_SECRET='...' \
 VERSION=vX.Y.Z make package-release
 ```
 
-`SKIRK_OAUTH_CLIENT_SECRET` is optional for public Google OAuth clients that
-only show a client ID.
+The built-in easy setup path uses Google's device-code OAuth flow. Google's
+token polling requires both the client ID and client secret for that flow.
 
 This writes:
 

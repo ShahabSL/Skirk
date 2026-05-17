@@ -99,7 +99,7 @@ Personal quota mode:
 - charges Drive API usage to that user's project quota instead of Skirk's shared
   project quota;
 - guides the user through creating a Google Cloud project, enabling Drive API,
-  configuring consent, and creating a `TVs and Limited Input devices` OAuth
+  configuring consent, and creating a `Desktop app` OAuth
   client:
 
 ```bash
@@ -112,6 +112,13 @@ Personal quota mode:
 This is the same pattern used by mature Drive tools such as rclone: a shared
 client is convenient for new users, while serious or high-volume users should
 bring their own OAuth client to avoid shared-project contention.
+
+Personal mode uses Google's desktop/native-app authorization flow. On a VPS,
+Skirk prints a Google approval URL; after approval the browser may land on a
+localhost URL that cannot load. Copy that full URL back into the terminal so
+Skirk can finish the token exchange. The Google `TVs and Limited Input devices`
+flow is reserved for easy built-in setup because Google's token polling requires
+a `client_secret`.
 
 Google Drive API project limits can be increased for some quota types from the
 Google Cloud Quotas page, but approval is not guaranteed. Google also enforces

@@ -70,7 +70,7 @@ func promptPersonalOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 	for {
 		printPersonalOAuthGuide(fallback)
 		fmt.Println("How do you want to provide the OAuth client?")
-		fmt.Println("1. Paste client ID and optional client secret")
+		fmt.Println("1. Paste Desktop app client ID and client secret")
 		fmt.Println("2. Use a downloaded OAuth client JSON file")
 		fmt.Println("3. Show these instructions again")
 		fmt.Println("0. Cancel")
@@ -116,28 +116,30 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println("   App name example: Skirk Personal")
 	fmt.Println("   Support email and developer contact: your Google email.")
 	fmt.Println("   Then open Audience/Test users and add the exact Google account")
-	fmt.Println("   you will use at google.com/device. This is required while")
+	fmt.Println("   you will use during Google approval. This is required while")
 	fmt.Println("   Publishing status is Testing.")
 	fmt.Println()
 	fmt.Println("4. Create the OAuth client")
 	fmt.Println("   Open: https://console.cloud.google.com/auth/clients")
 	fmt.Println("   Click Create client.")
-	fmt.Println("   Application type: TVs and Limited Input devices")
-	fmt.Println("   Name example: Skirk Personal Device")
+	fmt.Println("   Application type: Desktop app")
+	fmt.Println("   Name example: Skirk Personal Desktop")
 	fmt.Println("   Click Create.")
 	fmt.Println()
 	fmt.Println("5. Bring the client back to Skirk")
-	fmt.Println("   Easiest: copy the Client ID, plus Client secret if Google shows one,")
-	fmt.Println("   and paste them here. New public clients may show only a Client ID.")
+	fmt.Println("   Easiest: copy the Client ID and Client secret and paste them here.")
 	fmt.Println("   Alternative: download the JSON and save it as " + defaultPath + ".")
 	fmt.Println()
-	fmt.Println("Skirk will then open Google's device-code approval flow and generate the kit.")
+	fmt.Println("Skirk will print a Google approval URL. On a VPS, approve it in your")
+	fmt.Println("browser, then paste the redirected localhost URL back into this terminal.")
+	fmt.Println("Do not choose TVs and Limited Input devices for personal setup unless")
+	fmt.Println("Google also gives you a client secret and you explicitly use --oauth-flow device.")
 	fmt.Println()
 }
 
 func confirmPersonalOAuthConsentReady(ctx context.Context, reader *bufio.Reader) error {
 	fmt.Println()
-	fmt.Println("Before Skirk opens Google device approval:")
+	fmt.Println("Before Skirk opens Google approval:")
 	fmt.Println()
 	fmt.Println("Open: https://console.cloud.google.com/auth/audience")
 	fmt.Println()
@@ -151,7 +153,7 @@ func confirmPersonalOAuthConsentReady(ctx context.Context, reader *bufio.Reader)
 	fmt.Println("allowlist block goes away.")
 	fmt.Println()
 	fmt.Println("Do not add more scopes for this error. Skirk requests drive.file during")
-	fmt.Println("device login; this error is about OAuth app audience access.")
+	fmt.Println("Google login; this error is about OAuth app audience access.")
 	ready, err := promptYesNo(ctx, reader, "I added the account as a test user or published the app", false)
 	if err != nil {
 		return err
@@ -180,7 +182,7 @@ func promptExistingOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 
 		fmt.Printf("\n%s was not found.\n", path)
 		fmt.Println("1. Enter another JSON path")
-		fmt.Println("2. Paste client ID and optional client secret now")
+		fmt.Println("2. Paste Desktop app client ID and client secret now")
 		fmt.Println("3. Show setup instructions")
 		fmt.Println("0. Cancel")
 		choice, err := prompt(ctx, reader, "Missing OAuth JSON", "2")
@@ -213,7 +215,7 @@ func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbac
 	fmt.Println()
 	fmt.Println("Paste the values from the Google Cloud OAuth client page.")
 	fmt.Println("They are labels for your Google Cloud project; by themselves they do not grant Drive access.")
-	fmt.Println("If Google only shows a Client ID, leave the client secret blank.")
+	fmt.Println("Use application type \"Desktop app\". If Google only shows a Client ID, you probably created a TV/Limited Input client; create a Desktop app client instead.")
 	clientID, err := prompt(ctx, reader, "OAuth client ID", "")
 	if err != nil {
 		return "", err
@@ -229,6 +231,7 @@ func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbac
 	if !ok {
 		return "", errors.New("pasted OAuth client ID cannot be empty")
 	}
+	creds.Flow = "desktop"
 	savePath, err := prompt(ctx, reader, "Save OAuth client JSON as", fallbackPath)
 	if err != nil {
 		return "", err
@@ -259,6 +262,9 @@ func writeOAuthClientJSON(path string, creds oauthClientCredentials) error {
 	}
 	payload := map[string]any{
 		"installed": installed,
+	}
+	if strings.TrimSpace(creds.Flow) != "" {
+		payload["skirk_oauth_flow"] = strings.TrimSpace(creds.Flow)
 	}
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
