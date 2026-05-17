@@ -298,6 +298,131 @@ func startExitAfterSetup(ctx context.Context, exitPath, serviceName, serviceUser
 	return unit + " started", nil
 }
 
+func repairMailbox(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("repair-mailbox", flag.ExitOnError)
+	kitDir := fs.String("kit", "skirk-kit", "kit directory containing exit.json and client.json")
+	configPath := fs.String("config", "", "exit config path; defaults to <kit>/exit.json")
+	force := fs.Bool("force", false, "create a fresh mailbox even if the current mailbox validates")
+	startExit := fs.Bool("start-exit", false, "restart the exit service after rewriting the kit")
+	exitServiceName := fs.String("exit-service-name", defaultServiceName, "systemd service name used with --start-exit")
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	kit := strings.TrimSpace(*kitDir)
+	if kit == "" {
+		kit = "skirk-kit"
+	}
+	exitPath := strings.TrimSpace(*configPath)
+	if exitPath == "" {
+		exitPath = filepath.Join(kit, "exit.json")
+	}
+	exitCfg, err := skirk.LoadConfig(exitPath)
+	if err != nil {
+		return err
+	}
+
+	validationErr := validateDriveMailbox(ctx, exitCfg.Auth, exitCfg.Drive, exitCfg.Route.GoogleIP, exitCfg.SessionID)
+	if validationErr == nil && !*force {
+		result := map[string]any{
+			"result":  "ok",
+			"changed": false,
+			"message": "mailbox already validates",
+			"config":  exitPath,
+		}
+		if *jsonOut {
+			return printJSON(result)
+		}
+		fmt.Printf("Mailbox already validates for %s\n", exitPath)
+		return nil
+	}
+
+	folderName := "skirk-mailbox-" + exitCfg.SessionID
+	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route.GoogleIP, folderName, exitCfg.SessionID)
+	if err != nil {
+		return fmt.Errorf("repair mailbox failed after validation error (%v): %w", validationErr, err)
+	}
+
+	exitCfg.Drive = driveCfg
+	if err := writeJSONFile(exitPath, *exitCfg); err != nil {
+		return err
+	}
+
+	clientPath := filepath.Join(kit, "client.json")
+	clientTextPath := filepath.Join(kit, "client.skirk")
+	clientCommandPath := filepath.Join(kit, "client-command.txt")
+	clientUpdated := false
+	if _, statErr := os.Stat(clientPath); statErr == nil {
+		clientCfg, err := skirk.LoadConfig(clientPath)
+		if err != nil {
+			return err
+		}
+		if clientCfg.SessionID != exitCfg.SessionID || clientCfg.Secret != exitCfg.Secret {
+			return fmt.Errorf("client config %s does not match exit session/secret; refusing to rewrite it", clientPath)
+		}
+		clientCfg.Drive = driveCfg
+		if err := writeJSONFile(clientPath, *clientCfg); err != nil {
+			return err
+		}
+		clientText, err := skirk.EncodeConfigText(clientCfg)
+		if err != nil {
+			return err
+		}
+		if err := writeTextFile(clientTextPath, clientText+"\n"); err != nil {
+			return err
+		}
+		listen := strings.TrimSpace(clientCfg.Tunnel.Listen)
+		if listen == "" {
+			listen = "127.0.0.1:18080"
+		}
+		clientCommand := fmt.Sprintf("skirk serve-client --config '%s' --listen %s\n", clientText, listen)
+		if err := writeTextFile(clientCommandPath, clientCommand); err != nil {
+			return err
+		}
+		clientUpdated = true
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	runtimeStatus := ""
+	if *startExit {
+		if err := serviceCommand(ctx, []string{"restart", "--name", *exitServiceName}); err != nil {
+			return err
+		}
+		runtimeStatus = *exitServiceName + " restarted"
+	}
+
+	result := map[string]any{
+		"result":             "ok",
+		"changed":            true,
+		"previous_valid":     validationErr == nil,
+		"exit_config":        exitPath,
+		"client_config":      clientPath,
+		"client_updated":     clientUpdated,
+		"drive_folder_id":    folderID,
+		"validation_error":   "",
+		"exit_runtime":       runtimeStatus,
+		"client_config_text": clientTextPath,
+	}
+	if validationErr != nil {
+		result["validation_error"] = validationErr.Error()
+	}
+	if *jsonOut {
+		return printJSON(result)
+	}
+	fmt.Printf("Repaired Drive mailbox for %s\n", exitPath)
+	fmt.Printf("Data folder: %s\n", folderID)
+	if clientUpdated {
+		fmt.Printf("Updated client config: %s\n", clientPath)
+		fmt.Printf("Updated client text config: %s\n", clientTextPath)
+	}
+	if runtimeStatus != "" {
+		fmt.Printf("Exit runtime: %s\n", runtimeStatus)
+	}
+	return nil
+}
+
 func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
 	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
 	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
@@ -840,7 +965,7 @@ All generated client and exit configs contain Google refresh credentials and the
 
 ## Cleanup / Disconnect
 
-Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. To inspect old mailbox objects manually:
+Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. To inspect old mux objects manually:
 
 `+"```bash"+`
 skirk cleanup --config %s --older-than 2h
@@ -850,6 +975,12 @@ To delete those matched stale objects:
 
 `+"```bash"+`
 skirk cleanup --config %s --older-than 2h --delete
+`+"```"+`
+
+To empty every object in this Skirk mailbox, for example before deleting the kit:
+
+`+"```bash"+`
+skirk cleanup --config %s --all --older-than 1ns --delete --max-pages 20000
 `+"```"+`
 
 To revoke the embedded OAuth token:
@@ -873,7 +1004,7 @@ To immediately invalidate every config generated from this OAuth login, revoke t
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, serviceName)
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, serviceName)
 	return os.WriteFile(path, []byte(content), 0600)
 }
 

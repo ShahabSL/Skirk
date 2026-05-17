@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	stdtls "crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -22,6 +23,32 @@ type HTTPResult struct {
 	Status int
 	Body   []byte
 	Header http.Header
+}
+
+type GoogleAPIError struct {
+	Op      string
+	Status  int
+	Reason  string
+	Message string
+	Body    string
+}
+
+func (e *GoogleAPIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	reason := strings.TrimSpace(e.Reason)
+	if reason == "" {
+		reason = "unknown"
+	}
+	return fmt.Sprintf("%s failed status=%d reason=%s body=%q", e.Op, e.Status, reason, e.Body)
+}
+
+func (e *GoogleAPIError) IsStorageQuotaExceeded() bool {
+	if e == nil {
+		return false
+	}
+	return strings.EqualFold(e.Reason, "storageQuotaExceeded")
 }
 
 type GoogleHTTPClient struct {
@@ -371,5 +398,34 @@ func require2xx(result *HTTPResult, op string) error {
 	if len(body) > 500 {
 		body = body[:500]
 	}
-	return fmt.Errorf("%s failed status=%d body=%q", op, result.Status, body)
+	reason, message := googleAPIErrorDetails(result.Body)
+	return &GoogleAPIError{
+		Op:      op,
+		Status:  result.Status,
+		Reason:  reason,
+		Message: message,
+		Body:    body,
+	}
+}
+
+func googleAPIErrorDetails(body []byte) (string, string) {
+	var payload struct {
+		Error struct {
+			Status  string `json:"status"`
+			Message string `json:"message"`
+			Errors  []struct {
+				Reason string `json:"reason"`
+			} `json:"errors"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", ""
+	}
+	if len(payload.Error.Errors) > 0 && payload.Error.Errors[0].Reason != "" {
+		return payload.Error.Errors[0].Reason, payload.Error.Message
+	}
+	if payload.Error.Status != "" {
+		return payload.Error.Status, payload.Error.Message
+	}
+	return "", payload.Error.Message
 }

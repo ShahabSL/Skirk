@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -607,6 +608,82 @@ func TestDriveStoreCleanupDryRunDoesNotDelete(t *testing.T) {
 	}
 	if result.Matched != 1 || result.Deleted != 0 || deletes != 0 {
 		t.Fatalf("result = %+v deletes=%d, want dry-run match without delete", result, deletes)
+	}
+}
+
+func TestDriveStoreCleanupAllDeletesEveryMailboxObject(t *testing.T) {
+	var deleted []string
+	var queries []string
+	var mu sync.Mutex
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.Method {
+		case http.MethodGet:
+			query, err := url.ParseQuery(req.URL.RawQuery)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			queries = append(queries, query.Get("q"))
+			mu.Unlock()
+			return stringResponse(http.StatusOK, `{
+				"files":[
+					{"id":"mux-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"bench-id","name":"bench-drive/sample.bin","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
+					{"id":"setup-id","name":"setup/session/marker.json","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
+				]
+			}`), nil
+		case http.MethodDelete:
+			mu.Lock()
+			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/drive/v3/files/"))
+			mu.Unlock()
+			return stringResponse(http.StatusNoContent, ""), nil
+		default:
+			t.Fatalf("unexpected request method %s", req.Method)
+		}
+		return nil, nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	result, err := store.Cleanup(context.Background(), DriveCleanupOptions{
+		All:               true,
+		OlderThan:         0,
+		Now:               time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
+		DeleteConcurrency: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Prefix != "<all>" || result.Scanned != 3 || result.Matched != 3 || result.Deleted != 3 || result.Failed != 0 || result.MatchedSize != 60 {
+		t.Fatalf("cleanup all result = %+v, want every object deleted", result)
+	}
+	sort.Strings(deleted)
+	if strings.Join(deleted, ",") != "bench-id,mux-id,setup-id" {
+		t.Fatalf("deleted = %#v, want all object ids", deleted)
+	}
+	if len(queries) != 1 || !strings.Contains(queries[0], "trashed = false") || strings.Contains(queries[0], "name contains") {
+		t.Fatalf("cleanup all query = %#v, want all non-trashed objects", queries)
+	}
+}
+
+func TestDriveStoreCleanupReportsTruncatedList(t *testing.T) {
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusOK, `{
+			"nextPageToken":"next",
+			"files":[{"id":"old-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
+		}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	result, err := store.Cleanup(context.Background(), DriveCleanupOptions{
+		Prefix:    "muxv4/",
+		OlderThan: time.Hour,
+		Now:       time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
+		DryRun:    true,
+		MaxPages:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Truncated || result.Pages != 1 || result.Matched != 1 {
+		t.Fatalf("cleanup result = %+v, want truncated single-page match", result)
 	}
 }
 

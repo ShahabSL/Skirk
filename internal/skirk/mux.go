@@ -56,7 +56,9 @@ const (
 	muxProcessMaxRetries         = 8
 	muxUploadMaxRetries          = 8
 	muxStartupCatchup            = 30 * time.Second
-	muxListLookback              = 30 * time.Second
+	muxListLookback              = 8 * time.Second
+	muxRepairListLookback        = 30 * time.Second
+	muxFreshClassListPages       = 4
 	muxClosedStreamTTL           = 2 * time.Minute
 	muxRetryDelayMax             = 5 * time.Second
 	muxNormalStreamInflight      = 6
@@ -171,6 +173,10 @@ type driveMux struct {
 	listMu        sync.Mutex
 	listSince     time.Time
 	listPageToken string
+
+	priorityListMu        sync.Mutex
+	priorityListSince     time.Time
+	priorityListPageToken string
 
 	recvWake              chan struct{}
 	recvUrgent            chan muxObjectMeta
@@ -1417,6 +1423,10 @@ func (l *muxLane) runUploadLoop(ctx context.Context, priorityOnly bool) {
 					}
 					return
 				}
+				if isDriveStorageQuotaExceeded(err) {
+					l.failUploadBatch(ctx, frames, err, attempt)
+					break
+				}
 				if attempt >= muxUploadMaxRetries {
 					l.failUploadBatch(ctx, frames, err, attempt)
 					break
@@ -1462,6 +1472,11 @@ func (l *muxLane) failUploadBatch(ctx context.Context, frames []muxFrame, err er
 		closed[key] = struct{}{}
 		l.mux.terminalCloseStreamKey(ctx, key, "mux_upload_failed", []byte("mux_upload_failed"), true)
 	}
+}
+
+func isDriveStorageQuotaExceeded(err error) bool {
+	var googleErr *GoogleAPIError
+	return errors.As(err, &googleErr) && googleErr.IsStorageQuotaExceeded()
 }
 
 func (l *muxLane) receiveUploadBatch(ctx context.Context, priorityOnly bool, preferNormal bool) ([]muxFrame, bool) {
@@ -1663,6 +1678,20 @@ func (m *driveMux) pollDelay() time.Duration {
 
 func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 	prefix := m.recvPrefix()
+	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok {
+		if m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+			return m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
+		}, parseMuxObjectInfo, func() bool {
+			return m.hasListFreshPageTokenFor(&m.priorityListMu, &m.priorityListPageToken)
+		}, func(metas []muxObjectMeta) {
+			m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
+		}) {
+			return true
+		}
+		return m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_normal", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+			return m.listRecvMuxObjectsByClass(ctx, prefix, "/p1/", &m.listMu, &m.listSince, &m.listPageToken, true)
+		}, parseMuxObjectInfo, func() bool { return false }, m.rewindListSinceForMetas)
+	}
 	return m.pollMuxObjectsFromPrefix(ctx, prefix, m.discoverySource(), m.listRecvMuxObjects, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
 }
 
@@ -1770,6 +1799,46 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 	return m.listMuxObjectsByPrefix(ctx, prefix)
 }
 
+func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classNeedle string, mu *sync.Mutex, since *time.Time, pageToken *string, sliding bool) ([]ObjectInfo, error) {
+	store, ok := m.t.Data.(FreshListContainsPageStatusStore)
+	if !ok {
+		return m.listRecvMuxObjects(ctx, prefix)
+	}
+	if mu == nil || since == nil || pageToken == nil {
+		return nil, errors.New("mux class list cursor is nil")
+	}
+	cursor, cursorPageToken := m.listFreshCursorFor(mu, since, pageToken)
+	requestPageToken := cursorPageToken
+	if sliding {
+		requestPageToken = ""
+	}
+	result, err := store.ListFreshContainsPageStatus(ctx, []string{prefix, classNeedle}, cursor, requestPageToken, muxFreshClassListPages)
+	if err != nil && requestPageToken != "" && isDrivePageTokenRejected(err) {
+		m.clearListPageTokenFor(mu, pageToken)
+		if m.t != nil && m.t.Logger != nil {
+			m.t.Logger.Printf("mux list page token rejected role=%s direction=%s class=%s prefix=%s error=%s", m.role, directionName(m.recvDir), strings.Trim(classNeedle, "/"), muxShortName(prefix), errorSummary(err))
+		}
+		result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix, classNeedle}, cursor, "", muxFreshClassListPages)
+	}
+	switch {
+	case err != nil:
+	case !sliding && result.Truncated && result.NextPageToken != "":
+		m.setListPageTokenFor(mu, pageToken, result.NextPageToken)
+	case !sliding && (result.Truncated || result.Incomplete):
+		m.clearListPageTokenFor(mu, pageToken)
+	case sliding && !result.Incomplete:
+		m.advanceListSinceFor(result.Objects, mu, since, pageToken)
+	case sliding:
+		m.clearListPageTokenFor(mu, pageToken)
+	default:
+		m.advanceListSinceFor(result.Objects, mu, since, pageToken)
+	}
+	if err == nil && (result.Truncated || result.Incomplete) && m.t != nil && m.t.Logger != nil {
+		m.t.Logger.Printf("mux list fresh sliding role=%s direction=%s class=%s prefix=%s infos=%d since=%s truncated=%t incomplete=%t", m.role, directionName(m.recvDir), strings.Trim(classNeedle, "/"), muxShortName(prefix), len(result.Objects), cursor.Format(time.RFC3339Nano), result.Truncated, result.Incomplete)
+	}
+	return result.Objects, err
+}
+
 func (m *driveMux) listFreshSince() time.Time {
 	if m == nil {
 		return time.Time{}
@@ -1780,6 +1849,18 @@ func (m *driveMux) listFreshSince() time.Time {
 		return m.startedAt
 	}
 	return m.listSince
+}
+
+func (m *driveMux) listFreshSinceFor(mu *sync.Mutex, since *time.Time) time.Time {
+	if m == nil || mu == nil || since == nil {
+		return time.Time{}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if since.IsZero() {
+		return m.startedAt
+	}
+	return *since
 }
 
 func (m *driveMux) listFreshCursor() (time.Time, string) {
@@ -1795,6 +1876,19 @@ func (m *driveMux) listFreshCursor() (time.Time, string) {
 	return since, m.listPageToken
 }
 
+func (m *driveMux) listFreshCursorFor(mu *sync.Mutex, since *time.Time, pageToken *string) (time.Time, string) {
+	if m == nil || mu == nil || since == nil || pageToken == nil {
+		return time.Time{}, ""
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	cursor := *since
+	if cursor.IsZero() {
+		cursor = m.startedAt
+	}
+	return cursor, strings.TrimSpace(*pageToken)
+}
+
 func (m *driveMux) setListFreshPageToken(pageToken string) {
 	if m == nil {
 		return
@@ -1804,6 +1898,15 @@ func (m *driveMux) setListFreshPageToken(pageToken string) {
 	m.listMu.Unlock()
 }
 
+func (m *driveMux) setListPageTokenFor(mu *sync.Mutex, pageToken *string, value string) {
+	if m == nil || mu == nil || pageToken == nil {
+		return
+	}
+	mu.Lock()
+	*pageToken = strings.TrimSpace(value)
+	mu.Unlock()
+}
+
 func (m *driveMux) hasListFreshPageToken() bool {
 	if m == nil {
 		return false
@@ -1811,6 +1914,15 @@ func (m *driveMux) hasListFreshPageToken() bool {
 	m.listMu.Lock()
 	defer m.listMu.Unlock()
 	return strings.TrimSpace(m.listPageToken) != ""
+}
+
+func (m *driveMux) hasListFreshPageTokenFor(mu *sync.Mutex, pageToken *string) bool {
+	if m == nil || mu == nil || pageToken == nil {
+		return false
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	return strings.TrimSpace(*pageToken) != ""
 }
 
 func (m *driveMux) advanceListSince(infos []ObjectInfo) {
@@ -1827,6 +1939,31 @@ func (m *driveMux) advanceListSince(infos []ObjectInfo) {
 	}
 	m.listPageToken = ""
 	m.listMu.Unlock()
+}
+
+func (m *driveMux) advanceListSinceFor(infos []ObjectInfo, mu *sync.Mutex, since *time.Time, pageToken *string) {
+	if m == nil || len(infos) == 0 || mu == nil || since == nil || pageToken == nil {
+		return
+	}
+	next := m.nextListSince(infos)
+	if next.IsZero() {
+		return
+	}
+	mu.Lock()
+	if since.IsZero() || next.After(*since) {
+		*since = next
+	}
+	*pageToken = ""
+	mu.Unlock()
+}
+
+func (m *driveMux) clearListPageTokenFor(mu *sync.Mutex, pageToken *string) {
+	if m == nil || mu == nil || pageToken == nil {
+		return
+	}
+	mu.Lock()
+	*pageToken = ""
+	mu.Unlock()
 }
 
 func (m *driveMux) rewindListSinceForMetas(metas []muxObjectMeta) {
@@ -1866,7 +2003,7 @@ func (m *driveMux) listSinceTargetForMetas(metas []muxObjectMeta) time.Time {
 	if oldest.IsZero() {
 		return m.startedAt
 	}
-	target := oldest.Add(-muxListLookback)
+	target := oldest.Add(-muxRepairListLookback)
 	if !m.startedAt.IsZero() && target.Before(m.startedAt) {
 		return m.startedAt
 	}
@@ -2703,7 +2840,7 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 			cleanup.Data(task.name, task.id)
 		}
 		tasks = tasks[:0]
-		cleanup.flushAsyncAfter(0)
+		cleanup.flushAsyncAfter(0, force)
 	}
 	for {
 		select {
@@ -2713,7 +2850,7 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 		case task := <-m.cleanupQueue:
 			tasks = append(tasks, task)
 			if len(tasks) >= deferredCleanupFlushThreshold {
-				flush(false)
+				flush(true)
 			}
 		case <-ticker.C:
 			flush(false)
@@ -2838,10 +2975,13 @@ func (m *driveMux) downloadMuxObjectOnce(ctx context.Context, meta muxObjectMeta
 }
 
 func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectMeta, hedgeWon *atomic.Bool) ([]byte, error) {
+	slotStarted := time.Now()
 	release, err := m.t.acquireDownloadSlotBytes(ctx, meta.Priority)
 	if err != nil {
 		return nil, err
 	}
+	slotWait := time.Since(slotStarted)
+	started := time.Now()
 	opCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(meta.normalReceiveBytes(), meta.Priority, m.t.RouteProxy != ""))
 	var sealed []byte
 	if meta.ID != "" {
@@ -2853,12 +2993,17 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 	} else {
 		sealed, err = m.t.Data.Get(opCtx, meta.Name)
 	}
+	duration := time.Since(started)
 	cancel()
 	releaseErr := err
 	if hedgeWon != nil && hedgeWon.Load() && errors.Is(err, context.Canceled) {
 		releaseErr = nil
 	}
 	release(releaseErr, int64(len(sealed)))
+	if m.t.Observe && m.t.Logger != nil {
+		target, targetID := m.streamObserveTarget(meta.key())
+		m.t.Logger.Printf("mux download role=%s direction=%s lane=%d seq=%d priority=%t stream=%016x target=%s target_id=%s plain_bytes=%d sealed_bytes=%d slot_wait=%s get_duration=%s duration=%s object=%s error=%s", m.role, directionName(m.recvDir), meta.Lane, meta.Seq, meta.Priority, meta.StreamID, target, targetID, meta.PlainBytes, len(sealed), slotWait.Round(time.Millisecond), duration.Round(time.Millisecond), (slotWait + duration).Round(time.Millisecond), muxShortName(meta.Name), errorSummary(err))
+	}
 	return sealed, err
 }
 

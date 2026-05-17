@@ -221,10 +221,11 @@ starts `wireproxy.service`, and defaults `SKIRK_EXIT_PROXY` to that local SOCKS
 listener. `SKIRK_ACCEPT_WARP_TOS=1` makes the WARP registration noninteractive.
 
 `serve-exit` starts a mailbox janitor automatically. It removes stale mux
-transport objects older than 24 hours. Override with:
+transport, benchmark, and setup-marker objects older than 2 minutes. Override
+with:
 
 ```bash
-SKIRK_JANITOR_OLDER_THAN=6h skirk serve-exit --config skirk-kit/exit.json
+SKIRK_JANITOR_OLDER_THAN=6h SKIRK_JANITOR_INTERVAL=1h skirk serve-exit --config skirk-kit/exit.json
 SKIRK_DISABLE_JANITOR=1 skirk serve-exit --config skirk-kit/exit.json
 ```
 
@@ -352,6 +353,20 @@ Clean a specific prefix:
 skirk cleanup --config skirk-kit/exit.json --prefix muxv4/ --older-than 1s --delete
 ```
 
+Empty every object in this Skirk mailbox:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
+```
+
+If the configured Drive mailbox folder was deleted or the logs show
+`drive_not_found`, create a replacement folder, rewrite the local kit, and
+restart the exit service:
+
+```bash
+skirk repair-mailbox --kit skirk-kit --start-exit
+```
+
 ## Disconnect Or Revoke
 
 Stop the client and exit processes first.
@@ -371,7 +386,7 @@ skirk revoke --config skirk-kit/exit.json --revoke-oauth
 Delete stale Drive mailbox objects and then remove local generated files:
 
 ```bash
-skirk cleanup --config skirk-kit/exit.json --older-than 0s --delete
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
 ```
 
 ```bash

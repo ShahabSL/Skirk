@@ -24,7 +24,7 @@ func uninstallCommand(ctx context.Context, args []string) error {
 	binary := fs.Bool("binary", true, "remove the installed skirk binary")
 	binPath := fs.String("bin", defaultUninstallBinaryPath(), "installed skirk binary path")
 	configPath := fs.String("config", "skirk-kit/exit.json", "exit config path used for Drive cleanup or OAuth revoke")
-	deleteDrive := fs.Bool("delete-drive", false, "delete current Drive mailbox objects before revoking or deleting local files")
+	deleteDrive := fs.Bool("delete-drive", false, "delete Drive mailbox objects before revoking or deleting local files")
 	revokeOAuth := fs.Bool("revoke-oauth", false, "revoke the Google OAuth token embedded in the exit config")
 	deleteKit := fs.Bool("delete-kit", false, "delete the generated local kit directory")
 	kitDir := fs.String("kit", "skirk-kit", "generated kit directory to delete when --delete-kit is set")
@@ -72,7 +72,7 @@ func uninstallCommand(ctx context.Context, args []string) error {
 		}
 	}
 	if *deleteDrive {
-		if err := cleanup(ctx, []string{"--config", *configPath, "--older-than", "1ns", "--delete"}); err != nil {
+		if err := cleanup(ctx, []string{"--config", *configPath, "--all", "--older-than", "1ns", "--delete", "--max-pages", "20000"}); err != nil {
 			return fmt.Errorf("delete Drive mailbox objects: %w", err)
 		}
 	}

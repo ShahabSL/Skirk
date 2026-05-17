@@ -97,7 +97,7 @@ func menu(ctx context.Context) error {
 				return err
 			}
 			if deleteDrive {
-				if err := cleanup(ctx, []string{"--config", config, "--older-than", "1ns", "--delete"}); err != nil {
+				if err := cleanup(ctx, []string{"--config", config, "--all", "--older-than", "1ns", "--delete", "--max-pages", "20000"}); err != nil {
 					return err
 				}
 			}

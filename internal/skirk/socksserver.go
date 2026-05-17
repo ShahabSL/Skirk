@@ -184,7 +184,7 @@ func (s *SOCKSServer) serveUDPInTCP(ctx context.Context, control net.Conn) error
 			return err
 		}
 		if packet.Port != 53 {
-			continue
+			return fmt.Errorf("udp-in-tcp non-dns target refused: %s:%d", packet.Host, packet.Port)
 		}
 		response, err := answerDNSQuery(packet.Payload)
 		if err != nil {
@@ -242,7 +242,7 @@ func (s *SOCKSServer) serveUDPAssociate(ctx context.Context, control net.Conn) e
 			continue
 		}
 		if packet.Port != 53 {
-			continue
+			return fmt.Errorf("udp non-dns target refused: %s:%d", packet.Host, packet.Port)
 		}
 		response, err := answerDNSQuery(packet.Payload)
 		if err != nil {
@@ -422,19 +422,21 @@ func answerDNSQuery(query []byte) ([]byte, error) {
 	response = append(response, query[12:questionEnd]...)
 
 	var answers [][]byte
-	if qtype == 1 || qtype == 28 {
+	if qtype == 28 {
+		// The Drive transport and exit dialer are tuned around IPv4-first
+		// target selection. Returning no AAAA records keeps VPN-mode apps from
+		// opening literal IPv6 sockets that bypass the exit's family policy.
+		return response, nil
+	}
+	if qtype == 1 {
 		ips, lookupErr := net.LookupIP(strings.TrimSuffix(name, "."))
 		if lookupErr != nil {
 			response[3] = response[3]&0xf0 | 0x03
 			return response, nil
 		}
 		for _, ip := range ips {
-			if qtype == 1 {
-				if ip4 := ip.To4(); ip4 != nil {
-					answers = append(answers, ip4)
-				}
-			} else if ip16 := ip.To16(); ip16 != nil && ip.To4() == nil {
-				answers = append(answers, ip16)
+			if ip4 := ip.To4(); ip4 != nil {
+				answers = append(answers, ip4)
 			}
 		}
 	}

@@ -231,7 +231,8 @@ connectivity.
 ## Cleanup And Disconnect
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts an
-automatic janitor that deletes stale mux transport objects older than 24 hours.
+automatic janitor every minute that deletes stale Skirk transport objects older
+than 2 minutes.
 
 Manual cleanup is dry-run by default:
 
@@ -243,6 +244,19 @@ Actually delete matching stale objects:
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+```
+
+Empty every object in the configured Skirk mailbox:
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
+```
+
+If the Drive mailbox folder was deleted or the exit reports `drive_not_found`,
+repair the kit and restart the exit service:
+
+```bash
+skirk repair-mailbox --kit skirk-kit --start-exit
 ```
 
 Revoke the OAuth token embedded in a generated config:

@@ -30,6 +30,7 @@ type DriveStore struct {
 
 const driveListPageSize = "100"
 const driveListMaxPages = 16
+const driveMuxFreshListMaxPages = 4
 const defaultDriveCleanupMaxPages = 256
 const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 2 * time.Second
@@ -38,6 +39,7 @@ const driveFolderMimeType = "application/vnd.google-apps.folder"
 
 type DriveCleanupOptions struct {
 	Prefix            string
+	All               bool
 	OlderThan         time.Duration
 	Now               time.Time
 	DryRun            bool
@@ -54,6 +56,8 @@ type DriveCleanupResult struct {
 	Deleted     int       `json:"deleted"`
 	Failed      int       `json:"failed"`
 	MatchedSize int64     `json:"matched_size"`
+	Pages       int       `json:"pages,omitempty"`
+	Truncated   bool      `json:"truncated,omitempty"`
 	Errors      []string  `json:"errors,omitempty"`
 }
 
@@ -425,7 +429,7 @@ func (d *DriveStore) ListFreshStatus(ctx context.Context, prefix string, since t
 }
 
 func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
-	info, err := d.listContainsFresh(ctx, prefix, since, pageToken)
+	info, err := d.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, driveListMaxPages)
 	if err != nil {
 		return ObjectListInfo{}, err
 	}
@@ -542,9 +546,12 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 	return infos, nil
 }
 
-func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
+func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	if maxPages <= 0 {
+		maxPages = driveMuxFreshListMaxPages
+	}
 	values := url.Values{}
-	query := d.containsQuery([]string{prefix})
+	query := d.containsQuery(contains)
 	if !since.IsZero() {
 		query += fmt.Sprintf(" and modifiedTime >= '%s'", escapeDriveQuery(since.UTC().Format(time.RFC3339Nano)))
 	}
@@ -559,9 +566,19 @@ func (d *DriveStore) listContainsFresh(ctx context.Context, prefix string, since
 		values.Set("spaces", "appDataFolder")
 	}
 	var infos []ObjectInfo
-	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", driveListMaxPages, func(payload driveListPayload) (bool, error) {
+	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
-			if !strings.Contains(item.Name, prefix) {
+			matched := true
+			for _, value := range contains {
+				if strings.TrimSpace(value) == "" {
+					continue
+				}
+				if !strings.Contains(item.Name, value) {
+					matched = false
+					break
+				}
+			}
+			if !matched {
 				continue
 			}
 			if !since.IsZero() && item.ModifiedTime != "" {
@@ -647,11 +664,11 @@ func (d *DriveStore) DeleteIDs(ctx context.Context, fileIDs []string, concurrenc
 
 func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
 	prefix := strings.TrimSpace(opts.Prefix)
-	if prefix == "" {
+	if prefix == "" && !opts.All {
 		return DriveCleanupResult{}, fmt.Errorf("cleanup prefix is required")
 	}
-	if opts.OlderThan <= 0 {
-		return DriveCleanupResult{}, fmt.Errorf("cleanup older-than must be positive")
+	if opts.OlderThan < 0 {
+		return DriveCleanupResult{}, fmt.Errorf("cleanup older-than must be non-negative")
 	}
 	now := opts.Now
 	if now.IsZero() {
@@ -662,8 +679,12 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 	if maxPages <= 0 {
 		maxPages = defaultDriveCleanupMaxPages
 	}
+	resultPrefix := prefix
+	if opts.All {
+		resultPrefix = "<all>"
+	}
 	result := DriveCleanupResult{
-		Prefix: prefix,
+		Prefix: resultPrefix,
 		Cutoff: cutoff.UTC(),
 		DryRun: opts.DryRun,
 	}
@@ -672,17 +693,21 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 	}
 	var candidates []candidate
 	values := url.Values{}
-	values.Set("q", d.containsQuery([]string{prefix}))
+	var contains []string
+	if !opts.All {
+		contains = []string{prefix}
+	}
+	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime asc")
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
 	}
-	err := d.eachFilesPageUntilLimit(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
+	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
 			result.Scanned++
-			if !strings.HasPrefix(item.Name, prefix) {
+			if !opts.All && !strings.HasPrefix(item.Name, prefix) {
 				continue
 			}
 			updated, err := time.Parse(time.RFC3339Nano, item.ModifiedTime)
@@ -699,6 +724,8 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 		}
 		return true, nil
 	})
+	result.Pages = status.Pages
+	result.Truncated = status.Truncated || status.Incomplete
 	if err != nil {
 		return result, err
 	}

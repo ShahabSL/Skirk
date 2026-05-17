@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.1.40 - 2026-05-17
+
 - Added `skirk service` and expanded the operator menu for setup, systemd
   service lifecycle, Drive cleanup, OAuth revocation, and local kit deletion.
 - Stopped new setup runs from launching the blocked default Google Cloud SDK
@@ -25,6 +27,12 @@
 - Added Drive Mux v4 documentation as the single production transport.
 - Added docs for exit-side proxy forwarding, mailbox janitor cleanup, live
   benchmarks, quota telemetry, and Drive Changes based discovery.
+- Hardened Android VPN mode around the proven Drive transport flags, IPv4-only
+  routing, TCP fallback for app media traffic, and real-device Reels plus bulk
+  download validation.
+- Added SOCKS DNS/UDP tests covering AAAA suppression and non-DNS UDP refusal.
+- Switched Android release assets from debug APKs to release-signed APKs and
+  added GitHub artifact attestations for published release archives/APK.
 - Updated setup docs around one-line `skirk:` profiles, `serve-client`,
   `serve-exit`, custom OAuth setup, and Drive mailbox folders.
 - Removed stale references to alternate runtime control lanes and visible Drive

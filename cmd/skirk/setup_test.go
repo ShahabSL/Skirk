@@ -293,6 +293,7 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 		"skirk service install --config skirk-kit/exit.json --name skirk-exit",
 		"skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080",
 		"skirk cleanup --config skirk-kit/exit.json --older-than 2h",
+		"skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000",
 		"skirk revoke --config skirk-kit/exit.json --revoke-oauth",
 		"skirk uninstall --yes --name skirk-exit",
 	} {

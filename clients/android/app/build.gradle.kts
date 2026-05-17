@@ -8,7 +8,17 @@ val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
-val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.39").get()
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.40").get()
+val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
+val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("SKIRK_ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("SKIRK_ANDROID_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
 
 val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     group = "build"
@@ -110,11 +120,32 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 39
+        versionCode = 40
         versionName = skirkAppVersion
 
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            isShrinkResources = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

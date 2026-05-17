@@ -106,24 +106,26 @@ class SkirkVpnService : VpnService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Keep the VPN IPv4-only until Skirk can apply the same exit-side
+        // DNS/family policy to literal IPv6 targets produced by app stacks.
         val builder = Builder()
             .setSession("Skirk")
             .setMtu(DEFAULT_MTU)
             .addAddress(TUN_IPV4_ADDRESS, 30)
-            .addAddress(TUN_IPV6_ADDRESS, 128)
             .addRoute("0.0.0.0", 0)
-            .addRoute("::", 0)
             .addDnsServer(MAP_DNS_ADDRESS)
             .setConfigureIntent(configureIntent)
 
         addLocalNetworkExclusions(builder)
         runCatching { builder.addDisallowedApplication(packageName) }
-            .onFailure { Log.w(TAG, "Could not exclude Skirk app from its VPN route", it) }
+            .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             builder.setUnderlyingNetworks(underlyingNetworks)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            builder.setMetered(false)
+            // A Drive-backed VPN should look expensive to apps so media clients
+            // avoid aggressive prefetch and bitrate choices under whole-device mode.
+            builder.setMetered(true)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             builder.setBlocking(true)
@@ -171,7 +173,6 @@ class SkirkVpnService : VpnService() {
             tunnel:
               mtu: $DEFAULT_MTU
               ipv4: $TUN_IPV4_ADDRESS
-              ipv6: '$TUN_IPV6_ADDRESS'
 
             socks5:
               address: 127.0.0.1
@@ -284,7 +285,6 @@ class SkirkVpnService : VpnService() {
         private const val NOTIFICATION_ID = 1908
         private const val DEFAULT_MTU = 1280
         private const val TUN_IPV4_ADDRESS = "198.18.0.1"
-        private const val TUN_IPV6_ADDRESS = "fd7a:736b:6972:6b::1"
         private const val MAP_DNS_ADDRESS = "198.18.0.2"
         fun start(context: Context, profile: ClientProfile) {
             val intent = Intent(context, SkirkVpnService::class.java)

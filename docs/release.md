@@ -40,6 +40,10 @@ these repository secrets are configured before tagging:
 
 - `SKIRK_OAUTH_CLIENT_ID`
 - `SKIRK_OAUTH_CLIENT_SECRET`
+- `SKIRK_ANDROID_KEYSTORE_BASE64`
+- `SKIRK_ANDROID_KEYSTORE_PASSWORD`
+- `SKIRK_ANDROID_KEY_ALIAS`
+- `SKIRK_ANDROID_KEY_PASSWORD`
 
 Local release smoke builds can use the same variables:
 
@@ -61,9 +65,16 @@ Client release assets are built by GitHub Actions:
 - Windows portable desktop zip (`Skirk_windows_x64_portable.zip`) for normal GUI use.
 - Windows CLI zip (`skirk-windows-amd64.zip`) for manual PowerShell use. This
   asset is not the desktop app.
+- Android arm64 APK (`skirk-android-arm64.apk`) for sideload testing. This is
+  signed with the Skirk Android release keystore configured in GitHub secrets.
 
-The Android workflow validates that a debug APK still builds, but debug-signed
-APKs are not uploaded as public release assets.
+The workflow publishes SHA-256 checksums and GitHub artifact attestations for
+the APK and archives. Verify a downloaded asset with:
+
+```bash
+gh attestation verify ./skirk-android-arm64.apk -R ShahabSL/Skirk
+sha256sum -c SHA256SUMS
+```
 
 ## Publish
 
@@ -88,9 +99,16 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SK
 
 ## Android Signing
 
-Debug APKs are for local sideload testing only. A production Android release
-must use a release keystore through GitHub Actions secrets and publish a signed
-APK or AAB.
+The Android release workflow builds `assembleRelease`, verifies the APK with
+`apksigner verify --print-certs`, and uploads the signed APK. Rotate the
+keystore only deliberately; changing Android signing keys means existing
+sideload users cannot update in place without uninstalling first.
+
+Current Android release signing certificate SHA-256:
+
+```text
+45c73cd055ad189ff421e4bd84facbc2512ab26e505aed4b0d867ee6e9c347cf
+```
 
 ## Operational Validation
 
@@ -116,6 +134,7 @@ Manual cleanup dry-run:
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
 ```
 
 OAuth revocation:

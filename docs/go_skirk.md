@@ -113,9 +113,9 @@ priority over deleting old objects.
 
 `serve-exit` also starts a janitor:
 
-- default age: 24 hours;
-- default interval: 6 hours;
-- prefixes: mux transport object prefixes.
+- default age: 2 minutes;
+- default interval: 1 minute;
+- prefixes: mux transport, Drive benchmark, and setup marker prefixes.
 
 Environment controls:
 
@@ -130,6 +130,13 @@ Manual cleanup:
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
+```
+
+If the mailbox folder was deleted, repair the kit and restart the service:
+
+```bash
+skirk repair-mailbox --kit skirk-kit --start-exit
 ```
 
 ## Validation

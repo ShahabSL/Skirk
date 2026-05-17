@@ -81,6 +81,10 @@ type FreshListPageStatusStore interface {
 	ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error)
 }
 
+type FreshListContainsPageStatusStore interface {
+	ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error)
+}
+
 type ChangeFeedStore interface {
 	ChangesStartPageToken(ctx context.Context) (string, error)
 	ListChanges(ctx context.Context, pageToken string, includeRemoved bool) (ChangeListInfo, error)

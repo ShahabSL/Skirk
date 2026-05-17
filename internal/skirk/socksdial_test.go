@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,6 +124,72 @@ func TestSOCKSRejectsMappedDNSOverTLSProbe(t *testing.T) {
 	}
 }
 
+func TestSOCKSUDPInTCPRejectsNonDNSPackets(t *testing.T) {
+	socks := SOCKSServer{Listen: "127.0.0.1:0"}
+	listener, err := net.Listen("tcp", socks.Listen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		socks.Listen = addr
+		_ = socks.Serve(ctx)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatal(err)
+	}
+	methodReply := make([]byte, 2)
+	if _, err := io.ReadFull(conn, methodReply); err != nil {
+		t.Fatal(err)
+	}
+	request := []byte{0x05, socksCommandUDPInTCP, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	if _, err := conn.Write(request); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply[1] != 0x00 {
+		t.Fatalf("udp-in-tcp reply = 0x%02x, want success before per-packet refusal", reply[1])
+	}
+	if _, err := conn.Write(buildUDPInTCPFrame("example.com", 443, []byte("quic"))); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 1)
+	if n, err := conn.Read(buf); err == nil || n != 0 {
+		t.Fatalf("non-DNS udp-in-tcp packet kept session open: n=%d err=%v", n, err)
+	}
+}
+
+func TestSOCKSDNSAAAAQueriesReturnNoAnswers(t *testing.T) {
+	response, err := answerDNSQuery(dnsQuestion("example.com", 28))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response) < 12 {
+		t.Fatalf("short dns response: %d bytes", len(response))
+	}
+	if rcode := response[3] & 0x0f; rcode != 0 {
+		t.Fatalf("AAAA response rcode = %d, want noerror/nodata", rcode)
+	}
+	if answers := binary.BigEndian.Uint16(response[6:8]); answers != 0 {
+		t.Fatalf("AAAA answers = %d, want 0", answers)
+	}
+}
+
 func TestDialViaHTTPConnectProxy(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -212,4 +279,16 @@ func TestDialViaHTTPConnectProxy(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("proxy did not see CONNECT target")
 	}
+}
+
+func dnsQuestion(name string, qtype uint16) []byte {
+	msg := []byte{0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(name, ".") {
+		msg = append(msg, byte(len(label)))
+		msg = append(msg, label...)
+	}
+	msg = append(msg, 0)
+	msg = binary.BigEndian.AppendUint16(msg, qtype)
+	msg = binary.BigEndian.AppendUint16(msg, 1)
+	return msg
 }

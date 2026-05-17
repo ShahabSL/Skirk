@@ -3444,7 +3444,7 @@ func TestMuxPollRewindsFreshCursorWhenNormalEnqueueBackpressured(t *testing.T) {
 	if !mux.pollMuxObjects(context.Background()) {
 		t.Fatal("poll should report the enqueued priority object")
 	}
-	want := olderUpdated.Add(-muxListLookback)
+	want := olderUpdated.Add(-muxRepairListLookback)
 	if got := mux.listFreshSince(); !got.Equal(want) {
 		t.Fatalf("list since = %s, want rewind to %s after blocked enqueue", got, want)
 	}
@@ -3523,9 +3523,84 @@ func TestMuxReceiveGapRepairRewindsFreshCursor(t *testing.T) {
 	if !mux.enqueueNormalMuxObject(ctx, meta) {
 		t.Fatal("enqueue failed")
 	}
-	want := updated.Add(-muxListLookback)
+	want := updated.Add(-muxRepairListLookback)
 	if got := mux.listFreshSince(); !got.Equal(want) {
 		t.Fatalf("list since = %s, want enqueue-time repair rewind to %s", got, want)
+	}
+}
+
+func TestMuxPollSplitsPriorityAndNormalFreshLists(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	priorityName := muxObjectName(sid, DirectionDown, clientID, runID, "epoch-a", 1, 0, 1, 1, 1, 1, 128, true)
+	normalName := muxObjectName(sid, DirectionDown, clientID, runID, "epoch-a", 2, 0, 2, 1, 1, 1, muxMinBatch, false)
+	updated := startedAt.Add(2 * time.Minute).Format(time.RFC3339Nano)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		priority:    ObjectListInfo{Objects: []ObjectInfo{{Name: priorityName, Updated: updated}}},
+		normal:      ObjectListInfo{Objects: []ObjectInfo{{Name: normalName, Updated: updated}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = startedAt
+	mux.priorityListSince = startedAt
+
+	if !mux.pollMuxObjects(context.Background()) {
+		t.Fatal("priority poll should enqueue a p0 object")
+	}
+	if got := len(mux.recvUrgent); got != 1 {
+		t.Fatalf("urgent queue = %d, want 1", got)
+	}
+	if len(store.calls) != 1 || !containsString(store.calls[0].contains, "/p0/") {
+		t.Fatalf("first list call = %#v, want priority class filter", store.calls)
+	}
+
+	if !mux.pollMuxObjects(context.Background()) {
+		t.Fatal("normal poll should enqueue a p1 object after priority is known")
+	}
+	if got := len(mux.recvNormalFlows); got != 1 {
+		t.Fatalf("normal flow count = %d, want 1", got)
+	}
+	if len(store.calls) < 3 || !containsString(store.calls[2].contains, "/p1/") {
+		t.Fatalf("third list call = %#v, want normal class filter after priority scan", store.calls)
+	}
+}
+
+func TestMuxClassFreshListAdvancesSlidingCursorWhenTruncated(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	newest := startedAt.Add(2 * time.Minute)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		normal: ObjectListInfo{
+			Objects:   []ObjectInfo{{Name: "muxv4/demo/down/client/run/epoch/p1/s0000000000000001/l00/0000000000000001.f1.b65536", Updated: newest.Format(time.RFC3339Nano)}},
+			Truncated: true,
+		},
+	}
+	mux := &driveMux{
+		t:         &Tunnel{Data: store},
+		startedAt: startedAt,
+		listSince: startedAt,
+	}
+	if _, err := mux.listRecvMuxObjectsByClass(context.Background(), "muxv4/demo/down/client/run/", "/p1/", &mux.listMu, &mux.listSince, &mux.listPageToken, true); err != nil {
+		t.Fatal(err)
+	}
+	want := newest.Add(-muxListLookback)
+	if got := mux.listFreshSince(); !got.Equal(want) {
+		t.Fatalf("list since = %s, want sliding cursor %s after truncated class list", got, want)
+	}
+	if mux.hasListFreshPageToken() {
+		t.Fatal("class sliding list should not keep a stale page token")
 	}
 }
 
@@ -3575,6 +3650,39 @@ func (s *freshStatusStore) ListFreshStatus(context.Context, string, time.Time) (
 func (s *freshStatusStore) ListFreshPageStatus(_ context.Context, _ string, _ time.Time, pageToken string) (ObjectListInfo, error) {
 	s.pageCalls = append(s.pageCalls, pageToken)
 	return s.result, s.err
+}
+
+type classFreshStatusCall struct {
+	contains  []string
+	pageToken string
+	maxPages  int
+}
+
+type classFreshStatusStore struct {
+	*MemoryStore
+	priority ObjectListInfo
+	normal   ObjectListInfo
+	calls    []classFreshStatusCall
+}
+
+func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, contains []string, _ time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	s.calls = append(s.calls, classFreshStatusCall{contains: append([]string(nil), contains...), pageToken: pageToken, maxPages: maxPages})
+	if containsString(contains, "/p0/") {
+		return s.priority, nil
+	}
+	if containsString(contains, "/p1/") {
+		return s.normal, nil
+	}
+	return ObjectListInfo{}, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMuxProcessFailureBackoffDoesNotImmediateRequeue(t *testing.T) {

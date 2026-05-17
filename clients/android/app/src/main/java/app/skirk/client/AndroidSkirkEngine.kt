@@ -1,6 +1,7 @@
 package app.skirk.client
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import java.io.File
 import java.net.InetSocketAddress
@@ -142,9 +143,21 @@ class AndroidSkirkEngine(
             routeMode,
             "--poll-ms",
             "100",
+            "--burst-poll",
+            "--burst-poll-ms",
+            "25",
+            "--burst-poll-window-ms",
+            "10000",
+            "--upload-concurrency",
+            "16",
+            "--download-concurrency",
+            "32",
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )
+        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            args += "--observe"
+        }
         return args
     }
 

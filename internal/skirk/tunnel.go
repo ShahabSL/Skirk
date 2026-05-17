@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -143,6 +144,25 @@ func errorSummary(err error) string {
 	if err == nil {
 		return "none"
 	}
+	var googleErr *GoogleAPIError
+	if errors.As(err, &googleErr) {
+		reason := strings.ToLower(strings.TrimSpace(googleErr.Reason))
+		switch reason {
+		case "storagequotaexceeded":
+			return "storage_quota_exceeded"
+		case "notfound":
+			return "drive_not_found"
+		case "insufficientscopes":
+			return "insufficient_scopes"
+		case "ratelimitexceeded", "userratelimitexceeded":
+			return "drive_rate_limited"
+		case "":
+			return "drive_status_" + strconv.Itoa(googleErr.Status)
+		default:
+			reason = strings.NewReplacer("-", "_", " ", "_").Replace(reason)
+			return "drive_" + reason
+		}
+	}
 	return sanitizeTransportErrorText(err.Error())
 }
 
@@ -153,6 +173,8 @@ func sanitizeTransportErrorText(text string) string {
 		return ""
 	case strings.Contains(lower, "context canceled"):
 		return "context_canceled"
+	case strings.Contains(lower, "storagequotaexceeded"):
+		return "storage_quota_exceeded"
 	case strings.Contains(lower, "deadline exceeded") || strings.Contains(lower, "i/o timeout") || strings.Contains(lower, "timeout"):
 		return "timeout"
 	case strings.Contains(lower, "connection refused"):
@@ -807,11 +829,11 @@ func (c *deferredCleanup) add(task cleanupTask) {
 	}
 	c.tasks = append(c.tasks, task)
 	if len(c.tasks) >= deferredCleanupFlushThreshold {
-		c.flushAsyncAfter(0)
+		c.flushAsyncAfter(0, true)
 	}
 }
 
-func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
+func (c *deferredCleanup) flushAsyncAfter(delay time.Duration, force bool) {
 	if c == nil || c.t == nil || len(c.tasks) == 0 {
 		return
 	}
@@ -822,8 +844,10 @@ func (c *deferredCleanup) flushAsyncAfter(delay time.Duration) {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
-		tunnel.waitForCleanupQuiet(context.Background())
-		workers := 1
+		if !force {
+			tunnel.waitForCleanupQuiet(context.Background())
+		}
+		workers := 2
 		jobs := make(chan cleanupTask)
 		var wg sync.WaitGroup
 		for i := 0; i < workers; i++ {

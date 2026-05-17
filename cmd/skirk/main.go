@@ -47,7 +47,7 @@ func main() {
 func run(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	signals := make(chan os.Signal, 2)
-	signal.Notify(signals, os.Interrupt)
+	signal.Notify(signals, shutdownSignals()...)
 	defer signal.Stop(signals)
 	defer cancel()
 	go func() {
@@ -79,6 +79,8 @@ func run(args []string) error {
 		return revoke(ctx, args[2:])
 	case "cleanup":
 		return cleanup(ctx, args[2:])
+	case "repair-mailbox":
+		return repairMailbox(ctx, args[2:])
 	case "config":
 		return configCommand(args[2:])
 	case "service":
@@ -117,6 +119,8 @@ func usage() {
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
+  cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete
+  repair-mailbox --kit skirk-kit [--start-exit]
   service install --config skirk-kit/exit.json [--name skirk-exit]
   service status|start|stop|restart|uninstall [--name skirk-exit]
   uninstall --dry-run
@@ -207,7 +211,8 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/<session>/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/")
+	all := fs.Bool("all", false, "delete/list every non-trashed object in the configured Skirk Drive mailbox")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")
@@ -215,21 +220,29 @@ func cleanup(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, drive, err := load(*configPath)
+	_, drive, err := load(*configPath)
 	if err != nil {
 		return err
 	}
-	cleanupPrefixes := []string{strings.TrimSpace(*prefix)}
-	if cleanupPrefixes[0] == "" {
-		if strings.TrimSpace(cfg.SessionID) == "" {
-			return fmt.Errorf("config session_id is required when --prefix is not set")
+	if *all {
+		if strings.TrimSpace(*prefix) != "" {
+			return fmt.Errorf("--all cannot be combined with --prefix")
 		}
-		sid, err := skirk.ParseSessionID(cfg.SessionID)
+		result, err := drive.Cleanup(ctx, skirk.DriveCleanupOptions{
+			All:               true,
+			OlderThan:         *olderThan,
+			DryRun:            !*deleteObjects,
+			DeleteConcurrency: *concurrency,
+			MaxPages:          *maxPages,
+		})
 		if err != nil {
 			return err
 		}
-		session := skirk.SessionString(sid)
-		cleanupPrefixes = []string{"muxv4/" + session + "/"}
+		return printJSON(result)
+	}
+	cleanupPrefixes := []string{strings.TrimSpace(*prefix)}
+	if cleanupPrefixes[0] == "" {
+		cleanupPrefixes = []string{"muxv4/"}
 	}
 	results := make([]skirk.DriveCleanupResult, 0, len(cleanupPrefixes))
 	for _, cleanupPrefix := range cleanupPrefixes {
@@ -396,10 +409,10 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 24 * time.Hour
-const mailboxJanitorDefaultInterval = 6 * time.Hour
+const mailboxJanitorDefaultOlderThan = 2 * time.Minute
+const mailboxJanitorDefaultInterval = time.Minute
 
-var mailboxJanitorPrefixes = []string{"muxv4/"}
+var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
@@ -431,8 +444,8 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
 			Prefix:            prefix,
 			OlderThan:         olderThan,
-			DeleteConcurrency: 4,
-			MaxPages:          1000,
+			DeleteConcurrency: 8,
+			MaxPages:          20000,
 		})
 		cancel()
 		if err != nil {
@@ -440,8 +453,8 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 			continue
 		}
 		if result.Matched > 0 || result.Deleted > 0 || result.Failed > 0 {
-			log.Printf("mailbox janitor prefix=%s older_than=%s scanned=%d matched=%d deleted=%d failed=%d bytes=%d",
-				prefix, olderThan, result.Scanned, result.Matched, result.Deleted, result.Failed, result.MatchedSize)
+			log.Printf("mailbox janitor prefix=%s older_than=%s scanned=%d matched=%d deleted=%d failed=%d bytes=%d pages=%d truncated=%t",
+				prefix, olderThan, result.Scanned, result.Matched, result.Deleted, result.Failed, result.MatchedSize, result.Pages, result.Truncated)
 		}
 	}
 }
