@@ -68,7 +68,7 @@ jobs:
         run: |
           mkdir -p dist/android
           cp clients/android/app/build/outputs/apk/debug/app-debug.apk dist/android/skirk-android-arm64.apk
-          sha256sum dist/android/skirk-android-arm64.apk > dist/android/skirk-android-arm64.apk.sha256
+          (cd dist/android && sha256sum skirk-android-arm64.apk > skirk-android-arm64.apk.sha256)
 
       - uses: actions/upload-artifact@v4
         with:
