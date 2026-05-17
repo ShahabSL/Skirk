@@ -144,12 +144,12 @@ jobs:
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $commit = "${env:GITHUB_SHA}".Substring(0, 7)
           $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
-          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET)) {
-            throw "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET"
+          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and -not $env:SKIRK_OAUTH_CLIENT_ID) {
+            throw "release builds require SKIRK_OAUTH_CLIENT_ID; SKIRK_OAUTH_CLIENT_SECRET is optional for public OAuth clients"
           }
           if ($env:SKIRK_OAUTH_CLIENT_ID -or $env:SKIRK_OAUTH_CLIENT_SECRET) {
-            if (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET) {
-              throw "SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together"
+            if (-not $env:SKIRK_OAUTH_CLIENT_ID) {
+              throw "SKIRK_OAUTH_CLIENT_ID must be set when SKIRK_OAUTH_CLIENT_SECRET is set"
             }
             $ldflags = "$ldflags -X main.defaultOAuthClientID=$env:SKIRK_OAUTH_CLIENT_ID -X main.defaultOAuthClientSecret=$env:SKIRK_OAUTH_CLIENT_SECRET"
           }

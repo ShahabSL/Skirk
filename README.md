@@ -69,6 +69,9 @@ traffic is charged to their own project quota:
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
+For personal OAuth, paste the Google client ID. If Google also shows a client
+secret, paste it too; newer public clients may only show a client ID.
+
 This is the same operational model used by tools such as rclone: shared OAuth
 is convenient, personal OAuth isolates quota.
 

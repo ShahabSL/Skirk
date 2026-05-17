@@ -16,7 +16,7 @@ func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
 		"needs a Google OAuth client",
 		"This app is blocked",
 		"SKIRK_OAUTH_CLIENT_ID",
-		"SKIRK_OAUTH_CLIENT_SECRET",
+		"optionally SKIRK_OAUTH_CLIENT_SECRET",
 		"--oauth-client-file",
 		"/tmp/adc.json",
 	} {
@@ -78,15 +78,27 @@ func TestResolveOAuthClientCredentialsUsesBuiltInWithoutFile(t *testing.T) {
 	}
 }
 
-func TestResolveOAuthClientCredentialsRejectsPartialEnv(t *testing.T) {
+func TestResolveOAuthClientCredentialsAllowsEnvClientIDOnly(t *testing.T) {
 	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "env-client")
 	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "")
+	got, source, err := resolveOAuthClientCredentials("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "env-client" || got.ClientSecret != "" || !strings.Contains(source, "SKIRK_OAUTH_CLIENT_ID") {
+		t.Fatalf("unexpected env client-id-only credentials: creds=%#v source=%q", got, source)
+	}
+}
+
+func TestResolveOAuthClientCredentialsRejectsSecretOnlyEnv(t *testing.T) {
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "")
+	t.Setenv("SKIRK_OAUTH_CLIENT_SECRET", "env-secret")
 	_, _, err := resolveOAuthClientCredentials("")
 	if err == nil {
-		t.Fatal("expected partial env credential error")
+		t.Fatal("expected secret-only env credential error")
 	}
-	if !strings.Contains(err.Error(), "client_secret") {
-		t.Fatalf("partial env error should mention client_secret: %s", err)
+	if !strings.Contains(err.Error(), "client_id") {
+		t.Fatalf("secret-only env error should mention client_id: %s", err)
 	}
 }
 
@@ -107,6 +119,17 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 	if got.ClientID != "client.apps.googleusercontent.com" || got.ClientSecret != "secret" {
 		t.Fatalf("unexpected OAuth client credentials: %#v", got)
 	}
+	idOnlyPath := filepath.Join(t.TempDir(), "id-only-oauth-client.json")
+	if err := os.WriteFile(idOnlyPath, []byte(`{"installed":{"client_id":"public-client.apps.googleusercontent.com"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = readOAuthClientCredentials(idOnlyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClientID != "public-client.apps.googleusercontent.com" || got.ClientSecret != "" {
+		t.Fatalf("unexpected client-id-only OAuth client credentials: %#v", got)
+	}
 	badPath := filepath.Join(t.TempDir(), "bad-oauth-client.json")
 	if err := os.WriteFile(badPath, []byte(`{"installed":{"client_secret":"secret"}}`), 0600); err != nil {
 		t.Fatal(err)
@@ -115,8 +138,8 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid OAuth client file error")
 	}
-	if !strings.Contains(err.Error(), "client_id") || !strings.Contains(err.Error(), "client_secret") {
-		t.Fatalf("invalid OAuth error should mention client_id and client_secret: %s", err)
+	if !strings.Contains(err.Error(), "client_id") {
+		t.Fatalf("invalid OAuth error should mention client_id: %s", err)
 	}
 }
 
@@ -149,6 +172,56 @@ func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	}
 	if creds.ClientID != "client-id.apps.googleusercontent.com" || creds.ClientSecret != "client-secret" {
 		t.Fatalf("unexpected pasted credentials: %#v", creds)
+	}
+}
+
+func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-client.json")
+	input := strings.Join([]string{
+		"1", // paste credentials
+		"client-id.apps.googleusercontent.com",
+		"", // no client secret shown by Google
+		"", // save to default path
+		"",
+	}, "\n")
+	gotPath, err := promptPersonalOAuthClientFile(context.Background(), bufio.NewReader(strings.NewReader(input)), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != path {
+		t.Fatalf("path = %q, want %q", gotPath, path)
+	}
+	creds, err := readOAuthClientCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.ClientID != "client-id.apps.googleusercontent.com" || creds.ClientSecret != "" {
+		t.Fatalf("unexpected client-id-only pasted credentials: %#v", creds)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "client_secret") {
+		t.Fatalf("client-id-only OAuth JSON should omit client_secret:\n%s", string(body))
+	}
+}
+
+func TestDeviceTokenFormTreatsClientSecretAsOptional(t *testing.T) {
+	withoutSecret := deviceTokenForm(oauthClientCredentials{ClientID: "client-id"}, "device-code")
+	if got := withoutSecret.Get("client_id"); got != "client-id" {
+		t.Fatalf("client_id = %q, want client-id", got)
+	}
+	if _, ok := withoutSecret["client_secret"]; ok {
+		t.Fatalf("client_secret should be omitted when empty: %v", withoutSecret)
+	}
+	if got := withoutSecret.Get("grant_type"); got != "urn:ietf:params:oauth:grant-type:device_code" {
+		t.Fatalf("grant_type = %q", got)
+	}
+
+	withSecret := deviceTokenForm(oauthClientCredentials{ClientID: "client-id", ClientSecret: "secret"}, "device-code")
+	if got := withSecret.Get("client_secret"); got != "secret" {
+		t.Fatalf("client_secret = %q, want secret", got)
 	}
 }
 

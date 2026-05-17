@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.1.44 - 2026-05-17
+
+- Allowed personal Google OAuth clients to use a client ID without a client
+  secret, matching Google's public-client behavior.
+- Updated setup docs, wizard prompts, and release build checks so client
+  secrets are used when available but are not required.
+
 ## v0.1.43 - 2026-05-17
 
 - Removed the release publish job's `actions/download-artifact` dependency and

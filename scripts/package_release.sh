@@ -8,13 +8,13 @@ dist="${DIST_DIR:-dist}"
 ldflags="-s -w -X main.version=$version -X main.commit=$commit -X main.date=$date"
 oauth_client_id="${SKIRK_OAUTH_CLIENT_ID:-}"
 oauth_client_secret="${SKIRK_OAUTH_CLIENT_SECRET:-}"
-if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH:-0}" = "1" ] && { [ -z "$oauth_client_id" ] || [ -z "$oauth_client_secret" ]; }; then
-  echo "error: release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET" >&2
+if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH:-0}" = "1" ] && [ -z "$oauth_client_id" ]; then
+  echo "error: release builds require SKIRK_OAUTH_CLIENT_ID; SKIRK_OAUTH_CLIENT_SECRET is optional for public OAuth clients" >&2
   exit 1
 fi
 if [ -n "$oauth_client_id" ] || [ -n "$oauth_client_secret" ]; then
-  if [ -z "$oauth_client_id" ] || [ -z "$oauth_client_secret" ]; then
-    echo "error: SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together" >&2
+  if [ -z "$oauth_client_id" ]; then
+    echo "error: SKIRK_OAUTH_CLIENT_ID must be set when SKIRK_OAUTH_CLIENT_SECRET is set" >&2
     exit 1
   fi
   ldflags="$ldflags -X main.defaultOAuthClientID=$oauth_client_id -X main.defaultOAuthClientSecret=$oauth_client_secret"

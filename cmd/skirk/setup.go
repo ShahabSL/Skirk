@@ -579,7 +579,7 @@ func driveOAuthClientRequiredError(credsPath string, cause error) error {
 	}
 	return fmt.Errorf("Google Drive setup needs a Google OAuth client.\n"+
 		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
-		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET, or pass --oauth-client-file for testing.\n"+
+		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID, optionally SKIRK_OAUTH_CLIENT_SECRET, or pass --oauth-client-file for testing.\n"+
 		"Current ADC path was %s; original credential error: %w", credsPath, cause)
 }
 
@@ -599,7 +599,11 @@ func resolveOAuthClientCredentialsForMode(path string, allowBuiltIn bool) (oauth
 		if err != nil {
 			return oauthClientCredentials{}, "", err
 		}
-		return creds, "the OAuth client configured in SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET", nil
+		source := "the OAuth client configured in SKIRK_OAUTH_CLIENT_ID"
+		if strings.TrimSpace(creds.ClientSecret) != "" {
+			source += "/SKIRK_OAUTH_CLIENT_SECRET"
+		}
+		return creds, source, nil
 	}
 	if allowBuiltIn {
 		if creds, ok, err := builtInOAuthClient(); err != nil || ok {
@@ -617,7 +621,7 @@ func resolveOAuthClientCredentialsForMode(path string, allowBuiltIn bool) (oauth
 		return creds, "the OAuth client file oauth-client.json", nil
 	}
 	if !allowBuiltIn {
-		return oauthClientCredentials{}, "", errors.New("personal OAuth mode needs --oauth-client-file, oauth-client.json, or SKIRK_OAUTH_CLIENT_ID/SKIRK_OAUTH_CLIENT_SECRET")
+		return oauthClientCredentials{}, "", errors.New("personal OAuth mode needs --oauth-client-file, oauth-client.json, or SKIRK_OAUTH_CLIENT_ID")
 	}
 	return oauthClientCredentials{}, "", nil
 }
@@ -636,8 +640,8 @@ func oauthClientFromPair(clientID, clientSecret, source string) (oauthClientCred
 	if clientID == "" && clientSecret == "" {
 		return oauthClientCredentials{}, false, nil
 	}
-	if clientID == "" || clientSecret == "" {
-		return oauthClientCredentials{}, true, fmt.Errorf("%s must provide both client_id and client_secret", source)
+	if clientID == "" {
+		return oauthClientCredentials{}, true, fmt.Errorf("%s must provide client_id when client_secret is set", source)
 	}
 	return oauthClientCredentials{ClientID: clientID, ClientSecret: clientSecret}, true, nil
 }
@@ -663,8 +667,10 @@ func readOAuthClientCredentials(path string) (oauthClientCredentials, error) {
 	if raw.Web != nil && creds.ClientID == "" {
 		creds = *raw.Web
 	}
-	if strings.TrimSpace(creds.ClientID) == "" || strings.TrimSpace(creds.ClientSecret) == "" {
-		return oauthClientCredentials{}, errors.New("OAuth client JSON must contain client_id and client_secret")
+	creds.ClientID = strings.TrimSpace(creds.ClientID)
+	creds.ClientSecret = strings.TrimSpace(creds.ClientSecret)
+	if creds.ClientID == "" {
+		return oauthClientCredentials{}, errors.New("OAuth client JSON must contain client_id")
 	}
 	return creds, nil
 }
@@ -763,11 +769,7 @@ func pollDeviceToken(ctx context.Context, client oauthClientCredentials, code de
 			return deviceTokenResponse{}, ctx.Err()
 		case <-time.After(interval):
 		}
-		values := url.Values{}
-		values.Set("client_id", strings.TrimSpace(client.ClientID))
-		values.Set("client_secret", strings.TrimSpace(client.ClientSecret))
-		values.Set("device_code", code.DeviceCode)
-		values.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+		values := deviceTokenForm(client, code.DeviceCode)
 		var out deviceTokenResponse
 		err := postOAuthForm(ctx, "https://oauth2.googleapis.com/token", values, &out)
 		if err == nil && out.RefreshToken != "" {
@@ -788,6 +790,17 @@ func pollDeviceToken(ctx context.Context, client oauthClientCredentials, code de
 		}
 		return out, errors.New("device token response did not include a refresh token")
 	}
+}
+
+func deviceTokenForm(client oauthClientCredentials, deviceCode string) url.Values {
+	values := url.Values{}
+	values.Set("client_id", strings.TrimSpace(client.ClientID))
+	if secret := strings.TrimSpace(client.ClientSecret); secret != "" {
+		values.Set("client_secret", secret)
+	}
+	values.Set("device_code", deviceCode)
+	values.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+	return values
 }
 
 func deviceTokenError(out deviceTokenResponse) error {

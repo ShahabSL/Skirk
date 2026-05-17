@@ -44,9 +44,9 @@ Google blocks the default Google Cloud SDK OAuth client when a third-party app
 requests Drive scopes. That is the browser page that says "This app is blocked".
 Skirk therefore does not launch the default `gcloud` Drive-scope login for new
 credentials. Official release builds use Skirk's OAuth client directly. Source
-or development builds can set `SKIRK_OAUTH_CLIENT_ID` and
-`SKIRK_OAUTH_CLIENT_SECRET`, pass `--oauth-client-file`, or pass `--adc` with
-credentials you created yourself.
+or development builds can set `SKIRK_OAUTH_CLIENT_ID`, optionally
+`SKIRK_OAUTH_CLIENT_SECRET` when Google provides one, pass
+`--oauth-client-file`, or pass `--adc` with credentials you created yourself.
 
 Run setup from an interactive terminal. For SSH, use `ssh -tt -p PORT user@host`
 if the server does not allocate a TTY by default.
@@ -112,7 +112,8 @@ To create a personal Skirk OAuth client:
    that do not expire after the testing window.
 4. Add your Google account as a test user if the app is in testing mode.
 5. Create an OAuth client ID for `TVs and Limited Input devices`.
-6. Download the client JSON as `oauth-client.json`.
+6. Download the client JSON as `oauth-client.json`, or copy the client ID.
+   Google may not show a client secret for newer public clients; that is normal.
 
 Then run:
 
@@ -133,9 +134,10 @@ The personal OAuth wizard prints the exact Google Cloud pages to open:
 3. Configure the OAuth consent screen and add your Google account as a test user
    if the app stays in testing mode.
 4. Create an OAuth client with application type `TVs and Limited Input devices`.
-5. Paste the client ID and client secret into Skirk, or download the JSON.
+5. Paste the client ID into Skirk. If Google also shows a client secret, paste
+   it too; otherwise leave the secret blank. You can also download the JSON.
 
-If you paste the client ID and secret, setup writes the ignored local
+If you paste the client ID and optional secret, setup writes the ignored local
 `oauth-client.json` file for you.
 
 If Google shows `Access blocked` and says the app is currently being tested,
@@ -149,9 +151,11 @@ Or set environment variables for local builds:
 
 ```bash
 SKIRK_OAUTH_CLIENT_ID='...' \
-SKIRK_OAUTH_CLIENT_SECRET='...' \
 "$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
 ```
+
+Set `SKIRK_OAUTH_CLIENT_SECRET` as well only when the Google client page or
+downloaded JSON includes one.
 
 If Google blocks your OAuth client, enable the Google Drive API, configure the
 OAuth consent screen, add the signing-in Google account as a test user while the

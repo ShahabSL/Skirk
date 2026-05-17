@@ -70,7 +70,7 @@ func promptPersonalOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 	for {
 		printPersonalOAuthGuide(fallback)
 		fmt.Println("How do you want to provide the OAuth client?")
-		fmt.Println("1. Paste client ID and client secret")
+		fmt.Println("1. Paste client ID and optional client secret")
 		fmt.Println("2. Use a downloaded OAuth client JSON file")
 		fmt.Println("3. Show these instructions again")
 		fmt.Println("0. Cancel")
@@ -127,7 +127,8 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println("   Click Create.")
 	fmt.Println()
 	fmt.Println("5. Bring the client back to Skirk")
-	fmt.Println("   Easiest: copy the Client ID and Client secret and paste them here.")
+	fmt.Println("   Easiest: copy the Client ID, plus Client secret if Google shows one,")
+	fmt.Println("   and paste them here. New public clients may show only a Client ID.")
 	fmt.Println("   Alternative: download the JSON and save it as " + defaultPath + ".")
 	fmt.Println()
 	fmt.Println("Skirk will then open Google's device-code approval flow and generate the kit.")
@@ -179,7 +180,7 @@ func promptExistingOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 
 		fmt.Printf("\n%s was not found.\n", path)
 		fmt.Println("1. Enter another JSON path")
-		fmt.Println("2. Paste client ID and client secret now")
+		fmt.Println("2. Paste client ID and optional client secret now")
 		fmt.Println("3. Show setup instructions")
 		fmt.Println("0. Cancel")
 		choice, err := prompt(ctx, reader, "Missing OAuth JSON", "2")
@@ -212,11 +213,12 @@ func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbac
 	fmt.Println()
 	fmt.Println("Paste the values from the Google Cloud OAuth client page.")
 	fmt.Println("They are labels for your Google Cloud project; by themselves they do not grant Drive access.")
+	fmt.Println("If Google only shows a Client ID, leave the client secret blank.")
 	clientID, err := prompt(ctx, reader, "OAuth client ID", "")
 	if err != nil {
 		return "", err
 	}
-	clientSecret, err := prompt(ctx, reader, "OAuth client secret", "")
+	clientSecret, err := prompt(ctx, reader, "OAuth client secret (optional)", "")
 	if err != nil {
 		return "", err
 	}
@@ -225,7 +227,7 @@ func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbac
 		return "", err
 	}
 	if !ok {
-		return "", errors.New("pasted OAuth client ID and secret cannot both be empty")
+		return "", errors.New("pasted OAuth client ID cannot be empty")
 	}
 	savePath, err := prompt(ctx, reader, "Save OAuth client JSON as", fallbackPath)
 	if err != nil {
@@ -249,11 +251,14 @@ func writeOAuthClientJSON(path string, creds oauthClientCredentials) error {
 			return err
 		}
 	}
+	installed := map[string]string{
+		"client_id": creds.ClientID,
+	}
+	if strings.TrimSpace(creds.ClientSecret) != "" {
+		installed["client_secret"] = creds.ClientSecret
+	}
 	payload := map[string]any{
-		"installed": map[string]string{
-			"client_id":     creds.ClientID,
-			"client_secret": creds.ClientSecret,
-		},
+		"installed": installed,
 	}
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
