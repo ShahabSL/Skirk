@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.1.48 - 2026-05-18
+
+- Added versioned Android APK release naming and pinned installer version
+  arguments.
+- Added menu actions for updating Skirk and configuring exit outbound proxy,
+  including optional WARP wireproxy setup.
+- Simplified Android status hierarchy so the app shows one primary connection
+  state and keeps the version visible without repeating status labels.
+
 ## v0.1.47 - 2026-05-17
 
 - Added Drive-wide quota backoff so 403/429 rate-limit responses stop poll,
