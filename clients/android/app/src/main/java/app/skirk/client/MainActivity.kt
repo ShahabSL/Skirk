@@ -17,7 +17,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +51,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -81,6 +82,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -164,6 +166,7 @@ fun ConfigScreen() {
     var logText by remember { mutableStateOf(readSkirkLogs(context, connectionState.mode)) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
     var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
+    var importExpanded by remember { mutableStateOf(profiles.isEmpty()) }
 
     fun refreshConnectionState() {
         val raw = connectionStore.read()
@@ -262,6 +265,45 @@ fun ConfigScreen() {
         selectedMode = selected?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
         proxyShareLan = selected?.shareLan ?: false
     }
+    LaunchedEffect(profiles.isEmpty()) {
+        if (profiles.isEmpty()) {
+            importExpanded = true
+        }
+    }
+
+    fun pasteProfileFromClipboard() {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+        importError = ""
+    }
+
+    fun importProfile() {
+        try {
+            val port = socksPort.toIntOrNull()
+                ?.let { ClientProfile.validateSocksPort(it) }
+                ?: error("Local SOCKS port is required")
+            val profile = ClientProfile.fromRawConfig(
+                name = profileName,
+                rawConfig = rawConfig,
+                socksPort = port,
+                shareLan = false,
+                connectionMode = ClientProfile.CONNECTION_MODE_VPN,
+            )
+            store.saveProfile(profile)
+            rawConfig = ""
+            importError = ""
+            selectedMode = profile.connectionMode
+            proxyShareLan = false
+            importExpanded = false
+            message = "Imported ${profile.name}"
+            refresh()
+        } catch (error: Exception) {
+            val nextError = error.message ?: "Import failed"
+            importError = nextError
+            message = nextError
+            Toast.makeText(context, nextError, Toast.LENGTH_LONG).show()
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -288,18 +330,12 @@ fun ConfigScreen() {
                         Column {
                             Text("Skirk", fontWeight = FontWeight.SemiBold)
                             Text(
-                                "${if (running) "Connected" else "Ready"} v${BuildConfig.VERSION_NAME}",
+                                "v${BuildConfig.VERSION_NAME}",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelMedium,
                             )
                         }
                     }
-                },
-                actions = {
-                    StatusPill(
-                        text = if (running) "Running" else "Stopped",
-                        modifier = Modifier.padding(end = 12.dp),
-                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -316,6 +352,25 @@ fun ConfigScreen() {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (profiles.isEmpty()) {
+                item {
+                    ImportPanel(
+                        profileName = profileName,
+                        socksPort = socksPort,
+                        rawConfig = rawConfig,
+                        importError = importError,
+                        onProfileNameChange = { profileName = it },
+                        onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
+                        onRawConfigChange = {
+                            rawConfig = it
+                            importError = ""
+                        },
+                        onPaste = ::pasteProfileFromClipboard,
+                        onImport = ::importProfile,
+                    )
+                }
+            }
+
             item {
                 ConnectionPanel(
                     selected = selected,
@@ -336,50 +391,27 @@ fun ConfigScreen() {
                 )
             }
 
-            item {
-                ImportPanel(
-                    profileName = profileName,
-                    socksPort = socksPort,
-                    rawConfig = rawConfig,
-                    importError = importError,
-                    onProfileNameChange = { profileName = it },
-                    onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
-                    onRawConfigChange = {
-                        rawConfig = it
-                        importError = ""
-                    },
-                    onPaste = {
-                        val clipboard = context.getSystemService(ClipboardManager::class.java)
-                        rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-                        importError = ""
-                    },
-                    onImport = {
-                        try {
-                            val port = socksPort.toIntOrNull()
-                                ?.let { ClientProfile.validateSocksPort(it) }
-                                ?: error("Local SOCKS port is required")
-                            val profile = ClientProfile.fromRawConfig(
-                                name = profileName,
-                                rawConfig = rawConfig,
-                                socksPort = port,
-                                shareLan = false,
-                                connectionMode = ClientProfile.CONNECTION_MODE_VPN,
-                            )
-                            store.saveProfile(profile)
-                            rawConfig = ""
-                            importError = ""
-                            selectedMode = profile.connectionMode
-                            proxyShareLan = false
-                            message = "Imported ${profile.name}"
-                            refresh()
-                        } catch (error: Exception) {
-                            val nextError = error.message ?: "Import failed"
-                            importError = nextError
-                            message = nextError
-                            Toast.makeText(context, nextError, Toast.LENGTH_LONG).show()
-                        }
-                    },
-                )
+            if (!profiles.isEmpty()) {
+                item {
+                    if (importExpanded) {
+                        ImportPanel(
+                            profileName = profileName,
+                            socksPort = socksPort,
+                            rawConfig = rawConfig,
+                            importError = importError,
+                            onProfileNameChange = { profileName = it },
+                            onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
+                            onRawConfigChange = {
+                                rawConfig = it
+                                importError = ""
+                            },
+                            onPaste = ::pasteProfileFromClipboard,
+                            onImport = ::importProfile,
+                        )
+                    } else {
+                        AddProfilePanel(onExpand = { importExpanded = true })
+                    }
+                }
             }
 
             item {
@@ -434,6 +466,7 @@ private fun ConnectionPanel(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
+    val uiState = connectionUiState(running, selected, message)
     Panel {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -442,17 +475,22 @@ private fun ConnectionPanel(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = connectionHeadline(running, selected),
+                    text = uiState.title,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = connectionDetail(running, selected, message),
+                    text = connectionDetail(
+                        state = uiState,
+                        selected = selected,
+                        selectedMode = selectedMode,
+                        proxyShareLan = proxyShareLan,
+                        message = message,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            StatusPill(if (running) "Connected" else "Idle")
         }
         Button(
             onClick = if (running) onDisconnect else onConnect,
@@ -469,11 +507,6 @@ private fun ConnectionPanel(
             )
             Text(if (running) "Disconnect" else "Connect")
         }
-        RuntimeSummary(
-            selected = selected,
-            selectedMode = selectedMode,
-            proxyShareLan = proxyShareLan,
-        )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.PowerSettingsNew, "Connection mode", modeLabel(selectedMode))
         ModeSelector(
@@ -491,65 +524,6 @@ private fun ConnectionPanel(
             )
         } else {
             InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
-        }
-    }
-}
-
-@Composable
-private fun RuntimeSummary(
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        SummaryTile(
-            icon = Icons.Rounded.Shield,
-            label = "Profile",
-            value = selected?.name ?: "No profile",
-            modifier = Modifier.weight(1f),
-        )
-        SummaryTile(
-            icon = if (selectedMode == ClientProfile.CONNECTION_MODE_PROXY) {
-                Icons.Rounded.WifiTethering
-            } else {
-                Icons.Rounded.VpnKey
-            },
-            label = "Route",
-            value = routeSummary(selected, selectedMode, proxyShareLan),
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun SummaryTile(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.heightIn(min = 78.dp),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text(
-                    label,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-            Text(value, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -622,6 +596,37 @@ private fun DiagnosticsPanel(
 }
 
 @Composable
+private fun AddProfilePanel(onExpand: () -> Unit) {
+    Panel {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Add profile", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Import another config",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            OutlinedButton(onClick = onExpand) {
+                Icon(Icons.Rounded.Add, contentDescription = null)
+                Text("Add")
+            }
+        }
+    }
+}
+
+@Composable
 private fun ImportPanel(
     profileName: String,
     socksPort: String,
@@ -635,21 +640,6 @@ private fun ImportPanel(
 ) {
     Panel {
         SectionHeader(Icons.Rounded.Add, "Import profile", "One-line config")
-        OutlinedTextField(
-            value = profileName,
-            onValueChange = onProfileNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Profile name") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = socksPort,
-            onValueChange = onSocksPortChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Local SOCKS port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
         OutlinedTextField(
             value = rawConfig,
             onValueChange = onRawConfigChange,
@@ -682,6 +672,21 @@ private fun ImportPanel(
                 Text("Paste")
             }
         }
+        OutlinedTextField(
+            value = profileName,
+            onValueChange = onProfileNameChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Profile name") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = socksPort,
+            onValueChange = onSocksPortChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Local SOCKS port") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
     }
 }
 
@@ -730,9 +735,9 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun SectionHeader(icon: ImageVector, title: String, detail: String) {
+private fun SectionHeader(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -783,7 +788,12 @@ private fun ModeCard(
     onClick: () -> Unit,
 ) {
     Surface(
-        modifier = modifier.clickable(enabled = enabled, onClick = onClick),
+        modifier = modifier.selectable(
+            selected = selected,
+            enabled = enabled,
+            role = Role.RadioButton,
+            onClick = onClick,
+        ),
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(
             1.dp,
@@ -889,30 +899,15 @@ private fun ProfileRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            OutlinedButton(onClick = onSelect, enabled = enabled && !selected) {
-                Text(if (selected) "Selected" else "Select")
+            if (!selected) {
+                OutlinedButton(onClick = onSelect, enabled = enabled) {
+                    Text("Select")
+                }
             }
-            OutlinedButton(onClick = onDelete, enabled = enabled) {
-                Icon(Icons.Rounded.Delete, contentDescription = null)
+            IconButton(onClick = onDelete, enabled = enabled) {
+                Icon(Icons.Rounded.Delete, contentDescription = "Delete ${profile.name}")
             }
         }
-    }
-}
-
-@Composable
-private fun StatusPill(text: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
-        )
     }
 }
 
@@ -935,17 +930,63 @@ private fun EmptyState() {
     }
 }
 
-private fun connectionHeadline(running: Boolean, selected: ClientProfile?): String = when {
-    running -> "Connected"
-    selected == null -> "Import a profile"
-    else -> "Ready to connect"
+private enum class ConnectionUiState(val title: String) {
+    Setup("Setup"),
+    Ready("Ready"),
+    Connecting("Connecting"),
+    Connected("Connected"),
+    Error("Needs attention"),
 }
 
-private fun connectionDetail(running: Boolean, selected: ClientProfile?, message: String): String = when {
-    message.isNotBlank() -> message
-    running && selected != null -> "Skirk is routing with ${selected.name}."
-    selected != null -> "Selected profile: ${selected.name}"
-    else -> "Paste a Skirk profile below to enable connection controls."
+private fun connectionUiState(running: Boolean, selected: ClientProfile?, message: String): ConnectionUiState = when {
+    selected == null -> ConnectionUiState.Setup
+    running && message.contains("connecting", ignoreCase = true) -> ConnectionUiState.Connecting
+    running -> ConnectionUiState.Connected
+    isConnectionErrorMessage(message) -> ConnectionUiState.Error
+    else -> ConnectionUiState.Ready
+}
+
+private fun connectionDetail(
+    state: ConnectionUiState,
+    selected: ClientProfile?,
+    selectedMode: String,
+    proxyShareLan: Boolean,
+    message: String,
+): String {
+    if (selected == null) {
+        return "Import a profile below to enable connection."
+    }
+    val actionableMessage = connectionActionableMessage(message)
+    if (state == ConnectionUiState.Error && actionableMessage != null) {
+        return actionableMessage
+    }
+    return "${selected.name} · ${connectionRouteDetail(selected, selectedMode, proxyShareLan)}"
+}
+
+private fun connectionActionableMessage(message: String): String? {
+    val normalized = message.trim()
+    if (normalized.isBlank()) {
+        return null
+    }
+    val lower = normalized.lowercase()
+    if (
+        lower == "disconnected" ||
+        lower == "vpn connected" ||
+        lower.startsWith("socks connected") ||
+        lower.endsWith("stopped") ||
+        lower.startsWith("imported ")
+    ) {
+        return null
+    }
+    return normalized
+}
+
+private fun isConnectionErrorMessage(message: String): Boolean {
+    val lower = message.trim().lowercase()
+    return lower.contains("failed") ||
+        lower.contains("error") ||
+        lower.contains("not granted") ||
+        lower.contains("revoked")
 }
 
 private fun modeLabel(mode: String): String =
@@ -960,6 +1001,18 @@ private fun routeSummary(
     selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan -> "LAN enabled"
     selectedMode == ClientProfile.CONNECTION_MODE_PROXY -> "Local proxy"
     else -> "Device VPN"
+}
+
+private fun connectionRouteDetail(
+    selected: ClientProfile,
+    selectedMode: String,
+    proxyShareLan: Boolean,
+): String = when {
+    selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan ->
+        "LAN SOCKS5 · ${proxyAddress(selected, true).removePrefix("Trusted LAN only: ")}"
+    selectedMode == ClientProfile.CONNECTION_MODE_PROXY ->
+        "Local SOCKS5 · ${selected.socksAddress}"
+    else -> "Device VPN · ${selected.socksAddress}"
 }
 
 private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
