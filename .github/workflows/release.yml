@@ -101,18 +101,13 @@ jobs:
       - name: Prepare Android release APK
         run: |
           mkdir -p dist/android
-          versioned="skirk-${GITHUB_REF_NAME}-android-arm64.apk"
-          cp clients/android/app/build/outputs/apk/release/app-release.apk "dist/android/${versioned}"
           cp clients/android/app/build/outputs/apk/release/app-release.apk dist/android/skirk-android-arm64.apk
-          (cd dist/android && sha256sum "${versioned}" > "${versioned}.sha256")
           (cd dist/android && sha256sum skirk-android-arm64.apk > skirk-android-arm64.apk.sha256)
 
       - uses: actions/upload-artifact@v7
         with:
           name: android-release
           path: |
-            dist/android/skirk-v*-android-arm64.apk
-            dist/android/skirk-v*-android-arm64.apk.sha256
             dist/android/skirk-android-arm64.apk
             dist/android/skirk-android-arm64.apk.sha256
           if-no-files-found: error
@@ -245,7 +240,6 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: |
-            dist-release/skirk-${{ github.ref_name }}-android-arm64.apk
             dist-release/skirk-android-arm64.apk
             dist-release/skirk-linux-amd64.tar.gz
             dist-release/skirk-linux-arm64.tar.gz
@@ -262,10 +256,27 @@ jobs:
             echo "no release assets found" >&2
             exit 1
           fi
-          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-${{ github.ref_name }}-android-arm64.apk: release-signed Android arm64 APK for sideloading.\n- skirk-android-arm64.apk: compatibility alias for the same Android APK.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APK.\n- GitHub artifact attestations are generated for the APK and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
+          stale_android_asset="skirk-${GITHUB_REF_NAME}-android-arm64.apk"
+          stale_android_checksum="${stale_android_asset}.sha256"
+          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-android-arm64.apk: release-signed Android arm64 APK for sideloading.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APK.\n- GitHub artifact attestations are generated for the APK and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            existing_assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
+            for stale in "${stale_android_asset}" "${stale_android_checksum}"; do
+              if grep -Fxq "${stale}" <<<"${existing_assets}"; then
+                gh release delete-asset "${GITHUB_REF_NAME}" "${stale}" -y
+              fi
+            done
             gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
             gh release edit "${GITHUB_REF_NAME}" --notes "$release_notes"
           else
             gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --title "${GITHUB_REF_NAME}" --generate-notes --notes "$release_notes"
           fi
+          published_assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
+          for asset in ${published_assets}; do
+            case "${asset}" in
+              skirk-v*-android-arm64.apk|skirk-v*-android-arm64.apk.sha256)
+                echo "stale versioned Android asset remains: ${asset}" >&2
+                exit 1
+                ;;
+            esac
+          done

@@ -400,8 +400,7 @@ h2 {
   padding: 0;
 }
 
-.phase-badge {
-  --phase-color: var(--muted);
+.version-badge {
   min-height: 36px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -411,32 +410,8 @@ h2 {
   background: var(--surface);
   color: var(--muted-strong);
   font-size: 13px;
+  font-weight: 650;
   white-space: nowrap;
-}
-
-.phase-badge::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  margin-right: 8px;
-  border-radius: 999px;
-  background: var(--phase-color);
-}
-
-.phase-badge.connected {
-  --phase-color: var(--success);
-  border-color: var(--success);
-}
-
-.phase-badge.loading,
-.phase-badge.connecting,
-.phase-badge.disconnecting {
-  --phase-color: var(--warning);
-}
-
-.phase-badge.error {
-  --phase-color: var(--danger);
-  border-color: var(--danger);
 }
 
 .alert {

@@ -155,6 +155,12 @@ select `VPN`, and tap `Connect`. Android asks for VPN consent on first use.
 `Proxy` mode is available when an app or another LAN device explicitly supports
 SOCKS5.
 
+Current client surfaces:
+
+| Android | Windows desktop |
+| --- | --- |
+| <img src="assets/clients/android-client.png" alt="Skirk Android client in VPN mode" width="260"> | <img src="assets/clients/windows-desktop.png" alt="Skirk Windows desktop client connection console" width="620"> |
+
 See [docs/clients.md](docs/clients.md) for build and release details.
 
 ## Restricted-Network Testing

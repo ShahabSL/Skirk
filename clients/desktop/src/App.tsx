@@ -23,9 +23,11 @@ import {
 
 import { desktopApi, type ClientProfile, type ConnectionMode, type DesktopSnapshot } from "./lib/api";
 import logoMark from "./assets/logo-mark.png";
+import packageInfo from "../package.json";
 
 type Theme = "light" | "dark";
 type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode";
+const APP_VERSION = packageInfo.version;
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -232,7 +234,9 @@ function App() {
             >
               <RefreshCw className={initialLoading ? "spin" : undefined} aria-hidden="true" />
             </button>
-            <PhaseBadge phase={phase} />
+            <span className="version-badge" aria-label={`Skirk Desktop version ${APP_VERSION}`}>
+              v{APP_VERSION}
+            </span>
           </div>
         </header>
 
@@ -309,7 +313,7 @@ function App() {
                 ) : (
                   <Play />
                 )}
-                {vpnNeedsAdmin ? "Run as administrator" : "Connect"}
+                {vpnNeedsAdmin ? "Admin required" : "Connect"}
               </button>
             )}
             <button
@@ -318,14 +322,14 @@ function App() {
               onClick={() => void copySocksAddress()}
             >
               {copyStatus ? <Check /> : <Copy />}
-              {copyStatus ? "Copied" : "Copy SOCKS"}
+              {copyStatus ? "Copied" : "Copy local SOCKS"}
             </button>
           </div>
 
           <div className="metric-grid" aria-label="Runtime details">
             <Metric label="SOCKS endpoint" value={endpointValue} />
             <Metric label="HTTP endpoint" value={httpEndpointValue} />
-            <Metric label="LAN endpoints" value={lanAddressValue} />
+            <Metric label="LAN SOCKS endpoints" value={lanAddressValue} />
             <Metric label="Runtime" value={runtimeMetric(snapshot)} />
           </div>
         </section>
@@ -618,14 +622,6 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function PhaseBadge({ phase }: { phase: string }) {
-  return (
-    <div className={`phase-badge ${phase}`} role="status" aria-live="polite">
-      {formatPhase(phase)}
     </div>
   );
 }

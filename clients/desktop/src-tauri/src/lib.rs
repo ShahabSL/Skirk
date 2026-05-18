@@ -447,8 +447,6 @@ impl DesktopRuntime {
         if state.client.is_some() {
             return Ok(());
         }
-        state.phase = ConnectionPhase::Connecting;
-        state.message = "Starting Skirk sidecar".into();
         drop(state);
 
         let profiles = load_profiles(&self.paths)?;
@@ -524,9 +522,14 @@ impl DesktopRuntime {
             .stderr(Stdio::from(log_err));
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
+        {
+            let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+            state.phase = ConnectionPhase::Connecting;
+            state.message = "Starting Skirk sidecar".into();
+        }
         let child = command
             .spawn()
-            .map_err(|error| format!("failed to start skirk: {error}"))?;
+            .map_err(|error| self.mark_connect_error(format!("failed to start skirk: {error}")))?;
         let mut child = child;
 
         let socks_probe_address = loopback_probe_address(&socks_address);
@@ -534,18 +537,18 @@ impl DesktopRuntime {
         if !wait_for_socks5_endpoint(&socks_probe_address, Duration::from_secs(10)) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
+            return Err(self.mark_connect_error(format!(
                 "Skirk did not open SOCKS endpoint {socks_address}\n{}",
                 read_log_tail(&log_path, 80)
-            ));
+            )));
         }
         if !wait_for_tcp_endpoint(&http_probe_address, Duration::from_secs(10)) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
+            return Err(self.mark_connect_error(format!(
                 "Skirk did not open HTTP proxy endpoint {http_address}\n{}",
                 read_log_tail(&log_path, 80)
-            ));
+            )));
         }
 
         let mut tunnel = None;
@@ -557,7 +560,7 @@ impl DesktopRuntime {
                 Err(error) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(error);
+                    return Err(self.mark_connect_error(error));
                 }
             }
         }
@@ -568,7 +571,7 @@ impl DesktopRuntime {
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(error);
+                return Err(self.mark_connect_error(error));
             }
             true
         } else {
@@ -588,6 +591,16 @@ impl DesktopRuntime {
         state.phase = ConnectionPhase::Connected;
         state.message = connected_message(&mode);
         Ok(())
+    }
+
+    fn mark_connect_error(&self, message: String) -> String {
+        if let Ok(mut state) = self.inner.lock() {
+            if state.client.is_none() {
+                state.phase = ConnectionPhase::Error;
+                state.message = message.clone();
+            }
+        }
+        message
     }
 
     fn disconnect(&self) -> Result<(), String> {

@@ -4,12 +4,14 @@
 
 ## v0.1.48 - 2026-05-18
 
-- Added versioned Android APK release naming and pinned installer version
-  arguments.
+- Added pinned installer version arguments.
+- Kept Android release downloads on the stable `skirk-android-arm64.apk` asset
+  name because the GitHub release tag already carries the version.
 - Added menu actions for updating Skirk and configuring exit outbound proxy,
   including optional WARP wireproxy setup.
 - Simplified Android status hierarchy so the app shows one primary connection
   state and keeps the version visible without repeating status labels.
+- Tightened Windows desktop status wording and version visibility.
 
 ## v0.1.47 - 2026-05-17
 
