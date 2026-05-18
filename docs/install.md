@@ -31,6 +31,12 @@ Install a specific release:
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
 ```
 
+Equivalent pinned install using an argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh -s -- --version vX.Y.Z
+```
+
 Install to another directory:
 
 ```bash
@@ -233,7 +239,10 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
 Defaults: wireproxy listens on `127.0.0.1:40000`, Skirk writes
 `tunnel.exit_proxy=socks5h://127.0.0.1:40000`, and systemd starts
 `wireproxy.service` before `skirk-exit.service`. Override with
-`SKIRK_WIREPROXY_BIND` or `SKIRK_EXIT_PROXY` when needed.
+`SKIRK_WIREPROXY_BIND` or `SKIRK_EXIT_PROXY` when needed. The interactive
+`skirk` menu can also configure a custom outbound proxy, install WARP wireproxy,
+unset the proxy, or update the installed binary while keeping the existing kit
+and proxy settings.
 
 ## Local Build
 

@@ -141,6 +141,46 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	return nil
 }
 
+func installSystemdDropIn(ctx context.Context, unit, name, text string) error {
+	if err := requireSystemd(); err != nil {
+		return err
+	}
+	normalized, err := normalizeSystemdServiceName(unit)
+	if err != nil {
+		return err
+	}
+	unit = normalized
+	if strings.TrimSpace(name) == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return fmt.Errorf("unsafe systemd drop-in name %q", name)
+	}
+	tmp, err := os.CreateTemp("", "skirk-*.conf")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(text); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	dir := filepath.Join("/etc/systemd/system", unit+".d")
+	path := filepath.Join(dir, name)
+	if err := runPrivileged(ctx, "mkdir", "-p", dir); err != nil {
+		return err
+	}
+	if err := runPrivileged(ctx, "install", "-m", "0644", tmpPath, path); err != nil {
+		return err
+	}
+	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	fmt.Printf("Installed systemd drop-in %s\n", path)
+	return nil
+}
+
 func uninstallSystemdService(ctx context.Context, unit string) error {
 	if err := requireSystemd(); err != nil {
 		return err

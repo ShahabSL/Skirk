@@ -68,14 +68,16 @@ Client release assets are built by GitHub Actions:
 - Windows portable desktop zip (`Skirk_windows_x64_portable.zip`) for normal GUI use.
 - Windows CLI zip (`skirk-windows-amd64.zip`) for manual PowerShell use. This
   asset is not the desktop app.
-- Android arm64 APK (`skirk-android-arm64.apk`) for sideload testing. This is
-  signed with the Skirk Android release keystore configured in GitHub secrets.
+- Android arm64 APK (`skirk-vX.Y.Z-android-arm64.apk`) for sideload testing.
+  `skirk-android-arm64.apk` is also published as a compatibility alias for the
+  same file. Both are signed with the Skirk Android release keystore configured
+  in GitHub secrets.
 
 The workflow publishes SHA-256 checksums and GitHub artifact attestations for
 the APK and archives. Verify a downloaded asset with:
 
 ```bash
-gh attestation verify ./skirk-android-arm64.apk -R ShahabSL/Skirk
+gh attestation verify ./skirk-vX.Y.Z-android-arm64.apk -R ShahabSL/Skirk
 sha256sum -c SHA256SUMS
 ```
 
@@ -98,6 +100,12 @@ Or pin the version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
+```
+
+Equivalent pinned install using an argument:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh -s -- --version vX.Y.Z
 ```
 
 ## Android Signing

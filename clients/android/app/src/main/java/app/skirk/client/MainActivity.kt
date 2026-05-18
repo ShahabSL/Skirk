@@ -288,7 +288,7 @@ fun ConfigScreen() {
                         Column {
                             Text("Skirk", fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (running) "Connected" else "Ready",
+                                "${if (running) "Connected" else "Ready"} v${BuildConfig.VERSION_NAME}",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelMedium,
                             )

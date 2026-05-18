@@ -19,6 +19,59 @@ wireproxy_bin="${SKIRK_WIREPROXY_BIN:-/usr/local/bin/wireproxy}"
 wireproxy_version="${SKIRK_WIREPROXY_VERSION:-v1.1.2}"
 wgcf_bin="${SKIRK_WGCF_BIN:-/usr/local/bin/wgcf}"
 wgcf_version="${SKIRK_WGCF_VERSION:-v2.2.30}"
+wireproxy_only="${SKIRK_WIREPROXY_ONLY:-}"
+
+usage() {
+  cat <<EOF
+Usage: install.sh [--version VERSION] [--wireproxy-only] [uninstall|--uninstall]
+
+Environment:
+  SKIRK_VERSION=latest|vX.Y.Z  Select the Skirk release or source ref.
+  SKIRK_INSTALL_DIR=PATH       Install directory. Default: \$HOME/.local/bin.
+  SKIRK_INSTALL_WIREPROXY=1    Install Skirk-managed WARP wireproxy.
+EOF
+}
+
+validate_version() {
+  value="$1"
+  case "$value" in
+    ""|-*|*/*|*..*|*[!A-Za-z0-9._-]*)
+      echo "error: unsafe version/ref: $value" >&2
+      exit 1
+      ;;
+  esac
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --version)
+        [ "$#" -ge 2 ] || { echo "error: --version needs a value" >&2; exit 1; }
+        version="$2"
+        shift 2
+        ;;
+      --version=*)
+        version="${1#--version=}"
+        shift
+        ;;
+      --wireproxy-only)
+        wireproxy_only=1
+        install_wireproxy=1
+        shift
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  validate_version "$version"
+  set -- "$@"
+  parsed_args="$*"
+}
 
 normalize_service_unit() {
   name="$1"
@@ -387,6 +440,9 @@ EOF
 }
 
 main() {
+  parse_args "$@"
+  # shellcheck disable=SC2086
+  set -- $parsed_args
   if [ "${SKIRK_UNINSTALL:-}" = "1" ] || [ "${1:-}" = "uninstall" ] || [ "${1:-}" = "--uninstall" ]; then
     case "${1:-}" in
       uninstall|--uninstall) shift ;;
@@ -400,6 +456,11 @@ main() {
   platform="$(detect_platform)"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT INT TERM
+
+  if [ "$wireproxy_only" = "1" ]; then
+    install_warp_wireproxy
+    return 0
+  fi
 
   if ! install_from_release "$platform" "$tmp"; then
     install_from_source "$tmp"

@@ -5,10 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"skirk/internal/skirk"
 )
 
 func menu(ctx context.Context) error {
@@ -23,9 +27,10 @@ func menu(ctx context.Context) error {
 		fmt.Println("5. Run optional desktop dashboard")
 		fmt.Println("6. Manage exit service")
 		fmt.Println("7. Revoke, clean, or delete kit")
-		fmt.Println("8. Show commands")
+		fmt.Println("8. Update installed Skirk")
+		fmt.Println("9. Show commands")
 		if runtime.GOOS == "linux" {
-			fmt.Println("9. Uninstall Skirk from this Linux machine")
+			fmt.Println("10. Uninstall Skirk from this Linux machine")
 		}
 		fmt.Println("0. Quit")
 		choice, err := prompt(ctx, reader, "Select", "1")
@@ -120,8 +125,12 @@ func menu(ctx context.Context) error {
 				}
 			}
 		case "8":
-			usage()
+			if err := updateFromMenu(ctx, reader); err != nil {
+				return err
+			}
 		case "9":
+			usage()
+		case "10":
 			if runtime.GOOS != "linux" {
 				fmt.Println("Unknown selection")
 				continue
@@ -252,17 +261,31 @@ func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMod
 	if !startExit {
 		args = append(args, "--start-exit=false")
 	}
+	if runtime.GOOS == "linux" {
+		configureProxy, err := promptYesNo(ctx, reader, "Set outbound exit proxy now", false)
+		if err != nil {
+			return err
+		}
+		if configureProxy {
+			proxyURL, err := promptProxyURL(ctx, reader, "Outbound proxy URL", "socks5h://127.0.0.1:40000")
+			if err != nil {
+				return err
+			}
+			args = append(args, "--exit-proxy", proxyURL)
+		}
+	}
 	return setupInit(ctx, args)
 }
 
 func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 	fmt.Println()
 	fmt.Println("1. Install or update exit service")
-	fmt.Println("2. Service status")
-	fmt.Println("3. Start service")
-	fmt.Println("4. Stop service")
-	fmt.Println("5. Restart service")
-	fmt.Println("6. Uninstall exit service only")
+	fmt.Println("2. Configure outbound proxy")
+	fmt.Println("3. Service status")
+	fmt.Println("4. Start service")
+	fmt.Println("5. Stop service")
+	fmt.Println("6. Restart service")
+	fmt.Println("7. Uninstall exit service only")
 	fmt.Println("0. Back")
 	choice, err := prompt(ctx, reader, "Service action", "1")
 	if err != nil {
@@ -291,14 +314,16 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 		}
 		return serviceCommand(ctx, args)
 	case "2":
-		return serviceCommand(ctx, []string{"status", "--name", name})
+		return outboundProxyMenu(ctx, reader, name)
 	case "3":
-		return serviceCommand(ctx, []string{"start", "--name", name})
+		return serviceCommand(ctx, []string{"status", "--name", name})
 	case "4":
-		return serviceCommand(ctx, []string{"stop", "--name", name})
+		return serviceCommand(ctx, []string{"start", "--name", name})
 	case "5":
-		return serviceCommand(ctx, []string{"restart", "--name", name})
+		return serviceCommand(ctx, []string{"stop", "--name", name})
 	case "6":
+		return serviceCommand(ctx, []string{"restart", "--name", name})
+	case "7":
 		confirm, err := promptYesNo(ctx, reader, "Uninstall service", false)
 		if err != nil {
 			return err
@@ -310,6 +335,220 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 	default:
 		return fmt.Errorf("unknown service action %q", choice)
 	}
+}
+
+func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName string) error {
+	configPath, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+	if err != nil {
+		return err
+	}
+	cfg, err := skirk.LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	current := strings.TrimSpace(cfg.Tunnel.ExitProxy)
+	fmt.Printf("Current outbound proxy: %s\n", firstNonEmpty(current, "direct"))
+	fmt.Println("1. Set custom proxy URL")
+	if runtime.GOOS == "linux" {
+		fmt.Println("2. Install WARP wireproxy and use it")
+		fmt.Println("3. Unset proxy and use direct exit")
+	} else {
+		fmt.Println("2. Unset proxy and use direct exit")
+	}
+	fmt.Println("0. Back")
+	choice, err := prompt(ctx, reader, "Outbound proxy action", "1")
+	if err != nil {
+		return err
+	}
+	switch choice {
+	case "0", "back":
+		return nil
+	case "1":
+		proxyURL, err := promptProxyURL(ctx, reader, "Proxy URL", firstNonEmpty(current, "socks5h://127.0.0.1:40000"))
+		if err != nil {
+			return err
+		}
+		if err := updateExitProxyConfig(configPath, proxyURL); err != nil {
+			return err
+		}
+		fmt.Printf("Updated %s: outbound proxy is %s\n", configPath, proxyURL)
+	case "2":
+		if runtime.GOOS != "linux" {
+			if err := updateExitProxyConfig(configPath, ""); err != nil {
+				return err
+			}
+			fmt.Printf("Updated %s: outbound proxy is direct\n", configPath)
+			break
+		}
+		bind, err := prompt(ctx, reader, "WARP SOCKS listen", "127.0.0.1:40000")
+		if err != nil {
+			return err
+		}
+		if err := validateProxyListenAddr(bind); err != nil {
+			return err
+		}
+		accepted, err := promptYesNo(ctx, reader, "Install WARP wireproxy and accept Cloudflare WARP terms", false)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return fmt.Errorf("WARP wireproxy install cancelled")
+		}
+		if err := installWarpWireproxyFromMenu(ctx, bind); err != nil {
+			return err
+		}
+		proxyURL := "socks5h://" + bind
+		if err := updateExitProxyConfig(configPath, proxyURL); err != nil {
+			return err
+		}
+		if err := installWarpServiceDependency(ctx, serviceName); err != nil {
+			return err
+		}
+		fmt.Printf("Updated %s: outbound proxy is %s\n", configPath, proxyURL)
+	case "3":
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("unknown outbound proxy action %q", choice)
+		}
+		if err := updateExitProxyConfig(configPath, ""); err != nil {
+			return err
+		}
+		fmt.Printf("Updated %s: outbound proxy is direct\n", configPath)
+	default:
+		return fmt.Errorf("unknown outbound proxy action %q", choice)
+	}
+	restart, err := promptYesNo(ctx, reader, "Restart exit service now", true)
+	if err != nil {
+		return err
+	}
+	if restart {
+		return serviceCommand(ctx, []string{"restart", "--name", serviceName})
+	}
+	return nil
+}
+
+func validateProxyListenAddr(value string) error {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("WARP SOCKS listen must be host:port: %w", err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("WARP SOCKS listen host is required")
+	}
+	if _, err := net.LookupPort("tcp", port); err != nil {
+		return fmt.Errorf("WARP SOCKS listen port is invalid: %w", err)
+	}
+	return nil
+}
+
+func promptProxyURL(ctx context.Context, reader *bufio.Reader, label, fallback string) (string, error) {
+	for {
+		value, err := prompt(ctx, reader, label, fallback)
+		if err != nil {
+			return "", err
+		}
+		cfg := &skirk.Config{Secret: "validate-only", Tunnel: skirk.TunnelConfig{ExitProxy: strings.TrimSpace(value)}}
+		cfg.ApplyDefaults()
+		if err := cfg.Validate(); err == nil {
+			return strings.TrimSpace(value), nil
+		}
+		fmt.Println("Proxy must be a valid socks5, socks5h, http, or https URL.")
+	}
+}
+
+func updateExitProxyConfig(path, proxyURL string) error {
+	cfg, err := skirk.LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	cfg.Tunnel.ExitProxy = strings.TrimSpace(proxyURL)
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return writeJSONFile(path, cfg)
+}
+
+func installWarpWireproxyFromMenu(ctx context.Context, bind string) error {
+	script := `set -e
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT INT TERM
+curl -fsSL "$1" -o "$tmp"
+SKIRK_WIREPROXY_ONLY=1 SKIRK_INSTALL_WIREPROXY=1 SKIRK_ACCEPT_WARP_TOS=1 SKIRK_WIREPROXY_BIND="$2" sh "$tmp"`
+	cmd := exec.CommandContext(ctx, "sh", "-c", script, "skirk-warp", installerScriptURL(), bind)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func installerScriptURL() string {
+	ref := "main"
+	if safeInstallerRef(version) {
+		ref = version
+	}
+	return "https://raw.githubusercontent.com/ShahabSL/Skirk/" + ref + "/install.sh"
+}
+
+func safeInstallerRef(value string) bool {
+	if !strings.HasPrefix(value, "v") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '.' ||
+			r == '_' ||
+			r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func installWarpServiceDependency(ctx context.Context, serviceName string) error {
+	unit, err := normalizeSystemdServiceName(serviceName)
+	if err != nil {
+		return err
+	}
+	return installSystemdDropIn(ctx, unit, "10-wireproxy.conf", `[Unit]
+After=wireproxy.service
+Wants=wireproxy.service
+`)
+}
+
+func updateFromMenu(ctx context.Context, reader *bufio.Reader) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("menu update is currently available on Linux installs")
+	}
+	versionValue, err := prompt(ctx, reader, "Version", "latest")
+	if err != nil {
+		return err
+	}
+	serviceName, err := prompt(ctx, reader, "Service name", defaultServiceName)
+	if err != nil {
+		return err
+	}
+	restart, err := promptYesNo(ctx, reader, "Restart exit service after update", true)
+	if err != nil {
+		return err
+	}
+	script := `set -e
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT INT TERM
+curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh -o "$tmp"
+sh "$tmp" --version "$1"`
+	cmd := exec.CommandContext(ctx, "sh", "-c", script, "skirk-update", versionValue)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if restart {
+		return serviceCommand(ctx, []string{"restart", "--name", serviceName})
+	}
+	return nil
 }
 
 func promptYesNo(ctx context.Context, reader *bufio.Reader, label string, fallback bool) (bool, error) {
