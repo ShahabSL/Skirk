@@ -30,7 +30,7 @@ const (
 	bulkCoalesceMaxAge             = 250 * time.Millisecond
 	forcedBulkCoalesceMaxAge       = 1 * time.Second
 	deferredCleanupDelay           = 5 * time.Second
-	deferredCleanupFlushThreshold  = 128
+	deferredCleanupFlushThreshold  = 512
 	idleOpenPollInterval           = 1 * time.Second
 	openPollWarmWindow             = 45 * time.Second
 	directDriveSlowThreshold       = 5 * time.Second
@@ -50,8 +50,11 @@ const (
 	autoExitUploadWindow           = 8
 	autoExitExplicitUploadWindow   = 16
 	exitFamilyPreferenceTimeout    = 2 * time.Second
-	cleanupQuietWindow             = 2 * time.Second
+	cleanupQuietWindow             = 15 * time.Second
 	cleanupMaxForegroundDelay      = 2 * time.Minute
+	cleanupForegroundDeleteDelay   = 1 * time.Second
+	cleanupIdleDeleteDelay         = 1 * time.Second
+	cleanupDeleteTimeout           = 60 * time.Second
 	exitDialTimeout                = 30 * time.Second
 	burstSlowListThreshold         = 3 * time.Second
 	burstCooldownAfterSlow         = 20 * time.Second
@@ -252,27 +255,16 @@ func (t *Tunnel) recentActivity() bool {
 }
 
 func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
-	release, err := t.acquireUploadSlot(ctx, false)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if release != nil {
-			release(nil)
-		}
-	}()
+	// Cleanup is best-effort and already bounded by the deferred cleanup worker
+	// count. Do not train the foreground upload limiter from delete latency or
+	// delete failures; a stuck cleanup request should not shrink live upload
+	// capacity.
 	if fileID != "" {
 		if store, ok := t.Data.(ObjectIDStore); ok {
-			err = store.DeleteID(ctx, fileID)
-			release(err)
-			release = nil
-			return err
+			return store.DeleteID(ctx, fileID)
 		}
 	}
-	err = t.Data.Delete(ctx, name)
-	release(err)
-	release = nil
-	return err
+	return t.Data.Delete(ctx, name)
 }
 
 func (t *Tunnel) dialExitTarget(ctx context.Context, target string) (net.Conn, error) {
@@ -430,6 +422,16 @@ func (t *Tunnel) acquireUploadSlotBytes(ctx context.Context, priority bool) (fun
 
 func (t *Tunnel) acquireDownloadSlotBytes(ctx context.Context, priority bool) (func(error, int64), error) {
 	return t.limiter(false).AcquireBytes(ctx, priority)
+}
+
+func (t *Tunnel) canHedgeDownload() bool {
+	t.limiterMu.Lock()
+	limiter := t.downloadLimiter
+	t.limiterMu.Unlock()
+	if limiter == nil {
+		return true
+	}
+	return limiter.CanHedge()
 }
 
 func (t *Tunnel) limiter(upload bool) *adaptiveLimiter {
@@ -630,6 +632,18 @@ func (l *adaptiveLimiter) AcquireBytes(ctx context.Context, priority bool) (func
 	}
 }
 
+func (l *adaptiveLimiter) CanHedge() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.priorityWait > 0 || l.normalWait > 0 {
+		return false
+	}
+	if l.inFlight >= l.max {
+		return false
+	}
+	return l.limit-l.inFlight >= 2
+}
+
 func (l *adaptiveLimiter) canAcquireLocked(priority bool) bool {
 	if priority {
 		if l.inFlight < l.limit {
@@ -810,82 +824,13 @@ type cleanupTask struct {
 	id   string
 }
 
-type deferredCleanup struct {
-	tasks []cleanupTask
-	t     *Tunnel
-}
-
-func (t *Tunnel) newDeferredCleanup() *deferredCleanup {
-	return &deferredCleanup{t: t}
-}
-
-func (c *deferredCleanup) Data(name, id string) {
-	c.add(cleanupTask{name: name, id: id})
-}
-
-func (c *deferredCleanup) add(task cleanupTask) {
-	if c == nil || c.t == nil || !c.t.CleanupProcessed || (task.name == "" && task.id == "") {
+func (t *Tunnel) deleteCleanupTask(ctx context.Context, task cleanupTask) {
+	if t == nil || !t.CleanupProcessed || (task.name == "" && task.id == "") {
 		return
 	}
-	c.tasks = append(c.tasks, task)
-	if len(c.tasks) >= deferredCleanupFlushThreshold {
-		c.flushAsyncAfter(0, true)
-	}
-}
-
-func (c *deferredCleanup) flushAsyncAfter(delay time.Duration, force bool) {
-	if c == nil || c.t == nil || len(c.tasks) == 0 {
-		return
-	}
-	tasks := append([]cleanupTask(nil), c.tasks...)
-	c.tasks = c.tasks[:0]
-	tunnel := c.t
-	go func() {
-		if delay > 0 {
-			time.Sleep(delay)
-		}
-		if !force {
-			tunnel.waitForCleanupQuiet(context.Background())
-		}
-		workers := 2
-		jobs := make(chan cleanupTask)
-		var wg sync.WaitGroup
-		for i := 0; i < workers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for task := range jobs {
-					ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-					_ = tunnel.deleteData(ctx, task.name, task.id)
-					cancel()
-				}
-			}()
-		}
-		for _, task := range tasks {
-			jobs <- task
-		}
-		close(jobs)
-		wg.Wait()
-	}()
-}
-
-func (t *Tunnel) waitForCleanupQuiet(ctx context.Context) {
-	if t == nil || cleanupMaxForegroundDelay <= 0 {
-		return
-	}
-	deadline := time.NewTimer(cleanupMaxForegroundDelay)
-	defer deadline.Stop()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for t.foregroundBusy() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-deadline.C:
-			return
-		case <-ticker.C:
-		}
-	}
+	taskCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
+	_ = t.deleteData(taskCtx, task.name, task.id)
+	cancel()
 }
 
 func (t *Tunnel) foregroundBusy() bool {

@@ -735,6 +735,46 @@ func TestDriveStoreCleanupReportsTruncatedList(t *testing.T) {
 	}
 }
 
+func TestDriveStoreCleanupHonorsMaxDeletes(t *testing.T) {
+	var deleted []string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.Method {
+		case http.MethodGet:
+			return stringResponse(http.StatusOK, `{
+				"files":[
+					{"id":"old-1","name":"muxv4/abc/down/old-1","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"old-2","name":"muxv4/abc/down/old-2","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
+					{"id":"old-3","name":"muxv4/abc/down/old-3","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
+				]
+			}`), nil
+		case http.MethodDelete:
+			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/drive/v3/files/"))
+			return stringResponse(http.StatusNoContent, ""), nil
+		default:
+			t.Fatalf("unexpected request method %s", req.Method)
+		}
+		return nil, nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	result, err := store.Cleanup(context.Background(), DriveCleanupOptions{
+		Prefix:            "muxv4/",
+		OlderThan:         time.Hour,
+		Now:               time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC),
+		DeleteConcurrency: 1,
+		MaxDeletes:        2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 2 || !result.Truncated {
+		t.Fatalf("cleanup result = %+v, want two deletes and truncated=true", result)
+	}
+	sort.Strings(deleted)
+	if strings.Join(deleted, ",") != "old-1,old-2" {
+		t.Fatalf("deleted = %#v, want first two candidates only", deleted)
+	}
+}
+
 func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	stats := newDriveQuotaStats(time.Minute)
 	stats.since = time.Now().Add(-time.Second)

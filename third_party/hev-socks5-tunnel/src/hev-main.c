@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <lwip/init.h>
 
@@ -38,12 +39,18 @@ hev_socks5_tunnel_main_inner (int tun_fd)
     log_level = hev_config_get_misc_log_level ();
 
     res = hev_logger_init (log_level, log_file);
-    if (res < 0)
+    if (res < 0) {
+        if (tun_fd >= 0)
+            close (tun_fd);
         return -2;
+    }
 
     res = hev_socks5_logger_init (log_level, log_file);
-    if (res < 0)
+    if (res < 0) {
+        if (tun_fd >= 0)
+            close (tun_fd);
         return -3;
+    }
 
     nofile = hev_config_get_misc_limit_nofile ();
     res = set_limit_nofile (nofile);
@@ -55,8 +62,11 @@ hev_socks5_tunnel_main_inner (int tun_fd)
         run_as_daemon (pid_file);
 
     res = hev_task_system_init ();
-    if (res < 0)
+    if (res < 0) {
+        if (tun_fd >= 0)
+            close (tun_fd);
         return -4;
+    }
 
     lwip_init ();
 
@@ -79,8 +89,11 @@ int
 hev_socks5_tunnel_main_from_file (const char *config_path, int tun_fd)
 {
     int res = hev_config_init_from_file (config_path);
-    if (res < 0)
+    if (res < 0) {
+        if (tun_fd >= 0)
+            close (tun_fd);
         return -1;
+    }
 
     return hev_socks5_tunnel_main_inner (tun_fd);
 }
@@ -90,8 +103,11 @@ hev_socks5_tunnel_main_from_str (const unsigned char *config_str,
                                  unsigned int config_len, int tun_fd)
 {
     int res = hev_config_init_from_str (config_str, config_len);
-    if (res < 0)
+    if (res < 0) {
+        if (tun_fd >= 0)
+            close (tun_fd);
         return -1;
+    }
 
     return hev_socks5_tunnel_main_inner (tun_fd);
 }
@@ -102,10 +118,10 @@ hev_socks5_tunnel_main (const char *config_path, int tun_fd)
     return hev_socks5_tunnel_main_from_file (config_path, tun_fd);
 }
 
-void
+int
 hev_socks5_tunnel_quit (void)
 {
-    hev_socks5_tunnel_stop ();
+    return hev_socks5_tunnel_stop ();
 }
 
 #ifndef ENABLE_LIBRARY

@@ -413,9 +413,11 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 10 * time.Minute
-const mailboxJanitorDefaultInterval = 2 * time.Minute
-const mailboxJanitorDefaultDeleteConcurrency = 2
+const mailboxJanitorDefaultOlderThan = 2 * time.Hour
+const mailboxJanitorDefaultInterval = 10 * time.Minute
+const mailboxJanitorDefaultDeleteConcurrency = 1
+const mailboxJanitorDefaultMaxDeletesPerPrefix = 20
+const mailboxJanitorDefaultDeleteDelay = time.Second
 
 var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
 
@@ -425,8 +427,10 @@ func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	}
 	olderThan := envDuration("SKIRK_JANITOR_OLDER_THAN", mailboxJanitorDefaultOlderThan)
 	interval := envDuration("SKIRK_JANITOR_INTERVAL", mailboxJanitorDefaultInterval)
+	maxDeletes := envInt("SKIRK_JANITOR_MAX_DELETES_PER_PREFIX", mailboxJanitorDefaultMaxDeletesPerPrefix)
+	deleteDelay := envDuration("SKIRK_JANITOR_DELETE_DELAY", mailboxJanitorDefaultDeleteDelay)
 	go func() {
-		runMailboxJanitor(ctx, drive, olderThan)
+		runMailboxJanitor(ctx, drive, olderThan, maxDeletes, deleteDelay)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -434,13 +438,13 @@ func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				runMailboxJanitor(ctx, drive, olderThan)
+				runMailboxJanitor(ctx, drive, olderThan, maxDeletes, deleteDelay)
 			}
 		}
 	}()
 }
 
-func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan time.Duration) {
+func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan time.Duration, maxDeletes int, deleteDelay time.Duration) {
 	if drive == nil || olderThan <= 0 {
 		return
 	}
@@ -450,6 +454,8 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 			Prefix:            prefix,
 			OlderThan:         olderThan,
 			DeleteConcurrency: mailboxJanitorDefaultDeleteConcurrency,
+			MaxDeletes:        maxDeletes,
+			DeleteDelay:       deleteDelay,
 			MaxPages:          20000,
 		})
 		cancel()
@@ -1742,6 +1748,18 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 	}
 	value, err := time.ParseDuration(raw)
 	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func envInt(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
 		return fallback
 	}
 	return value

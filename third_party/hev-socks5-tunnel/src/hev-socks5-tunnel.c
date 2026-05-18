@@ -8,9 +8,9 @@
  */
 
 #include <errno.h>
-#include <assert.h>
 #include <signal.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/ioctl.h>
 
 #include <lwip/tcp.h>
@@ -41,9 +41,12 @@
 #include "hev-socks5-tunnel.h"
 
 static int run;
+static int stop_requested;
+static int run_started;
 static int tun_fd = -1;
 static int tun_fd_local;
 static int event_fds[2] = { -1, -1 };
+static int gateway_ready;
 
 static size_t stat_tx_packets;
 static size_t stat_rx_packets;
@@ -61,6 +64,33 @@ static HevTask *task_lwip_timer;
 static HevList session_set;
 
 static int
+tunnel_take_fd (void)
+{
+    int fd;
+
+    for (;;) {
+        fd = READ_ONCE (tun_fd);
+        if (fd < 0)
+            return -1;
+        if (__sync_bool_compare_and_swap (&tun_fd, fd, -1))
+            break;
+    }
+
+    WRITE_ONCE (tun_fd_local, 0);
+    return fd;
+}
+
+static void
+tunnel_close_fd_now (void)
+{
+    int fd;
+
+    fd = tunnel_take_fd ();
+    if (fd >= 0)
+        hev_tunnel_close (fd);
+}
+
+static int
 task_io_yielder (HevTaskYieldType type, void *data)
 {
     hev_task_yield (type);
@@ -72,8 +102,13 @@ static err_t
 netif_output_handler (struct netif *netif, struct pbuf *p)
 {
     ssize_t s;
+    int fd;
 
-    s = hev_tunnel_write (tun_fd, p);
+    fd = READ_ONCE (tun_fd);
+    if (fd < 0)
+        return ERR_IF;
+
+    s = hev_tunnel_write (fd, p);
     if (s <= 0) {
         if (errno == EAGAIN)
             return ERR_WOULDBLOCK;
@@ -260,15 +295,20 @@ static void
 lwip_io_task_entry (void *data)
 {
     const unsigned int mtu = hev_config_get_tunnel_mtu ();
+    int fd;
 
     LOG_D ("socks5 tunnel lwip task run");
 
-    hev_tunnel_add_task (tun_fd, task_lwip_io);
+    fd = READ_ONCE (tun_fd);
+    if (fd < 0)
+        return;
+
+    hev_tunnel_add_task (fd, task_lwip_io);
 
     for (; run;) {
         struct pbuf *buf;
 
-        buf = hev_tunnel_read (tun_fd, mtu, task_io_yielder, NULL);
+        buf = hev_tunnel_read (fd, mtu, task_io_yielder, NULL);
         if (!buf)
             continue;
 
@@ -281,7 +321,7 @@ lwip_io_task_entry (void *data)
         hev_task_mutex_unlock (&mutex);
     }
 
-    hev_tunnel_del_task (tun_fd, task_lwip_io);
+    hev_tunnel_del_task (fd, task_lwip_io);
 }
 
 static void
@@ -328,10 +368,12 @@ tunnel_init (int extern_tun_fd)
         res = ioctl (extern_tun_fd, FIONBIO, (char *)&nonblock);
         if (res < 0) {
             LOG_E ("socks5 tunnel non-blocking");
+            close (extern_tun_fd);
             return -1;
         }
 
         tun_fd = extern_tun_fd;
+        tun_fd_local = 1;
         return 0;
     }
 
@@ -342,6 +384,7 @@ tunnel_init (int extern_tun_fd)
         LOG_E ("socks5 tunnel open (%s)", strerror (errno));
         return -1;
     }
+    tun_fd_local = 1;
 
     mtu = hev_config_get_tunnel_mtu ();
     res = hev_tunnel_set_mtu (mtu);
@@ -379,7 +422,6 @@ tunnel_init (int extern_tun_fd)
         hev_exec_run (script_path, hev_tunnel_get_name (),
                       hev_tunnel_get_index (), 0);
 
-    tun_fd_local = 1;
     return 0;
 }
 
@@ -388,7 +430,7 @@ tunnel_fini (void)
 {
     const char *script_path;
 
-    if (!tun_fd_local)
+    if (!READ_ONCE (tun_fd_local) && (READ_ONCE (tun_fd) < 0))
         return;
 
     script_path = hev_config_get_tunnel_pre_down_script ();
@@ -396,9 +438,7 @@ tunnel_fini (void)
         hev_exec_run (script_path, hev_tunnel_get_name (),
                       hev_tunnel_get_index (), 1);
 
-    hev_tunnel_close (tun_fd);
-    tun_fd_local = 0;
-    tun_fd = -1;
+    tunnel_close_fd_now ();
 }
 
 static int
@@ -433,15 +473,26 @@ gateway_init (void)
     udp_bind (udp, NULL, 0);
     udp_recv (udp, udp_recv_handler, NULL);
 
+    gateway_ready = 1;
     return 0;
 }
 
 static void
 gateway_fini (void)
 {
-    udp_remove (udp);
-    tcp_close (tcp);
+    if (!gateway_ready)
+        return;
+
+    if (udp) {
+        udp_remove (udp);
+        udp = NULL;
+    }
+    if (tcp) {
+        tcp_close (tcp);
+        tcp = NULL;
+    }
     netif_remove (&netif);
+    gateway_ready = 0;
 }
 
 static int
@@ -627,12 +678,24 @@ hev_socks5_tunnel_fini (void)
     stat_rx_packets = 0;
     stat_tx_bytes = 0;
     stat_rx_bytes = 0;
+    WRITE_ONCE (run_started, 0);
+}
+
+void
+hev_socks5_tunnel_prepare_start (void)
+{
+    WRITE_ONCE (stop_requested, 0);
+    WRITE_ONCE (run_started, 0);
+    WRITE_ONCE (run, 0);
 }
 
 int
 hev_socks5_tunnel_run (void)
 {
     LOG_D ("socks5 tunnel run");
+
+    if (READ_ONCE (stop_requested))
+        return 0;
 
     task_event = hev_task_ref (task_event);
     hev_task_run (task_event, event_task_entry, NULL);
@@ -644,29 +707,68 @@ hev_socks5_tunnel_run (void)
     hev_task_run (task_lwip_timer, lwip_timer_task_entry, NULL);
 
     run = 1;
+    if (READ_ONCE (stop_requested)) {
+        run = 0;
+        return 0;
+    }
+    WRITE_ONCE (run_started, 1);
     hev_task_system_run ();
+    WRITE_ONCE (run_started, 0);
 
     return 0;
 }
 
-void
+int
 hev_socks5_tunnel_stop (void)
 {
-    int res;
-    int fd;
+	int res;
+	int fd = -1;
+    int attempts;
 
-    LOG_D ("socks5 tunnel stop");
+	LOG_D ("socks5 tunnel stop");
 
-    for (;;) {
-        fd = READ_ONCE (event_fds[1]);
-        if (fd >= 0)
+	WRITE_ONCE (stop_requested, 1);
+	if (!READ_ONCE (run_started)) {
+		WRITE_ONCE (run, 0);
+	}
+	for (attempts = 0; attempts < 30; attempts++) {
+		fd = READ_ONCE (event_fds[1]);
+		if (fd >= 0)
             break;
         /* Wait for async initialization */
         usleep (100 * 1000);
     }
+    if (fd < 0)
+        return -1;
 
+    res = 0;
     res = write (fd, &res, 1);
-    assert (res > 0 && "socks5 tunnel write event");
+    return res > 0 ? 0 : -1;
+}
+
+void
+hev_socks5_tunnel_force_stop (void)
+{
+    int fd;
+
+    LOG_D ("socks5 tunnel force stop");
+
+    WRITE_ONCE (stop_requested, 1);
+    WRITE_ONCE (run, 0);
+
+    fd = READ_ONCE (event_fds[1]);
+    if (fd >= 0) {
+        int val = 0;
+        (void)write (fd, &val, 1);
+    }
+    if (task_lwip_io)
+        hev_task_wakeup (task_lwip_io);
+}
+
+int
+hev_socks5_tunnel_is_running (void)
+{
+    return READ_ONCE (run_started) && READ_ONCE (run);
 }
 
 void

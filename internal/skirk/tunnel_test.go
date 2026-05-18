@@ -3,6 +3,7 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -580,6 +581,128 @@ func (s *delayedBlobStore) Delete(ctx context.Context, name string) error {
 	return s.inner.Delete(ctx, name)
 }
 
+type countingCleanupStore struct {
+	deleted chan string
+	count   atomic.Int64
+}
+
+func newCountingCleanupStore(buffer int) *countingCleanupStore {
+	return &countingCleanupStore{deleted: make(chan string, buffer)}
+}
+
+func (s *countingCleanupStore) Put(context.Context, string, []byte) error { return nil }
+
+func (s *countingCleanupStore) Get(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (s *countingCleanupStore) List(context.Context, string) ([]ObjectInfo, error) {
+	return nil, nil
+}
+
+func (s *countingCleanupStore) Delete(_ context.Context, name string) error {
+	s.record(name)
+	return nil
+}
+
+func (s *countingCleanupStore) GetByID(context.Context, string) ([]byte, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (s *countingCleanupStore) DeleteID(_ context.Context, id string) error {
+	s.record(id)
+	return nil
+}
+
+func (s *countingCleanupStore) record(value string) {
+	s.count.Add(1)
+	select {
+	case s.deleted <- value:
+	default:
+	}
+}
+
+func TestCleanupDeleteDoesNotBackoffUploadLimiter(t *testing.T) {
+	limiter := newAdaptiveLimiter(8, 16, time.Millisecond, "test/upload", nil)
+	tunnel := &Tunnel{
+		Data: &delayedBlobStore{
+			inner:       NewMemoryStore(),
+			deleteDelay: 25 * time.Millisecond,
+		},
+		uploadLimiter: limiter,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	err := tunnel.deleteData(ctx, "stale-object", "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deleteData error = %v, want context deadline exceeded", err)
+	}
+
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if limiter.limit != 8 {
+		t.Fatalf("upload limiter limit = %d, want 8", limiter.limit)
+	}
+	if limiter.inFlight != 0 {
+		t.Fatalf("upload limiter inFlight = %d, want 0", limiter.inFlight)
+	}
+}
+
+func TestMuxCleanupDoesNotBurstDeleteWhileForegroundBusy(t *testing.T) {
+	store := newCountingCleanupStore(deferredCleanupFlushThreshold)
+	tunnel := &Tunnel{
+		Data:             store,
+		CleanupProcessed: true,
+	}
+	tunnel.activeStreams.Store(1)
+	mux := &driveMux{
+		t:            tunnel,
+		cleanupQueue: make(chan cleanupTask, deferredCleanupFlushThreshold),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mux.runCleanupLoop(ctx)
+
+	for i := 0; i < deferredCleanupFlushThreshold; i++ {
+		mux.cleanupQueue <- cleanupTask{id: fmt.Sprintf("id-%d", i)}
+	}
+
+	select {
+	case id := <-store.deleted:
+		t.Fatalf("cleanup deleted %q while foreground traffic was busy", id)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got := store.count.Load(); got != 0 {
+		t.Fatalf("cleanup deletes = %d, want 0 while foreground busy", got)
+	}
+}
+
+func TestMuxCleanupDrainsWhenIdleThresholdReached(t *testing.T) {
+	store := newCountingCleanupStore(deferredCleanupFlushThreshold)
+	tunnel := &Tunnel{
+		Data:             store,
+		CleanupProcessed: true,
+	}
+	mux := &driveMux{
+		t:            tunnel,
+		cleanupQueue: make(chan cleanupTask, deferredCleanupFlushThreshold),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mux.runCleanupLoop(ctx)
+
+	for i := 0; i < deferredCleanupFlushThreshold; i++ {
+		mux.cleanupQueue <- cleanupTask{id: fmt.Sprintf("id-%d", i)}
+	}
+
+	select {
+	case <-store.deleted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not drain while idle")
+	}
+}
+
 func sleepContext(ctx context.Context, delay time.Duration) error {
 	if delay <= 0 {
 		return nil
@@ -1104,31 +1227,158 @@ func TestMuxExitOpenClaimSuppressesDuplicatesAndRecentlyClosed(t *testing.T) {
 	}
 }
 
-func TestMuxRSTBeforeOpenRemembersClosedStream(t *testing.T) {
+func TestMuxRSTBeforeOpenWaitsForOpenRepair(t *testing.T) {
 	ctx := context.Background()
 	mux := &driveMux{
-		t:       &Tunnel{},
-		role:    "exit",
-		streams: map[muxStreamKey]*muxStream{},
-		opening: map[muxStreamKey]struct{}{},
-		closed:  map[muxStreamKey]time.Time{},
-		pending: map[muxStreamKey][]muxFrame{},
+		t:            &Tunnel{},
+		role:         "exit",
+		streams:      map[muxStreamKey]*muxStream{},
+		opening:      map[muxStreamKey]struct{}{},
+		closed:       map[muxStreamKey]time.Time{},
+		pending:      map[muxStreamKey][]muxFrame{},
+		pendingBytes: map[muxStreamKey]int{},
 	}
 	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
 	mux.queuePendingFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1, Payload: []byte("late")})
 
 	mux.handleFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID})
-	if !mux.isClosedStream(key) {
-		t.Fatal("unknown RST should remember the stream as closed")
+	if mux.isClosedStream(key) {
+		t.Fatal("unknown RST should not tombstone the stream before pending-open repair")
 	}
-	if mux.claimExitOpen(key) {
-		t.Fatal("open claim succeeded after earlier RST")
+	if !mux.claimExitOpen(key) {
+		t.Fatal("open claim should still succeed after RST-before-OPEN ordering")
 	}
+	mux.finishExitOpenClaim(key, false)
+	mux.pendingMu.Lock()
+	pending := len(mux.pending[key])
+	pendingBytes := mux.pendingBytes[key]
+	mux.pendingMu.Unlock()
+	if pending != 2 {
+		t.Fatalf("pending frames = %d, want DATA and RST", pending)
+	}
+	if pendingBytes == 0 {
+		t.Fatal("pending RST should count toward pending bytes")
+	}
+}
+
+func TestMuxPendingRSTFlushesAfterOpen(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+
+	mux := &driveMux{
+		t:            &Tunnel{},
+		role:         "exit",
+		streams:      map[muxStreamKey]*muxStream{},
+		opening:      map[muxStreamKey]struct{}{},
+		closed:       map[muxStreamKey]time.Time{},
+		pending:      map[muxStreamKey][]muxFrame{},
+		pendingBytes: map[muxStreamKey]int{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID})
 	mux.pendingMu.Lock()
 	pending := len(mux.pending[key])
 	mux.pendingMu.Unlock()
-	if pending != 0 {
-		t.Fatalf("pending frames = %d, want dropped after RST", pending)
+	if pending != 1 {
+		t.Fatalf("pending frames = %d, want RST before open", pending)
+	}
+
+	mux.handleFrame(ctx, muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: key.ClientID,
+		RunID:    key.RunID,
+		StreamID: key.StreamID,
+		Payload:  encodeMuxOpenPayload(listener.Addr().String(), nil),
+	})
+
+	select {
+	case conn := <-accepted:
+		defer conn.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("exit did not process OPEN after pending RST")
+	}
+	for i := 0; i < 50 && !mux.isClosedStream(key); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !mux.isClosedStream(key) {
+		t.Fatal("pending RST should close the stream after OPEN is processed")
+	}
+}
+
+func TestMuxRSTAfterCloseDoesNotReportBeforeOpen(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	mux := &driveMux{
+		t:       &Tunnel{Observe: true, Logger: log.New(&logs, "", 0)},
+		role:    "exit",
+		streams: map[muxStreamKey]*muxStream{},
+		opening: map[muxStreamKey]struct{}{},
+		closed:  map[muxStreamKey]time.Time{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
+	left, right := net.Pipe()
+	defer right.Close()
+	stream := mux.registerStream(key.StreamID, key.ClientID, key.RunID, left)
+	stream.close()
+
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID})
+
+	logText := logs.String()
+	if strings.Contains(logText, "remote_rst_before_open") {
+		t.Fatalf("late RST was misreported as before-open: %s", logText)
+	}
+	if !strings.Contains(logText, "mux rst ignored") || !strings.Contains(logText, "reason=after_close") {
+		t.Fatalf("late RST log = %q, want after-close ignored log", logText)
+	}
+}
+
+func TestMuxRSTWhileOpenClaimIsNotReportedBeforeOpen(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	mux := &driveMux{
+		t:       &Tunnel{Logger: log.New(&logs, "", 0)},
+		role:    "exit",
+		streams: map[muxStreamKey]*muxStream{},
+		opening: map[muxStreamKey]struct{}{},
+		closed:  map[muxStreamKey]time.Time{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
+	open := muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: key.ClientID,
+		RunID:    key.RunID,
+		StreamID: key.StreamID,
+		Payload:  encodeMuxOpenPayload("example.com:443", nil),
+	}
+	if !mux.claimExitOpenFrame(open) {
+		t.Fatal("open claim failed")
+	}
+
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID})
+
+	logText := logs.String()
+	if strings.Contains(logText, "remote_rst_before_open") {
+		t.Fatalf("RST while opening was misreported as before-open: %s", logText)
+	}
+	if !strings.Contains(logText, "remote_rst_while_opening") {
+		t.Fatalf("RST while opening log = %q, want remote_rst_while_opening", logText)
+	}
+	if !mux.isClosedStream(key) {
+		t.Fatal("RST while opening should close the stream key")
 	}
 }
 
@@ -1239,6 +1489,85 @@ func TestMuxPendingFramesFlushReleasesByteAccounting(t *testing.T) {
 	}
 	if len(stream.inbound) != 2 {
 		t.Fatalf("stream inbound frames = %d, want 2", len(stream.inbound))
+	}
+}
+
+func TestMuxPendingFINFlushesAfterOpen(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	received := make(chan []byte, 1)
+	remoteDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			remoteDone <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			remoteDone <- err
+			return
+		}
+		received <- buf
+		_, err = conn.Read(make([]byte, 1))
+		if err == io.EOF {
+			remoteDone <- nil
+			return
+		}
+		remoteDone <- err
+	}()
+
+	mux := &driveMux{
+		t:            &Tunnel{},
+		role:         "exit",
+		streams:      map[muxStreamKey]*muxStream{},
+		opening:      map[muxStreamKey]struct{}{},
+		closed:       map[muxStreamKey]time.Time{},
+		pending:      map[muxStreamKey][]muxFrame{},
+		pendingBytes: map[muxStreamKey]int{},
+	}
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 42}
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1, Payload: []byte("late")})
+	mux.handleFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 2})
+	if got := len(mux.pending[key]); got != 2 {
+		t.Fatalf("pending frames = %d, want DATA and FIN before open", got)
+	}
+
+	mux.handleFrame(ctx, muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: key.ClientID,
+		RunID:    key.RunID,
+		StreamID: key.StreamID,
+		Payload:  encodeMuxOpenPayload(listener.Addr().String(), nil),
+	})
+
+	select {
+	case got := <-received:
+		if string(got) != "late" {
+			t.Fatalf("remote received %q, want late", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote did not receive pending DATA after OPEN")
+	}
+	select {
+	case err := <-remoteDone:
+		if err != nil {
+			t.Fatalf("remote did not observe pending FIN after OPEN: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote did not observe pending FIN after OPEN")
+	}
+	if got := mux.pendingTotalBytes; got != 0 {
+		t.Fatalf("pending total bytes = %d, want 0 after OPEN flush", got)
 	}
 }
 
@@ -1720,6 +2049,28 @@ func TestPriorityMuxDownloadHedgesSlowFirstAttempt(t *testing.T) {
 	}
 }
 
+func TestPriorityMuxDownloadSkipsHedgeWhenLimiterHasNoSpareCapacity(t *testing.T) {
+	store := &slowFirstObjectStore{}
+	tunnel := &Tunnel{
+		Data:                store,
+		DownloadConcurrency: 1,
+		Profile:             "auto",
+		role:                "client",
+	}
+	mux := &driveMux{t: tunnel}
+
+	sealed, err := mux.downloadMuxObject(context.Background(), muxObjectMeta{Name: "obj", ID: "file-id", Priority: true})
+	if err != nil {
+		t.Fatalf("download mux object: %v", err)
+	}
+	if string(sealed) != "slow" {
+		t.Fatalf("sealed = %q, want slow first response", sealed)
+	}
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("store calls = %d, want no hedge under saturated download limiter", got)
+	}
+}
+
 type hedgedObjectStore struct {
 	calls       atomic.Int32
 	firstExited chan struct{}
@@ -1745,6 +2096,32 @@ func (s *hedgedObjectStore) GetByID(ctx context.Context, _ string) ([]byte, erro
 }
 
 func (s *hedgedObjectStore) DeleteID(context.Context, string) error { return nil }
+
+type slowFirstObjectStore struct {
+	calls atomic.Int32
+}
+
+func (s *slowFirstObjectStore) Put(context.Context, string, []byte) error { return nil }
+
+func (s *slowFirstObjectStore) Get(ctx context.Context, name string) ([]byte, error) {
+	return s.GetByID(ctx, name)
+}
+
+func (s *slowFirstObjectStore) List(context.Context, string) ([]ObjectInfo, error) { return nil, nil }
+
+func (s *slowFirstObjectStore) Delete(context.Context, string) error { return nil }
+
+func (s *slowFirstObjectStore) GetByID(ctx context.Context, _ string) ([]byte, error) {
+	s.calls.Add(1)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(muxPriorityDownloadHedge + 200*time.Millisecond):
+		return []byte("slow"), nil
+	}
+}
+
+func (s *slowFirstObjectStore) DeleteID(context.Context, string) error { return nil }
 
 func TestMuxFramesStayOnHomeLane(t *testing.T) {
 	mux := &driveMux{lanes: make([]*muxLane, muxLaneCount)}
@@ -2057,11 +2434,20 @@ func TestMuxUploadTerminalFailureClosesAffectedStreams(t *testing.T) {
 		mux.lanes[i].urgent = make(chan muxFrame)
 	}
 	stream := mux.registerStream(42, "client-a", "run-a", left)
+	ack := newMuxFrameAck()
 	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
 	lane.failUploadBatch(context.Background(), []muxFrame{
-		{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: 1, Payload: []byte("x")},
+		{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: 1, Payload: []byte("x"), Ack: ack},
 	}, fmt.Errorf("permanent upload failure"), muxUploadMaxRetries)
 
+	select {
+	case err := <-ack.ch:
+		if err == nil {
+			t.Fatal("upload terminal failure ack = nil, want error")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("upload terminal failure did not ack affected frame")
+	}
 	select {
 	case <-stream.done:
 	case <-time.After(250 * time.Millisecond):
@@ -2070,6 +2456,136 @@ func TestMuxUploadTerminalFailureClosesAffectedStreams(t *testing.T) {
 	if !mux.isClosedStream(stream.key()) {
 		t.Fatal("upload terminal failure did not remember closed stream")
 	}
+}
+
+func TestMuxUploadSuccessAcksFrames(t *testing.T) {
+	ctx := context.Background()
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         NewMemoryStore(),
+		SessionID:    sid,
+		ClientID:     "client-a",
+		RunID:        "run-a",
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack := newMuxFrameAck()
+	frame := muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: "client-a",
+		RunID:    "run-a",
+		StreamID: 42,
+		Payload:  encodeMuxOpenPayload("example.com:443", []byte("hello")),
+		Ack:      ack,
+	}
+	lane := mux.lanes[mux.frameLane(frame)]
+	batch, err := lane.prepareUploadBatchV4(ctx, []muxFrame{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lane.uploadPreparedBatchV4(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ack.ch:
+		if err != nil {
+			t.Fatalf("upload success ack = %v, want nil", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("upload success did not ack frame")
+	}
+}
+
+func TestMuxOpenWaitsForUploadAckBeforeReadingPostOpenData(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := &blockingFirstPutObjectStore{
+		MemoryStore: NewMemoryStore(),
+		started:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     "client-a",
+		RunID:        "run-a",
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.start(ctx)
+
+	local, app := net.Pipe()
+	defer local.Close()
+	defer app.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- mux.openClientStream(ctx, "example.com:443", local)
+	}()
+
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("OPEN upload did not start")
+	}
+
+	if err := app.SetWriteDeadline(time.Now().Add(30 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.Write([]byte("post-open data")); err == nil {
+		t.Fatal("post-open data was read before OPEN upload was acknowledged")
+	}
+
+	close(store.release)
+	if err := app.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.Write([]byte("post-open data")); err != nil {
+		t.Fatalf("post-open data was not read after OPEN upload ack: %v", err)
+	}
+	cancel()
+	_ = app.Close()
+
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("openClientStream returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("openClientStream did not finish after app close")
+	}
+}
+
+type blockingFirstPutObjectStore struct {
+	*MemoryStore
+	mu      sync.Mutex
+	blocked bool
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingFirstPutObjectStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
+	block := false
+	s.mu.Lock()
+	if !s.blocked {
+		s.blocked = true
+		block = true
+		close(s.started)
+	}
+	s.mu.Unlock()
+	if block {
+		select {
+		case <-ctx.Done():
+			return ObjectInfo{}, ctx.Err()
+		case <-s.release:
+		}
+	}
+	return s.MemoryStore.PutObject(ctx, name, data)
 }
 
 func TestNormalSendSchedulerInterleavesStreams(t *testing.T) {
@@ -3816,10 +4332,52 @@ func TestMuxPollSplitsPriorityAndNormalFreshLists(t *testing.T) {
 		t.Fatal("normal poll should enqueue a p1 object after priority is known")
 	}
 	if got := len(mux.recvNormalFlows); got != 1 {
-		t.Fatalf("normal flow count = %d, want 1", got)
+		t.Fatalf("normal flow count = %d, want 1; calls = %#v", got, store.calls)
 	}
 	if len(store.calls) < 3 || !containsString(store.calls[2].contains, "/p1/") {
 		t.Fatalf("third list call = %#v, want normal class filter after priority scan", store.calls)
+	}
+}
+
+func TestMuxPollDoesNotSkipNormalWhenPriorityWorkFound(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	priorityName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", 1, []uint64{1}, 0, 1, 1, 1, 1, 128, true)
+	normalName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", 2, []uint64{2}, 0, 2, 1, 1, 1, muxMinBatch, false)
+	updated := startedAt.Add(2 * time.Minute).Format(time.RFC3339Nano)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		priority:    ObjectListInfo{Objects: []ObjectInfo{{Name: priorityName, Updated: updated}}},
+		normal:      ObjectListInfo{Objects: []ObjectInfo{{Name: normalName, Updated: updated}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = startedAt
+	mux.priorityListSince = startedAt
+	mux.active.Store(1)
+
+	if !mux.pollMuxObjects(context.Background()) {
+		t.Fatal("poll should enqueue priority and normal work")
+	}
+	if got := len(mux.recvUrgent); got != 1 {
+		t.Fatalf("urgent queue = %d, want 1", got)
+	}
+	if got := len(mux.recvNormalFlows); got != 1 {
+		t.Fatalf("normal flow count = %d, want 1; calls = %#v", got, store.calls)
+	}
+	if len(store.calls) != 2 || !containsString(store.calls[0].contains, "/p0/") || !containsString(store.calls[1].contains, "/p1/") {
+		t.Fatalf("list calls = %#v, want priority and normal in same active poll", store.calls)
 	}
 }
 
@@ -3879,6 +4437,458 @@ func TestMuxPollPacesNormalFreshListForIdleOpenStream(t *testing.T) {
 	}
 	if len(store.calls) != 3 || !containsString(store.calls[2].contains, "/p0/") {
 		t.Fatalf("paced list calls = %#v, want only priority before normal interval", store.calls)
+	}
+}
+
+func TestMuxPendingOpenTargetedRepairEnqueuesMissingOpen(t *testing.T) {
+	ctx := context.Background()
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	updated := startedAt.Add(3 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(42)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	openName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 0, 0, 128, true)
+	store := &classFreshStatusStore{
+		MemoryStore:  NewMemoryStore(),
+		targetNeedle: streamNeedle,
+		targeted:     ObjectListInfo{Objects: []ObjectInfo{{Name: openName, Updated: updated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.queuePendingFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: streamID, Seq: 1, Payload: []byte("late data")})
+	key := muxStreamKey{ClientID: clientID, RunID: runID, StreamID: streamID}
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[key] = time.Now().Add(-muxPendingOpenRepairInitial - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.maintainPendingOpens(ctx) {
+		t.Fatal("pending open maintenance should repair unknown stream")
+	}
+	if got := len(mux.recvUrgent); got != 1 {
+		t.Fatalf("urgent repair queue = %d, want missing open object", got)
+	}
+	if len(store.calls) != 1 || !containsString(store.calls[0].contains, streamNeedle) || !containsString(store.calls[0].contains, "/p0/") {
+		t.Fatalf("targeted repair calls = %#v, want stream-specific priority list", store.calls)
+	}
+}
+
+func TestMuxPendingOpenRepairUsesPriorityOpenCursor(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	openUpdated := now.Add(-10 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(43)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	openName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 0, 0, 128, true)
+	store := &classFreshStatusStore{
+		MemoryStore:  NewMemoryStore(),
+		targetNeedle: streamNeedle,
+		targeted:     ObjectListInfo{Objects: []ObjectInfo{{Name: openName, Updated: openUpdated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	frame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: streamID, Seq: 1, Payload: []byte("late data")}
+	mux.queuePendingFrame(ctx, frame)
+	key := frame.key()
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[key] = now.Add(-muxPendingOpenRepairInitial - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.maintainPendingOpens(ctx) {
+		t.Fatal("pending open maintenance should repair unknown stream")
+	}
+	if got := len(mux.recvUrgent); got != 1 {
+		t.Fatalf("urgent repair queue = %d, want missing open object", got)
+	}
+	if len(store.calls) != 1 {
+		t.Fatalf("targeted repair calls = %#v, want one stream-specific list", store.calls)
+	}
+	if !containsString(store.calls[0].contains, "/p0/") {
+		t.Fatalf("targeted repair contains = %#v, want priority-open-only filter", store.calls[0].contains)
+	}
+	if !store.calls[0].since.Equal(startedAt) {
+		t.Fatalf("targeted repair since = %s, want run start %s for priority-open scan", store.calls[0].since, startedAt)
+	}
+}
+
+func TestMuxPriorityOrderingKeepsOpenBeforeEarlyData(t *testing.T) {
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 0x42}
+	open := muxObjectMeta{
+		Name:       "open",
+		ClientID:   key.ClientID,
+		RunID:      key.RunID,
+		StreamID:   key.StreamID,
+		Priority:   true,
+		PlainBytes: 128,
+	}
+	earlyData := muxObjectMeta{
+		Name:            "early-data",
+		ClientID:        key.ClientID,
+		RunID:           key.RunID,
+		StreamID:        key.StreamID,
+		Priority:        true,
+		PlainBytes:      128,
+		FrameMinSeq:     1,
+		FrameMaxSeq:     1,
+		FrameRangeKnown: true,
+	}
+
+	ordered := orderMuxMetas([]muxObjectMeta{earlyData, open})
+	if len(ordered) != 2 || ordered[0].Name != "open" {
+		t.Fatalf("priority object order = %#v, want OPEN-like object before early DATA", ordered)
+	}
+}
+
+func TestMuxPollRunsPendingOpenMaintenanceDespitePriorityWork(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	updated := now.Add(-10 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	priorityStream := uint64(44)
+	pendingStream := uint64(45)
+	pendingNeedle := fmt.Sprintf("%016x", pendingStream)
+	priorityName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", priorityStream, []uint64{priorityStream}, 0, 1, 1, 0, 0, 128, true)
+	openName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", pendingStream, []uint64{pendingStream}, 0, 1, 1, 0, 0, 128, true)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		priority:    ObjectListInfo{Objects: []ObjectInfo{{Name: priorityName, Updated: updated.Format(time.RFC3339Nano)}}},
+		targetedByNeedle: map[string]ObjectListInfo{
+			pendingNeedle: {Objects: []ObjectInfo{{Name: openName, Updated: updated.Format(time.RFC3339Nano)}}},
+		},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = startedAt
+	mux.priorityListSince = startedAt
+	pendingFrame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: pendingStream, Seq: 1, Payload: []byte("late data")}
+	mux.queuePendingFrame(ctx, pendingFrame)
+	pendingKey := pendingFrame.key()
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[pendingKey] = now.Add(-muxPendingOpenRepairInitial - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.pollMuxObjects(ctx) {
+		t.Fatal("poll should report priority work and pending-open repair")
+	}
+	var sawBroadPriority, sawPendingRepair bool
+	for _, call := range store.calls {
+		if containsString(call.contains, "/p0/") && !containsString(call.contains, pendingNeedle) {
+			sawBroadPriority = true
+		}
+		if containsString(call.contains, pendingNeedle) {
+			sawPendingRepair = true
+		}
+	}
+	if !sawBroadPriority || !sawPendingRepair {
+		t.Fatalf("list calls = %#v, want broad priority plus pending-open repair despite priority work", store.calls)
+	}
+}
+
+func TestMuxRepairDoesNotSuppressNormalPoll(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	updated := now.Add(-10 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	pendingStream := uint64(45)
+	normalStream := uint64(46)
+	pendingNeedle := fmt.Sprintf("%016x", pendingStream)
+	openName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", pendingStream, []uint64{pendingStream}, 0, 1, 1, 0, 0, 128, true)
+	normalName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", normalStream, []uint64{normalStream}, 0, 2, 1, 1, 1, muxMinBatch, false)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		normal:      ObjectListInfo{Objects: []ObjectInfo{{Name: normalName, Updated: updated.Format(time.RFC3339Nano)}}},
+		targetedByNeedle: map[string]ObjectListInfo{
+			pendingNeedle: {Objects: []ObjectInfo{{Name: openName, Updated: updated.Format(time.RFC3339Nano)}}},
+		},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = startedAt
+	mux.priorityListSince = startedAt
+	mux.active.Store(1)
+	pendingFrame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: pendingStream, Seq: 1, Payload: []byte("late data")}
+	mux.queuePendingFrame(ctx, pendingFrame)
+	pendingKey := pendingFrame.key()
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[pendingKey] = now.Add(-muxPendingOpenRepairInitial - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.pollMuxObjects(ctx) {
+		t.Fatal("poll should report pending-open repair and normal work")
+	}
+	if got := len(mux.recvNormalFlows); got != 1 {
+		t.Fatalf("normal flow count = %d, want 1; calls = %#v", got, store.calls)
+	}
+	var sawPendingRepair, sawNormal bool
+	for _, call := range store.calls {
+		if containsString(call.contains, pendingNeedle) {
+			sawPendingRepair = true
+		}
+		if containsString(call.contains, "/p1/") {
+			sawNormal = true
+		}
+	}
+	if !sawPendingRepair || !sawNormal {
+		t.Fatalf("list calls = %#v, want pending repair and normal poll in same active cycle", store.calls)
+	}
+}
+
+func TestMuxPollRunsGapAndPendingOpenMaintenance(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	updated := now.Add(-10 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	gapStream := uint64(44)
+	pendingStream := uint64(45)
+	gapNeedle := fmt.Sprintf("%016x", gapStream)
+	pendingNeedle := fmt.Sprintf("%016x", pendingStream)
+	gapName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", gapStream, []uint64{gapStream}, 0, 1, 1, 1, 1, muxMinBatch, false)
+	openName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", pendingStream, []uint64{pendingStream}, 0, 1, 1, 0, 0, 128, true)
+	store := &classFreshStatusStore{
+		MemoryStore: NewMemoryStore(),
+		targetedByNeedle: map[string]ObjectListInfo{
+			gapNeedle:     {Objects: []ObjectInfo{{Name: gapName, Updated: updated.Format(time.RFC3339Nano)}}},
+			pendingNeedle: {Objects: []ObjectInfo{{Name: openName, Updated: updated.Format(time.RFC3339Nano)}}},
+		},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	stream := mux.registerStream(gapStream, clientID, runID, nil)
+	defer stream.close()
+	gapKey := stream.key()
+	later := muxObjectMeta{
+		Name:            "later-gap",
+		ClientID:        clientID,
+		RunID:           runID,
+		StreamID:        gapStream,
+		Seq:             2,
+		PlainBytes:      muxMinBatch,
+		FrameMinSeq:     2,
+		FrameMaxSeq:     2,
+		FrameRangeKnown: true,
+		Updated:         updated,
+	}
+	mux.recvNormalMu.Lock()
+	mux.recvNormalFlows[gapKey] = []muxObjectMeta{later}
+	mux.addNormalReceiveQueuedLocked(gapKey, later)
+	mux.recvGaps[gapKey] = muxReceiveGapState{
+		firstSeen:  now.Add(-muxReceiveGapRepairInterval - time.Millisecond),
+		lastRepair: now.Add(-muxReceiveGapRepairInterval - time.Millisecond),
+		meta:       later,
+		expected:   1,
+		nextMinSeq: 2,
+		nextMaxSeq: 2,
+	}
+	mux.recvNormalMu.Unlock()
+
+	pendingFrame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: pendingStream, Seq: 1, Payload: []byte("late data")}
+	mux.queuePendingFrame(ctx, pendingFrame)
+	pendingKey := pendingFrame.key()
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[pendingKey] = now.Add(-muxPendingOpenRepairInitial - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.pollMuxObjects(ctx) {
+		t.Fatal("poll should report gap and pending-open repair work")
+	}
+	var sawGap, sawPending bool
+	for _, call := range store.calls {
+		if containsString(call.contains, gapNeedle) {
+			sawGap = true
+		}
+		if containsString(call.contains, pendingNeedle) {
+			sawPending = true
+		}
+	}
+	if !sawGap || !sawPending {
+		t.Fatalf("targeted calls = %#v, want both receive gap and pending-open repair", store.calls)
+	}
+}
+
+func TestMuxPollRunsPendingOpenTimeoutDespiteGenericWork(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	priorityStream := uint64(44)
+	pendingStream := uint64(45)
+	priorityName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", priorityStream, []uint64{priorityStream}, 0, 1, 1, 0, 0, 128, true)
+	store := NewMemoryStore()
+	if err := store.Put(ctx, priorityName, []byte("placeholder")); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	pendingFrame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: pendingStream, Seq: 1, Payload: []byte("late data")}
+	mux.queuePendingFrame(ctx, pendingFrame)
+	pendingKey := pendingFrame.key()
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[pendingKey] = now.Add(-muxReceiveGapTimeout - time.Millisecond)
+	mux.pendingMu.Unlock()
+
+	if !mux.pollMuxObjects(ctx) {
+		t.Fatal("poll should report generic work and pending-open timeout")
+	}
+	mux.pendingMu.Lock()
+	_, pending := mux.pending[pendingKey]
+	mux.pendingMu.Unlock()
+	if pending {
+		t.Fatal("pending-open timeout was skipped while generic list work existed")
+	}
+	if !mux.isClosedStream(pendingKey) {
+		t.Fatal("timed-out pending stream was not tombstoned")
+	}
+}
+
+func TestMuxPendingOpenRepairIsBudgeted(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	startedAt := now.Add(-time.Hour)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	store := &classFreshStatusStore{MemoryStore: NewMemoryStore()}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	for i := 0; i < muxPendingOpenRepairBudget+5; i++ {
+		streamID := uint64(1000 + i)
+		frame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: streamID, Seq: 1, Payload: []byte("late data")}
+		mux.queuePendingFrame(ctx, frame)
+		key := frame.key()
+		mux.pendingMu.Lock()
+		mux.pendingFirstSeen[key] = now.Add(-muxPendingOpenRepairInitial - time.Duration(i+1)*time.Millisecond)
+		mux.pendingMu.Unlock()
+	}
+
+	if !mux.maintainPendingOpens(ctx) {
+		t.Fatal("pending open maintenance should repair a bounded batch")
+	}
+	if got := len(store.calls); got != muxPendingOpenRepairBudget {
+		t.Fatalf("targeted repair calls = %d, want budget %d", got, muxPendingOpenRepairBudget)
+	}
+	if mux.maintainPendingOpens(ctx) {
+		t.Fatal("same repair window should not schedule another pending-open batch")
+	}
+	if got := len(store.calls); got != muxPendingOpenRepairBudget {
+		t.Fatalf("targeted repair calls after repeated maintenance = %d, want still %d", got, muxPendingOpenRepairBudget)
+	}
+}
+
+func TestMuxPendingOpenRepairSkipsOpeningStreams(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(46)
+	store := &classFreshStatusStore{MemoryStore: NewMemoryStore()}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := muxFrame{Kind: muxFrameData, ClientID: clientID, RunID: runID, StreamID: streamID, Seq: 1, Payload: []byte("late data")}
+	key := frame.key()
+	mux.queuePendingFrame(ctx, frame)
+	mux.pendingMu.Lock()
+	mux.pendingFirstSeen[key] = now.Add(-muxReceiveGapTimeout - time.Second)
+	mux.pendingMu.Unlock()
+	mux.streamsMu.Lock()
+	mux.opening[key] = struct{}{}
+	mux.streamsMu.Unlock()
+
+	if mux.maintainPendingOpens(ctx) {
+		t.Fatal("pending open maintenance should skip a stream already opening")
+	}
+	if len(store.calls) != 0 {
+		t.Fatalf("targeted repair calls = %#v, want none for opening stream", store.calls)
+	}
+	if m := mux.isClosedStream(key); m {
+		t.Fatal("opening pending stream was closed by timeout")
 	}
 }
 
@@ -3983,31 +4993,53 @@ func (s *freshStatusStore) ListFreshPageStatus(_ context.Context, _ string, _ ti
 
 type classFreshStatusCall struct {
 	contains  []string
+	since     time.Time
 	pageToken string
 	maxPages  int
 }
 
 type classFreshStatusStore struct {
 	*MemoryStore
-	priority     ObjectListInfo
-	normal       ObjectListInfo
-	targetNeedle string
-	targeted     ObjectListInfo
-	calls        []classFreshStatusCall
+	priority         ObjectListInfo
+	normal           ObjectListInfo
+	targetNeedle     string
+	targeted         ObjectListInfo
+	targetedByNeedle map[string]ObjectListInfo
+	calls            []classFreshStatusCall
 }
 
-func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, contains []string, _ time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
-	s.calls = append(s.calls, classFreshStatusCall{contains: append([]string(nil), contains...), pageToken: pageToken, maxPages: maxPages})
+func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	s.calls = append(s.calls, classFreshStatusCall{contains: append([]string(nil), contains...), since: since, pageToken: pageToken, maxPages: maxPages})
+	for needle, result := range s.targetedByNeedle {
+		if containsString(contains, needle) {
+			return filterObjectListInfoSince(result, since), nil
+		}
+	}
 	if s.targetNeedle != "" && containsString(contains, s.targetNeedle) {
-		return s.targeted, nil
+		return filterObjectListInfoSince(s.targeted, since), nil
 	}
 	if containsString(contains, "/p0/") {
-		return s.priority, nil
+		return filterObjectListInfoSince(s.priority, since), nil
 	}
 	if containsString(contains, "/p1/") {
-		return s.normal, nil
+		return filterObjectListInfoSince(s.normal, since), nil
 	}
 	return ObjectListInfo{}, nil
+}
+
+func filterObjectListInfoSince(info ObjectListInfo, since time.Time) ObjectListInfo {
+	if since.IsZero() {
+		return info
+	}
+	filtered := info
+	filtered.Objects = nil
+	for _, object := range info.Objects {
+		updated := parseObjectUpdated(object)
+		if updated.IsZero() || !updated.Before(since) {
+			filtered.Objects = append(filtered.Objects, object)
+		}
+	}
+	return filtered
 }
 
 func containsString(values []string, want string) bool {

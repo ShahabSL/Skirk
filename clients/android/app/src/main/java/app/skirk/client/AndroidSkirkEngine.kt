@@ -14,18 +14,21 @@ import kotlin.concurrent.thread
 class AndroidSkirkEngine(
     private val context: Context,
     private val logFileName: String,
+    private val onUnexpectedExit: ((Int) -> Unit)? = null,
 ) {
     private var process: Process? = null
     private var activeProfile: ClientProfile? = null
 
-    fun start(profile: ClientProfile) {
-        if (activeProfile?.runtimeKey == profile.runtimeKey && process?.isAlive == true) {
-            return
-        }
-        stop()
+	@Synchronized
+	fun start(profile: ClientProfile) {
+		if (activeProfile?.runtimeKey == profile.runtimeKey && process?.isAlive == true) {
+			return
+		}
+		stop()
+		waitForListenPortRelease(profile)
 
-        val configFile = writeRuntimeConfig(profile)
-        val engine = File(context.applicationInfo.nativeLibraryDir, ENGINE_NAME)
+		val configFile = writeRuntimeConfig(profile)
+		val engine = File(context.applicationInfo.nativeLibraryDir, ENGINE_NAME)
         check(engine.exists()) { "Skirk engine was not packaged at ${engine.absolutePath}" }
 
         val logsDir = File(context.filesDir, "logs").apply { mkdirs() }
@@ -80,7 +83,9 @@ class AndroidSkirkEngine(
     }
 
     private fun ensureProcessAlive() {
-        val child = process ?: error("Skirk engine is not running")
+        val child = synchronized(this) {
+            process ?: error("Skirk engine is not running")
+        }
         if (child.isAlive) {
             return
         }
@@ -91,27 +96,61 @@ class AndroidSkirkEngine(
             ?.takeLast(8)
             ?.joinToString("\n")
             .orEmpty()
-        process = null
-        activeProfile = null
+        synchronized(this) {
+            if (process === child) {
+                process = null
+                activeProfile = null
+            }
+        }
         error("Skirk engine exited with code $code\n$tail")
     }
 
-    fun stop() {
-        val child = process
-        process = null
-        activeProfile = null
-        child?.destroy()
-        runCatching {
-            if (child?.waitFor(2, TimeUnit.SECONDS) == false) {
-                child.destroyForcibly()
-            }
-        }
-    }
+	@Synchronized
+	fun stop() {
+		val child = process
+		process = null
+		activeProfile = null
+		child?.destroy()
+		runCatching {
+			if (child?.waitFor(2, TimeUnit.SECONDS) == false) {
+				child.destroyForcibly()
+				child.waitFor(1, TimeUnit.SECONDS)
+			}
+		}
+	}
+
+	private fun waitForListenPortRelease(profile: ClientProfile, timeoutMs: Long = 3_000L) {
+		val host = if (profile.socksHost == "0.0.0.0") "127.0.0.1" else profile.socksHost
+		val deadline = System.currentTimeMillis() + timeoutMs
+		while (System.currentTimeMillis() < deadline) {
+			if (!canConnect(host, profile.socksPort)) {
+				return
+			}
+			Thread.sleep(100L)
+		}
+		error("local SOCKS port is still in use on $host:${profile.socksPort}")
+	}
+
+	private fun canConnect(host: String, port: Int): Boolean =
+		runCatching {
+			Socket().use { socket ->
+				socket.connect(InetSocketAddress(host, port), 150)
+			}
+		}.isSuccess
 
     private fun watchProcessExit(child: Process, logFile: File) {
         thread(name = "skirk-engine-watch", start = true) {
             val code = runCatching { child.waitFor() }.getOrNull() ?: return@thread
-            if (process !== child) {
+            val unexpected = synchronized(this) {
+                if (process !== child) {
+                    false
+                } else {
+                    process = null
+                    activeProfile = null
+                    true
+                }
+            }
+            if (!unexpected) {
                 appendLogLine(logFile, "android stopped code=$code")
                 Log.i(TAG, "Skirk engine stopped code=$code")
                 return@thread
@@ -123,8 +162,7 @@ class AndroidSkirkEngine(
                 .orEmpty()
             appendLogLine(logFile, "android exited unexpectedly code=$code")
             Log.w(TAG, "Skirk engine exited unexpectedly code=$code\n$tail")
-            process = null
-            activeProfile = null
+            onUnexpectedExit?.invoke(code)
         }
     }
 
@@ -148,7 +186,7 @@ class AndroidSkirkEngine(
                 "--poll-ms",
                 "1000",
                 "--upload-concurrency",
-                "4",
+                "8",
                 "--download-concurrency",
                 "16",
             )

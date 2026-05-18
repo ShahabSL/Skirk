@@ -26,16 +26,30 @@ class SkirkProxyService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopRequested = true
-            stopProxy()
-            connectionState.stopped("Disconnected")
-            stopSelf()
+        if (intent == null) {
+            Log.w(TAG, "Ignoring proxy service restart without an explicit start intent")
+            connectionState.stopped("SOCKS stopped")
+            stopSelfResult(startId)
             return START_NOT_STICKY
         }
+		if (intent.action == ACTION_STOP) {
+			stopRequested = true
+			stopProxy()
+			if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+				connectionState.stopped("Disconnected")
+			}
+			stopSelf()
+			return START_NOT_STICKY
+		}
+		if (intent.action != ACTION_START) {
+			Log.w(TAG, "Ignoring proxy service intent with action=${intent.action}")
+			stopSelfResult(startId)
+			return START_NOT_STICKY
+		}
+		SkirkVpnService.stop(this)
 
-        val profile = intent?.getStringExtra(EXTRA_PROFILE_JSON)
-            ?.let { ClientProfile.fromJson(JSONObject(it)) }
+		val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
+			?.let { ClientProfile.fromJson(JSONObject(it)) }
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
@@ -50,20 +64,22 @@ class SkirkProxyService : Service() {
         if (startInProgress.compareAndSet(false, true)) {
             thread(name = "skirk-proxy-start", start = true) {
                 runCatching { startProxy(profile) }
-                    .onFailure { error ->
-                        Log.e(TAG, "Failed to start Skirk", error)
-                        if (stopRequested) {
-                            connectionState.stopped("Disconnected")
-                        } else {
-                            connectionState.failed("SOCKS failed: ${error.message ?: "start failed"}")
-                        }
-                        stopProxy()
-                        stopSelf()
+					.onFailure { error ->
+						Log.e(TAG, "Failed to start Skirk", error)
+						if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+							if (stopRequested) {
+								connectionState.stopped("Disconnected")
+							} else {
+								connectionState.failed("SOCKS failed: ${error.message ?: "start failed"}")
+							}
+						}
+						stopProxy()
+						stopSelf()
                     }
                 startInProgress.set(false)
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -77,15 +93,23 @@ class SkirkProxyService : Service() {
         super.onDestroy()
     }
 
-    private fun startProxy(profile: ClientProfile) {
-        Log.i(TAG, "Starting proxy on ${profile.socksAddress}")
-        stopProxy()
-        engine.start(profile)
-        engine.waitUntilReady(readinessHost(profile), profile.socksPort)
-        if (stopRequested) {
-            return
-        }
-        connectionState.connected(profile, "SOCKS connected on ${displayAddress(profile)}")
+	private fun startProxy(profile: ClientProfile) {
+		Log.i(TAG, "Starting proxy on ${profile.socksAddress}")
+		stopProxy()
+		if (stopRequested) {
+			return
+		}
+		engine.start(profile)
+		if (stopRequested) {
+			stopProxy()
+			return
+		}
+		engine.waitUntilReady(readinessHost(profile), profile.socksPort)
+		if (stopRequested) {
+			stopProxy()
+			return
+		}
+		connectionState.connected(profile, "SOCKS connected on ${displayAddress(profile)}")
         Log.i(TAG, "Proxy ready on ${profile.socksAddress}")
     }
 

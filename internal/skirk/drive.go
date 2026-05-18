@@ -50,6 +50,8 @@ type DriveCleanupOptions struct {
 	Now               time.Time
 	DryRun            bool
 	DeleteConcurrency int
+	MaxDeletes        int
+	DeleteDelay       time.Duration
 	MaxPages          int
 }
 
@@ -733,12 +735,18 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
 			result.Matched++
 			result.MatchedSize += size
+			if opts.MaxDeletes > 0 && len(candidates) >= opts.MaxDeletes {
+				return false, nil
+			}
 			candidates = append(candidates, candidate{id: item.ID})
 		}
 		return true, nil
 	})
 	result.Pages = status.Pages
 	result.Truncated = status.Truncated || status.Incomplete
+	if opts.MaxDeletes > 0 && len(candidates) >= opts.MaxDeletes {
+		result.Truncated = true
+	}
 	if err != nil {
 		return result, err
 	}
@@ -772,6 +780,15 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 				mu.Lock()
 				result.Deleted++
 				mu.Unlock()
+				if opts.DeleteDelay > 0 {
+					timer := time.NewTimer(opts.DeleteDelay)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return
+					case <-timer.C:
+					}
+				}
 			}
 		}()
 	}
