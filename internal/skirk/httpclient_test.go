@@ -73,6 +73,24 @@ func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
 	}
 }
 
+func TestGoogleHTTPClientCanReturnRateLimitWithoutRetry(t *testing.T) {
+	requests := 0
+	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`), nil
+	})}}
+	result, err := client.RequestNoRateLimitRetry(context.Background(), http.MethodGet, "www.googleapis.com", "/drive/v3/files", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", result.Status)
+	}
+	if requests != 1 || result.Attempts != 1 {
+		t.Fatalf("requests=%d result attempts=%d, want one immediate Drive rate-limit response", requests, result.Attempts)
+	}
+}
+
 func TestGoogleHTTPClientRequestsAndDecodesGzip(t *testing.T) {
 	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Header.Get("Accept-Encoding") != "gzip" {

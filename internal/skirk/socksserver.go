@@ -57,13 +57,13 @@ func (s *SOCKSServer) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	if req.Command == socksCommandUDPAssociate {
-		if err := s.serveUDPAssociate(ctx, conn); err != nil && s.Logger != nil {
+		if err := s.serveUDPAssociate(ctx, conn); err != nil && s.Logger != nil && !isExpectedUDPRefusal(err) {
 			s.Logger.Printf("socks udp associate failed: %v", err)
 		}
 		return
 	}
 	if req.Command == socksCommandUDPInTCP {
-		if err := s.serveUDPInTCP(ctx, conn); err != nil && s.Logger != nil {
+		if err := s.serveUDPInTCP(ctx, conn); err != nil && s.Logger != nil && !isExpectedUDPRefusal(err) {
 			s.Logger.Printf("socks udp-in-tcp failed: %v", err)
 		}
 		return
@@ -158,6 +158,10 @@ func isMappedDNSOverTLSProbe(target string) bool {
 		return false
 	}
 	return ip[0] == 198 && (ip[1] == 18 || ip[1] == 19)
+}
+
+func isExpectedUDPRefusal(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "non-dns target refused")
 }
 
 func socksReply(conn net.Conn, rep byte) error {

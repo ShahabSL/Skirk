@@ -20,9 +20,10 @@ import (
 )
 
 type HTTPResult struct {
-	Status int
-	Body   []byte
-	Header http.Header
+	Status   int
+	Body     []byte
+	Header   http.Header
+	Attempts int
 }
 
 type GoogleAPIError struct {
@@ -155,6 +156,14 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return c.request(ctx, method, host, path, headers, body, true)
+}
+
+func (c *GoogleHTTPClient) RequestNoRateLimitRetry(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return c.request(ctx, method, host, path, headers, body, false)
+}
+
+func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
 	var lastErr error
 	var lastResult *HTTPResult
 	for i, route := range googleHTTPRouteAttempts(c.route) {
@@ -162,8 +171,8 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 		if i > 0 {
 			client = NewGoogleHTTPClient(route)
 		}
-		result, err := client.requestWithRetries(ctx, method, host, path, headers, body)
-		if err == nil && !shouldRetryResult(result) {
+		result, err := client.requestWithRetries(ctx, method, host, path, headers, body, retryRateLimit)
+		if err == nil && !shouldRetryResultWithPolicy(result, retryRateLimit) {
 			return result, nil
 		}
 		if err == nil {
@@ -181,7 +190,7 @@ func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path strin
 	return lastResult, nil
 }
 
-func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
 	attempts := 4
 	if isGoogleFrontRoute(c.route.Mode) {
 		attempts = 5
@@ -190,7 +199,10 @@ func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host,
 	var lastResult *HTTPResult
 	for attempt := 0; attempt < attempts; attempt++ {
 		result, err := c.requestOnce(ctx, method, host, path, headers, body)
-		if err == nil && !shouldRetryResult(result) {
+		if result != nil {
+			result.Attempts = attempt + 1
+		}
+		if err == nil && !shouldRetryResultWithPolicy(result, retryRateLimit) {
 			return result, nil
 		}
 		if err == nil {
@@ -338,10 +350,20 @@ func shouldPinGoogleIP(mode string) bool {
 }
 
 func shouldRetryResult(result *HTTPResult) bool {
+	return shouldRetryResultWithPolicy(result, true)
+}
+
+func shouldRetryResultWithPolicy(result *HTTPResult, retryRateLimit bool) bool {
 	if result == nil {
 		return false
 	}
-	if result.Status == http.StatusRequestTimeout || result.Status == http.StatusTooManyRequests || result.Status >= 500 {
+	if result.Status == http.StatusRequestTimeout || result.Status >= 500 {
+		return true
+	}
+	if !retryRateLimit {
+		return false
+	}
+	if result.Status == http.StatusTooManyRequests {
 		return true
 	}
 	if result.Status != http.StatusForbidden {

@@ -1366,38 +1366,28 @@ func TestOrderMuxMetasPrioritizesInteractiveObjects(t *testing.T) {
 	}
 }
 
-func TestMuxPriorityFramePromotesControlAndHintedTinyData(t *testing.T) {
-	for _, kind := range []byte{muxFrameOpen, muxFrameFIN, muxFrameRST} {
+func TestMuxPriorityFramePromotesOnlyControl(t *testing.T) {
+	for _, kind := range []byte{muxFrameOpen, muxFrameRST} {
 		if !muxPriorityFrame(muxFrame{Kind: kind}) {
 			t.Fatalf("kind %d should stay strict priority", kind)
 		}
 	}
 
-	frame := muxFrame{Kind: muxFrameData, Seq: 1, Payload: make([]byte, muxPriorityBootstrapChunk)}
-	if muxPriorityFrame(frame) {
-		t.Fatal("data without an explicit bootstrap hint should use the fair scheduler")
+	if muxPriorityFrame(muxFrame{Kind: muxFrameFIN}) {
+		t.Fatal("FIN should stay ordered with data to avoid priority/normal sequence gaps")
 	}
-	frame.PriorityHint = true
-	if !muxPriorityFrame(frame) {
-		t.Fatal("bounded bootstrap hint should promote tiny data")
+
+	for _, size := range []int{0, 1024, muxMinBatch} {
+		if muxPriorityFrame(muxFrame{Kind: muxFrameData, Seq: 1, Payload: make([]byte, size)}) {
+			t.Fatalf("data payload size %d should use the fair scheduler", size)
+		}
 	}
-	frame.Payload = make([]byte, muxPriorityBootstrapChunk+1)
-	if muxPriorityFrame(frame) {
-		t.Fatal("large data frame should not consume priority capacity")
+
+	if !muxPriorityFrame(muxFrame{Kind: muxFrameData, Seq: 1, Payload: []byte("small"), Priority: true}) {
+		t.Fatal("priority-marked small data should use the priority lane")
 	}
-	frame.Seq = 2
-	frame.Payload = make([]byte, muxPriorityBootstrapChunk)
-	frame.PriorityHint = false
-	if muxPriorityFrame(frame) {
-		t.Fatal("continuing data frame should use the fair data scheduler")
-	}
-	frame.PriorityHint = true
-	if !muxPriorityFrame(frame) {
-		t.Fatal("bounded bootstrap hint should promote tiny continuation data")
-	}
-	frame.Payload = make([]byte, muxPriorityBootstrapChunk+1)
-	if muxPriorityFrame(frame) {
-		t.Fatal("bootstrap hint should not promote oversized data frames")
+	if !muxPriorityFrame(muxFrame{Kind: muxFrameFIN, Seq: 2, Priority: true}) {
+		t.Fatal("priority-marked FIN should stay with a priority-only small stream")
 	}
 }
 
@@ -1408,6 +1398,31 @@ func TestMuxPriorityBatchRequiresAllFramesPriority(t *testing.T) {
 	}
 	if muxPriorityBatch(frames) {
 		t.Fatal("mixed priority and bulk batch should not be classified as priority")
+	}
+}
+
+func TestMuxNormalPollingThrottlesWhileNormalWorkActive(t *testing.T) {
+	now := time.Unix(100, 0)
+	key := muxStreamKey{ClientID: "client-a", RunID: "run-a", StreamID: 1}
+	mux := &driveMux{
+		t:                  &Tunnel{PollInterval: 500 * time.Millisecond},
+		recvNormalFlows:    map[muxStreamKey][]muxObjectMeta{key: {{Name: "normal", StreamID: key.StreamID}}},
+		recvNormalActive:   map[muxStreamKey]int{},
+		recvGaps:           map[muxStreamKey]muxReceiveGapState{},
+		normalListLastPoll: now,
+	}
+
+	if mux.shouldPollNormalMuxObjects(now.Add(500 * time.Millisecond)) {
+		t.Fatal("normal polling should wait while already queued normal work is active")
+	}
+	if !mux.shouldPollNormalMuxObjects(now.Add(muxNormalActivePollInterval)) {
+		t.Fatal("normal polling should resume after the active-work interval")
+	}
+	mux.recvNormalMu.Lock()
+	mux.recvGaps[key] = muxReceiveGapState{}
+	mux.recvNormalMu.Unlock()
+	if !mux.shouldPollNormalMuxObjects(now.Add(500 * time.Millisecond)) {
+		t.Fatal("normal polling should continue while repairing receive gaps")
 	}
 }
 
@@ -1453,162 +1468,116 @@ func TestMuxSendDataPayloadQueuesDataThroughFairScheduler(t *testing.T) {
 	}
 }
 
-func TestMuxSendDataPayloadPromotesTinyFirstResponse(t *testing.T) {
+func TestMuxSendFrameKeepsOpenRSTPriorityAndFINDataNormal(t *testing.T) {
 	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
 	for i := range mux.lanes {
 		mux.lanes[i] = newMuxLane(mux, i)
 	}
-	stream := &muxStream{id: 1, clientID: "client-a", runID: "run-a", mux: mux}
-	stream.enablePriorityBootstrap(int64(muxPriorityBootstrapChunk))
+	data := mux.normalizeFrameNamespace(muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Payload: make([]byte, 1024)})
+	lane := mux.lanes[mux.frameLane(data)]
+	open := mux.normalizeFrameNamespace(muxFrame{Kind: muxFrameOpen, ClientID: "client-a", RunID: "run-a", StreamID: 1})
+	rst := mux.normalizeFrameNamespace(muxFrame{Kind: muxFrameRST, ClientID: "client-a", RunID: "run-a", StreamID: 1})
 
-	if err := mux.sendDataPayload(context.Background(), stream, make([]byte, muxPriorityBootstrapChunk)); err != nil {
-		t.Fatalf("send data payload: %v", err)
-	}
-
-	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
-	if got := len(lane.urgent); got != 1 {
-		t.Fatalf("urgent frames = %d, want tiny first data in priority queue", got)
-	}
-	got := <-lane.urgent
-	if got.Seq != 1 || len(got.Payload) != muxPriorityBootstrapChunk {
-		t.Fatalf("urgent frame seq=%d len=%d, want seq 1 len %d", got.Seq, len(got.Payload), muxPriorityBootstrapChunk)
-	}
-
-	lane.normalMu.Lock()
-	queued := lane.normalQueuedFrames
-	lane.normalMu.Unlock()
-	if queued != 0 {
-		t.Fatalf("normal frames = %d, want none for tiny first response", queued)
-	}
-}
-
-func TestMuxSendDataPayloadUsesDirectionAwareBootstrapBudgets(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		budget        int64
-		wantUrgent    int
-		wantRemaining int64
-	}{
-		{name: "client post-open", budget: muxClientBootstrapBudget, wantUrgent: 1, wantRemaining: 0},
-		{name: "exit first response", budget: muxExitBootstrapBudget, wantUrgent: 1, wantRemaining: muxExitBootstrapBudget - muxPriorityBootstrapChunk},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
-			for i := range mux.lanes {
-				mux.lanes[i] = newMuxLane(mux, i)
-			}
-			stream := &muxStream{id: 1, clientID: "client-a", runID: "run-a", mux: mux}
-			stream.enablePriorityBootstrap(tt.budget)
-
-			payload := make([]byte, muxExitBootstrapBudget+32*1024)
-			if err := mux.sendDataPayload(context.Background(), stream, payload); err != nil {
-				t.Fatalf("send data payload: %v", err)
-			}
-			lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
-			if got := len(lane.urgent); got != tt.wantUrgent {
-				t.Fatalf("urgent frames = %d, want %d", got, tt.wantUrgent)
-			}
-			lane.normalMu.Lock()
-			normalQueued := lane.normalQueuedFrames
-			lane.normalMu.Unlock()
-			if normalQueued != 1 {
-				t.Fatalf("normal frames = %d, want one fair remainder", normalQueued)
-			}
-			if got := stream.sendPriorityLeft.Load(); got != tt.wantRemaining {
-				t.Fatalf("remaining priority budget = %d, want %d", got, tt.wantRemaining)
-			}
-		})
-	}
-}
-
-func TestMuxSendDataPayloadDemotesLargePriorityDataWhenBacklogged(t *testing.T) {
-	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
-	for i := range mux.lanes {
-		mux.lanes[i] = newMuxLane(mux, i)
-	}
-	stream := &muxStream{id: 1, clientID: "client-a", runID: "run-a", mux: mux}
-	stream.enablePriorityBootstrap(muxExitBootstrapBudget)
-
-	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
-	lane.noteUrgentUploadEnqueued(make([]muxFrame, muxPriorityDataBacklog))
-
-	if err := mux.sendDataPayload(context.Background(), stream, make([]byte, muxPriorityBootstrapChunk)); err != nil {
-		t.Fatalf("send data payload: %v", err)
-	}
-	if got := len(lane.urgent); got != 0 {
-		t.Fatalf("urgent frames = %d, want congested large data demoted", got)
-	}
-
-	lane.normalMu.Lock()
-	normal := append([]muxFrame(nil), lane.normalQueues[stream.key()]...)
-	queued := lane.normalQueuedFrames
-	lane.normalMu.Unlock()
-	if queued != 1 || len(normal) != 1 {
-		t.Fatalf("normal queue = queued %d frames %+v, want one demoted frame", queued, normal)
-	}
-	if normal[0].Seq != 1 || len(normal[0].Payload) != muxPriorityBootstrapChunk {
-		t.Fatalf("demoted frame seq=%d len=%d", normal[0].Seq, len(normal[0].Payload))
-	}
-	if normal[0].PriorityHint || muxPriorityFrame(normal[0]) {
-		t.Fatal("demoted frame should not remain priority-classified")
-	}
-}
-
-func TestMuxSendFrameKeepsTinyDataAndControlPriorityWhenBacklogged(t *testing.T) {
-	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
-	for i := range mux.lanes {
-		mux.lanes[i] = newMuxLane(mux, i)
-	}
-	frame := mux.normalizeFrameNamespace(muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 1, Payload: make([]byte, muxPriorityCongestedDataMax), PriorityHint: true})
-	lane := mux.lanes[mux.frameLane(frame)]
-	lane.noteUrgentUploadEnqueued(make([]muxFrame, muxPriorityDataBacklog))
-
-	if err := mux.sendFrame(context.Background(), frame); err != nil {
-		t.Fatalf("send tiny data frame: %v", err)
+	if err := mux.sendFrame(context.Background(), data); err != nil {
+		t.Fatalf("send data frame: %v", err)
 	}
 	if err := mux.sendFrame(context.Background(), muxFrame{Kind: muxFrameFIN, ClientID: "client-a", RunID: "run-a", StreamID: 1}); err != nil {
 		t.Fatalf("send fin frame: %v", err)
 	}
+	if err := mux.sendFrame(context.Background(), open); err != nil {
+		t.Fatalf("send open frame: %v", err)
+	}
+	if err := mux.sendFrame(context.Background(), rst); err != nil {
+		t.Fatalf("send rst frame: %v", err)
+	}
 	if got := len(lane.urgent); got != 2 {
-		t.Fatalf("urgent frames = %d, want tiny data and control to stay priority", got)
+		t.Fatalf("urgent frames = %d, want only OPEN/RST in strict priority", got)
+	}
+	lane.normalMu.Lock()
+	normal := append([]muxFrame(nil), lane.normalQueues[data.key()]...)
+	queued := lane.normalQueuedFrames
+	lane.normalMu.Unlock()
+	if queued != 2 || len(normal) != 2 || normal[0].Kind != muxFrameData || normal[1].Kind != muxFrameFIN {
+		t.Fatalf("normal queue = queued %d frames %+v, want data then FIN", queued, normal)
+	}
+	for _, frame := range normal {
+		if muxPriorityFrame(frame) {
+			t.Fatalf("frame kind %d should stay normal", frame.Kind)
+		}
 	}
 }
 
-func TestMuxSendDataPayloadPromotesFirstBootstrapChunkAndPreservesBudgetWhenBacklogged(t *testing.T) {
+func TestMuxSmallStreamDataAndFINStayPriorityUntilDemotion(t *testing.T) {
 	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
 	for i := range mux.lanes {
 		mux.lanes[i] = newMuxLane(mux, i)
 	}
-	stream := &muxStream{id: 1, clientID: "client-a", runID: "run-a", mux: mux}
-	stream.enablePriorityBootstrap(64 * 1024)
+	stream := &muxStream{
+		id:       1,
+		clientID: "client-a",
+		runID:    "run-a",
+		mux:      mux,
+	}
 
-	payload := make([]byte, 64*1024+64*1024)
-	if err := mux.sendDataPayload(context.Background(), stream, payload); err != nil {
+	if err := mux.sendDataPayload(context.Background(), stream, []byte("GET / HTTP/1.1\r\n\r\n")); err != nil {
 		t.Fatalf("send data payload: %v", err)
+	}
+	if err := mux.sendFrame(context.Background(), muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Priority: stream.claimPriorityFIN()}); err != nil {
+		t.Fatalf("send fin: %v", err)
 	}
 
 	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
-	if got := len(lane.urgent); got != 1 {
-		t.Fatalf("urgent frames = %d, want only one pending bootstrap chunk while lane is backlogged", got)
+	if got := len(lane.urgent); got != 2 {
+		t.Fatalf("urgent frames = %d, want small data and FIN", got)
 	}
-	frame := <-lane.urgent
-	if !frame.PriorityHint || !muxPriorityFrame(frame) || len(frame.Payload) != muxPriorityBootstrapChunk {
-		t.Fatalf("bootstrap frame = seq %d len %d hint %t", frame.Seq, len(frame.Payload), frame.PriorityHint)
+	for i := 0; i < 2; i++ {
+		frame := <-lane.urgent
+		if !muxPriorityFrame(frame) {
+			t.Fatalf("urgent frame %d was not priority: %+v", i, frame)
+		}
+	}
+	lane.normalMu.Lock()
+	queued := lane.normalQueuedFrames
+	lane.normalMu.Unlock()
+	if queued != 0 {
+		t.Fatalf("normal queued frames = %d, want 0", queued)
+	}
+}
+
+func TestMuxLargeStreamDataDemotesFINToNormal(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}, lanes: make([]*muxLane, muxLaneCount)}
+	for i := range mux.lanes {
+		mux.lanes[i] = newMuxLane(mux, i)
+	}
+	stream := &muxStream{
+		id:       1,
+		clientID: "client-a",
+		runID:    "run-a",
+		mux:      mux,
 	}
 
+	if err := mux.sendDataPayload(context.Background(), stream, make([]byte, muxPriorityStreamBytes+1)); err != nil {
+		t.Fatalf("send data payload: %v", err)
+	}
+	if err := mux.sendFrame(context.Background(), muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Priority: stream.claimPriorityFIN()}); err != nil {
+		t.Fatalf("send fin: %v", err)
+	}
+
+	lane := mux.lanes[mux.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
+	if got := len(lane.urgent); got != 0 {
+		t.Fatalf("urgent frames = %d, want demoted stream to stay normal", got)
+	}
 	lane.normalMu.Lock()
 	normal := append([]muxFrame(nil), lane.normalQueues[stream.key()]...)
 	queued := lane.normalQueuedFrames
 	lane.normalMu.Unlock()
-	wantNormal := len(payload) - muxPriorityBootstrapChunk
-	if queued != 1 || len(normal) != 1 || len(normal[0].Payload) != wantNormal {
-		t.Fatalf("normal queue = queued %d frames %+v, want one fair remainder of %d bytes", queued, normal, wantNormal)
+	if queued != 2 || len(normal) != 2 || normal[0].Kind != muxFrameData || normal[1].Kind != muxFrameFIN {
+		t.Fatalf("normal queue = queued %d frames %+v, want data then FIN", queued, normal)
 	}
-	if normal[0].PriorityHint || muxPriorityFrame(normal[0]) {
-		t.Fatal("remainder should not consume priority capacity")
-	}
-	if got, want := stream.sendPriorityLeft.Load(), int64(64*1024-muxPriorityBootstrapChunk); got != want {
-		t.Fatalf("remaining priority budget = %d, want %d preserved for later uncongested first bytes", got, want)
+	for _, frame := range normal {
+		if muxPriorityFrame(frame) {
+			t.Fatalf("demoted frame kind %d should stay normal", frame.Kind)
+		}
 	}
 }
 
@@ -1924,32 +1893,6 @@ func TestMuxUrgentBatchLoopCapsBrowserOpenBurst(t *testing.T) {
 	}
 }
 
-func TestMuxPriorityDataBacklogCountsCoalescedUrgentFrames(t *testing.T) {
-	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
-	lane.urgent = make(chan muxFrame, muxUrgentFrameQueue)
-	lane.urgentUpload = make(chan []muxFrame, 1)
-	frames := make([]muxFrame, muxPriorityDataBacklog)
-	lane.noteUrgentUploadEnqueued(frames)
-
-	largeData := muxFrame{Kind: muxFrameData, Payload: make([]byte, muxPriorityCongestedDataMax+1)}
-	if !lane.priorityDataBacklogHigh(largeData) {
-		t.Fatal("coalesced urgent upload frames should count toward priority data demotion")
-	}
-	tinyData := muxFrame{Kind: muxFrameData, Payload: make([]byte, muxPriorityCongestedDataMax)}
-	if lane.priorityDataBacklogHigh(tinyData) {
-		t.Fatal("tiny data should stay eligible for priority even when urgent upload is backlogged")
-	}
-	control := muxFrame{Kind: muxFrameFIN}
-	if lane.priorityDataBacklogHigh(control) {
-		t.Fatal("control frames should never be demoted by data backlog policy")
-	}
-
-	lane.noteUrgentUploadDequeued(frames)
-	if lane.priorityDataBacklogHigh(largeData) {
-		t.Fatal("priority data backlog should clear after urgent frames are drained")
-	}
-}
-
 func TestMuxReceiveUploadBatchPrefersNormalAfterUrgentBurst(t *testing.T) {
 	ctx := context.Background()
 	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
@@ -1958,7 +1901,6 @@ func TestMuxReceiveUploadBatchPrefersNormalAfterUrgentBurst(t *testing.T) {
 
 	urgent := []muxFrame{{Kind: muxFrameOpen, ClientID: "client-a", RunID: "run-a", StreamID: 1}}
 	normal := []muxFrame{{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 2, Seq: 2, Payload: make([]byte, inlineDataThreshold+1)}}
-	lane.noteUrgentUploadEnqueued(urgent)
 	lane.urgentUpload <- urgent
 	lane.upload <- normal
 
@@ -1968,36 +1910,6 @@ func TestMuxReceiveUploadBatchPrefersNormalAfterUrgentBurst(t *testing.T) {
 	}
 	if muxPriorityBatch(got) || got[0].StreamID != normal[0].StreamID {
 		t.Fatalf("received batch = %+v, want normal batch after urgent burst", got)
-	}
-	if lane.urgentUploadBacklogFrames() != len(urgent) {
-		t.Fatalf("urgent backlog frames = %d, want urgent batch still queued", lane.urgentUploadBacklogFrames())
-	}
-}
-
-func TestMuxReceiveUploadBatchKeepsWorkerHeldUrgentBacklogVisible(t *testing.T) {
-	ctx := context.Background()
-	lane := newMuxLane(&driveMux{t: &Tunnel{ChunkSize: 1024 * 1024}}, 0)
-	lane.urgentUpload = make(chan []muxFrame, 1)
-	urgent := []muxFrame{
-		{Kind: muxFrameOpen, ClientID: "client-a", RunID: "run-a", StreamID: 1},
-		{Kind: muxFrameOpen, ClientID: "client-a", RunID: "run-a", StreamID: 2},
-	}
-	lane.noteUrgentUploadEnqueued(urgent)
-	lane.urgentUpload <- urgent
-
-	got, done := lane.receiveUploadBatch(ctx, false, false)
-	if done {
-		t.Fatal("receiveUploadBatch returned done")
-	}
-	if len(got) != len(urgent) {
-		t.Fatalf("received %d urgent frames, want %d", len(got), len(urgent))
-	}
-	if lane.urgentUploadBacklogFrames() != len(urgent) {
-		t.Fatalf("worker-held urgent frames = %d, want %d still visible", lane.urgentUploadBacklogFrames(), len(urgent))
-	}
-	lane.noteUrgentUploadDequeued(got)
-	if lane.urgentUploadBacklogFrames() != 0 {
-		t.Fatalf("urgent backlog after completion = %d, want 0", lane.urgentUploadBacklogFrames())
 	}
 }
 
@@ -3090,7 +3002,7 @@ func TestMuxTakeNormalBatchLimitsContendedBulkToFairFrame(t *testing.T) {
 	if err := mux.sendDataPayload(ctx, bulk, make([]byte, mux.readBufferSize())); err != nil {
 		t.Fatalf("send bulk payload: %v", err)
 	}
-	if err := mux.sendDataPayload(ctx, peer, make([]byte, 32*1024)); err != nil {
+	if err := mux.sendDataPayload(ctx, peer, make([]byte, muxPriorityStreamBytes+1)); err != nil {
 		t.Fatalf("send peer payload: %v", err)
 	}
 
@@ -3642,6 +3554,122 @@ func TestMuxReceiveGapRepairRewindsFreshCursor(t *testing.T) {
 	}
 }
 
+func TestMuxReceiveGapTargetedRepairEnqueuesMissingStreamObject(t *testing.T) {
+	ctx := context.Background()
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	updated := startedAt.Add(3 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(42)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	missingName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 1, 1, 128, true)
+	store := &classFreshStatusStore{
+		MemoryStore:  NewMemoryStore(),
+		targetNeedle: streamNeedle,
+		targeted:     ObjectListInfo{Objects: []ObjectInfo{{Name: missingName, Updated: updated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	stream := mux.registerStream(streamID, clientID, runID, nil)
+	defer stream.close()
+	key := stream.key()
+	laterName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 2, 1, 2, 2, muxMinBatch, false)
+	later := muxObjectMeta{
+		Name:            laterName,
+		ClientID:        key.ClientID,
+		RunID:           key.RunID,
+		StreamID:        key.StreamID,
+		Seq:             2,
+		PlainBytes:      muxMinBatch,
+		FrameMinSeq:     2,
+		FrameMaxSeq:     2,
+		FrameRangeKnown: true,
+		Updated:         updated,
+	}
+
+	if !mux.enqueueNormalMuxObject(ctx, later) {
+		t.Fatal("enqueue later object failed")
+	}
+	if got := len(mux.recvUrgent); got != 1 {
+		t.Fatalf("urgent targeted repair queue = %d, want missing p0 object", got)
+	}
+	if len(store.calls) != 1 || !containsString(store.calls[0].contains, streamNeedle) {
+		t.Fatalf("targeted repair calls = %#v, want stream-specific list", store.calls)
+	}
+}
+
+func TestMuxReceiveGapTargetedRepairSchedulesMissingNormalObject(t *testing.T) {
+	ctx := context.Background()
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	updated := startedAt.Add(3 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(42)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	missingName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 1, 1, muxMinBatch, false)
+	store := &classFreshStatusStore{
+		MemoryStore:  NewMemoryStore(),
+		targetNeedle: streamNeedle,
+		targeted:     ObjectListInfo{Objects: []ObjectInfo{{Name: missingName, Updated: updated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	stream := mux.registerStream(streamID, clientID, runID, nil)
+	defer stream.close()
+	key := stream.key()
+	laterName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 2, 1, 2, 2, muxMinBatch, false)
+	later := muxObjectMeta{
+		Name:            laterName,
+		ClientID:        key.ClientID,
+		RunID:           key.RunID,
+		StreamID:        key.StreamID,
+		Seq:             2,
+		PlainBytes:      muxMinBatch,
+		FrameMinSeq:     2,
+		FrameMaxSeq:     2,
+		FrameRangeKnown: true,
+		Updated:         updated,
+	}
+
+	if !mux.enqueueNormalMuxObject(ctx, later) {
+		t.Fatal("enqueue later object failed")
+	}
+	mux.recvNormalMu.Lock()
+	items := append([]muxObjectMeta(nil), mux.recvNormalFlows[key]...)
+	mux.recvNormalMu.Unlock()
+	if len(items) != 2 || items[0].FrameMinSeq != 1 || items[1].FrameMinSeq != 2 {
+		t.Fatalf("normal flow order = %+v, want missing frame 1 before frame 2", items)
+	}
+	select {
+	case got := <-mux.recvNormalReady:
+		if got != key {
+			t.Fatalf("ready key = %+v, want %+v", got, key)
+		}
+	default:
+		t.Fatal("missing normal object did not signal receive scheduling")
+	}
+}
+
 func TestMuxReceiveGapTimeoutClosesStuckStream(t *testing.T) {
 	ctx := context.Background()
 	sid := [16]byte{0xaa, 0xbb, 0xcc}
@@ -3861,7 +3889,7 @@ func TestMuxNormalActivePollIntervalAdaptsToBasePoll(t *testing.T) {
 		want time.Duration
 	}{
 		{name: "fast proxy", poll: 100 * time.Millisecond, want: muxNormalActivePollMin},
-		{name: "setup default", poll: 250 * time.Millisecond, want: muxNormalActivePollInterval},
+		{name: "legacy setup default", poll: 250 * time.Millisecond, want: time.Second},
 		{name: "vpn", poll: 500 * time.Millisecond, want: muxNormalActivePollInterval},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3961,13 +3989,18 @@ type classFreshStatusCall struct {
 
 type classFreshStatusStore struct {
 	*MemoryStore
-	priority ObjectListInfo
-	normal   ObjectListInfo
-	calls    []classFreshStatusCall
+	priority     ObjectListInfo
+	normal       ObjectListInfo
+	targetNeedle string
+	targeted     ObjectListInfo
+	calls        []classFreshStatusCall
 }
 
 func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, contains []string, _ time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
 	s.calls = append(s.calls, classFreshStatusCall{contains: append([]string(nil), contains...), pageToken: pageToken, maxPages: maxPages})
+	if s.targetNeedle != "" && containsString(contains, s.targetNeedle) {
+		return s.targeted, nil
+	}
 	if containsString(contains, "/p0/") {
 		return s.priority, nil
 	}

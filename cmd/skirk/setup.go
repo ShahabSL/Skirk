@@ -72,7 +72,7 @@ func setupInit(ctx context.Context, args []string) error {
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 8*1024*1024, "maximum tunnel chunk size")
-	pollMS := fs.Int("poll-ms", 250, "Drive mailbox poll interval in milliseconds")
+	pollMS := fs.Int("poll-ms", 1000, "Drive mailbox poll interval in milliseconds")
 	clientUploadConcurrency := fs.Int("client-upload-concurrency", 0, "client Drive upload concurrency; 0 uses auto profile")
 	clientDownloadConcurrency := fs.Int("client-download-concurrency", 0, "client Drive download concurrency; 0 uses auto profile")
 	exitUploadConcurrency := fs.Int("exit-upload-concurrency", 0, "exit Drive upload concurrency; 0 uses auto profile")

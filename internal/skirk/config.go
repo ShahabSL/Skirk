@@ -102,6 +102,8 @@ type TunnelConfig struct {
 	Observe             bool   `json:"observe,omitempty"`
 }
 
+const autoProfilePollFloorMS = 1000
+
 func LoadConfig(path string) (*Config, error) {
 	if cfg, ok, err := ParseInlineConfig(path); ok || err != nil {
 		return cfg, err
@@ -296,7 +298,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.ChunkSize = 16 * 1024 * 1024
 	}
 	if c.Tunnel.PollIntervalMS == 0 {
-		c.Tunnel.PollIntervalMS = 100
+		c.Tunnel.PollIntervalMS = autoProfilePollFloorMS
 	}
 	if c.Tunnel.BurstPollMS == 0 {
 		c.Tunnel.BurstPollMS = 75
@@ -761,8 +763,8 @@ func firstNonEmptyString(values ...string) string {
 func (c Config) PollInterval() time.Duration {
 	interval := c.Tunnel.PollIntervalMS
 	if strings.TrimSpace(c.Tunnel.Profile) == "" || strings.TrimSpace(c.Tunnel.Profile) == "auto" {
-		if interval <= 0 {
-			interval = 100
+		if interval < autoProfilePollFloorMS {
+			interval = autoProfilePollFloorMS
 		}
 	}
 	return time.Duration(interval) * time.Millisecond

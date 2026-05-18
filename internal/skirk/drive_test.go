@@ -81,6 +81,54 @@ func TestDriveStoreRefreshesTokenAfterUnauthorized(t *testing.T) {
 	}
 }
 
+func TestDriveStoreDoesNotHTTPRetryRateLimit(t *testing.T) {
+	var requests int32
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&requests, 1)
+		return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}],"message":"Rate Limit Exceeded"}}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+
+	_, err := store.PutObject(context.Background(), "object", []byte("data"))
+	if err == nil {
+		t.Fatal("expected Drive rate-limit error")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want one Drive HTTP attempt before returning quota error", requests)
+	}
+}
+
+func TestDriveStoreRateLimitBackoffDelaysNextRequest(t *testing.T) {
+	var requests int32
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if atomic.AddInt32(&requests, 1) == 1 {
+			return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}],"message":"Rate Limit Exceeded"}}`), nil
+		}
+		return stringResponse(http.StatusOK, `{"id":"file-id","name":"object","size":"4"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	store.backoff.base = 30 * time.Millisecond
+	store.backoff.max = 30 * time.Millisecond
+	store.backoff.jitter = 0
+
+	_, err := store.PutObject(context.Background(), "object", []byte("data"))
+	if err == nil {
+		t.Fatal("expected first request to trip Drive quota backoff")
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := store.PutObject(ctx, "object", []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 25*time.Millisecond {
+		t.Fatalf("second request waited %s, want quota backoff delay", elapsed)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want one failed request and one delayed success", requests)
+	}
+}
+
 func TestDriveStoreGenerateObjectIDsUsesAppDataSpace(t *testing.T) {
 	var gotQuery url.Values
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

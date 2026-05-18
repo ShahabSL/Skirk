@@ -1376,7 +1376,7 @@ func sampleConfig(args []string) error {
 		Auth:      skirk.AuthConfig{TokenCommand: "gcloud auth print-access-token"},
 		Route:     skirk.RouteConfig{Mode: *routeMode, Proxy: *proxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
 		Drive:     skirk.DriveConfig{Space: "appDataFolder"},
-		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", Profile: "auto", ChunkSize: 16 * 1024 * 1024, PollIntervalMS: 250, Concurrency: *concurrency, CleanupProcessed: true},
+		Tunnel:    skirk.TunnelConfig{Listen: "127.0.0.1:18080", Profile: "auto", ChunkSize: 16 * 1024 * 1024, PollIntervalMS: 1000, Concurrency: *concurrency, CleanupProcessed: true},
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

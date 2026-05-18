@@ -47,9 +47,11 @@ Key properties:
 
 - Four Drive lanes carry many logical streams.
 - Frames are encrypted and coalesced into Drive objects.
-- Priority traffic carries opens, closes, small writes, first bytes, and sparse
-  interactive traffic.
-- Normal traffic carries bulk data with bounded per-stream and global queues.
+- Priority traffic carries stream opens, resets, first bytes embedded in opens,
+  and ordered small-stream follow-on data/FIN while the stream remains under the
+  small-stream threshold.
+- Normal traffic carries demoted and bulk data with bounded per-stream and
+  global queues.
 - Client response objects are namespaced by client ID and run ID so multiple
   devices can use a copied profile without consuming each other's responses.
 - Upload/download worker windows adapt to Drive health.

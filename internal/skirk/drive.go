@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -25,6 +26,7 @@ type DriveStore struct {
 	folderID    string
 	space       string
 	quota       *driveQuotaStats
+	backoff     *driveQuotaBackoff
 	Logger      *log.Logger
 }
 
@@ -36,6 +38,10 @@ const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 2 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
 const driveFolderMimeType = "application/vnd.google-apps.folder"
+const driveQuotaBackoffBase = 5 * time.Second
+const driveQuotaBackoffMax = 64 * time.Second
+const driveQuotaBackoffJitter = time.Second
+const driveQuotaBackoffLogInterval = 5 * time.Second
 
 type DriveCleanupOptions struct {
 	Prefix            string
@@ -72,7 +78,7 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 		space = "appDataFolder"
 		folderID = ""
 	}
-	return &DriveStore{http: httpClient, tokenSource: tokenSource, folderID: folderID, space: space, quota: newDriveQuotaStats(driveQuotaLogInterval())}
+	return &DriveStore{http: httpClient, tokenSource: tokenSource, folderID: folderID, space: space, quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -627,6 +633,13 @@ func (d *DriveStore) DeleteID(ctx context.Context, fileID string) error {
 	return require2xx(result, "drive delete id")
 }
 
+func (d *DriveStore) WaitForDriveQuota(ctx context.Context, op string) error {
+	if d == nil || d.backoff == nil {
+		return nil
+	}
+	return d.backoff.Wait(ctx, op, d.Logger)
+}
+
 func (d *DriveStore) DeleteIDs(ctx context.Context, fileIDs []string, concurrency int) error {
 	if concurrency < 1 {
 		concurrency = 1
@@ -962,6 +975,11 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 	label := driveRequestLabel(method, path)
 	started := time.Now()
 	for attempt := 0; attempt < 2; attempt++ {
+		if d.backoff != nil {
+			if err := d.backoff.Wait(ctx, label, d.Logger); err != nil {
+				return nil, err
+			}
+		}
 		merged, err := d.authHeaders(ctx)
 		if err != nil {
 			return nil, err
@@ -969,18 +987,25 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 		for key, value := range headers {
 			merged[key] = value
 		}
-		result, err := d.http.Request(ctx, method, "www.googleapis.com", path, merged, body)
+		result, err := d.http.RequestNoRateLimitRetry(ctx, method, "www.googleapis.com", path, merged, body)
 		if err != nil {
-			d.logDriveRequest(label, attempt+1, 0, nil, time.Since(started), err)
+			d.logDriveRequest(label, 1, 0, nil, time.Since(started), err)
 			return nil, err
 		}
 		last = result
+		httpAttempts := result.Attempts
+		if httpAttempts < 1 {
+			httpAttempts = 1
+		}
 		if result.Status != http.StatusUnauthorized {
-			d.logDriveRequest(label, attempt+1, result.Status, result.Body, time.Since(started), nil)
+			d.logDriveRequest(label, httpAttempts, result.Status, result.Body, time.Since(started), nil)
+			if d.backoff != nil {
+				d.backoff.Observe(label, result, d.Logger)
+			}
 			return result, nil
 		}
 		if d.tokenSource == nil {
-			d.logDriveRequest(label, attempt+1, result.Status, result.Body, time.Since(started), nil)
+			d.logDriveRequest(label, httpAttempts, result.Status, result.Body, time.Since(started), nil)
 			return result, nil
 		}
 		if d.Logger != nil {
@@ -989,7 +1014,11 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 		d.tokenSource.Invalidate()
 	}
 	if last != nil {
-		d.logDriveRequest(label, 2, last.Status, last.Body, time.Since(started), nil)
+		httpAttempts := last.Attempts
+		if httpAttempts < 1 {
+			httpAttempts = 1
+		}
+		d.logDriveRequest(label, httpAttempts, last.Status, last.Body, time.Since(started), nil)
 	}
 	return last, nil
 }
@@ -998,8 +1027,11 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 	if errors.Is(err, context.Canceled) {
 		return
 	}
+	if attempts < 1 {
+		attempts = 1
+	}
 	if d.quota != nil {
-		if report, ok := d.quota.Record(label, status, len(body), duration, err); ok && d.Logger != nil {
+		if report, ok := d.quota.Record(label, status, len(body), duration, err, attempts); ok && d.Logger != nil {
 			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",
 				report.Duration.Round(time.Second), report.Calls, report.Units, report.Errors, report.ResponseBytes, report.OpSummary())
 		}
@@ -1028,6 +1060,139 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 
 func (d *DriveStore) mediaRequest(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
 	return d.request(ctx, method, path, headers, body)
+}
+
+type driveQuotaBackoff struct {
+	mu      sync.Mutex
+	base    time.Duration
+	max     time.Duration
+	jitter  time.Duration
+	until   time.Time
+	fails   int
+	reason  string
+	op      string
+	lastLog time.Time
+}
+
+func newDriveQuotaBackoff() *driveQuotaBackoff {
+	return &driveQuotaBackoff{base: driveQuotaBackoffBase, max: driveQuotaBackoffMax, jitter: driveQuotaBackoffJitter}
+}
+
+func (b *driveQuotaBackoff) Wait(ctx context.Context, op string, logger *log.Logger) error {
+	if b == nil {
+		return nil
+	}
+	for {
+		b.mu.Lock()
+		until := b.until
+		reason := b.reason
+		wait := time.Until(until)
+		if wait <= 0 {
+			b.mu.Unlock()
+			return nil
+		}
+		if logger != nil && time.Since(b.lastLog) >= driveQuotaBackoffLogInterval {
+			logger.Printf("drive quota backoff active op=%s wait=%s reason=%s", op, wait.Round(time.Millisecond), reason)
+			b.lastLog = time.Now()
+		}
+		b.mu.Unlock()
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (b *driveQuotaBackoff) Observe(op string, result *HTTPResult, logger *log.Logger) {
+	if b == nil || result == nil {
+		return
+	}
+	if !isDriveRateLimitResult(result) {
+		b.noteNonRateLimitedResult(result)
+		return
+	}
+	reason := driveErrorReason(result.Body)
+	delay := retryAfter(result)
+	if delay <= 0 {
+		delay = b.nextDelay()
+	}
+	now := time.Now()
+	until := now.Add(delay)
+	b.mu.Lock()
+	if until.After(b.until) {
+		b.until = until
+	}
+	b.fails++
+	b.reason = reason
+	b.op = op
+	if logger != nil && time.Since(b.lastLog) >= driveQuotaBackoffLogInterval {
+		logger.Printf("drive quota backoff tripped op=%s status=%d reason=%s delay=%s failures=%d", op, result.Status, reason, time.Until(b.until).Round(time.Millisecond), b.fails)
+		b.lastLog = now
+	}
+	b.mu.Unlock()
+}
+
+func (b *driveQuotaBackoff) noteNonRateLimitedResult(result *HTTPResult) {
+	if result == nil || result.Status < 200 || result.Status >= 300 {
+		return
+	}
+	now := time.Now()
+	b.mu.Lock()
+	if b.until.IsZero() || now.After(b.until) {
+		b.fails = 0
+		b.reason = ""
+		b.op = ""
+	}
+	b.mu.Unlock()
+}
+
+func (b *driveQuotaBackoff) nextDelay() time.Duration {
+	b.mu.Lock()
+	failures := b.fails
+	base := b.base
+	maximum := b.max
+	jitter := b.jitter
+	b.mu.Unlock()
+	if base <= 0 {
+		base = driveQuotaBackoffBase
+	}
+	if maximum <= 0 {
+		maximum = driveQuotaBackoffMax
+	}
+	if failures < 0 {
+		failures = 0
+	}
+	if failures > 6 {
+		failures = 6
+	}
+	delay := base * time.Duration(1<<failures)
+	if delay > maximum {
+		delay = maximum
+	}
+	if jitter > 0 {
+		delay += time.Duration(rand.Int63n(int64(jitter)))
+	}
+	if delay > maximum {
+		delay = maximum
+	}
+	return delay
+}
+
+func isDriveRateLimitResult(result *HTTPResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.Status == http.StatusTooManyRequests {
+		return true
+	}
+	if result.Status != http.StatusForbidden {
+		return false
+	}
+	reason := strings.ToLower(strings.TrimSpace(driveErrorReason(result.Body)))
+	return reason == "ratelimitexceeded" || reason == "userratelimitexceeded" || reason == "dailylimitexceeded"
 }
 
 type driveQuotaStats struct {
@@ -1095,45 +1260,49 @@ func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 	}
 }
 
-func (s *driveQuotaStats) Record(op string, status int, responseBytes int, duration time.Duration, err error) (driveQuotaReport, bool) {
+func (s *driveQuotaStats) Record(op string, status int, responseBytes int, duration time.Duration, err error, httpAttempts ...int) (driveQuotaReport, bool) {
 	if s == nil {
 		return driveQuotaReport{}, false
+	}
+	attempts := int64(1)
+	if len(httpAttempts) > 0 && httpAttempts[0] > 1 {
+		attempts = int64(httpAttempts[0])
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.since.IsZero() {
 		s.since = time.Now()
 	}
-	units := int64(driveQuotaUnits(op))
+	units := int64(driveQuotaUnits(op)) * attempts
 	durationMS := duration.Milliseconds()
 	if durationMS < 0 {
 		durationMS = 0
 	}
 	failed := err != nil || status >= 400
-	s.calls++
+	s.calls += attempts
 	s.units += units
 	s.bytes += int64(responseBytes)
-	s.totalCalls++
+	s.totalCalls += attempts
 	s.totalUnits += units
 	s.totalBytes += int64(responseBytes)
 	if failed {
-		s.errors++
-		s.totalError++
+		s.errors += attempts
+		s.totalError += attempts
 	}
 	current := s.ops[op]
-	current.Calls++
+	current.Calls += attempts
 	current.Units += units
 	addDriveQuotaDuration(&current, durationMS)
 	if failed {
-		current.Errors++
+		current.Errors += attempts
 	}
 	s.ops[op] = current
 	totalCurrent := s.totalOps[op]
-	totalCurrent.Calls++
+	totalCurrent.Calls += attempts
 	totalCurrent.Units += units
 	addDriveQuotaDuration(&totalCurrent, durationMS)
 	if failed {
-		totalCurrent.Errors++
+		totalCurrent.Errors += attempts
 	}
 	s.totalOps[op] = totalCurrent
 	if s.interval == 0 || time.Since(s.since) < s.interval {

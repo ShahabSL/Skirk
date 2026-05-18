@@ -54,8 +54,11 @@ of Drive lanes:
 - client downlink objects are namespaced by local client ID and per-run ID, so
   multiple devices can use one copied profile without consuming each other's
   responses;
-- priority frames carry opens, closes, small writes, and sparse traffic;
-- normal frames carry bulk data and are coalesced to reduce Drive object count;
+- priority frames carry stream opens, resets, first bytes embedded in opens,
+  and ordered small-stream follow-on data/FIN while the stream remains under
+  the small-stream threshold;
+- normal frames carry demoted and bulk data, preserving stream sequence order
+  while coalescing bulk data to reduce Drive object count;
 - upload and download worker windows adapt to Drive health;
 - processed objects are deleted by a deferred cleanup loop that yields to
   foreground traffic.

@@ -90,7 +90,7 @@ Default easy mode:
 
 - uses Skirk's built-in OAuth client;
 - gives users the one-command device-code setup flow;
-- charges Drive API usage to Skirk's Google Cloud project quota;
+- charges Drive API usage to Skirk's shared Google Cloud project quota;
 - still keeps each Google account under Google's per-user-per-project quota.
 
 Personal quota mode:
@@ -109,9 +109,10 @@ Personal quota mode:
   --oauth-mode personal
 ```
 
-This is the same pattern used by mature Drive tools such as rclone: a shared
-client is convenient for new users, while serious or high-volume users should
-bring their own OAuth client to avoid shared-project contention.
+Easy mode is best for trials and low-volume personal use. Personal quota mode is
+recommended for sustained video, multiple clients, or public/shared deployments,
+because it avoids shared-project contention when many easy-mode users are active
+at the same time.
 
 Personal mode uses Google's desktop/native-app authorization flow. On a VPS,
 Skirk prints a Google approval URL; after approval the browser may land on a

@@ -46,8 +46,10 @@ func isInteractiveTerminal() bool {
 
 func promptSetupOAuthMode(ctx context.Context, reader *bufio.Reader) (string, string, error) {
 	fmt.Println("Google OAuth mode:")
-	fmt.Println("1. Easy Skirk OAuth client")
-	fmt.Println("2. Personal Google OAuth project")
+	fmt.Println("1. Easy Skirk OAuth client (quick start, shared Drive API quota)")
+	fmt.Println("2. Personal Google OAuth project (recommended for reliable use)")
+	fmt.Println()
+	fmt.Println("Use personal mode if you expect sustained video, multiple clients, or public use.")
 	choice, err := prompt(ctx, reader, "Select OAuth mode", "1")
 	if err != nil {
 		return "", "", err
@@ -98,6 +100,7 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println("Personal Google OAuth project wizard")
 	fmt.Println()
 	fmt.Println("This mode uses your own Google Cloud project for Drive API quota.")
+	fmt.Println("It avoids contention with the shared easy-mode OAuth project.")
 	fmt.Println("You only need a normal Google account and a browser. Keep this terminal open.")
 	fmt.Println()
 	fmt.Println("In your browser, do these steps:")

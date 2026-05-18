@@ -22,11 +22,10 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-const DESKTOP_CLIENT_POLL_MS: &str = "100";
-const DESKTOP_CLIENT_BURST_POLL_MS: &str = "25";
-const DESKTOP_CLIENT_BURST_POLL_WINDOW_MS: &str = "10000";
-const DESKTOP_CLIENT_CONCURRENCY: &str = "32";
-const DESKTOP_VPN_CLIENT_POLL_MS: &str = "500";
+const DESKTOP_CLIENT_POLL_MS: &str = "1000";
+const DESKTOP_CLIENT_UPLOAD_CONCURRENCY: &str = "8";
+const DESKTOP_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
+const DESKTOP_VPN_CLIENT_POLL_MS: &str = "1000";
 const DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY: &str = "4";
 const DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
 
@@ -510,15 +509,13 @@ impl DesktopRuntime {
                 .arg(DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY);
         } else {
             command
+                .arg("--no-burst-poll")
                 .arg("--poll-ms")
                 .arg(DESKTOP_CLIENT_POLL_MS)
-                .arg("--burst-poll")
-                .arg("--burst-poll-ms")
-                .arg(DESKTOP_CLIENT_BURST_POLL_MS)
-                .arg("--burst-poll-window-ms")
-                .arg(DESKTOP_CLIENT_BURST_POLL_WINDOW_MS)
-                .arg("--concurrency")
-                .arg(DESKTOP_CLIENT_CONCURRENCY);
+                .arg("--upload-concurrency")
+                .arg(DESKTOP_CLIENT_UPLOAD_CONCURRENCY)
+                .arg("--download-concurrency")
+                .arg(DESKTOP_CLIENT_DOWNLOAD_CONCURRENCY);
         }
         command
             .arg("--watch-parent-pid")

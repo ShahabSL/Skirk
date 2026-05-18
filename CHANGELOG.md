@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.1.47 - 2026-05-17
+
+- Added Drive-wide quota backoff so 403/429 rate-limit responses stop poll,
+  upload, download, and cleanup retry storms instead of multiplying them.
+- Reworked mux v4 priority so small streams stay ordered in the priority lane
+  while bulk streams demote cleanly to normal traffic, preventing priority and
+  normal frames from overtaking each other.
+- Raised auto-profile polling defaults to reduce Drive list pressure across
+  Android, Windows, and generated setup profiles.
+- Added targeted mux gap repair and regression tests for missing Drive objects,
+  ordered small-stream priority, bulk fairness, and Drive rate-limit handling.
+- Suppressed expected Android non-DNS UDP refusal noise while keeping the VPN
+  IPv4/TCP fallback policy for QUIC-heavy apps.
+- Clarified setup docs that easy OAuth shares Skirk project quota and personal
+  OAuth only isolates quota when users create their own Google Cloud project.
+
 ## v0.1.46 - 2026-05-17
 
 - Reduced Drive mailbox quota pressure in VPN mode by disabling burst polling

@@ -146,7 +146,7 @@ class AndroidSkirkEngine(
             args += listOf(
                 "--no-burst-poll",
                 "--poll-ms",
-                "500",
+                "1000",
                 "--upload-concurrency",
                 "4",
                 "--download-concurrency",
@@ -154,17 +154,13 @@ class AndroidSkirkEngine(
             )
         } else {
             args += listOf(
+                "--no-burst-poll",
                 "--poll-ms",
-                "100",
-                "--burst-poll",
-                "--burst-poll-ms",
-                "25",
-                "--burst-poll-window-ms",
-                "10000",
+                "1000",
                 "--upload-concurrency",
-                "16",
+                "8",
                 "--download-concurrency",
-                "32",
+                "16",
             )
         }
         args += listOf(

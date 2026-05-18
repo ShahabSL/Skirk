@@ -87,14 +87,14 @@ create an OAuth app.
 
 ## Personal Quota Mode
 
-Normal users can stay on the built-in Skirk OAuth client. Heavy users, forks,
-and deployments that do not want to share Skirk's Google Cloud project quota
-should create their own OAuth client and pass it to setup.
+The built-in Skirk OAuth client is the easiest way to try Skirk. For sustained
+video use, multiple clients, forks, or deployments that must not share Skirk's
+Google Cloud project quota, create a personal OAuth client and pass it to setup.
 
 With the built-in client:
 
 - setup is easiest;
-- Drive API usage is charged to Skirk's Google Cloud project quota;
+- Drive API usage is charged to Skirk's shared Google Cloud project quota;
 - each Google account still has its own per-user-per-project quota bucket.
 
 With a personal OAuth client:

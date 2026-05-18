@@ -64,32 +64,30 @@ const (
 	muxNormalStreamInflight      = 6
 	muxNormalStreamInflightBytes = muxNormalStreamInflight * muxNormalBulkBatch
 	muxNormalSmallBatchDelay     = 50 * time.Millisecond
-	muxClientBootstrapBudget     = 8 * 1024
-	muxExitBootstrapBudget       = 16 * 1024
-	muxPriorityBootstrapChunk    = 8 * 1024
-	muxPriorityDataBacklog       = 1
-	muxPriorityCongestedDataMax  = 1024
 	muxUrgentCoalesceBatch       = 128 * 1024
 	muxUrgentCoalesceDelay       = 25 * time.Millisecond
 	muxUrgentCoalesceStreams     = 32
+	muxPriorityStreamBytes       = 64 * 1024
 	muxUploadPriorityBurst       = 4
 	muxUploadIDPoolSize          = 64
 	muxPriorityDownloadHedge     = 1500 * time.Millisecond
-	muxNormalActivePollInterval  = 1 * time.Second
+	muxNormalActivePollInterval  = 2 * time.Second
 	muxNormalActivePollMin       = 500 * time.Millisecond
 	muxReceiveGapRepairInterval  = 2 * time.Second
 	muxReceiveGapTimeout         = 2 * time.Minute
+	muxTargetedGapRepairInitial  = 3
+	muxTargetedGapRepairEvery    = 10
 )
 
 type muxFrame struct {
-	Kind         byte
-	ClientID     string
-	RunID        string
-	StreamID     uint64
-	Seq          uint64
-	Payload      []byte
-	PriorityHint bool
-	EnqueuedAt   time.Time
+	Kind       byte
+	ClientID   string
+	RunID      string
+	StreamID   uint64
+	Seq        uint64
+	Payload    []byte
+	EnqueuedAt time.Time
+	Priority   bool
 }
 
 type muxObjectMeta struct {
@@ -229,7 +227,6 @@ type muxLane struct {
 	urgent              chan muxFrame
 	urgentUpload        chan []muxFrame
 	upload              chan []muxFrame
-	urgentUploadFrames  atomic.Int64
 	normalWake          chan struct{}
 	normalMu            sync.Mutex
 	normalQueues        map[muxStreamKey][]muxFrame
@@ -240,6 +237,10 @@ type muxLane struct {
 	normalQueuedFrames  int
 	normalQueuedBytes   int
 	seq                 uint64
+}
+
+type driveQuotaWaitStore interface {
+	WaitForDriveQuota(ctx context.Context, op string) error
 }
 
 type muxPreparedUpload struct {
@@ -276,9 +277,11 @@ type muxStream struct {
 	firstSendLogged  atomic.Bool
 	firstRecvLogged  atomic.Bool
 	sendSeq          atomic.Uint64
-	sendPriorityLeft atomic.Int64
 	sendPayloadBytes atomic.Int64
 	recvPayloadBytes atomic.Int64
+	sendClassMu      sync.Mutex
+	prioritySent     int64
+	priorityDemoted  bool
 	recvExpected     uint64
 	recvPending      map[uint64]muxFrame
 	recvPendingBytes int
@@ -422,8 +425,8 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 		return err
 	}
 	stream := m.registerStream(streamID, m.t.ClientID, m.t.RunID, local)
+	stream.notePriorityPayload(len(initial))
 	stream.setObservedTarget(started, target)
-	stream.enablePriorityBootstrap(muxClientBootstrapBudget)
 	stream.observeOpen(len(initial), 0, nil)
 	m.startWriter(stream)
 	if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameOpen, ClientID: stream.clientID, RunID: stream.runID, StreamID: streamID, Payload: encodeMuxOpenPayload(target, initial)}); err != nil {
@@ -480,7 +483,6 @@ func (m *driveMux) openExitStream(ctx context.Context, frame muxFrame) {
 		return
 	}
 	stream.setObservedTarget(started, target)
-	stream.enablePriorityBootstrap(muxExitBootstrapBudget)
 	m.finishExitOpenClaim(key, false)
 	m.startWriter(stream)
 	if len(initial) > 0 {
@@ -755,7 +757,7 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 			continue
 		}
 		if err == io.EOF || strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") {
-			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq()})
+			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Priority: stream.claimPriorityFIN()})
 			stream.markLocalReadDone()
 			return
 		}
@@ -769,21 +771,11 @@ func (m *driveMux) sendDataPayload(ctx context.Context, stream *muxStream, paylo
 	for len(payload) > 0 {
 		seq := stream.nextSendSeq()
 		chunkSize := len(payload)
-		priorityHint := false
-		priorityBacklogged := m.priorityDataBacklogHighForStream(stream, chunkSize)
-		if !priorityBacklogged {
-			if priorityChunk := stream.takePriorityBootstrapChunk(chunkSize); priorityChunk > 0 {
-				chunkSize = priorityChunk
-				priorityHint = true
-			}
-		}
-		if !priorityHint {
-			if maxPayload := m.normalFramePayloadBytes(); chunkSize > maxPayload {
-				chunkSize = maxPayload
-			}
+		if maxPayload := m.normalFramePayloadBytes(); chunkSize > maxPayload {
+			chunkSize = maxPayload
 		}
 		chunk := append([]byte(nil), payload[:chunkSize]...)
-		if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: seq, Payload: chunk, PriorityHint: priorityHint}); err != nil {
+		if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: seq, Payload: chunk, Priority: stream.claimPriorityPayload(len(chunk))}); err != nil {
 			return err
 		}
 		payload = payload[chunkSize:]
@@ -791,50 +783,48 @@ func (m *driveMux) sendDataPayload(ctx context.Context, stream *muxStream, paylo
 	return nil
 }
 
-func (m *driveMux) priorityDataBacklogHighForStream(stream *muxStream, payloadBytes int) bool {
-	if m == nil || stream == nil || len(m.lanes) == 0 {
-		return false
-	}
-	lane := m.lanes[m.frameLane(muxFrame{Kind: muxFrameData, StreamID: stream.id})]
-	if lane == nil {
-		return false
-	}
-	return lane.priorityDataBacklogHighPayload(muxFrameData, payloadBytes)
-}
-
-func (s *muxStream) enablePriorityBootstrap(budget int64) {
-	if s == nil {
+func (s *muxStream) notePriorityPayload(n int) {
+	if s == nil || n <= 0 {
 		return
 	}
-	if budget < 0 {
-		budget = 0
+	s.sendClassMu.Lock()
+	defer s.sendClassMu.Unlock()
+	s.prioritySent += int64(n)
+	if s.prioritySent > muxPriorityStreamBytes {
+		s.priorityDemoted = true
 	}
-	s.sendPriorityLeft.Store(budget)
 }
 
-func (s *muxStream) takePriorityBootstrapChunk(payloadBytes int) int {
-	if s == nil || payloadBytes <= 0 {
-		return 0
+func (s *muxStream) claimPriorityPayload(n int) bool {
+	if s == nil || n <= 0 || n > muxPriorityStreamBytes {
+		if s != nil {
+			s.demotePriorityPayloads()
+		}
+		return false
 	}
-	for {
-		left := s.sendPriorityLeft.Load()
-		if left <= 0 {
-			return 0
-		}
-		chunk := payloadBytes
-		if chunk > muxPriorityBootstrapChunk {
-			chunk = muxPriorityBootstrapChunk
-		}
-		if int64(chunk) > left {
-			chunk = int(left)
-		}
-		if chunk <= 0 {
-			return 0
-		}
-		if s.sendPriorityLeft.CompareAndSwap(left, left-int64(chunk)) {
-			return chunk
-		}
+	s.sendClassMu.Lock()
+	defer s.sendClassMu.Unlock()
+	if s.priorityDemoted || s.prioritySent+int64(n) > muxPriorityStreamBytes {
+		s.priorityDemoted = true
+		return false
 	}
+	s.prioritySent += int64(n)
+	return true
+}
+
+func (s *muxStream) claimPriorityFIN() bool {
+	if s == nil {
+		return false
+	}
+	s.sendClassMu.Lock()
+	defer s.sendClassMu.Unlock()
+	return !s.priorityDemoted && s.prioritySent <= muxPriorityStreamBytes
+}
+
+func (s *muxStream) demotePriorityPayloads() {
+	s.sendClassMu.Lock()
+	defer s.sendClassMu.Unlock()
+	s.priorityDemoted = true
 }
 
 func (s *muxStream) nextSendSeq() uint64 {
@@ -1072,14 +1062,6 @@ func (m *driveMux) sendFrame(ctx context.Context, frame muxFrame) error {
 	}
 	lane := m.lanes[m.frameLane(frame)]
 	priority := muxPriorityFrame(frame)
-	if priority && lane.priorityDataBacklogHigh(frame) {
-		frame.PriorityHint = false
-		priority = false
-		if m.t.Observe && m.t.Logger != nil {
-			target, targetID := m.streamObserveTarget(frame.key())
-			m.t.Logger.Printf("mux priority demote role=%s lane=%d stream=%016x target=%s target_id=%s frame_seq=%d payload_bytes=%d urgent_q=%d urgent_upload_q=%d normal_upload_q=%d reason=priority_data_backlog", m.role, m.frameLane(frame), frame.StreamID, target, targetID, frame.Seq, len(frame.Payload), len(lane.urgent), len(lane.urgentUpload), len(lane.upload))
-		}
-	}
 	if priority {
 		select {
 		case lane.urgent <- frame:
@@ -1094,54 +1076,6 @@ func (m *driveMux) sendFrame(ctx context.Context, frame muxFrame) error {
 	}
 	m.t.markActivity()
 	return nil
-}
-
-func (l *muxLane) priorityDataBacklogHigh(frame muxFrame) bool {
-	return l.priorityDataBacklogHighPayload(frame.Kind, len(frame.Payload))
-}
-
-func (l *muxLane) priorityDataBacklogHighPayload(kind byte, payloadBytes int) bool {
-	if l == nil || kind != muxFrameData || payloadBytes <= muxPriorityCongestedDataMax {
-		return false
-	}
-	return len(l.urgent)+l.urgentUploadBacklogFrames() >= muxPriorityDataBacklog
-}
-
-func (l *muxLane) urgentUploadBacklogFrames() int {
-	if l == nil {
-		return 0
-	}
-	frames := int(l.urgentUploadFrames.Load())
-	if batches := len(l.urgentUpload); batches > frames {
-		frames = batches
-	}
-	return frames
-}
-
-func (l *muxLane) noteUrgentUploadEnqueued(frames []muxFrame) {
-	if l == nil || len(frames) == 0 {
-		return
-	}
-	l.urgentUploadFrames.Add(int64(len(frames)))
-}
-
-func (l *muxLane) noteUrgentUploadDequeued(frames []muxFrame) {
-	if l == nil || len(frames) == 0 {
-		return
-	}
-	for {
-		current := l.urgentUploadFrames.Load()
-		if current <= 0 {
-			return
-		}
-		decrement := int64(len(frames))
-		if decrement > current {
-			decrement = current
-		}
-		if l.urgentUploadFrames.CompareAndSwap(current, current-decrement) {
-			return
-		}
-	}
 }
 
 func (l *muxLane) enqueueNormalFrame(ctx context.Context, frame muxFrame) error {
@@ -1289,11 +1223,9 @@ func (l *muxLane) runUrgentBatchLoop(ctx context.Context) {
 			default:
 			}
 		}
-		l.noteUrgentUploadEnqueued(frames)
 		select {
 		case l.urgentUpload <- frames:
 		case <-ctx.Done():
-			l.noteUrgentUploadDequeued(frames)
 			return
 		}
 	}
@@ -1477,14 +1409,6 @@ uploadLoop:
 		if done {
 			return
 		}
-		priorityFrames := muxPriorityBatch(frames)
-		priorityDequeued := false
-		dequeuePriority := func() {
-			if priorityFrames && !priorityDequeued {
-				l.noteUrgentUploadDequeued(frames)
-				priorityDequeued = true
-			}
-		}
 		var batch muxPreparedUpload
 		for attempt := 1; ; attempt++ {
 			var err error
@@ -1493,11 +1417,9 @@ uploadLoop:
 				break
 			}
 			if ctx.Err() != nil {
-				dequeuePriority()
 				return
 			}
 			if attempt >= muxUploadMaxRetries {
-				dequeuePriority()
 				l.failUploadBatch(ctx, frames, err, attempt)
 				continue uploadLoop
 			}
@@ -1510,7 +1432,6 @@ uploadLoop:
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				dequeuePriority()
 				return
 			case <-timer.C:
 			}
@@ -1524,7 +1445,6 @@ uploadLoop:
 		for attempt := 1; ; attempt++ {
 			if err := l.uploadPreparedBatchV4(ctx, batch); err != nil {
 				if ctx.Err() != nil {
-					dequeuePriority()
 					return
 				}
 				if isDriveStorageQuotaExceeded(err) {
@@ -1544,16 +1464,12 @@ uploadLoop:
 				select {
 				case <-ctx.Done():
 					timer.Stop()
-					dequeuePriority()
 					return
 				case <-timer.C:
 				}
 				continue
 			}
 			break
-		}
-		if priorityBatch {
-			dequeuePriority()
 		}
 	}
 }
@@ -1628,11 +1544,15 @@ func muxFlushDelay(frame muxFrame) time.Duration {
 }
 
 func muxPriorityFrame(frame muxFrame) bool {
+	if frame.Priority {
+		switch frame.Kind {
+		case muxFrameOpen, muxFrameData, muxFrameFIN, muxFrameRST:
+			return true
+		}
+	}
 	switch frame.Kind {
-	case muxFrameOpen, muxFrameFIN, muxFrameRST:
+	case muxFrameOpen, muxFrameRST:
 		return true
-	case muxFrameData:
-		return frame.PriorityHint && len(frame.Payload) <= muxPriorityBootstrapChunk
 	default:
 		return false
 	}
@@ -1719,6 +1639,11 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	if len(batch.frames) == 0 {
 		return nil
 	}
+	if store, ok := l.mux.t.Data.(driveQuotaWaitStore); ok {
+		if err := store.WaitForDriveQuota(ctx, "mux_upload"); err != nil {
+			return err
+		}
+	}
 	pickedAt := time.Now()
 	release, err := l.mux.t.acquireUploadSlotBytes(ctx, batch.priority)
 	if err != nil {
@@ -1803,10 +1728,7 @@ func (m *driveMux) runReceiveLoop(ctx context.Context) {
 	ticker := time.NewTicker(m.t.PollInterval)
 	defer ticker.Stop()
 	for {
-		processed := m.pollMuxObjects(ctx)
-		if processed {
-			continue
-		}
+		m.pollMuxObjects(ctx)
 		delay := m.pollDelay()
 		if delay != m.t.PollInterval {
 			resetTicker(ticker, delay)
@@ -1942,10 +1864,14 @@ func (m *driveMux) shouldPollNormalMuxObjects(now time.Time) bool {
 		return false
 	}
 	m.recvNormalMu.Lock()
-	hasNormalWork := len(m.recvNormalFlows) > 0 || len(m.recvNormalActive) > 0 || len(m.recvGaps) > 0
+	hasGaps := len(m.recvGaps) > 0
+	hasNormalWork := len(m.recvNormalFlows) > 0 || len(m.recvNormalActive) > 0
 	m.recvNormalMu.Unlock()
-	if hasNormalWork {
+	if hasGaps {
 		return true
+	}
+	if hasNormalWork {
+		return m.normalListLastPoll.IsZero() || now.Sub(m.normalListLastPoll) >= m.normalActivePollInterval()
 	}
 	if m.active.Load() <= 0 {
 		return false
@@ -2841,8 +2767,9 @@ func (m *driveMux) handleReceiveGapDecision(ctx context.Context, key muxStreamKe
 		m.closeReceiveGapTimeout(ctx, key, decision, queued)
 		return true
 	case decision.repair:
+		targeted := m.targetedReceiveGapRepair(ctx, key, decision)
 		m.rewindReceiveListForMeta(decision.meta)
-		m.logReceiveGapRepair(key, decision, queued)
+		m.logReceiveGapRepair(key, decision, queued, targeted)
 		m.wakeReceiver()
 		return true
 	default:
@@ -2850,11 +2777,75 @@ func (m *driveMux) handleReceiveGapDecision(ctx context.Context, key muxStreamKe
 	}
 }
 
-func (m *driveMux) logReceiveGapRepair(key muxStreamKey, decision muxReceiveGapDecision, queued int) {
+func (m *driveMux) targetedReceiveGapRepair(ctx context.Context, key muxStreamKey, decision muxReceiveGapDecision) int {
+	if m == nil || m.t == nil || m.t.Data == nil || key.StreamID == 0 || !m.shouldTargetedGapRepair(decision) {
+		return 0
+	}
+	store, ok := m.t.Data.(FreshListContainsPageStatusStore)
+	if !ok {
+		return 0
+	}
+	contains := []string{
+		m.recvPrefix(),
+		fmt.Sprintf("/%s/%s/", key.ClientID, key.RunID),
+		fmt.Sprintf("%016x", key.StreamID),
+	}
+	since := m.listSinceTargetForMetas([]muxObjectMeta{decision.meta})
+	result, err := store.ListFreshContainsPageStatus(ctx, contains, since, "", muxFreshClassListPages)
+	if err != nil {
+		if m.t.Logger != nil && ctx.Err() == nil {
+			m.t.Logger.Printf("mux receive gap targeted_repair failed role=%s stream=%016x expected_frame=%d next_range=%d-%d repairs=%d error=%s", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.repairCount, errorSummary(err))
+		}
+		return 0
+	}
+	metas := make([]muxObjectMeta, 0, len(result.Objects))
+	for _, info := range result.Objects {
+		meta, ok := parseMuxObjectInfo(info)
+		if !ok || meta.Name == "" || !muxMetaContainsStreamKey(meta, key) {
+			continue
+		}
+		if !controlIsFresh(info, m.startedAt) || m.isKnown(meta.Name) {
+			continue
+		}
+		metas = append(metas, meta)
+	}
+	metas = orderMuxMetas(metas)
+	enqueued := 0
+	for _, meta := range metas {
+		if m.enqueueMuxObject(ctx, meta) {
+			enqueued++
+		}
+	}
+	if m.t.Logger != nil && (m.t.Observe || enqueued > 0 || result.Truncated || result.Incomplete) {
+		m.t.Logger.Printf("mux receive gap targeted_repair role=%s stream=%016x expected_frame=%d next_range=%d-%d repairs=%d since=%s infos=%d metas=%d enqueued=%d truncated=%t incomplete=%t", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.repairCount, since.Format(time.RFC3339Nano), len(result.Objects), len(metas), enqueued, result.Truncated, result.Incomplete)
+	}
+	return enqueued
+}
+
+func (m *driveMux) shouldTargetedGapRepair(decision muxReceiveGapDecision) bool {
+	if decision.repairCount <= 0 {
+		return false
+	}
+	if decision.repairCount <= muxTargetedGapRepairInitial {
+		return true
+	}
+	return decision.repairCount%muxTargetedGapRepairEvery == 0
+}
+
+func muxMetaContainsStreamKey(meta muxObjectMeta, key muxStreamKey) bool {
+	for _, candidate := range meta.streamKeys() {
+		if candidate == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *driveMux) logReceiveGapRepair(key muxStreamKey, decision muxReceiveGapDecision, queued int, targeted int) {
 	if m == nil || m.t == nil || m.t.Logger == nil {
 		return
 	}
-	m.t.Logger.Printf("mux receive gap repair role=%s stream=%016x expected_frame=%d next_range=%d-%d pending_frames=%d pending_bytes=%d queued=%d repairs=%d gap_age=%s list_rewind=true", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.pendingFrames, decision.pendingBytes, queued, decision.repairCount, decision.age.Round(time.Millisecond))
+	m.t.Logger.Printf("mux receive gap repair role=%s stream=%016x expected_frame=%d next_range=%d-%d pending_frames=%d pending_bytes=%d queued=%d repairs=%d gap_age=%s targeted_enqueued=%d list_rewind=true", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.pendingFrames, decision.pendingBytes, queued, decision.repairCount, decision.age.Round(time.Millisecond), targeted)
 }
 
 func (m *driveMux) closeReceiveGapTimeout(ctx context.Context, key muxStreamKey, decision muxReceiveGapDecision, queued int) {
@@ -3333,6 +3324,11 @@ func (m *driveMux) downloadMuxObjectOnce(ctx context.Context, meta muxObjectMeta
 }
 
 func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectMeta, hedgeWon *atomic.Bool) ([]byte, error) {
+	if store, ok := m.t.Data.(driveQuotaWaitStore); ok {
+		if err := store.WaitForDriveQuota(ctx, "mux_download"); err != nil {
+			return nil, err
+		}
+	}
 	slotStarted := time.Now()
 	release, err := m.t.acquireDownloadSlotBytes(ctx, meta.Priority)
 	if err != nil {
