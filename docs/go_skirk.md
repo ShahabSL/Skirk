@@ -165,7 +165,7 @@ Restricted path:
 skirk bench-live \
   --config skirk-kit/client.skirk \
   --upstream-proxy socks5h://127.0.0.1:11093 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --samples 3
 ```
 

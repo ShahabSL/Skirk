@@ -293,9 +293,15 @@ skirk serve-client \
 
 ## Restricted Networks
 
-Generated client profiles default to `google_front`. That route uses a
-Google-looking TLS/SNI path for Google API traffic, which is the current default
-for the tested hostile network. The exit route defaults to `direct`.
+Generated client profiles default to `google_front_pinned`. That route uses a
+Google-looking TLS/SNI path pinned to the configured Google edge IP for Google
+API traffic, which is the current default for the tested hostile network. The
+exit route defaults to `direct`.
+
+Existing Linux profiles generated before v0.1.51 are not rewritten by an
+update. Regenerate the kit or pass
+`--route-mode google_front_pinned --google-ip 216.239.38.120` when starting the
+client.
 
 When the hostile network is available through a local SOCKS proxy:
 
@@ -303,7 +309,7 @@ When the hostile network is available through a local SOCKS proxy:
 skirk serve-client \
   --config "$SKIRK_CLIENT_CONFIG" \
   --listen 127.0.0.1:18080 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --upstream-proxy socks5h://127.0.0.1:11093
 ```
 
@@ -338,7 +344,7 @@ Hostile path:
 skirk bench-live \
   --config skirk-kit/client.skirk \
   --upstream-proxy socks5h://127.0.0.1:11093 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --samples 3
 ```
 

@@ -109,9 +109,13 @@ LAN بتواند SOCKS5 را مستقیم تنظیم کند.
 
 ## تست در شبکه محدود
 
-پروفایل‌های کلاینت به صورت پیش‌فرض از `google_front` استفاده می‌کنند؛ یعنی
-ترافیک Google API را از مسیری با ظاهر Google عبور می‌دهند. exit معمولا
-`direct` است، چون خودش اینترنت عادی دارد.
+پروفایل‌های کلاینت به صورت پیش‌فرض از `google_front_pinned` استفاده می‌کنند؛
+یعنی ترافیک Google API را از مسیری با ظاهر Google و متصل به IP ثابت Google عبور
+می‌دهند. exit معمولا `direct` است، چون خودش اینترنت عادی دارد.
+
+پروفایل‌های لینوکس که قبل از v0.1.51 ساخته شده‌اند با آپدیت به صورت خودکار
+بازنویسی نمی‌شوند. kit را دوباره بسازید یا هنگام اجرای کلاینت
+`--route-mode google_front_pinned --google-ip 216.239.38.120` را بدهید.
 
 اگر شبکه محدود روی سیستم شما به شکل یک SOCKS محلی در دسترس است:
 
@@ -119,7 +123,7 @@ LAN بتواند SOCKS5 را مستقیم تنظیم کند.
 skirk serve-client \
   --config "$SKIRK_CLIENT_CONFIG" \
   --listen 127.0.0.1:18080 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --upstream-proxy socks5h://127.0.0.1:11093
 ```
 
@@ -145,7 +149,7 @@ skirk bench-live --config skirk-kit/client.skirk --samples 5
 skirk bench-live \
   --config skirk-kit/client.skirk \
   --upstream-proxy socks5h://127.0.0.1:11093 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --samples 3
 ```
 

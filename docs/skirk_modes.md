@@ -54,9 +54,14 @@ predictable under mixed browsing and downloads.
 Client profiles default to:
 
 ```text
-client route: google_front
+client route: google_front_pinned
 exit route: direct
 ```
+
+Existing Linux profiles generated before v0.1.51 keep their embedded route.
+Regenerate the kit or pass
+`--route-mode google_front_pinned --google-ip 216.239.38.120` when starting the
+client.
 
 Available route modes:
 
@@ -109,6 +114,6 @@ Hostile-path verification:
 skirk bench-live \
   --config skirk-kit/client.skirk \
   --upstream-proxy socks5h://127.0.0.1:11093 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --samples 3
 ```

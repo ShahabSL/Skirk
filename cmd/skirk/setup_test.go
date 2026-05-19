@@ -424,7 +424,7 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 		ExitPath:          "skirk-kit/exit.json",
 		DriveFolderID:     "appDataFolder",
 		Transport:         "drive_appdata",
-		ClientRoute:       "google_front",
+		ClientRoute:       "google_front_pinned",
 		ExitRoute:         "direct",
 		Listen:            "127.0.0.1:18080",
 	})
@@ -465,7 +465,7 @@ func TestWriteSetupReadmeDocumentsStartedServiceName(t *testing.T) {
 		ExitPath:          "skirk-kit/exit.json",
 		DriveFolderID:     "folder",
 		Transport:         "drive_folder",
-		ClientRoute:       "google_front",
+		ClientRoute:       "google_front_pinned",
 		ExitRoute:         "direct",
 		Listen:            "127.0.0.1:18080",
 		StartExit:         true,

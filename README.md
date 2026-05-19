@@ -165,9 +165,15 @@ See [docs/clients.md](docs/clients.md) for build and release details.
 
 ## Restricted-Network Testing
 
-Generated client profiles default to `google_front`, which uses a
-Google-looking TLS route for Google API traffic. The exit defaults to `direct`
-because it normally has ordinary internet access.
+Generated client profiles default to `google_front_pinned`, which uses a
+Google-looking TLS route pinned to the configured Google edge IP for Google API
+traffic. The exit defaults to `direct` because it normally has ordinary internet
+access.
+
+Existing Linux profiles generated before v0.1.51 are not rewritten by an
+update. Regenerate the kit or pass
+`--route-mode google_front_pinned --google-ip 216.239.38.120` when starting the
+client.
 
 If the restricted network is exposed locally as another SOCKS proxy:
 
@@ -175,7 +181,7 @@ If the restricted network is exposed locally as another SOCKS proxy:
 skirk serve-client \
   --config "$SKIRK_CLIENT_CONFIG" \
   --listen 127.0.0.1:18080 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --upstream-proxy socks5h://127.0.0.1:11093
 ```
 
@@ -201,7 +207,7 @@ Measure a hostile path:
 skirk bench-live \
   --config skirk-kit/client.skirk \
   --upstream-proxy socks5h://127.0.0.1:11093 \
-  --route-mode google_front \
+  --route-mode google_front_pinned \
   --samples 3
 ```
 
