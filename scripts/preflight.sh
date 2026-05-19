@@ -32,6 +32,13 @@ if git grep -IEn "$secret_pattern" -- . ':!scripts/preflight.sh' >"$secret_tmp" 
 fi
 
 git diff --check
+sh -n install.sh
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck install.sh scripts/test_installer.sh
+else
+  echo "Skipping shellcheck because it is not installed."
+fi
+scripts/test_installer.sh
 go test ./...
 go vet ./...
 

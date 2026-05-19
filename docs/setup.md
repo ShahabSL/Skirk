@@ -230,9 +230,13 @@ setup:
 skirk setup init --out skirk-kit --reset-google-login --exit-proxy socks5h://127.0.0.1:40000
 ```
 
-When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs wgcf/wireproxy,
-starts `wireproxy.service`, and defaults `SKIRK_EXIT_PROXY` to that local SOCKS
-listener. `SKIRK_ACCEPT_WARP_TOS=1` makes the WARP registration noninteractive.
+When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs Skirk-managed
+wgcf/wireproxy under fixed system paths, starts `wireproxy.service` as the
+unprivileged `skirk-wireproxy` user, and defaults `SKIRK_EXIT_PROXY` to the
+local loopback SOCKS listener. Managed WARP binds only to `127.0.0.1:PORT`;
+use an explicit `--exit-proxy` or `SKIRK_EXIT_PROXY` for a different
+already-secured outbound proxy. `SKIRK_ACCEPT_WARP_TOS=1` makes WARP
+registration noninteractive.
 
 `serve-exit` starts a mailbox janitor automatically. It runs at startup and then
 every 2 minutes, removing stale mux transport, benchmark, and setup-marker

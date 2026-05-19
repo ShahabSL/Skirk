@@ -60,14 +60,67 @@ func TestUpdateExitProxyConfigRejectsInvalidProxy(t *testing.T) {
 }
 
 func TestValidateProxyListenAddr(t *testing.T) {
-	for _, input := range []string{"127.0.0.1:40000", "localhost:40000", "[::1]:40000"} {
+	for _, input := range []string{"127.0.0.1:40000"} {
 		if err := validateProxyListenAddr(input); err != nil {
 			t.Fatalf("validateProxyListenAddr(%q): %v", input, err)
 		}
 	}
-	for _, input := range []string{"", "127.0.0.1", ":40000", "127.0.0.1:bad"} {
+	for _, input := range []string{"", "127.0.0.1", ":40000", "127.0.0.1:bad", "127.0.0.1:40000\n[HTTP]", "localhost:40000", "[::1]:40000", "0.0.0.0:40000", "192.168.1.10:40000"} {
 		if err := validateProxyListenAddr(input); err == nil {
 			t.Fatalf("validateProxyListenAddr(%q) = nil, want error", input)
+		}
+	}
+}
+
+func TestUpdateInstallerEnvPinsCurrentBinaryDirAndStripsSetupEnv(t *testing.T) {
+	got := updateInstallerEnv([]string{
+		"PATH=/usr/bin",
+		"SKIRK_SERVER_SETUP=1",
+		"SKIRK_UNINSTALL=1",
+		"SKIRK_REPO=attacker/repo",
+		"SKIRK_ASSET_BASE=file:///tmp/bad",
+		"SKIRK_VERSION=v9.9.9",
+		"SKIRK_DEV_INSTALL=1",
+		"SKIRK_INSTALL_WIREPROXY=1",
+		"SKIRK_WIREPROXY_BIND=0.0.0.0:40000",
+		"SKIRK_ACCEPT_WARP_TOS=1",
+		"SKIRK_EXIT_PROXY=socks5h://127.0.0.1:40000",
+		"SKIRK_INSTALL_DIR=/old/path",
+	})
+	joined := "\n" + strings.Join(got, "\n") + "\n"
+	for _, forbidden := range []string{
+		"SKIRK_SERVER_SETUP=",
+		"SKIRK_UNINSTALL=",
+		"SKIRK_REPO=",
+		"SKIRK_ASSET_BASE=",
+		"SKIRK_VERSION=",
+		"SKIRK_DEV_INSTALL=",
+		"SKIRK_INSTALL_WIREPROXY=",
+		"SKIRK_WIREPROXY_BIND=",
+		"SKIRK_ACCEPT_WARP_TOS=",
+		"SKIRK_EXIT_PROXY=",
+		"SKIRK_INSTALL_DIR=/old/path",
+	} {
+		if strings.Contains(joined, "\n"+forbidden) {
+			t.Fatalf("update env kept forbidden entry %q in:\n%s", forbidden, joined)
+		}
+	}
+	for _, want := range []string{"PATH=/usr/bin", "SKIRK_INSTALL_DIR=", "SKIRK_REQUIRE_RELEASE_ASSET=1"} {
+		if !strings.Contains(joined, "\n"+want) {
+			t.Fatalf("update env missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+func TestValidMenuUpdateVersion(t *testing.T) {
+	for _, input := range []string{"latest", "v0.1.49", "v10.20.30"} {
+		if !validMenuUpdateVersion(input) {
+			t.Fatalf("validMenuUpdateVersion(%q) = false", input)
+		}
+	}
+	for _, input := range []string{"main", "dev", "v1", "v1.2", "v1.2.3-rc1", "v1.2.3/bad", "v1.2.x"} {
+		if validMenuUpdateVersion(input) {
+			t.Fatalf("validMenuUpdateVersion(%q) = true", input)
 		}
 	}
 }

@@ -3,8 +3,9 @@ set -eu
 
 repo="${SKIRK_REPO:-ShahabSL/Skirk}"
 version="${SKIRK_VERSION:-latest}"
-install_dir="${SKIRK_INSTALL_DIR:-$HOME/.local/bin}"
 asset_base="${SKIRK_ASSET_BASE:-}"
+require_release_asset="${SKIRK_REQUIRE_RELEASE_ASSET:-}"
+dev_install=""
 server_setup="${SKIRK_SERVER_SETUP:-}"
 adc_path="${SKIRK_ADC:-}"
 setup_out="${SKIRK_SETUP_OUT:-skirk-kit}"
@@ -16,19 +17,33 @@ install_wireproxy="${SKIRK_INSTALL_WIREPROXY:-}"
 wireproxy_bind="${SKIRK_WIREPROXY_BIND:-127.0.0.1:40000}"
 wireproxy_dir="${SKIRK_WIREPROXY_DIR:-/etc/wireproxy}"
 wireproxy_bin="${SKIRK_WIREPROXY_BIN:-/usr/local/bin/wireproxy}"
+wireproxy_user="${SKIRK_WIREPROXY_USER:-skirk-wireproxy}"
 wireproxy_version="${SKIRK_WIREPROXY_VERSION:-v1.1.2}"
 wgcf_bin="${SKIRK_WGCF_BIN:-/usr/local/bin/wgcf}"
 wgcf_version="${SKIRK_WGCF_VERSION:-v2.2.30}"
 wireproxy_only="${SKIRK_WIREPROXY_ONLY:-}"
 
+default_install_dir() {
+  if [ -n "${SKIRK_INSTALL_DIR:-}" ]; then
+    printf '%s\n' "$SKIRK_INSTALL_DIR"
+    return 0
+  fi
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+install_dir="$(default_install_dir)"
+
 usage() {
   cat <<EOF
-Usage: install.sh [--version VERSION] [--wireproxy-only] [uninstall|--uninstall]
+Usage: install.sh [--version VERSION] [--wireproxy-only] [--dev-install] [uninstall|--uninstall]
 
 Environment:
-  SKIRK_VERSION=latest|vX.Y.Z  Select the Skirk release or source ref.
+  SKIRK_VERSION=latest|vX.Y.Z  Select the Skirk release.
   SKIRK_INSTALL_DIR=PATH       Install directory. Default: \$HOME/.local/bin.
+  SKIRK_REQUIRE_RELEASE_ASSET=1 Fail instead of building from source if release assets are unavailable.
+                                  Defaults to 1 for explicit vX.Y.Z versions.
   SKIRK_INSTALL_WIREPROXY=1    Install Skirk-managed WARP wireproxy.
+  --dev-install                Allow custom SKIRK_REPO/SKIRK_ASSET_BASE and source refs.
 EOF
 }
 
@@ -40,6 +55,42 @@ validate_version() {
       exit 1
       ;;
   esac
+  case "$value" in
+    v*)
+      if ! is_release_version "$value"; then
+        echo "error: release versions must use vX.Y.Z format: $value" >&2
+        exit 1
+      fi
+      ;;
+    latest) ;;
+    *)
+      if [ "$dev_install" != "1" ]; then
+        echo "error: version must be latest or vX.Y.Z (use --dev-install for source refs)" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+is_release_version() {
+  value="$1"
+  case "$value" in
+    v*.*.*) ;;
+    *) return 1 ;;
+  esac
+  rest="${value#v}"
+  old_ifs="$IFS"
+  IFS=.
+  # shellcheck disable=SC2086
+  set -- $rest
+  IFS="$old_ifs"
+  [ "$#" -eq 3 ] || return 1
+  for part in "$@"; do
+    case "$part" in
+      ""|*[!0-9]*) return 1 ;;
+    esac
+  done
+  return 0
 }
 
 parse_args() {
@@ -57,6 +108,10 @@ parse_args() {
       --wireproxy-only)
         wireproxy_only=1
         install_wireproxy=1
+        shift
+        ;;
+      --dev-install)
+        dev_install=1
         shift
         ;;
       --help|-h)
@@ -91,6 +146,31 @@ is_skirk_unit_file() {
   unit_path="$1"
   [ -f "$unit_path" ] || return 1
   grep -Eq 'Managed by Skirk|Wireproxy WARP SOCKS proxy for Skirk exit|ExecStart=.* serve-exit .* --config ' "$unit_path"
+}
+
+is_skirk_dropin_file() {
+  dropin_path="$1"
+  [ -f "$dropin_path" ] || return 1
+  if run_root grep -Fq "Managed by Skirk" "$dropin_path"; then
+    return 0
+  fi
+  cleaned="$(run_root sed '/^[[:space:]]*$/d' "$dropin_path")"
+  [ "$cleaned" = "[Unit]
+After=wireproxy.service
+Wants=wireproxy.service" ]
+}
+
+remove_skirk_wireproxy_dropin() {
+  dropin_dir="$1"
+  dropin_path="$dropin_dir/10-wireproxy.conf"
+  if [ -e "$dropin_path" ]; then
+    if ! is_skirk_dropin_file "$dropin_path"; then
+      echo "error: refusing to remove non-Skirk drop-in: $dropin_path" >&2
+      exit 1
+    fi
+    run_root rm -f "$dropin_path"
+  fi
+  run_root rmdir "$dropin_dir" 2>/dev/null || true
 }
 
 need() {
@@ -137,6 +217,218 @@ run_root() {
     echo "error: this step needs root or sudo: $*" >&2
     exit 1
   fi
+}
+
+validate_wireproxy_bind() {
+  case "$wireproxy_bind" in
+    127.0.0.1:*) ;;
+    *)
+      echo "error: SKIRK_WIREPROXY_BIND must bind loopback only, for example 127.0.0.1:40000" >&2
+      exit 1
+      ;;
+  esac
+  case "$wireproxy_bind" in
+    *[!0123456789.:]*|*:*:*)
+      echo "error: SKIRK_WIREPROXY_BIND must be exactly 127.0.0.1:PORT" >&2
+      exit 1
+      ;;
+  esac
+  port="${wireproxy_bind#127.0.0.1:}"
+  case "$port" in
+    ""|*[!0-9]*)
+      echo "error: SKIRK_WIREPROXY_BIND port is invalid: $wireproxy_bind" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "error: SKIRK_WIREPROXY_BIND port is out of range: $wireproxy_bind" >&2
+    exit 1
+  fi
+}
+
+validate_wireproxy_user() {
+  if [ "$wireproxy_user" != "skirk-wireproxy" ]; then
+    echo "error: managed WARP wireproxy must run as skirk-wireproxy" >&2
+    exit 1
+  fi
+}
+
+require_systemd_for_wireproxy() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "error: systemd is required to install and start WARP wireproxy" >&2
+    exit 1
+  fi
+  if ! systemctl show --property=SystemState >/dev/null 2>&1; then
+    echo "error: systemd is not usable on this machine" >&2
+    exit 1
+  fi
+}
+
+preflight_wireproxy_install() {
+  if [ "$install_wireproxy" != "1" ]; then
+    return 0
+  fi
+  validate_wireproxy_bind
+  validate_wireproxy_user
+  require_systemd_for_wireproxy
+  need ss
+  if [ "$wireproxy_dir" != "/etc/wireproxy" ] || [ "$wireproxy_bin" != "/usr/local/bin/wireproxy" ] || [ "$wgcf_bin" != "/usr/local/bin/wgcf" ]; then
+    echo "error: managed WARP wireproxy uses fixed paths under /etc/wireproxy and /usr/local/bin" >&2
+    exit 1
+  fi
+  if [ -L "$wireproxy_dir" ] || [ -L "$wireproxy_bin" ] || [ -L "$wgcf_bin" ]; then
+    echo "error: refusing to use symlinked WARP wireproxy paths" >&2
+    exit 1
+  fi
+  wireproxy_unit="/etc/systemd/system/wireproxy.service"
+  if [ -e "$wireproxy_unit" ] && ! is_skirk_unit_file "$wireproxy_unit"; then
+    echo "error: refusing to overwrite non-Skirk $wireproxy_unit" >&2
+    exit 1
+  fi
+  manifest_ok=0
+  if has_skirk_wireproxy_manifest; then
+    verify_skirk_wireproxy_manifest
+    manifest_ok=1
+  fi
+  if [ -e "$wireproxy_dir" ] && [ "$manifest_ok" != "1" ] && ! is_legacy_skirk_wireproxy_install; then
+    echo "error: refusing to overwrite non-Skirk $wireproxy_dir" >&2
+    exit 1
+  fi
+  if [ -e "$wireproxy_bin" ] && [ "$manifest_ok" != "1" ] && ! is_legacy_skirk_wireproxy_install; then
+    echo "error: refusing to overwrite existing $wireproxy_bin without Skirk manifest" >&2
+    exit 1
+  fi
+  if [ -e "$wgcf_bin" ] && [ "$manifest_ok" != "1" ] && ! is_legacy_skirk_wireproxy_install; then
+    echo "error: refusing to overwrite existing $wgcf_bin without Skirk manifest" >&2
+    exit 1
+  fi
+  port="${wireproxy_bind#127.0.0.1:}"
+  if run_root ss -ltnp 2>/dev/null | awk -v port=":$port" '$4 ~ port "$" && $0 !~ /wireproxy/ { found = 1 } END { exit !found }'; then
+    echo "error: $wireproxy_bind is already used by a non-wireproxy process" >&2
+    exit 1
+  fi
+}
+
+wait_wireproxy_ready() {
+  port="${wireproxy_bind#127.0.0.1:}"
+  i=0
+  while [ "$i" -lt 30 ]; do
+    if systemctl is-active --quiet wireproxy.service; then
+      main_pid="$(systemctl show -p MainPID --value wireproxy.service 2>/dev/null || true)"
+      if [ -n "$main_pid" ] && [ "$main_pid" != "0" ]; then
+        if run_root ss -ltnp 2>/dev/null | awk -v want="127.0.0.1:$port" -v pid="$main_pid" '$4 == want && $0 ~ ("pid=" pid "([^0-9]|$)") { found = 1 } END { exit !found }'; then
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  echo "error: wireproxy.service started but $wireproxy_bind did not become ready" >&2
+  systemctl status wireproxy.service --no-pager >&2 || true
+  exit 1
+}
+
+file_sha256() {
+  path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    echo "error: missing required command: sha256sum or shasum" >&2
+    exit 1
+  fi
+}
+
+root_file_exists() {
+  run_root test -f "$1" >/dev/null 2>&1
+}
+
+has_skirk_wireproxy_manifest() {
+  root_file_exists "$wireproxy_dir/skirk-managed.manifest"
+}
+
+wireproxy_manifest_value() {
+  key="$1"
+  run_root awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; found = 1; exit } END { exit found ? 0 : 1 }' "$wireproxy_dir/skirk-managed.manifest"
+}
+
+verify_manifest_checksum() {
+  path="$1"
+  want="$2"
+  if [ -z "$want" ]; then
+    echo "error: refusing to trust WARP manifest with empty checksum for $path" >&2
+    exit 1
+  fi
+  if [ -e "$path" ]; then
+    got="$(file_sha256 "$path")"
+    if [ "$got" != "$want" ]; then
+      echo "error: refusing to overwrite $path: WARP manifest checksum mismatch" >&2
+      exit 1
+    fi
+  fi
+}
+
+verify_skirk_wireproxy_manifest() {
+  manifest="$wireproxy_dir/skirk-managed.manifest"
+  root_file_exists "$manifest" || {
+    echo "error: missing WARP ownership manifest: $manifest" >&2
+    exit 1
+  }
+  run_root grep -Fq "Managed by Skirk" "$manifest" || {
+    echo "error: refusing to trust WARP manifest without Skirk marker: $manifest" >&2
+    exit 1
+  }
+  m_dir="$(wireproxy_manifest_value config_dir || true)"
+  m_wireproxy="$(wireproxy_manifest_value wireproxy_bin || true)"
+  m_wireproxy_sha="$(wireproxy_manifest_value wireproxy_sha256 || true)"
+  m_wgcf="$(wireproxy_manifest_value wgcf_bin || true)"
+  m_wgcf_sha="$(wireproxy_manifest_value wgcf_sha256 || true)"
+  m_service="$(wireproxy_manifest_value service || true)"
+  m_user="$(wireproxy_manifest_value user || true)"
+  if [ "$m_dir" != "$wireproxy_dir" ] || [ "$m_wireproxy" != "$wireproxy_bin" ] || [ "$m_wgcf" != "$wgcf_bin" ] || [ "$m_service" != "/etc/systemd/system/wireproxy.service" ] || [ "$m_user" != "$wireproxy_user" ]; then
+    echo "error: refusing to trust WARP manifest with unexpected paths or user" >&2
+    exit 1
+  fi
+  verify_manifest_checksum "$wireproxy_bin" "$m_wireproxy_sha"
+  verify_manifest_checksum "$wgcf_bin" "$m_wgcf_sha"
+}
+
+is_legacy_skirk_wireproxy_install() {
+  wireproxy_unit="/etc/systemd/system/wireproxy.service"
+  [ -e "$wireproxy_unit" ] || return 1
+  is_skirk_unit_file "$wireproxy_unit" || return 1
+  root_file_exists "$wireproxy_dir/wireproxy.conf" || return 1
+  run_root grep -Fq "WGConfig = $wireproxy_dir/wgcf-profile.conf" "$wireproxy_dir/wireproxy.conf"
+}
+
+ensure_wireproxy_user() {
+  if command -v getent >/dev/null 2>&1 && getent passwd "$wireproxy_user" >/dev/null 2>&1; then
+    user_entry="$(getent passwd "$wireproxy_user")"
+    uid="$(printf '%s\n' "$user_entry" | awk -F: '{print $3}')"
+    shell="$(printf '%s\n' "$user_entry" | awk -F: '{print $7}')"
+    if [ "$uid" -eq 0 ]; then
+      echo "error: refusing to run WARP wireproxy as uid 0" >&2
+      exit 1
+    fi
+    case "$shell" in
+      */nologin|*/false) ;;
+      *)
+        echo "error: refusing to reuse existing $wireproxy_user account with login shell $shell" >&2
+        exit 1
+        ;;
+    esac
+    return 0
+  fi
+  command -v useradd >/dev/null 2>&1 || {
+    echo "error: useradd is required to create $wireproxy_user" >&2
+    exit 1
+  }
+  nologin_shell="/usr/sbin/nologin"
+  [ -x "$nologin_shell" ] || nologin_shell="/sbin/nologin"
+  [ -x "$nologin_shell" ] || nologin_shell="/bin/false"
+  run_root useradd --system --no-create-home --shell "$nologin_shell" "$wireproxy_user"
 }
 
 uninstall_skirk() {
@@ -209,11 +501,13 @@ install_from_release() {
     echo "error: release archive did not contain executable skirk" >&2
     return 1
   fi
+  verify_candidate_version "$tmp/skirk"
   mkdir -p "$install_dir"
   install_tmp="$install_dir/.skirk.tmp.$$"
   cp "$tmp/skirk" "$install_tmp"
   chmod 0755 "$install_tmp"
   mv "$install_tmp" "$install_dir/skirk"
+  verify_candidate_version "$install_dir/skirk"
 }
 
 install_warp_wireproxy() {
@@ -226,6 +520,7 @@ install_warp_wireproxy() {
     linux-amd64|linux-arm64) ;;
     *) echo "error: WARP wireproxy installer supports linux-amd64 and linux-arm64 only (got $platform)" >&2; exit 1 ;;
   esac
+  preflight_wireproxy_install
 
   if [ -z "$exit_proxy" ]; then
     exit_proxy="socks5h://$wireproxy_bind"
@@ -239,9 +534,9 @@ install_warp_wireproxy() {
   wireproxy_url="https://github.com/windtf/wireproxy/releases/download/$wireproxy_version/wireproxy_linux_${wgcf_arch}.tar.gz"
 
   echo "Installing WARP wireproxy..."
+  ensure_wireproxy_user
   download "$wgcf_url" "$tmp_warp/wgcf"
   chmod 0755 "$tmp_warp/wgcf"
-  run_root install -m 0755 "$tmp_warp/wgcf" "$wgcf_bin"
 
   download "$wireproxy_url" "$tmp_warp/wireproxy.tar.gz"
   mkdir "$tmp_warp/wireproxy"
@@ -251,27 +546,27 @@ install_warp_wireproxy() {
     echo "error: wireproxy release archive did not contain executable wireproxy" >&2
     exit 1
   fi
-  run_root install -m 0755 "$wireproxy_src" "$wireproxy_bin"
 
   run_root mkdir -p "$wireproxy_dir"
-  run_root chmod 700 "$wireproxy_dir"
-  if [ ! -f "$wireproxy_dir/wgcf-account.toml" ] || [ "${SKIRK_RESET_WARP:-}" = "1" ]; then
+  run_root chmod 0711 "$wireproxy_dir"
+  if ! root_file_exists "$wireproxy_dir/wgcf-account.toml" || [ "${SKIRK_RESET_WARP:-}" = "1" ]; then
     (
       cd "$tmp_warp"
       if [ "${SKIRK_ACCEPT_WARP_TOS:-}" = "1" ]; then
-        printf "yes\n" | "$wgcf_bin" register
+        printf "yes\n" | "$tmp_warp/wgcf" register
       else
-        "$wgcf_bin" register
+        "$tmp_warp/wgcf" register
       fi
-      "$wgcf_bin" generate --profile "$tmp_warp/wgcf-profile.conf"
+      "$tmp_warp/wgcf" generate --profile "$tmp_warp/wgcf-profile.conf"
     )
     run_root install -m 0600 "$tmp_warp/wgcf-account.toml" "$wireproxy_dir/wgcf-account.toml"
     run_root install -m 0600 "$tmp_warp/wgcf-profile.conf" "$wireproxy_dir/wgcf-profile.conf"
-  elif [ ! -f "$wireproxy_dir/wgcf-profile.conf" ]; then
-    cp "$wireproxy_dir/wgcf-account.toml" "$tmp_warp/wgcf-account.toml"
+  elif ! root_file_exists "$wireproxy_dir/wgcf-profile.conf"; then
+    run_root cp "$wireproxy_dir/wgcf-account.toml" "$tmp_warp/wgcf-account.toml"
+    run_root chown "$(id -u):$(id -g)" "$tmp_warp/wgcf-account.toml"
     (
       cd "$tmp_warp"
-      "$wgcf_bin" generate --profile "$tmp_warp/wgcf-profile.conf"
+      "$tmp_warp/wgcf" generate --profile "$tmp_warp/wgcf-profile.conf"
     )
     run_root install -m 0600 "$tmp_warp/wgcf-profile.conf" "$wireproxy_dir/wgcf-profile.conf"
   fi
@@ -283,11 +578,29 @@ WGConfig = $wireproxy_dir/wgcf-profile.conf
 [Socks5]
 BindAddress = $wireproxy_bind
 EOF
-  run_root install -m 0600 "$wireproxy_conf" "$wireproxy_dir/wireproxy.conf"
-
-  if command -v systemctl >/dev/null 2>&1; then
-    wireproxy_unit="$tmp_warp/wireproxy.service"
-    cat >"$wireproxy_unit" <<EOF
+  wireproxy_sha="$(file_sha256 "$wireproxy_src")"
+  wgcf_sha="$(file_sha256 "$tmp_warp/wgcf")"
+  wireproxy_manifest="$tmp_warp/skirk-managed.manifest"
+  cat >"$wireproxy_manifest" <<EOF
+# Managed by Skirk
+config_dir=$wireproxy_dir
+wireproxy_bin=$wireproxy_bin
+wireproxy_sha256=$wireproxy_sha
+wgcf_bin=$wgcf_bin
+wgcf_sha256=$wgcf_sha
+service=/etc/systemd/system/wireproxy.service
+user=$wireproxy_user
+EOF
+  run_root install -m 0755 "$tmp_warp/wgcf" "$wgcf_bin"
+  run_root install -m 0755 "$wireproxy_src" "$wireproxy_bin"
+  run_root install -m 0644 "$wireproxy_conf" "$wireproxy_dir/wireproxy.conf"
+  run_root install -m 0644 "$wireproxy_manifest" "$wireproxy_dir/skirk-managed.manifest"
+  run_root chown root:root "$wireproxy_dir" "$wireproxy_dir/wireproxy.conf" "$wireproxy_dir/skirk-managed.manifest"
+  run_root chmod 0711 "$wireproxy_dir"
+  run_root chown "$wireproxy_user" "$wireproxy_dir/wgcf-account.toml" "$wireproxy_dir/wgcf-profile.conf"
+  run_root chmod 0600 "$wireproxy_dir/wgcf-account.toml" "$wireproxy_dir/wgcf-profile.conf"
+  wireproxy_unit="$tmp_warp/wireproxy.service"
+  cat >"$wireproxy_unit" <<EOF
 [Unit]
 Description=Wireproxy WARP SOCKS proxy for Skirk exit
 # Managed by Skirk
@@ -295,23 +608,35 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=exec
+User=$wireproxy_user
 ExecStart=$wireproxy_bin -c $wireproxy_dir/wireproxy.conf
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 ReadOnlyPaths=$wireproxy_dir
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    run_root install -m 0644 "$wireproxy_unit" /etc/systemd/system/wireproxy.service
-    run_root systemctl daemon-reload
-    run_root systemctl enable --now wireproxy.service
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    systemd-analyze verify "$wireproxy_unit"
   fi
+  run_root install -m 0644 "$wireproxy_unit" /etc/systemd/system/wireproxy.service
+  run_root systemctl daemon-reload
+  run_root systemctl enable wireproxy.service
+  run_root systemctl restart wireproxy.service
+  wait_wireproxy_ready
 
   echo "WARP wireproxy listening on $wireproxy_bind"
 }
@@ -342,6 +667,20 @@ install_from_source() {
   cp "$build_out" "$install_tmp"
   chmod 0755 "$install_tmp"
   mv "$install_tmp" "$install_dir/skirk"
+}
+
+verify_candidate_version() {
+  binary="$1"
+  if ! is_release_version "$version"; then
+    return 0
+  fi
+  installed_output="$("$binary" version)"
+  installed="${installed_output#skirk }"
+  installed="${installed%% *}"
+  if [ "$installed" != "$version" ]; then
+    echo "error: candidate skirk reports $installed, expected $version" >&2
+    exit 1
+  fi
 }
 
 run_server_setup() {
@@ -391,7 +730,12 @@ install_exit_service() {
     /*) ;;
     *) config_path="$(pwd)/$config_path" ;;
   esac
-  unit="/etc/systemd/system/$service_name.service"
+  service_unit="$(normalize_service_unit "$service_name")"
+  unit="/etc/systemd/system/$service_unit"
+  if [ -e "$unit" ] && ! is_skirk_unit_file "$unit"; then
+    echo "error: refusing to overwrite non-Skirk systemd service: $unit" >&2
+    exit 1
+  fi
   tmp_unit="$(mktemp)"
   cat >"$tmp_unit" <<EOF
 [Unit]
@@ -414,36 +758,57 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 EOF
-  if [ "$install_wireproxy" = "1" ]; then
-    tmp_with_deps="$(mktemp)"
-    awk '
-      /^After=/ { print $0 " wireproxy.service"; next }
-      /^Wants=/ { print $0 " wireproxy.service"; next }
-      { print }
-    ' "$tmp_unit" >"$tmp_with_deps"
-    mv "$tmp_with_deps" "$tmp_unit"
-  fi
   if [ "$(id -u)" -eq 0 ]; then
     cp "$tmp_unit" "$unit"
+    remove_skirk_wireproxy_dropin "$unit.d"
+    if [ "$install_wireproxy" = "1" ]; then
+      mkdir -p "$unit.d"
+      cat >"$unit.d/10-wireproxy.conf" <<EOF
+[Unit]
+# Managed by Skirk
+After=wireproxy.service
+Wants=wireproxy.service
+EOF
+    fi
     systemctl daemon-reload
-    systemctl enable --now "$service_name"
+    systemctl enable --now "$service_unit"
   elif command -v sudo >/dev/null 2>&1; then
     sudo cp "$tmp_unit" "$unit"
+    remove_skirk_wireproxy_dropin "$unit.d"
+    if [ "$install_wireproxy" = "1" ]; then
+      tmp_dropin="$(mktemp)"
+      cat >"$tmp_dropin" <<EOF
+[Unit]
+# Managed by Skirk
+After=wireproxy.service
+Wants=wireproxy.service
+EOF
+      sudo mkdir -p "$unit.d"
+      sudo cp "$tmp_dropin" "$unit.d/10-wireproxy.conf"
+      rm -f "$tmp_dropin"
+    fi
     sudo systemctl daemon-reload
-    sudo systemctl enable --now "$service_name"
+    sudo systemctl enable --now "$service_unit"
   else
     echo "Note: sudo is unavailable; systemd service file was left at $tmp_unit" >&2
     return 0
   fi
   rm -f "$tmp_unit"
-  echo "Installed and started systemd service: $service_name"
+  echo "Installed and started systemd service: $service_unit"
 }
 
 main() {
   parse_args "$@"
+  if [ "$dev_install" != "1" ]; then
+    repo="ShahabSL/Skirk"
+    asset_base=""
+  fi
+  if [ -z "$require_release_asset" ]; then
+    require_release_asset=1
+  fi
   # shellcheck disable=SC2086
   set -- $parsed_args
-  if [ "${SKIRK_UNINSTALL:-}" = "1" ] || [ "${1:-}" = "uninstall" ] || [ "${1:-}" = "--uninstall" ]; then
+  if [ "${1:-}" = "uninstall" ] || [ "${1:-}" = "--uninstall" ]; then
     case "${1:-}" in
       uninstall|--uninstall) shift ;;
     esac
@@ -456,6 +821,7 @@ main() {
   platform="$(detect_platform)"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT INT TERM
+  preflight_wireproxy_install
 
   if [ "$wireproxy_only" = "1" ]; then
     install_warp_wireproxy
@@ -463,6 +829,10 @@ main() {
   fi
 
   if ! install_from_release "$platform" "$tmp"; then
+    if [ "$require_release_asset" = "1" ] || [ "$dev_install" != "1" ]; then
+      echo "error: release asset unavailable for $version; refusing source fallback" >&2
+      exit 1
+    fi
     install_from_source "$tmp"
   fi
   install_warp_wireproxy

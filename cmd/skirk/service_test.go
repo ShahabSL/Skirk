@@ -88,6 +88,59 @@ func TestValidateSystemdUserRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestAssertSkirkDropInDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "10-wireproxy.conf")
+	if err := os.WriteFile(path, []byte("[Unit]\nAfter=wireproxy.service\nWants=wireproxy.service\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSkirkDropInDir(dir); err != nil {
+		t.Fatalf("assertSkirkDropInDir accepted Skirk drop-in: %v", err)
+	}
+	if err := assertSkirkDropInFile(path); err != nil {
+		t.Fatalf("assertSkirkDropInFile accepted Skirk drop-in: %v", err)
+	}
+
+	foreign := filepath.Join(t.TempDir(), "foreign.service.d")
+	if err := os.MkdirAll(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreignPath := filepath.Join(foreign, "override.conf")
+	if err := os.WriteFile(foreignPath, []byte("[Service]\nEnvironment=SECRET=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSkirkDropInDir(foreign); err == nil {
+		t.Fatal("assertSkirkDropInDir accepted non-Skirk drop-in")
+	}
+	if err := assertSkirkDropInFile(foreignPath); err == nil {
+		t.Fatal("assertSkirkDropInFile accepted non-Skirk drop-in")
+	}
+
+	wireproxyForeign := filepath.Join(t.TempDir(), "wireproxy-foreign.conf")
+	if err := os.WriteFile(wireproxyForeign, []byte("[Unit]\nAfter=wireproxy.service\nEnvironment=FOREIGN=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertSkirkDropInFile(wireproxyForeign); err == nil {
+		t.Fatal("assertSkirkDropInFile accepted non-legacy wireproxy drop-in without Skirk marker")
+	}
+}
+
+func TestRemoveSystemdDependencyFromUnitText(t *testing.T) {
+	input := "[Unit]\nAfter=network-online.target wireproxy.service\nWants=network-online.target wireproxy.service\n[Service]\nExecStart=/usr/local/bin/skirk serve-exit --config /opt/skirk-kit/exit.json\n"
+	got, changed := removeSystemdDependencyFromUnitText(input, "wireproxy.service")
+	if !changed {
+		t.Fatal("removeSystemdDependencyFromUnitText did not report change")
+	}
+	if strings.Contains(got, "wireproxy.service") {
+		t.Fatalf("wireproxy dependency remained:\n%s", got)
+	}
+	for _, want := range []string{"After=network-online.target", "Wants=network-online.target", "ExecStart=/usr/local/bin/skirk"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("updated unit missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSystemdUnitTextPassesSystemdAnalyzeVerify(t *testing.T) {
 	if _, err := exec.LookPath("systemd-analyze"); err != nil {
 		t.Skip("systemd-analyze is not installed")

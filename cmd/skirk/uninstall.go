@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,10 +15,25 @@ import (
 
 const (
 	defaultWireproxyService = "wireproxy"
-	defaultWireproxyDir     = "/etc/wireproxy"
-	defaultWireproxyBin     = "/usr/local/bin/wireproxy"
-	defaultWGCFBin          = "/usr/local/bin/wgcf"
+	defaultWireproxyUser    = "skirk-wireproxy"
+	wireproxyManifestName   = "skirk-managed.manifest"
 )
+
+var (
+	defaultWireproxyDir = "/etc/wireproxy"
+	defaultWireproxyBin = "/usr/local/bin/wireproxy"
+	defaultWGCFBin      = "/usr/local/bin/wgcf"
+)
+
+type wireproxyManifest struct {
+	ConfigDir         string
+	WireproxyBin      string
+	WireproxySHA256   string
+	WGCFBin           string
+	WGCFSHA256        string
+	Service           string
+	HasManagedBySkirk bool
+}
 
 func uninstallCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
@@ -203,28 +221,324 @@ func removeInstalledBinary(ctx context.Context, path string) error {
 }
 
 func uninstallWireproxy(ctx context.Context) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("wireproxy uninstall is only available on Linux")
+	}
 	wireproxyUnitPath := filepath.Join("/etc/systemd/system", defaultWireproxyService+".service")
+	serviceOwned := false
 	if _, err := os.Lstat(wireproxyUnitPath); err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: skipping wireproxy path removal because %s is absent\n", wireproxyUnitPath)
-			return nil
+		if !os.IsNotExist(err) {
+			return err
 		}
+		fmt.Printf("Wireproxy service already absent: %s\n", wireproxyUnitPath)
+	} else {
+		if owned, err := isSkirkSystemdUnitFile(wireproxyUnitPath); err != nil {
+			return err
+		} else if !owned {
+			return fmt.Errorf("refusing to remove %s: unit file is not managed by Skirk", wireproxyUnitPath)
+		}
+		serviceOwned = true
+	}
+
+	manifest, hasManifest, err := loadWireproxyManifest(defaultWireproxyDir)
+	if err != nil {
 		return err
 	}
-	if err := uninstallServiceIfAvailable(ctx, defaultWireproxyService); err != nil {
-		return fmt.Errorf("remove wireproxy service: %w", err)
+	if hasManifest {
+		if err := verifyWireproxyManifest(manifest); err != nil {
+			return err
+		}
+	} else if _, err := os.Lstat(defaultWireproxyDir); err == nil {
+		if !serviceOwned {
+			return fmt.Errorf("refusing to remove %s: Skirk ownership manifest is absent", defaultWireproxyDir)
+		}
+		if err := assertSkirkWireproxyPath(defaultWireproxyDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
-	for _, path := range []string{defaultWireproxyDir, defaultWireproxyBin, defaultWGCFBin} {
-		if _, err := os.Lstat(path); err != nil {
+
+	if !serviceOwned && !hasManifest {
+		fmt.Println("Wireproxy service and Skirk-owned config are absent; leaving helper binaries untouched.")
+		return nil
+	}
+	if serviceOwned {
+		if err := uninstallServiceIfAvailable(ctx, defaultWireproxyService); err != nil {
+			return fmt.Errorf("remove wireproxy service: %w", err)
+		}
+	}
+
+	removed := false
+	if hasManifest {
+		if _, err := os.Lstat(defaultWireproxyDir); err == nil {
+			if err := removeWireproxyConfigDir(ctx, defaultWireproxyDir, true); err != nil {
+				return err
+			}
+			fmt.Printf("Removed wireproxy path: %s\n", defaultWireproxyDir)
+			removed = true
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		for _, path := range []string{defaultWireproxyBin, defaultWGCFBin} {
+			if _, err := os.Lstat(path); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return err
+			}
+			if err := assertSkirkWireproxyPath(path); err != nil {
+				return err
+			}
+			if err := runPrivileged(ctx, "rm", "-rf", path); err != nil {
+				return fmt.Errorf("remove %s: %w", path, err)
+			}
+			fmt.Printf("Removed wireproxy path: %s\n", path)
+			removed = true
+		}
+	} else if _, err := os.Lstat(defaultWireproxyDir); err == nil {
+		if err := removeWireproxyConfigDir(ctx, defaultWireproxyDir, false); err != nil {
+			return err
+		}
+		fmt.Printf("Removed wireproxy path: %s\n", defaultWireproxyDir)
+		fmt.Println("Wireproxy helper binaries left untouched because the Skirk ownership manifest is absent.")
+		removed = true
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if !removed {
+		fmt.Println("Wireproxy paths already absent.")
+	}
+	return nil
+}
+
+func preflightUninstallWireproxy() error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("wireproxy uninstall is only available on Linux")
+	}
+	wireproxyUnitPath := filepath.Join("/etc/systemd/system", defaultWireproxyService+".service")
+	serviceOwned := false
+	if _, err := os.Lstat(wireproxyUnitPath); err == nil {
+		owned, err := isSkirkSystemdUnitFile(wireproxyUnitPath)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return fmt.Errorf("refusing to remove %s: unit file is not managed by Skirk", wireproxyUnitPath)
+		}
+		serviceOwned = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	manifest, hasManifest, err := loadWireproxyManifest(defaultWireproxyDir)
+	if err != nil {
+		return err
+	}
+	if hasManifest {
+		return verifyWireproxyManifest(manifest)
+	}
+	if _, err := os.Lstat(defaultWireproxyDir); err == nil {
+		if !serviceOwned {
+			return fmt.Errorf("refusing to remove %s: Skirk ownership manifest is absent", defaultWireproxyDir)
+		}
+		return assertSkirkWireproxyPath(defaultWireproxyDir)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func loadWireproxyManifest(dir string) (wireproxyManifest, bool, error) {
+	path := filepath.Join(dir, wireproxyManifestName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return wireproxyManifest{}, false, nil
+		}
+		return wireproxyManifest{}, false, err
+	}
+	manifest := wireproxyManifest{}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "Managed by Skirk") {
+			manifest.HasManagedBySkirk = true
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "config_dir":
+			manifest.ConfigDir = strings.TrimSpace(value)
+		case "wireproxy_bin":
+			manifest.WireproxyBin = strings.TrimSpace(value)
+		case "wireproxy_sha256":
+			manifest.WireproxySHA256 = strings.TrimSpace(value)
+		case "wgcf_bin":
+			manifest.WGCFBin = strings.TrimSpace(value)
+		case "wgcf_sha256":
+			manifest.WGCFSHA256 = strings.TrimSpace(value)
+		case "service":
+			manifest.Service = strings.TrimSpace(value)
+		}
+	}
+	return manifest, true, nil
+}
+
+func verifyWireproxyManifest(manifest wireproxyManifest) error {
+	if !manifest.HasManagedBySkirk {
+		return fmt.Errorf("refusing to remove wireproxy: ownership manifest is missing Skirk marker")
+	}
+	expectedService := filepath.Join("/etc/systemd/system", defaultWireproxyService+".service")
+	expected := map[string]string{
+		"config_dir":    defaultWireproxyDir,
+		"wireproxy_bin": defaultWireproxyBin,
+		"wgcf_bin":      defaultWGCFBin,
+		"service":       expectedService,
+	}
+	got := map[string]string{
+		"config_dir":    manifest.ConfigDir,
+		"wireproxy_bin": manifest.WireproxyBin,
+		"wgcf_bin":      manifest.WGCFBin,
+		"service":       manifest.Service,
+	}
+	for key, want := range expected {
+		if got[key] != want {
+			return fmt.Errorf("refusing to remove wireproxy: manifest %s=%q, want %q", key, got[key], want)
+		}
+	}
+	for _, item := range []struct {
+		path string
+		sum  string
+	}{
+		{manifest.WireproxyBin, manifest.WireproxySHA256},
+		{manifest.WGCFBin, manifest.WGCFSHA256},
+	} {
+		if strings.TrimSpace(item.sum) == "" {
+			return fmt.Errorf("refusing to remove %s: manifest checksum is empty", item.path)
+		}
+		if _, err := os.Lstat(item.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return err
 		}
-		if err := runPrivileged(ctx, "rm", "-rf", path); err != nil {
-			return fmt.Errorf("remove %s: %w", path, err)
+		if err := verifyFileSHA256(item.path, item.sum); err != nil {
+			return err
 		}
-		fmt.Printf("Removed wireproxy path: %s\n", path)
+	}
+	if _, err := os.Lstat(defaultWireproxyDir); err == nil {
+		if err := assertSkirkWireproxyPath(defaultWireproxyDir); err != nil {
+			return err
+		}
+		if err := assertWireproxyConfigDirEntries(defaultWireproxyDir, true); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func assertWireproxyConfigDirEntries(path string, hasManifest bool) error {
+	allowed := map[string]bool{
+		"wgcf-account.toml": true,
+		"wgcf-profile.conf": true,
+		"wireproxy.conf":    true,
+	}
+	if hasManifest {
+		allowed[wireproxyManifestName] = true
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return fmt.Errorf("refusing to remove %s: contains unexpected directory %s", path, entry.Name())
+		}
+		if !allowed[entry.Name()] {
+			return fmt.Errorf("refusing to remove %s: contains unexpected file %s", path, entry.Name())
+		}
+	}
+	return nil
+}
+
+func removeWireproxyConfigDir(ctx context.Context, path string, hasManifest bool) error {
+	if err := assertSkirkWireproxyPath(path); err != nil {
+		return err
+	}
+	if err := assertWireproxyConfigDirEntries(path, hasManifest); err != nil {
+		return err
+	}
+	for _, name := range []string{"wgcf-account.toml", "wgcf-profile.conf", "wireproxy.conf", wireproxyManifestName} {
+		if !hasManifest && name == wireproxyManifestName {
+			continue
+		}
+		target := filepath.Join(path, name)
+		if _, err := os.Lstat(target); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := runPrivileged(ctx, "rm", "-f", target); err != nil {
+			return fmt.Errorf("remove %s: %w", target, err)
+		}
+	}
+	if err := runPrivileged(ctx, "rmdir", path); err != nil {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	return nil
+}
+
+func verifyFileSHA256(path, want string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(hash.Sum(nil))
+	if !strings.EqualFold(got, strings.TrimSpace(want)) {
+		return fmt.Errorf("refusing to remove %s: checksum mismatch", path)
+	}
+	return nil
+}
+
+func assertSkirkWireproxyPath(path string) error {
+	switch path {
+	case defaultWireproxyDir:
+		profile := filepath.Join(path, "wgcf-profile.conf")
+		conf := filepath.Join(path, "wireproxy.conf")
+		data, err := os.ReadFile(conf)
+		if err != nil {
+			return fmt.Errorf("refusing to remove %s: missing Skirk wireproxy.conf: %w", path, err)
+		}
+		if !strings.Contains(string(data), "WGConfig = "+profile) {
+			return fmt.Errorf("refusing to remove %s: wireproxy.conf does not point at Skirk profile", path)
+		}
+	case defaultWireproxyBin:
+		if filepath.Base(path) != "wireproxy" {
+			return fmt.Errorf("refusing to remove unexpected wireproxy binary path %s", path)
+		}
+	case defaultWGCFBin:
+		if filepath.Base(path) != "wgcf" {
+			return fmt.Errorf("refusing to remove unexpected wgcf binary path %s", path)
+		}
+	default:
+		return fmt.Errorf("refusing to remove unexpected wireproxy path %s", path)
 	}
 	return nil
 }

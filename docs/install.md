@@ -11,8 +11,8 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 The installer puts `skirk` in `$HOME/.local/bin` by default. The `export PATH`
-line makes `skirk` available in the current shell, but scripts and fresh SSH
-sessions can always use the absolute path: `$HOME/.local/bin/skirk`.
+line makes that install available in the current shell, but scripts and fresh
+SSH sessions can always use an absolute path such as `$HOME/.local/bin/skirk`.
 
 After install, run `skirk` for the operator menu or run setup directly:
 
@@ -43,10 +43,14 @@ Install to another directory:
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_INSTALL_DIR=/usr/local/bin sh
 ```
 
-Install from a fork:
+Development-only installs from a fork or local asset mirror require the explicit
+`--dev-install` flag. Normal release installs intentionally ignore inherited
+`SKIRK_REPO` and `SKIRK_ASSET_BASE` so old update commands cannot be redirected
+to an unintended binary.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/Skirk/main/install.sh | SKIRK_REPO=OWNER/Skirk sh
+curl -fsSL https://raw.githubusercontent.com/OWNER/Skirk/main/install.sh | \
+  SKIRK_REPO=OWNER/Skirk sh -s -- --dev-install
 ```
 
 Review before running:
@@ -60,12 +64,13 @@ sh install.sh
 ## What The Installer Does
 
 1. Detects Linux `amd64` or `arm64`.
-2. Downloads the matching GitHub release archive when available.
-3. Builds from source when no release archive exists.
+2. Downloads the matching GitHub release archive.
+3. Verifies an explicitly pinned `vX.Y.Z` archive reports the requested version.
 4. Installs one binary: `skirk`.
 5. Prints the installed version and next setup command.
 
-Release archive installs do not require Go. Source builds require Go.
+Release archive installs do not require Go. Source builds are a development-only
+path behind `--dev-install`.
 
 ## Google OAuth
 
@@ -238,8 +243,9 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
 
 Defaults: wireproxy listens on `127.0.0.1:40000`, Skirk writes
 `tunnel.exit_proxy=socks5h://127.0.0.1:40000`, and systemd starts
-`wireproxy.service` before `skirk-exit.service`. Override with
-`SKIRK_WIREPROXY_BIND` or `SKIRK_EXIT_PROXY` when needed. The interactive
+`wireproxy.service` before `skirk-exit.service`. `SKIRK_WIREPROXY_BIND` must
+stay loopback-only; use `SKIRK_EXIT_PROXY` when pointing Skirk at a different
+already-secured outbound proxy. The interactive
 `skirk` menu can also configure a custom outbound proxy, install WARP wireproxy,
 unset the proxy, or update the installed binary while keeping the existing kit
 and proxy settings.

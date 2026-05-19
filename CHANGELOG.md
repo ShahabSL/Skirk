@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.1.49 - 2026-05-18
+
+- Added an outbound-proxy menu action to uninstall Skirk-managed WARP
+  wireproxy, remove its systemd dependency from the exit service, and switch
+  the exit back to direct mode.
+- Hardened WARP wireproxy removal so leftover config and helper binaries are
+  cleaned even if the wireproxy systemd unit was already missing.
+- Hardened WARP setup and updates with loopback-only managed SOCKS binds,
+  preflight checks before root writes, an unprivileged `skirk-wireproxy`
+  service user, Skirk-owned artifact manifests, and stricter menu-update
+  environment sanitization.
+
 ## v0.1.48 - 2026-05-18
 
 - Added pinned installer version arguments.

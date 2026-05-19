@@ -351,7 +351,8 @@ func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName st
 	fmt.Println("1. Set custom proxy URL")
 	if runtime.GOOS == "linux" {
 		fmt.Println("2. Install WARP wireproxy and use it")
-		fmt.Println("3. Unset proxy and use direct exit")
+		fmt.Println("3. Uninstall WARP wireproxy and use direct exit")
+		fmt.Println("4. Unset proxy and use direct exit")
 	} else {
 		fmt.Println("2. Unset proxy and use direct exit")
 	}
@@ -374,10 +375,9 @@ func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName st
 		fmt.Printf("Updated %s: outbound proxy is %s\n", configPath, proxyURL)
 	case "2":
 		if runtime.GOOS != "linux" {
-			if err := updateExitProxyConfig(configPath, ""); err != nil {
+			if err := setDirectExitProxy(ctx, serviceName, configPath); err != nil {
 				return err
 			}
-			fmt.Printf("Updated %s: outbound proxy is direct\n", configPath)
 			break
 		}
 		bind, err := prompt(ctx, reader, "WARP SOCKS listen", "127.0.0.1:40000")
@@ -409,10 +409,36 @@ func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName st
 		if runtime.GOOS != "linux" {
 			return fmt.Errorf("unknown outbound proxy action %q", choice)
 		}
+		confirm, err := promptYesNo(ctx, reader, "Uninstall WARP wireproxy and use direct exit", false)
+		if err != nil {
+			return err
+		}
+		if !confirm {
+			return nil
+		}
+		if err := preflightRemoveWarpServiceDependency(serviceName); err != nil {
+			return err
+		}
+		if err := preflightUninstallWireproxy(); err != nil {
+			return err
+		}
 		if err := updateExitProxyConfig(configPath, ""); err != nil {
 			return err
 		}
+		if err := removeWarpServiceDependency(ctx, serviceName); err != nil {
+			return err
+		}
+		if err := uninstallWireproxy(ctx); err != nil {
+			return err
+		}
 		fmt.Printf("Updated %s: outbound proxy is direct\n", configPath)
+	case "4":
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("unknown outbound proxy action %q", choice)
+		}
+		if err := setDirectExitProxy(ctx, serviceName, configPath); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown outbound proxy action %q", choice)
 	}
@@ -426,6 +452,19 @@ func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName st
 	return nil
 }
 
+func setDirectExitProxy(ctx context.Context, serviceName, configPath string) error {
+	if err := updateExitProxyConfig(configPath, ""); err != nil {
+		return err
+	}
+	if runtime.GOOS == "linux" {
+		if err := removeWarpServiceDependency(ctx, serviceName); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("Updated %s: outbound proxy is direct\n", configPath)
+	return nil
+}
+
 func validateProxyListenAddr(value string) error {
 	host, port, err := net.SplitHostPort(strings.TrimSpace(value))
 	if err != nil {
@@ -433,6 +472,12 @@ func validateProxyListenAddr(value string) error {
 	}
 	if strings.TrimSpace(host) == "" {
 		return fmt.Errorf("WARP SOCKS listen host is required")
+	}
+	if strings.ContainsAny(value, "\r\n\t") {
+		return fmt.Errorf("WARP SOCKS listen must be a single-line address")
+	}
+	if host != "127.0.0.1" {
+		return fmt.Errorf("WARP SOCKS listen must bind loopback only; use 127.0.0.1:40000")
 	}
 	if _, err := net.LookupPort("tcp", port); err != nil {
 		return fmt.Errorf("WARP SOCKS listen port is invalid: %w", err)
@@ -489,21 +534,7 @@ func installerScriptURL() string {
 }
 
 func safeInstallerRef(value string) bool {
-	if !strings.HasPrefix(value, "v") || strings.Contains(value, "..") {
-		return false
-	}
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '.' ||
-			r == '_' ||
-			r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
+	return validMenuUpdateVersion(value) && strings.HasPrefix(value, "v")
 }
 
 func installWarpServiceDependency(ctx context.Context, serviceName string) error {
@@ -512,9 +543,36 @@ func installWarpServiceDependency(ctx context.Context, serviceName string) error
 		return err
 	}
 	return installSystemdDropIn(ctx, unit, "10-wireproxy.conf", `[Unit]
+# Managed by Skirk
 After=wireproxy.service
 Wants=wireproxy.service
 `)
+}
+
+func removeWarpServiceDependency(ctx context.Context, serviceName string) error {
+	unit, err := normalizeSystemdServiceName(serviceName)
+	if err != nil {
+		return err
+	}
+	if err := removeSystemdDropIn(ctx, unit, "10-wireproxy.conf"); err != nil {
+		return err
+	}
+	return removeSystemdUnitDependency(ctx, unit, "wireproxy.service")
+}
+
+func preflightRemoveWarpServiceDependency(serviceName string) error {
+	unit, err := normalizeSystemdServiceName(serviceName)
+	if err != nil {
+		return err
+	}
+	unitPath := filepath.Join("/etc/systemd/system", unit)
+	if _, err := os.Lstat(unitPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return assertSkirkSystemdUnit(unit)
 }
 
 func updateFromMenu(ctx context.Context, reader *bufio.Reader) error {
@@ -524,6 +582,9 @@ func updateFromMenu(ctx context.Context, reader *bufio.Reader) error {
 	versionValue, err := prompt(ctx, reader, "Version", "latest")
 	if err != nil {
 		return err
+	}
+	if !validMenuUpdateVersion(versionValue) {
+		return fmt.Errorf("update version must be latest or a vX.Y.Z tag")
 	}
 	serviceName, err := prompt(ctx, reader, "Service name", defaultServiceName)
 	if err != nil {
@@ -536,12 +597,18 @@ func updateFromMenu(ctx context.Context, reader *bufio.Reader) error {
 	script := `set -e
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT INT TERM
-curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh -o "$tmp"
+case "$1" in
+  latest) ref=main ;;
+  v*) ref="$1" ;;
+  *) echo "error: update version must be latest or a vX.Y.Z tag" >&2; exit 1 ;;
+esac
+curl -fsSL "https://raw.githubusercontent.com/ShahabSL/Skirk/$ref/install.sh" -o "$tmp"
 sh "$tmp" --version "$1"`
 	cmd := exec.CommandContext(ctx, "sh", "-c", script, "skirk-update", versionValue)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	cmd.Env = updateInstallerEnv(os.Environ())
 	if err := cmd.Run(); err != nil {
 		return err
 	}
@@ -549,6 +616,94 @@ sh "$tmp" --version "$1"`
 		return serviceCommand(ctx, []string{"restart", "--name", serviceName})
 	}
 	return nil
+}
+
+func updateInstallerEnv(base []string) []string {
+	exe, err := os.Executable()
+	if err == nil {
+		if abs, err := filepath.Abs(exe); err == nil {
+			exe = abs
+		}
+	}
+	installDir := ""
+	if strings.TrimSpace(exe) != "" {
+		installDir = filepath.Dir(exe)
+	}
+	blocked := map[string]bool{
+		"SKIRK_SERVER_SETUP":        true,
+		"SKIRK_UNINSTALL":           true,
+		"SKIRK_REPO":                true,
+		"SKIRK_ASSET_BASE":          true,
+		"SKIRK_VERSION":             true,
+		"SKIRK_DEV_INSTALL":         true,
+		"SKIRK_INSTALL_SYSTEMD":     true,
+		"SKIRK_INSTALL_WIREPROXY":   true,
+		"SKIRK_WIREPROXY_ONLY":      true,
+		"SKIRK_WIREPROXY_BIND":      true,
+		"SKIRK_WIREPROXY_DIR":       true,
+		"SKIRK_WIREPROXY_BIN":       true,
+		"SKIRK_WIREPROXY_VERSION":   true,
+		"SKIRK_WGCF_BIN":            true,
+		"SKIRK_WGCF_VERSION":        true,
+		"SKIRK_RESET_WARP":          true,
+		"SKIRK_ACCEPT_WARP_TOS":     true,
+		"SKIRK_EXIT_PROXY":          true,
+		"SKIRK_ADC":                 true,
+		"SKIRK_SETUP_OUT":           true,
+		"SKIRK_RESET_GOOGLE_LOGIN":  true,
+		"SKIRK_OAUTH_CLIENT_FILE":   true,
+		"SKIRK_OAUTH_CLIENT_ID":     true,
+		"SKIRK_OAUTH_CLIENT_SECRET": true,
+	}
+	out := make([]string, 0, len(base)+2)
+	hasInstallDir := false
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if key == "SKIRK_INSTALL_DIR" {
+			hasInstallDir = true
+			if installDir != "" {
+				out = append(out, "SKIRK_INSTALL_DIR="+installDir)
+			}
+			continue
+		}
+		if blocked[key] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !hasInstallDir && installDir != "" {
+		out = append(out, "SKIRK_INSTALL_DIR="+installDir)
+	}
+	out = append(out, "SKIRK_REQUIRE_RELEASE_ASSET=1")
+	return out
+}
+
+func validMenuUpdateVersion(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "latest" {
+		return true
+	}
+	if !strings.HasPrefix(value, "v") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(value, "v"), ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func promptYesNo(ctx context.Context, reader *bufio.Reader, label string, fallback bool) (bool, error) {

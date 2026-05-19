@@ -153,6 +153,9 @@ func installSystemdDropIn(ctx context.Context, unit, name, text string) error {
 	if strings.TrimSpace(name) == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
 		return fmt.Errorf("unsafe systemd drop-in name %q", name)
 	}
+	if err := assertSkirkSystemdUnit(unit); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp("", "skirk-*.conf")
 	if err != nil {
 		return err
@@ -181,14 +184,152 @@ func installSystemdDropIn(ctx context.Context, unit, name, text string) error {
 	return nil
 }
 
+func removeSystemdDropIn(ctx context.Context, unit, name string) error {
+	if err := requireSystemd(); err != nil {
+		return err
+	}
+	normalized, err := normalizeSystemdServiceName(unit)
+	if err != nil {
+		return err
+	}
+	unit = normalized
+	if strings.TrimSpace(name) == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return fmt.Errorf("unsafe systemd drop-in name %q", name)
+	}
+	if err := assertSkirkSystemdUnit(unit); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	dir := filepath.Join("/etc/systemd/system", unit+".d")
+	path := filepath.Join(dir, name)
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := assertSkirkDropInFile(path); err != nil {
+		return err
+	}
+	if err := runPrivileged(ctx, "rm", "-f", path); err != nil {
+		return err
+	}
+	_ = runPrivileged(ctx, "rmdir", dir)
+	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	fmt.Printf("Removed systemd drop-in %s\n", path)
+	return nil
+}
+
+func assertSkirkSystemdUnit(unit string) error {
+	unitPath := filepath.Join("/etc/systemd/system", unit)
+	owned, err := isSkirkSystemdUnitFile(unitPath)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("refusing to modify %s: unit file is not managed by Skirk", unitPath)
+	}
+	return nil
+}
+
+func removeSystemdUnitDependency(ctx context.Context, unit, dependency string) error {
+	if err := requireSystemd(); err != nil {
+		return err
+	}
+	normalized, err := normalizeSystemdServiceName(unit)
+	if err != nil {
+		return err
+	}
+	unit = normalized
+	unitPath := filepath.Join("/etc/systemd/system", unit)
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if owned, err := isSkirkSystemdUnitFile(unitPath); err != nil {
+		return err
+	} else if !owned {
+		return fmt.Errorf("refusing to edit %s: unit file is not managed by Skirk", unitPath)
+	}
+	next, changed := removeSystemdDependencyFromUnitText(string(data), dependency)
+	if !changed {
+		return nil
+	}
+	tmp, err := os.CreateTemp("", "skirk-*.service")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(next); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := runPrivileged(ctx, "install", "-m", "0644", tmpPath, unitPath); err != nil {
+		return err
+	}
+	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %s dependency from %s\n", dependency, unitPath)
+	return nil
+}
+
+func removeSystemdDependencyFromUnitText(text, dependency string) (string, bool) {
+	var out []string
+	changed := false
+	for _, line := range strings.SplitAfter(text, "\n") {
+		body := strings.TrimSuffix(line, "\n")
+		suffix := ""
+		if strings.HasSuffix(line, "\n") {
+			suffix = "\n"
+		}
+		key, value, ok := strings.Cut(body, "=")
+		if !ok || (key != "After" && key != "Wants") {
+			out = append(out, line)
+			continue
+		}
+		fields := strings.Fields(value)
+		nextFields := fields[:0]
+		for _, field := range fields {
+			if field == dependency {
+				changed = true
+				continue
+			}
+			nextFields = append(nextFields, field)
+		}
+		if len(nextFields) == 0 {
+			if len(fields) != 0 {
+				changed = true
+			}
+			continue
+		}
+		out = append(out, key+"="+strings.Join(nextFields, " ")+suffix)
+	}
+	return strings.Join(out, ""), changed
+}
+
 func uninstallSystemdService(ctx context.Context, unit string) error {
 	if err := requireSystemd(); err != nil {
 		return err
 	}
 	unitPath := filepath.Join("/etc/systemd/system", unit)
+	dropInDir := unitPath + ".d"
 	owned, err := isSkirkSystemdUnitFile(unitPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if err := removeSkirkSystemdDropInDir(ctx, dropInDir); err != nil {
+				return err
+			}
 			fmt.Printf("Systemd service file already absent: %s\n", unitPath)
 			return nil
 		}
@@ -198,9 +339,12 @@ func uninstallSystemdService(ctx context.Context, unit string) error {
 		return fmt.Errorf("refusing to remove %s: unit file is not managed by Skirk", unitPath)
 	}
 	if err := runPrivileged(ctx, "systemctl", "disable", "--now", unit); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: systemctl disable --now failed for %s: %v\n", unit, err)
+		return fmt.Errorf("stop and disable %s: %w", unit, err)
 	}
 	if err := runPrivileged(ctx, "rm", "-f", unitPath); err != nil {
+		return err
+	}
+	if err := removeSkirkSystemdDropInDir(ctx, dropInDir); err != nil {
 		return err
 	}
 	if err := runPrivileged(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -208,6 +352,68 @@ func uninstallSystemdService(ctx context.Context, unit string) error {
 	}
 	fmt.Printf("Removed systemd service %s\n", unit)
 	return nil
+}
+
+func removeSkirkSystemdDropInDir(ctx context.Context, dir string) error {
+	if _, err := os.Lstat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := assertSkirkDropInDir(dir); err != nil {
+		return err
+	}
+	return runPrivileged(ctx, "rm", "-rf", dir)
+}
+
+func assertSkirkDropInDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return fmt.Errorf("refusing to remove %s: contains nested directory %s", dir, entry.Name())
+		}
+		if !strings.HasSuffix(entry.Name(), ".conf") {
+			return fmt.Errorf("refusing to remove %s: contains non-drop-in file %s", dir, entry.Name())
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !isSkirkDropInText(string(data)) {
+			return fmt.Errorf("refusing to remove %s: drop-in %s is not managed by Skirk", dir, entry.Name())
+		}
+	}
+	return nil
+}
+
+func assertSkirkDropInFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !isSkirkDropInText(string(data)) {
+		return fmt.Errorf("refusing to remove %s: drop-in is not managed by Skirk", path)
+	}
+	return nil
+}
+
+func isSkirkDropInText(text string) bool {
+	if strings.Contains(text, "Managed by Skirk") {
+		return true
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n") == "[Unit]\nAfter=wireproxy.service\nWants=wireproxy.service"
 }
 
 func isSkirkSystemdUnitFile(path string) (bool, error) {

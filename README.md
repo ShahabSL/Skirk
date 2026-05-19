@@ -309,6 +309,9 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
   sh
 ```
 
+The managed WARP listener is loopback-only by design. Use a custom
+`--exit-proxy` or `SKIRK_EXIT_PROXY` for an already-secured outbound proxy.
+
 Expose an HTTP/HTTPS proxy on the client in addition to SOCKS5:
 
 ```bash
