@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.1.50 - 2026-05-18
+
+- Restart the interactive Linux menu from the newly installed binary after a
+  menu-driven Skirk update, so freshly added menu actions are visible
+  immediately instead of requiring users to quit and rerun `skirk`.
+
 ## v0.1.49 - 2026-05-18
 
 - Added an outbound-proxy menu action to uninstall Skirk-managed WARP

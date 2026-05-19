@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"skirk/internal/skirk"
 )
@@ -613,9 +614,23 @@ sh "$tmp" --version "$1"`
 		return err
 	}
 	if restart {
-		return serviceCommand(ctx, []string{"restart", "--name", serviceName})
+		if err := serviceCommand(ctx, []string{"restart", "--name", serviceName}); err != nil {
+			return err
+		}
 	}
-	return nil
+	return execUpdatedMenu()
+}
+
+func execUpdatedMenu() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("updated Skirk was installed, but current executable path could not be resolved; restart skirk manually: %w", err)
+	}
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
+	}
+	fmt.Printf("Restarting updated Skirk menu from %s\n", exe)
+	return syscall.Exec(exe, []string{exe}, os.Environ())
 }
 
 func updateInstallerEnv(base []string) []string {
