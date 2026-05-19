@@ -351,6 +351,7 @@ has_skirk_wireproxy_manifest() {
 
 wireproxy_manifest_value() {
   key="$1"
+  # shellcheck disable=SC2016 # awk variables are expanded by awk, not the shell.
   run_root awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; found = 1; exit } END { exit found ? 0 : 1 }' "$wireproxy_dir/skirk-managed.manifest"
 }
 
