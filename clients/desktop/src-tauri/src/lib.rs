@@ -26,7 +26,7 @@ const DESKTOP_CLIENT_POLL_MS: &str = "1000";
 const DESKTOP_CLIENT_UPLOAD_CONCURRENCY: &str = "8";
 const DESKTOP_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
 const DESKTOP_VPN_CLIENT_POLL_MS: &str = "1000";
-const DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY: &str = "4";
+const DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY: &str = "8";
 const DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
 
 #[cfg(windows)]
@@ -472,6 +472,7 @@ impl DesktopRuntime {
         ensure_port_free(&socks_address)?;
         ensure_port_free(&http_address)?;
         let skirk = self.resolve_sidecar()?;
+        let sidecar_process_path = process_path_for_rules(&skirk);
         let log_path = client_log_path(&self.paths);
         let log = OpenOptions::new()
             .create(true)
@@ -553,7 +554,7 @@ impl DesktopRuntime {
 
         let mut tunnel = None;
         if matches!(mode, ConnectionMode::Vpn) {
-            match self.spawn_tunnel(profile.socks_port, &google_ip) {
+            match self.spawn_tunnel(profile.socks_port, &sidecar_process_path, &google_ip) {
                 Ok(next_tunnel) => {
                     tunnel = Some(next_tunnel);
                 }
@@ -633,7 +634,12 @@ impl DesktopRuntime {
         }
     }
 
-    fn spawn_tunnel(&self, socks_port: u16, google_ip: &str) -> Result<ManagedTunnel, String> {
+    fn spawn_tunnel(
+        &self,
+        socks_port: u16,
+        sidecar_process_path: &str,
+        google_ip: &str,
+    ) -> Result<ManagedTunnel, String> {
         if !cfg!(windows) {
             return Err("VPN mode is only available on Windows".into());
         }
@@ -645,7 +651,7 @@ impl DesktopRuntime {
         let tunnel = self.resolve_tunnel_sidecar()?;
         let log_path = tunnel_log_path(&self.paths);
         let config_path = tunnel_config_path(&self.paths);
-        let config = tunnel_config(socks_port, google_ip);
+        let config = tunnel_config(socks_port, sidecar_process_path, google_ip);
         fs::write(
             &config_path,
             serde_json::to_vec_pretty(&config)
@@ -1136,6 +1142,23 @@ fn loopback_probe_address(address: &str) -> String {
         .unwrap_or_else(|| address.to_string())
 }
 
+fn process_path_for_rules(path: &Path) -> String {
+    normalize_windows_process_path(
+        &path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string(),
+    )
+}
+
+fn normalize_windows_process_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+}
+
 fn parse_google_ip(value: &str) -> Result<IpAddr, String> {
     let value = value.trim();
     let value = if value.is_empty() {
@@ -1162,11 +1185,11 @@ fn google_control_cidr(google_ip: &str) -> String {
     }
 }
 
-fn tunnel_config(socks_port: u16, google_ip: &str) -> Value {
+fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -> Value {
     let google_control_cidr = google_control_cidr(google_ip);
     let google_control_route_cidr = google_control_cidr.clone();
-    // The sidecar's Drive control plane must stay outside the TUN path. A
-    // destination CIDR bypass is deterministic, unlike Windows process lookup.
+    // The sidecar's Drive control plane must stay outside the TUN path. Keep
+    // the pinned Google CIDR as a deterministic fallback for process matching.
     json!({
         "log": {
             "level": "warn",
@@ -1237,6 +1260,31 @@ fn tunnel_config(socks_port: u16, google_ip: &str) -> Value {
                     "mode": "or",
                     "rules": [
                         {
+                            "process_name": [
+                                "skirk-sidecar.exe",
+                                "skirk.exe",
+                                "skirk-windows-amd64.exe"
+                            ]
+                        },
+                        {
+                            "process_path": [
+                                sidecar_process_path
+                            ]
+                        }
+                    ],
+                    "action": "route",
+                    "outbound": "direct"
+                },
+                {
+                    "inbound": "tun-in",
+                    "action": "sniff",
+                    "timeout": "1s"
+                },
+                {
+                    "type": "logical",
+                    "mode": "or",
+                    "rules": [
+                        {
                             "protocol": "dns"
                         },
                         {
@@ -1259,6 +1307,7 @@ fn tunnel_config(socks_port: u16, google_ip: &str) -> Value {
             ],
             "final": "proxy",
             "auto_detect_interface": true,
+            "find_process": true,
             "default_domain_resolver": "local"
         }
     })
@@ -1583,8 +1632,20 @@ mod tests {
     }
 
     #[test]
+    fn process_path_for_rules_uses_win32_style_paths() {
+        assert_eq!(
+            normalize_windows_process_path(r"\\?\C:\Skirk\skirk-sidecar.exe"),
+            r"C:\Skirk\skirk-sidecar.exe"
+        );
+        assert_eq!(
+            normalize_windows_process_path(r"\\?\UNC\server\share\skirk-sidecar.exe"),
+            r"\\server\share\skirk-sidecar.exe"
+        );
+    }
+
+    #[test]
     fn tunnel_config_uses_sing_box_1_13_tun_fields() {
-        let config = tunnel_config(18080, "216.239.38.120");
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "216.239.38.120");
         let inbound = config
             .pointer("/inbounds/0")
             .and_then(Value::as_object)
@@ -1650,34 +1711,75 @@ mod tests {
         );
         assert_eq!(
             config
-                .pointer("/route/rules/3/action")
+                .pointer("/route/rules/1/action")
+                .and_then(Value::as_str),
+            Some("route")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/1/outbound")
+                .and_then(Value::as_str),
+            Some("direct")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/1/rules/0/process_name/0")
+                .and_then(Value::as_str),
+            Some("skirk-sidecar.exe")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/1/rules/1/process_path/0")
+                .and_then(Value::as_str),
+            Some(r"C:\Skirk\skirk-sidecar.exe")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/2/action")
+                .and_then(Value::as_str),
+            Some("sniff")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/2/inbound")
+                .and_then(Value::as_str),
+            Some("tun-in")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/2/timeout")
+                .and_then(Value::as_str),
+            Some("1s")
+        );
+        assert_eq!(
+            config
+                .pointer("/route/rules/5/action")
                 .and_then(Value::as_str),
             Some("reject")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/3/network")
+                .pointer("/route/rules/5/network")
                 .and_then(Value::as_str),
             Some("udp")
         );
         assert_eq!(
             config
-                .pointer("/route/rules/3/no_drop")
+                .pointer("/route/rules/5/no_drop")
                 .and_then(Value::as_bool),
             Some(true)
         );
-        assert!(config.pointer("/route/find_process").is_none());
-        assert!(!config
-            .pointer("/route/rules")
-            .and_then(Value::as_array)
-            .expect("route rules")
-            .iter()
-            .any(|rule| rule.pointer("/action").and_then(Value::as_str) == Some("sniff")));
+        assert_eq!(
+            config
+                .pointer("/route/find_process")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
     fn tunnel_config_uses_custom_google_control_ip() {
-        let config = tunnel_config(18080, "8.8.8.8");
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "8.8.8.8");
         assert!(config
             .pointer("/inbounds/0/route_exclude_address")
             .and_then(Value::as_array)

@@ -1,6 +1,6 @@
 [package]
 name = "skirk-desktop"
-version = "0.1.51"
+version = "0.1.52"
 description = "Skirk portable desktop client"
 edition = "2021"
 

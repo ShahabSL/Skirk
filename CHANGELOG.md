@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.1.52 - 2026-05-19
+
+- Restored Windows VPN route-level destination sniffing for the sing-box TUN
+  sidecar, so transparent TCP traffic recovers domains before entering the
+  local Skirk SOCKS tunnel instead of flooding the mux with raw-IP opens.
+- Raised the Windows VPN client upload window to match Android, giving priority
+  stream opens enough Drive upload capacity during whole-device startup fanout.
+- Hardened mux receive-gap repair during large downloads by scanning a deeper
+  targeted page window from the older normal cursor, preventing a stuck missing
+  frame from pinning pending response objects until Drive storage fills.
+
 ## v0.1.51 - 2026-05-19
 
 - Changed Linux generated client profiles and sample configs to default to
