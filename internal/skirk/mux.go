@@ -59,6 +59,7 @@ const (
 	muxListLookback              = 8 * time.Second
 	muxRepairListLookback        = 30 * time.Second
 	muxFreshClassListPages       = 4
+	muxTargetedGapRepairPages    = 16
 	muxClosedStreamTTL           = 2 * time.Minute
 	muxRetryDelayMax             = 5 * time.Second
 	muxNormalStreamInflight      = 6
@@ -2886,23 +2887,35 @@ func (m *driveMux) targetedReceiveGapRepair(ctx context.Context, key muxStreamKe
 	if m == nil || m.t == nil || m.t.Data == nil || key.StreamID == 0 || !m.shouldTargetedGapRepair(decision) {
 		return 0
 	}
-	since := m.listSinceTargetForMetas([]muxObjectMeta{decision.meta})
+	since := m.receiveGapRepairSince(decision)
 	enqueued, result := m.targetedStreamRepair(ctx, key, since)
 	if m.t.Logger != nil && (m.t.Observe || enqueued > 0 || result.Truncated || result.Incomplete) {
-		m.t.Logger.Printf("mux receive gap targeted_repair role=%s stream=%016x expected_frame=%d next_range=%d-%d repairs=%d since=%s infos=%d enqueued=%d truncated=%t incomplete=%t", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.repairCount, since.Format(time.RFC3339Nano), len(result.Objects), enqueued, result.Truncated, result.Incomplete)
+		m.t.Logger.Printf("mux receive gap targeted_repair role=%s stream=%016x expected_frame=%d next_range=%d-%d repairs=%d since=%s max_pages=%d infos=%d enqueued=%d truncated=%t incomplete=%t", m.role, key.StreamID, decision.expected, decision.meta.FrameMinSeq, decision.meta.FrameMaxSeq, decision.repairCount, since.Format(time.RFC3339Nano), muxTargetedGapRepairPages, len(result.Objects), enqueued, result.Truncated, result.Incomplete)
 	}
 	return enqueued
 }
 
+func (m *driveMux) receiveGapRepairSince(decision muxReceiveGapDecision) time.Time {
+	target := m.listSinceTargetForMetas([]muxObjectMeta{decision.meta})
+	cursor := m.listFreshSince()
+	if !cursor.IsZero() && (target.IsZero() || cursor.Before(target)) {
+		target = cursor
+	}
+	if !m.startedAt.IsZero() && target.Before(m.startedAt) {
+		return m.startedAt
+	}
+	return target
+}
+
 func (m *driveMux) targetedStreamRepair(ctx context.Context, key muxStreamKey, since time.Time) (int, ObjectListInfo) {
-	return m.targetedStreamRepairContains(ctx, key, since, nil)
+	return m.targetedStreamRepairContains(ctx, key, since, nil, muxTargetedGapRepairPages)
 }
 
 func (m *driveMux) targetedPriorityStreamRepair(ctx context.Context, key muxStreamKey, since time.Time) (int, ObjectListInfo) {
-	return m.targetedStreamRepairContains(ctx, key, since, []string{"/p0/"})
+	return m.targetedStreamRepairContains(ctx, key, since, []string{"/p0/"}, muxFreshClassListPages)
 }
 
-func (m *driveMux) targetedStreamRepairContains(ctx context.Context, key muxStreamKey, since time.Time, extraContains []string) (int, ObjectListInfo) {
+func (m *driveMux) targetedStreamRepairContains(ctx context.Context, key muxStreamKey, since time.Time, extraContains []string, maxPages int) (int, ObjectListInfo) {
 	if m == nil || m.t == nil || m.t.Data == nil || key.StreamID == 0 {
 		return 0, ObjectListInfo{}
 	}
@@ -2916,7 +2929,7 @@ func (m *driveMux) targetedStreamRepairContains(ctx context.Context, key muxStre
 		fmt.Sprintf("%016x", key.StreamID),
 	}
 	contains = append(contains, extraContains...)
-	result, err := store.ListFreshContainsPageStatus(ctx, contains, since, "", muxFreshClassListPages)
+	result, err := store.ListFreshContainsPageStatus(ctx, contains, since, "", maxPages)
 	if err != nil {
 		if m.t.Logger != nil && ctx.Err() == nil {
 			m.t.Logger.Printf("mux stream targeted_repair failed role=%s stream=%016x error=%s", m.role, key.StreamID, errorSummary(err))

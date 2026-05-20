@@ -4186,6 +4186,152 @@ func TestMuxReceiveGapTargetedRepairSchedulesMissingNormalObject(t *testing.T) {
 	}
 }
 
+func TestMuxReceiveGapTargetedRepairUsesOlderNormalCursor(t *testing.T) {
+	ctx := context.Background()
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	cursor := startedAt.Add(7*time.Minute + 6*time.Second)
+	missingUpdated := startedAt.Add(7*time.Minute + 30*time.Second)
+	laterUpdated := startedAt.Add(8*time.Minute + 43*time.Second)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(42)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	missingName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 1, 1, muxMinBatch, false)
+	store := &classFreshStatusStore{
+		MemoryStore:  NewMemoryStore(),
+		targetNeedle: streamNeedle,
+		targeted:     ObjectListInfo{Objects: []ObjectInfo{{Name: missingName, Updated: missingUpdated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = cursor
+	stream := mux.registerStream(streamID, clientID, runID, nil)
+	defer stream.close()
+	key := stream.key()
+	laterName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 9, 1, 2, 2, muxMinBatch, false)
+	later := muxObjectMeta{
+		Name:            laterName,
+		ClientID:        key.ClientID,
+		RunID:           key.RunID,
+		StreamID:        key.StreamID,
+		Seq:             9,
+		PlainBytes:      muxMinBatch,
+		FrameMinSeq:     2,
+		FrameMaxSeq:     2,
+		FrameRangeKnown: true,
+		Updated:         laterUpdated,
+	}
+
+	if !mux.enqueueNormalMuxObject(ctx, later) {
+		t.Fatal("enqueue later object failed")
+	}
+	if len(store.calls) != 1 {
+		t.Fatalf("targeted repair calls = %#v, want one call", store.calls)
+	}
+	if got := store.calls[0].since; !got.Equal(cursor) {
+		t.Fatalf("targeted repair since = %s, want older normal cursor %s", got, cursor)
+	}
+	if got := store.calls[0].maxPages; got != muxTargetedGapRepairPages {
+		t.Fatalf("targeted repair max pages = %d, want %d", got, muxTargetedGapRepairPages)
+	}
+	mux.recvNormalMu.Lock()
+	items := append([]muxObjectMeta(nil), mux.recvNormalFlows[key]...)
+	mux.recvNormalMu.Unlock()
+	if len(items) != 2 || items[0].FrameMinSeq != 1 || items[1].FrameMinSeq != 2 {
+		t.Fatalf("normal flow order = %+v, want repaired frame before later frame", items)
+	}
+}
+
+func TestMuxReceiveGapRepairSinceClampsOlderCursorToStart(t *testing.T) {
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	mux, err := newDriveMux(&Tunnel{PollInterval: time.Second}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	mux.listSince = startedAt.Add(-time.Minute)
+	decision := muxReceiveGapDecision{
+		meta: muxObjectMeta{
+			Updated: startedAt.Add(3 * time.Minute),
+		},
+	}
+
+	if got := mux.receiveGapRepairSince(decision); !got.Equal(startedAt) {
+		t.Fatalf("repair since = %s, want startedAt clamp %s", got, startedAt)
+	}
+}
+
+func TestMuxReceiveGapTargetedRepairLooksPastFreshClassPageBudget(t *testing.T) {
+	ctx := context.Background()
+	startedAt := time.Date(2026, 5, 12, 23, 40, 0, 0, time.UTC)
+	updated := startedAt.Add(3 * time.Minute)
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	clientID := "client-a"
+	runID := "run-a"
+	streamID := uint64(42)
+	streamNeedle := fmt.Sprintf("%016x", streamID)
+	missingName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 1, 1, 1, 1, muxMinBatch, false)
+	store := &classFreshStatusStore{
+		MemoryStore:       NewMemoryStore(),
+		targetNeedle:      streamNeedle,
+		targetMinMaxPages: muxFreshClassListPages + 1,
+		targeted:          ObjectListInfo{Objects: []ObjectInfo{{Name: missingName, Updated: updated.Format(time.RFC3339Nano)}}},
+	}
+	mux, err := newDriveMux(&Tunnel{
+		Data:         store,
+		SessionID:    sid,
+		ClientID:     clientID,
+		RunID:        runID,
+		PollInterval: time.Second,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.startedAt = startedAt
+	stream := mux.registerStream(streamID, clientID, runID, nil)
+	defer stream.close()
+	key := stream.key()
+	laterName := muxObjectNameWithStreamIDs(sid, DirectionDown, clientID, runID, "epoch-a", streamID, []uint64{streamID}, 0, 2, 1, 2, 2, muxMinBatch, false)
+	later := muxObjectMeta{
+		Name:            laterName,
+		ClientID:        key.ClientID,
+		RunID:           key.RunID,
+		StreamID:        key.StreamID,
+		Seq:             2,
+		PlainBytes:      muxMinBatch,
+		FrameMinSeq:     2,
+		FrameMaxSeq:     2,
+		FrameRangeKnown: true,
+		Updated:         updated,
+	}
+
+	if !mux.enqueueNormalMuxObject(ctx, later) {
+		t.Fatal("enqueue later object failed")
+	}
+	if len(store.calls) != 1 {
+		t.Fatalf("targeted repair calls = %#v, want one call", store.calls)
+	}
+	if got := store.calls[0].maxPages; got <= muxFreshClassListPages {
+		t.Fatalf("targeted repair max pages = %d, want deeper than fresh class budget %d", got, muxFreshClassListPages)
+	}
+	mux.recvNormalMu.Lock()
+	items := append([]muxObjectMeta(nil), mux.recvNormalFlows[key]...)
+	mux.recvNormalMu.Unlock()
+	if len(items) != 2 || items[0].FrameMinSeq != 1 || items[1].FrameMinSeq != 2 {
+		t.Fatalf("normal flow order = %+v, want deep repaired frame before later frame", items)
+	}
+}
+
 func TestMuxReceiveGapTimeoutClosesStuckStream(t *testing.T) {
 	ctx := context.Background()
 	sid := [16]byte{0xaa, 0xbb, 0xcc}
@@ -4531,6 +4677,9 @@ func TestMuxPendingOpenRepairUsesPriorityOpenCursor(t *testing.T) {
 	}
 	if !store.calls[0].since.Equal(startedAt) {
 		t.Fatalf("targeted repair since = %s, want run start %s for priority-open scan", store.calls[0].since, startedAt)
+	}
+	if got := store.calls[0].maxPages; got != muxFreshClassListPages {
+		t.Fatalf("targeted repair max pages = %d, want priority budget %d", got, muxFreshClassListPages)
 	}
 }
 
@@ -5000,12 +5149,13 @@ type classFreshStatusCall struct {
 
 type classFreshStatusStore struct {
 	*MemoryStore
-	priority         ObjectListInfo
-	normal           ObjectListInfo
-	targetNeedle     string
-	targeted         ObjectListInfo
-	targetedByNeedle map[string]ObjectListInfo
-	calls            []classFreshStatusCall
+	priority          ObjectListInfo
+	normal            ObjectListInfo
+	targetNeedle      string
+	targetMinMaxPages int
+	targeted          ObjectListInfo
+	targetedByNeedle  map[string]ObjectListInfo
+	calls             []classFreshStatusCall
 }
 
 func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
@@ -5016,6 +5166,9 @@ func (s *classFreshStatusStore) ListFreshContainsPageStatus(_ context.Context, c
 		}
 	}
 	if s.targetNeedle != "" && containsString(contains, s.targetNeedle) {
+		if s.targetMinMaxPages > 0 && maxPages < s.targetMinMaxPages {
+			return ObjectListInfo{Truncated: true}, nil
+		}
 		return filterObjectListInfoSince(s.targeted, since), nil
 	}
 	if containsString(contains, "/p0/") {
