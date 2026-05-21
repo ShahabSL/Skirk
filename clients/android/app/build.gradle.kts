@@ -8,7 +8,7 @@ val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
-val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.54").get()
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.55").get()
 val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
 val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("SKIRK_ANDROID_KEY_ALIAS").orNull
@@ -61,7 +61,7 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
                     "-trimpath",
                     "-buildmode=pie",
                     "-ldflags",
-                    "-s -w -X main.version=android-$skirkAppVersion",
+                    "-s -w -X main.version=android-$skirkAppVersion -linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384",
                     "-o",
                     outputDir.resolve("libskirk.so").absolutePath,
                     "./cmd/skirk",
@@ -143,7 +143,7 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 54
+        versionCode = 55
         versionName = skirkAppVersion
 
         ndk {

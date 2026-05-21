@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.1.55 - 2026-05-21
+
+- Fixed the Android ARMv7 VPN startup crash in mux upload sequencing by using
+  typed atomics for lane object sequence numbers.
+- Rebuilt the Android Go sidecar with 16 KB ELF LOAD alignment and restored
+  extracted native library packaging so Android 15/16 page-size checks pass.
+- Expanded the 32-bit preflight gate to run a real memory-store SOCKS tunnel,
+  exercising mux uploads under a 32-bit runtime class.
+
 ## v0.1.54 - 2026-05-20
 
 - Fixed the Android ARMv7 engine startup crash by replacing raw 64-bit atomic

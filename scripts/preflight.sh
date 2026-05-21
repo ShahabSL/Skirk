@@ -40,7 +40,7 @@ else
 fi
 scripts/test_installer.sh
 go test ./...
-GOARCH=386 CGO_ENABLED=0 go test ./internal/skirk -run TestNewTunnelStartsOn32BitAtomicRuntime -count=1
+GOARCH=386 CGO_ENABLED=0 go test ./internal/skirk -run 'Test(NewTunnelStartsOn32BitAtomicRuntime|TunnelSOCKSToExitWithMemoryStores)' -count=1
 go vet ./...
 
 if [ "${SKIRK_FULL_PREFLIGHT:-0}" = "1" ]; then

@@ -280,7 +280,7 @@ type muxLane struct {
 	normalOrder         []muxStreamKey
 	normalQueuedFrames  int
 	normalQueuedBytes   int
-	seq                 uint64
+	seq                 atomic.Uint64
 }
 
 type driveQuotaWaitStore interface {
@@ -1703,7 +1703,7 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 	if err != nil {
 		return muxPreparedUpload{}, err
 	}
-	seq := atomic.AddUint64(&l.seq, 1)
+	seq := l.seq.Add(1)
 	key, err := DeriveMuxLaneKeyV4(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.idx)
 	if err != nil {
 		return muxPreparedUpload{}, err
