@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 type adcCredentials struct {

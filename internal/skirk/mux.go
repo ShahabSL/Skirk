@@ -256,6 +256,8 @@ type driveMux struct {
 	recvNormalSent              map[muxStreamKey]bool
 	recvGaps                    map[muxStreamKey]muxReceiveGapState
 	cleanupQueue                chan cleanupTask
+	cleanupKick                 chan struct{}
+	cleanupOverflow             chan struct{}
 	exitOpenSlots               chan struct{}
 	startedAt                   time.Time
 	uploadIDMu                  sync.Mutex
@@ -360,6 +362,8 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		recvNormalSent:        map[muxStreamKey]bool{},
 		recvGaps:              map[muxStreamKey]muxReceiveGapState{},
 		cleanupQueue:          make(chan cleanupTask, muxReceiveQueue),
+		cleanupKick:           make(chan struct{}, 1),
+		cleanupOverflow:       make(chan struct{}, cleanupOverflowWorkers),
 		exitOpenSlots:         make(chan struct{}, muxExitOpenDialConcurrency),
 		startedAt:             startedAt,
 	}
@@ -1765,6 +1769,9 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 		target, targetID := l.mux.streamObserveTarget(batch.frames[0].key())
 		loggedAt := time.Now()
 		l.mux.t.Logger.Printf("mux upload role=%s lane=%d seq=%d priority=%t stream=%016x target=%s target_id=%s frames=%d frame_seq_min=%d frame_seq_max=%d plain_bytes=%d sealed_bytes=%d queue_delay=%s slot_wait=%s put_duration=%s duration=%s total_delay=%s urgent_q=%d normal_q=%d urgent_upload_q=%d normal_upload_q=%d idempotent=%t error=%s", l.mux.role, l.idx, batch.seq, batch.priority, batch.frames[0].StreamID, target, targetID, len(batch.frames), batch.minSeq, batch.maxSeq, len(batch.raw), len(batch.sealed), muxFrameQueueDelayAt(batch.frames[0], pickedAt), slotWait.Round(time.Millisecond), duration.Round(time.Millisecond), duration.Round(time.Millisecond), muxFrameTotalDelayAt(batch.frames[0], loggedAt, pickedAt), len(l.urgent), l.normalQueueLen(), len(l.urgentUpload), len(l.upload), batch.driveID != "", errorSummary(err))
+	}
+	if errorSummary(err) == "storage_quota_exceeded" {
+		l.mux.requestCleanupKick()
 	}
 	if err == nil {
 		completeMuxFrameAcks(batch.frames, nil)
@@ -3294,9 +3301,49 @@ func (m *driveMux) enqueueCleanup(task cleanupTask) {
 	}
 	select {
 	case m.cleanupQueue <- task:
+		if len(m.cleanupQueue) >= cap(m.cleanupQueue)/2 {
+			m.requestCleanupKick()
+		}
+		return
+	default:
+	}
+	m.requestCleanupKick()
+	timer := time.NewTimer(cleanupEnqueueWait)
+	defer timer.Stop()
+	select {
+	case m.cleanupQueue <- task:
+		return
+	case <-timer.C:
+	}
+	if m.t.Logger != nil {
+		m.t.Logger.Printf("mux cleanup queue full object=%s forcing_direct_delete=true", muxShortName(task.name))
+	}
+	m.tryDirectOverflowCleanup(task)
+}
+
+func (m *driveMux) requestCleanupKick() {
+	if m == nil || m.cleanupKick == nil {
+		return
+	}
+	select {
+	case m.cleanupKick <- struct{}{}:
+	default:
+	}
+}
+
+func (m *driveMux) tryDirectOverflowCleanup(task cleanupTask) {
+	if m == nil || m.t == nil || m.cleanupOverflow == nil {
+		return
+	}
+	select {
+	case m.cleanupOverflow <- struct{}{}:
+		go func() {
+			defer func() { <-m.cleanupOverflow }()
+			m.t.deleteCleanupTask(context.Background(), task)
+		}()
 	default:
 		if m.t.Logger != nil {
-			m.t.Logger.Printf("mux cleanup queue full object=%s", muxShortName(task.name))
+			m.t.Logger.Printf("mux cleanup overflow workers busy object=%s dropped=true", muxShortName(task.name))
 		}
 	}
 }
@@ -3352,6 +3399,29 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 		m.t.deleteCleanupTask(deleteCtx, task)
 		return true
 	}
+	drainPendingQueue := func(limit int) {
+		for limit != 0 {
+			select {
+			case task := <-m.cleanupQueue:
+				rememberTask(task)
+				if limit > 0 {
+					limit--
+				}
+			default:
+				return
+			}
+		}
+	}
+	deleteSome := func(deleteCtx context.Context, limit int) {
+		for limit != 0 && len(tasks) > 0 {
+			if !deleteOne(deleteCtx) {
+				return
+			}
+			if limit > 0 {
+				limit--
+			}
+		}
+	}
 	drainIdle := func() {
 		for len(tasks) > 0 {
 			if m.t.foregroundBusy() {
@@ -3381,6 +3451,9 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 			if len(tasks) >= deferredCleanupFlushThreshold && !m.t.foregroundBusy() {
 				drainIdle()
 			}
+		case <-m.cleanupKick:
+			drainPendingQueue(cleanupEmergencyDeleteBatch)
+			deleteSome(ctx, cleanupEmergencyDeleteBatch)
 		case <-foregroundTicker.C:
 			if foregroundDue(time.Now()) {
 				deleteOne(ctx)
@@ -4151,7 +4224,7 @@ func encodeMuxBatch(frames []muxFrame) ([]byte, error) {
 	binary.BigEndian.PutUint16(tmp[:2], uint16(len(frames)))
 	buf.Write(tmp[:2])
 	for _, frame := range frames {
-		if len(frame.Payload) > int(^uint32(0)) {
+		if uint64(len(frame.Payload)) > uint64(^uint32(0)) {
 			return nil, errors.New("mux frame too large")
 		}
 		tmp[0] = frame.Kind

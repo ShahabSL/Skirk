@@ -703,6 +703,61 @@ func TestMuxCleanupDrainsWhenIdleThresholdReached(t *testing.T) {
 	}
 }
 
+func TestMuxCleanupKickDeletesWhileForegroundBusy(t *testing.T) {
+	store := newCountingCleanupStore(1)
+	tunnel := &Tunnel{
+		Data:             store,
+		CleanupProcessed: true,
+	}
+	tunnel.activeStreams.Store(1)
+	mux := &driveMux{
+		t:            tunnel,
+		cleanupQueue: make(chan cleanupTask, 1),
+		cleanupKick:  make(chan struct{}, 1),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mux.runCleanupLoop(ctx)
+
+	mux.cleanupQueue <- cleanupTask{id: "urgent-cleanup"}
+	mux.requestCleanupKick()
+
+	select {
+	case id := <-store.deleted:
+		if id != "urgent-cleanup" {
+			t.Fatalf("cleanup deleted %q, want urgent-cleanup", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup kick did not delete during foreground pressure")
+	}
+}
+
+func TestMuxCleanupQueueFullForcesBoundedDirectDelete(t *testing.T) {
+	store := newCountingCleanupStore(1)
+	tunnel := &Tunnel{
+		Data:             store,
+		CleanupProcessed: true,
+	}
+	mux := &driveMux{
+		t:               tunnel,
+		cleanupQueue:    make(chan cleanupTask, 1),
+		cleanupKick:     make(chan struct{}, 1),
+		cleanupOverflow: make(chan struct{}, 1),
+	}
+	mux.cleanupQueue <- cleanupTask{id: "already-queued"}
+
+	mux.enqueueCleanup(cleanupTask{id: "overflow-cleanup"})
+
+	select {
+	case id := <-store.deleted:
+		if id != "overflow-cleanup" {
+			t.Fatalf("cleanup deleted %q, want overflow-cleanup", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("full cleanup queue did not force bounded direct delete")
+	}
+}
+
 func sleepContext(ctx context.Context, delay time.Duration) error {
 	if delay <= 0 {
 		return nil

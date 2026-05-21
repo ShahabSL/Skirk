@@ -45,14 +45,13 @@ Install Skirk on the exit machine:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-"$HOME/.local/bin/skirk" version
+skirk version
 ```
 
 Create a kit and start the exit service:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 Interactive setup first lets you choose easy Skirk OAuth or a personal Google
@@ -67,7 +66,7 @@ Heavy users can instead use their own Google Cloud OAuth client so Drive API
 traffic is charged to their own project quota:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
+skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
 For personal OAuth, create a Google OAuth client with application type
@@ -81,21 +80,21 @@ is convenient, personal OAuth isolates quota.
 Check the exit service:
 
 ```bash
-"$HOME/.local/bin/skirk" service status
+skirk service status
 ```
 
 Or run the operator menu and choose setup, service, cleanup, or revoke actions
 from one place:
 
 ```bash
-"$HOME/.local/bin/skirk"
+skirk
 ```
 
 Uninstall from Linux:
 
 ```bash
-"$HOME/.local/bin/skirk" uninstall --dry-run
-"$HOME/.local/bin/skirk" uninstall --yes
+skirk uninstall --dry-run
+skirk uninstall --yes
 # or:
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh -s -- uninstall
 ```
@@ -104,8 +103,8 @@ If you generated a kit with `--start-exit=false`, start the exit manually or
 install the service later:
 
 ```bash
-"$HOME/.local/bin/skirk" service install --config skirk-kit/exit.json
-"$HOME/.local/bin/skirk" service status
+skirk service install --config skirk-kit/exit.json
+skirk service status
 ```
 
 Copy the one-line text from `skirk-kit/client.skirk` and use it on a client.
@@ -113,11 +112,10 @@ From a Linux client:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
 
 read -r SKIRK_CLIENT_CONFIG
 # paste the skirk:... profile, press Enter, then run:
-"$HOME/.local/bin/skirk" serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
+skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen 127.0.0.1:18080
 ```
 
 Test the local SOCKS proxy:
@@ -131,7 +129,13 @@ the Skirk exit path.
 
 ## Client Options
 
-Linux and headless servers use the Go CLI:
+Linux users can use either the portable desktop app from
+`Skirk_linux_x64_portable.zip` or the Go CLI. The Linux desktop app imports the
+same one-line `skirk:` profile and supports Proxy mode with SOCKS5 and HTTP
+listeners, including trusted-LAN sharing when enabled. Linux VPN mode is also
+available when the app is run with root or `CAP_NET_ADMIN` privileges.
+
+Headless servers use the Go CLI:
 
 ```bash
 skirk serve-client --config client.skirk --listen 127.0.0.1:18080
@@ -145,15 +149,17 @@ profile:
 skirk serve-client --config client.skirk --listen 127.0.0.1:18080 --client-id my-laptop
 ```
 
-Windows users should use the portable desktop app from the release assets. It
-imports the same one-line `skirk:` profile and starts the Skirk SOCKS sidecar.
-The Windows build is proxy-first; configure the browser or app to use SOCKS5
-`127.0.0.1:18080`.
+Windows, Linux, and macOS users should use the portable desktop app from the
+release assets. It imports the same one-line `skirk:` profile and starts the
+Skirk SOCKS and HTTP sidecar. Windows supports Proxy, System Proxy, and VPN
+modes; Linux supports Proxy and VPN modes; macOS supports Proxy mode in this
+release.
 
 Android users should use the Android app. Import the same one-line profile,
 select `VPN`, and tap `Connect`. Android asks for VPN consent on first use.
 `Proxy` mode is available when an app or another LAN device explicitly supports
-SOCKS5.
+SOCKS5 or HTTP proxy settings. Use `skirk-android-universal.apk` unless you
+specifically want a smaller per-ABI APK.
 
 Current client surfaces:
 
@@ -327,9 +333,40 @@ skirk serve-client \
   --http-proxy-listen 127.0.0.1:18081
 ```
 
+For trusted-LAN sharing from a Linux client, bind the listeners to all
+interfaces and protect the host with a firewall:
+
+```bash
+skirk serve-client \
+  --config skirk-kit/client.skirk \
+  --listen 0.0.0.0:18080 \
+  --http-proxy-listen 0.0.0.0:18081
+```
+
 Skirk uses prefix-scoped fresh listing for runtime object discovery. The main
 latency knob exposed to clients is `--poll-ms`; lower values trade more Drive API
 calls for faster wakeups.
+
+Current Google Drive API quota accounting is unit-based. For projects created
+under Google's May 2026 quota model, Google documents 1,000,000 quota
+units/min/project and 325,000 units/min/user/project. Skirk's clients show an
+estimated local units/min rate from their own process only; they cannot see
+remaining project-wide quota because other clients and exits share the same
+Google Cloud project budget.
+
+Desktop and Android clients expose performance presets:
+
+- `Recommended`: 1s polling, 8 upload workers, 16 download workers.
+- `Lower Drive usage`: 2s polling, lower worker counts.
+- `Responsive`: recommended workers plus burst polling after traffic. This can
+  improve wakeup latency but spends list quota faster.
+- `Bulk transfer`: more workers for downloads and large transfers.
+
+Linux exit operators can run `skirk`, choose `Manage exit services and
+instances`, and create/manage multiple Skirk exit instances on one machine.
+Each additional instance uses its own generated kit directory, service name,
+Google OAuth/Drive mailbox, proxy settings, cleanup flow, and performance
+tuning.
 
 ## Documentation
 

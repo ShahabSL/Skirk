@@ -14,30 +14,44 @@ class DebugControlReceiver : BroadcastReceiver() {
                 try {
                     val rawConfig = intent.getStringExtra("config").orEmpty()
                     val name = intent.getStringExtra("name") ?: "ADB profile"
-                    val port = intent.getIntExtra("port", 18080)
+                    val port = intent.getIntExtra("port", ClientProfile.DEFAULT_SOCKS_PORT)
+                    val httpPort = if (intent.hasExtra("httpPort")) {
+                        intent.getIntExtra("httpPort", ClientProfile.DEFAULT_HTTP_PORT)
+                    } else {
+                        0
+                    }
                     val shareLan = intent.getBooleanExtra("shareLan", false)
                     val mode = intent.getStringExtra("mode") ?: ClientProfile.CONNECTION_MODE_VPN
-                    val profile = ClientProfile.fromRawConfig(name, rawConfig, port, shareLan, mode)
+                    val profile = ClientProfile.fromRawConfig(
+                        name = name,
+                        rawConfig = rawConfig,
+                        socksPort = port,
+                        httpPort = httpPort,
+                        shareLan = shareLan,
+                        connectionMode = mode,
+                    )
                     store.saveProfile(profile)
-                    Log.i(TAG, "Imported ${profile.id} ${profile.socksAddress}")
+                    Log.i(TAG, "Imported ${profile.id} SOCKS ${profile.socksAddress} HTTP ${profile.httpAddress}")
                 } catch (error: Exception) {
                     Log.e(TAG, "Import failed", error)
                 }
             }
 
             ACTION_START -> {
-                val profile = store.selectedProfile() ?: error("No selected profile")
-                if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
-                    if (VpnService.prepare(context) != null) {
-                        error("VPN permission has not been granted")
+                runCatching {
+                    val profile = store.selectedProfile() ?: error("No selected profile")
+                    if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+                        if (VpnService.prepare(context) != null) {
+                            error("VPN permission has not been granted")
+                        }
+                        SkirkVpnService.start(context, profile)
+                    } else {
+                        SkirkProxyService.start(context, profile)
                     }
-                    SkirkProxyService.stop(context)
-                    SkirkVpnService.start(context, profile)
-                } else {
-                    SkirkVpnService.stop(context)
-                    SkirkProxyService.start(context, profile)
+                    Log.i(TAG, "Started ${profile.id} SOCKS ${profile.socksAddress} HTTP ${profile.httpAddress}")
+                }.onFailure { error ->
+                    Log.e(TAG, "Start failed", error)
                 }
-                Log.i(TAG, "Started ${profile.id} ${profile.socksAddress}")
             }
 
             ACTION_STOP -> {

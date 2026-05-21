@@ -66,6 +66,7 @@ class SkirkVpnService : VpnService() {
             }
             thread(name = "skirk-vpn-stop", start = true) {
                 stopTunnel("Disconnected", allowQueuedRestart = false)
+                stopSelfResult(startId)
             }
             return START_NOT_STICKY
         }
@@ -74,10 +75,12 @@ class SkirkVpnService : VpnService() {
 			stopSelfResult(startId)
 			return START_NOT_STICKY
 		}
-		SkirkProxyService.stop(this)
+            if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+                SkirkProxyService.stop(this)
+            }
 
-		val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
-			?.let { ClientProfile.fromJson(JSONObject(it)) }
+			val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
+				?.let { ClientProfile.fromJson(JSONObject(it)) }
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
@@ -86,7 +89,16 @@ class SkirkVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        startForegroundCompat(if (vpnPhase == VpnPhase.RUNNING) "Connected" else "Connecting")
+        val foregroundStarted = runCatching {
+            startForegroundCompat(if (vpnPhase == VpnPhase.RUNNING) "Connected" else "Connecting")
+        }.onFailure { error ->
+            Log.e(TAG, "Could not start VPN foreground service", error)
+            connectionState.failed("VPN failed: ${error.message ?: "foreground service failed"}")
+            stopSelfResult(startId)
+        }.isSuccess
+        if (!foregroundStarted) {
+            return START_NOT_STICKY
+        }
         var queuedAfterStop = false
         val generation = synchronized(lifecycleLock) {
             if (!workerStarted && vpnPhase == VpnPhase.STOPPED) {
@@ -138,12 +150,25 @@ class SkirkVpnService : VpnService() {
 		super.onRevoke()
 	}
 
-	override fun onDestroy() {
-		thread(name = "skirk-vpn-destroy-stop", start = true) {
-			stopTunnel("service destroyed", stopService = false, allowQueuedRestart = false)
+		override fun onDestroy() {
+			thread(name = "skirk-vpn-destroy-stop", start = true) {
+				stopTunnel("service destroyed", stopService = false, allowQueuedRestart = false)
+			}
+			super.onDestroy()
 		}
-		super.onDestroy()
-	}
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "VPN foreground service timed out type=$fgsType")
+        thread(name = "skirk-vpn-timeout-stop", start = true) {
+            stopTunnel(
+                "VPN stopped by Android foreground service timeout",
+                failed = true,
+                stopService = false,
+                allowQueuedRestart = false,
+            )
+            stopSelfResult(startId)
+        }
+    }
 
     private fun startTunnel(profile: ClientProfile, generation: Long) {
         val localProfile = profile.copy(shareLan = false, connectionMode = ClientProfile.CONNECTION_MODE_VPN)
@@ -155,7 +180,7 @@ class SkirkVpnService : VpnService() {
             }
             engine.start(localProfile)
         }
-        engine.waitUntilReady("127.0.0.1", localProfile.socksPort)
+        engine.waitUntilReady("local SOCKS proxy", "127.0.0.1", localProfile.socksPort)
         Log.i(TAG, "VPN engine ready on 127.0.0.1:${localProfile.socksPort}")
 
         if (isStartCancelled(generation)) {
@@ -321,12 +346,14 @@ class SkirkVpnService : VpnService() {
             runCatching { activeInterface?.close() }
                 .onFailure { Log.w(TAG, "VPN interface close failed", it) }
             detachedFd?.let { closeDetachedFd(it, "stop before native start") }
-            if (shouldStopNative) {
+            if (shouldStopNative && runCatching { tunnel.TProxyIsRunning() }.getOrDefault(false)) {
                 runCatching { tunnel.TProxyStopService() }
                     .onFailure {
                         stopFailure = it
                         Log.w(TAG, "tun2socks stop failed", it)
                     }
+            } else if (shouldStopNative) {
+                Log.w(TAG, "Skipping tun2socks stop because native run loop is already down")
             }
         } finally {
             engine.stop()

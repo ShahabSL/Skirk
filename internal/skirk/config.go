@@ -604,10 +604,12 @@ func refreshAccessTokenViaGoogleEndpoints(ctx context.Context, route RouteConfig
 	var errs []string
 	for _, attempt := range oauthTokenAttempts(route) {
 		attemptCtx, cancel := context.WithTimeout(ctx, attempt.timeout)
+		started := time.Now()
 		result, err := NewGoogleHTTPClient(attempt.route).Request(attemptCtx, http.MethodPost, attempt.host, attempt.path, headers, body)
+		elapsed := time.Since(started)
 		cancel()
 		if err != nil {
-			errs = append(errs, attempt.source+": "+errorSummary(err))
+			errs = append(errs, oauthTokenAttemptSummary(attempt, elapsed, 0, err))
 			continue
 		}
 		token, err := parseOAuthTokenResponse(result.Status, result.Body)
@@ -618,9 +620,25 @@ func refreshAccessTokenViaGoogleEndpoints(ctx context.Context, route RouteConfig
 		if terminalOAuthTokenError(result.Status, result.Body) {
 			return OAuthAccessToken{}, err
 		}
-		errs = append(errs, attempt.source+": "+errorSummary(err))
+		errs = append(errs, oauthTokenAttemptSummary(attempt, elapsed, result.Status, err))
 	}
 	return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed through all routes: %s", strings.Join(errs, "; "))
+}
+
+func oauthTokenAttemptSummary(attempt oauthTokenAttempt, elapsed time.Duration, status int, err error) string {
+	statusText := ""
+	if status > 0 {
+		statusText = fmt.Sprintf(" status=%d", status)
+	}
+	return fmt.Sprintf("%s host=%s route=%s proxy=%t elapsed=%s%s error=%s",
+		attempt.source,
+		attempt.host,
+		firstNonEmptyString(strings.TrimSpace(attempt.route.Mode), "direct"),
+		strings.TrimSpace(attempt.route.Proxy) != "",
+		elapsed.Round(time.Millisecond),
+		statusText,
+		errorSummary(err),
+	)
 }
 
 func oauthTokenAttempts(route RouteConfig) []oauthTokenAttempt {

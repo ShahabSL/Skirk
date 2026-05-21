@@ -8,7 +8,7 @@ val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
-val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.52").get()
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.53").get()
 val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
 val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("SKIRK_ANDROID_KEY_ALIAS").orNull
@@ -19,6 +19,11 @@ val hasReleaseSigning = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
+val androidNativeAbis = listOf("arm64-v8a", "armeabi-v7a")
+val goAndroidTargets = listOf(
+    Triple("arm64-v8a", "arm64", ""),
+    Triple("armeabi-v7a", "arm", "7"),
+)
 
 val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     group = "build"
@@ -30,10 +35,22 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     outputs.dir(generatedSkirkJniLibs)
 
     doLast {
-        val targets = listOf(
-            Triple("arm64-v8a", "arm64", "libskirk.so"),
+        val sdkRoot = androidSdkRoot()
+        val ndkRoot = sdkRoot.resolve("ndk/${android.ndkVersion}")
+        check(ndkRoot.exists()) { "Android NDK was not found at ${ndkRoot.absolutePath}" }
+        val hostTag = when {
+            org.gradle.internal.os.OperatingSystem.current().isLinux -> "linux-x86_64"
+            org.gradle.internal.os.OperatingSystem.current().isMacOsX -> "darwin-x86_64"
+            org.gradle.internal.os.OperatingSystem.current().isWindows -> "windows-x86_64"
+            else -> error("Unsupported host OS for Android NDK clang")
+        }
+        val toolchainBin = ndkRoot.resolve("toolchains/llvm/prebuilt/$hostTag/bin")
+        val clangSuffix = if (org.gradle.internal.os.OperatingSystem.current().isWindows) ".cmd" else ""
+        val cCompilers = mapOf(
+            "arm64-v8a" to toolchainBin.resolve("aarch64-linux-android26-clang$clangSuffix").absolutePath,
+            "armeabi-v7a" to toolchainBin.resolve("armv7a-linux-androideabi26-clang$clangSuffix").absolutePath,
         )
-        targets.forEach { (abi, goArch, fileName) ->
+        goAndroidTargets.forEach { (abi, goArch, goArm) ->
             val outputDir = generatedSkirkJniLibs.get().dir(abi).asFile
             outputDir.mkdirs()
             exec {
@@ -46,12 +63,16 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
                     "-ldflags",
                     "-s -w -X main.version=android-$skirkAppVersion",
                     "-o",
-                    outputDir.resolve(fileName).absolutePath,
+                    outputDir.resolve("libskirk.so").absolutePath,
                     "./cmd/skirk",
                 )
                 environment("GOOS", "android")
                 environment("GOARCH", goArch)
-                environment("CGO_ENABLED", "0")
+                if (goArm.isNotBlank()) {
+                    environment("GOARM", goArm)
+                }
+                environment("CGO_ENABLED", "1")
+                environment("CC", requireNotNull(cCompilers[abi]) { "missing Android compiler for $abi" })
             }
         }
     }
@@ -84,7 +105,7 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
             """
             APP_PLATFORM := android-26
             APP_OPTIM := release
-            APP_ABI := arm64-v8a
+            APP_ABI := ${androidNativeAbis.joinToString(" ")}
             APP_CFLAGS := -O3 -DPKGNAME=app/skirk/client -DCLSNAME=HevTun2Socks
             APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
             NDK_TOOLCHAIN_VERSION := clang
@@ -104,10 +125,12 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
             )
         }
 
-        val outputDir = generatedHevJniLibs.get().dir("arm64-v8a").asFile
-        outputDir.mkdirs()
-        hevSourceDir.file("libs/arm64-v8a/libhev-socks5-tunnel.so").asFile
-            .copyTo(outputDir.resolve("libhev-socks5-tunnel.so"), overwrite = true)
+        androidNativeAbis.forEach { abi ->
+            val outputDir = generatedHevJniLibs.get().dir(abi).asFile
+            outputDir.mkdirs()
+            hevSourceDir.file("libs/$abi/libhev-socks5-tunnel.so").asFile
+                .copyTo(outputDir.resolve("libhev-socks5-tunnel.so"), overwrite = true)
+        }
     }
 }
 
@@ -120,11 +143,20 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 52
+        versionCode = 53
         versionName = skirkAppVersion
 
         ndk {
-            abiFilters += "arm64-v8a"
+            abiFilters += androidNativeAbis
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*androidNativeAbis.toTypedArray())
+            isUniversalApk = true
         }
     }
 

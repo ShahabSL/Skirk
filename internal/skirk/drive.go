@@ -1265,6 +1265,15 @@ type DriveQuotaSnapshot struct {
 	Ops           map[string]DriveQuotaOpSnapshot `json:"ops"`
 }
 
+type DriveQuotaBackoffSnapshot struct {
+	Active      bool    `json:"active"`
+	Until       string  `json:"until,omitempty"`
+	WaitSeconds float64 `json:"wait_seconds,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	Op          string  `json:"op,omitempty"`
+	Failures    int     `json:"failures,omitempty"`
+}
+
 func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 	if interval < 0 {
 		interval = 0
@@ -1368,6 +1377,13 @@ func (d *DriveStore) QuotaSnapshot() DriveQuotaSnapshot {
 	return d.quota.Snapshot()
 }
 
+func (d *DriveStore) QuotaBackoffSnapshot() DriveQuotaBackoffSnapshot {
+	if d == nil || d.backoff == nil {
+		return DriveQuotaBackoffSnapshot{}
+	}
+	return d.backoff.Snapshot(time.Now())
+}
+
 func (d *DriveStore) ResetTelemetry() {
 	if d != nil && d.quota != nil {
 		d.quota.Reset()
@@ -1389,6 +1405,33 @@ func (s *driveQuotaStats) Snapshot() DriveQuotaSnapshot {
 	}
 }
 
+func (b *driveQuotaBackoff) Snapshot(now time.Time) DriveQuotaBackoffSnapshot {
+	if b == nil {
+		return DriveQuotaBackoffSnapshot{}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	wait := time.Until(b.until)
+	if !now.IsZero() {
+		wait = b.until.Sub(now)
+	}
+	if wait <= 0 {
+		return DriveQuotaBackoffSnapshot{
+			Reason:   b.reason,
+			Op:       b.op,
+			Failures: b.fails,
+		}
+	}
+	return DriveQuotaBackoffSnapshot{
+		Active:      true,
+		Until:       b.until.UTC().Format(time.RFC3339Nano),
+		WaitSeconds: wait.Seconds(),
+		Reason:      b.reason,
+		Op:          b.op,
+		Failures:    b.fails,
+	}
+}
+
 func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot {
 	out := DriveQuotaSnapshot{
 		Calls:         s.Calls - before.Calls,
@@ -1399,7 +1442,7 @@ func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot 
 	}
 	for key, after := range s.Ops {
 		prev := before.Ops[key]
-		out.Ops[key] = DriveQuotaOpSnapshot{
+		delta := DriveQuotaOpSnapshot{
 			Calls:           after.Calls - prev.Calls,
 			Units:           after.Units - prev.Units,
 			Errors:          after.Errors - prev.Errors,
@@ -1409,6 +1452,10 @@ func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot 
 			P50DurationMS:   after.P50DurationMS,
 			P95DurationMS:   after.P95DurationMS,
 		}
+		if delta.Calls == 0 && delta.Units == 0 && delta.Errors == 0 && delta.TotalDurationMS == 0 {
+			continue
+		}
+		out.Ops[key] = delta
 	}
 	return out
 }
@@ -1539,7 +1586,7 @@ func driveQuotaUnits(op string) int {
 		return 100
 	case "download":
 		return 200
-	case "upload", "delete", "create", "generate_ids":
+	case "upload", "delete", "create":
 		return 50
 	default:
 		return 5

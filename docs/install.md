@@ -6,18 +6,18 @@ Use this on a Linux exit machine, Linux client, VPS, laptop, or home server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-"$HOME/.local/bin/skirk" version
+skirk version
 ```
 
-The installer puts `skirk` in `$HOME/.local/bin` by default. The `export PATH`
-line makes that install available in the current shell, but scripts and fresh
-SSH sessions can always use an absolute path such as `$HOME/.local/bin/skirk`.
+When run as root, the installer puts `skirk` in `/usr/local/bin`, which is on a
+normal SSH PATH. For non-root installs it uses `$HOME/.local/bin` and writes a
+small PATH entry to the user's shell profile so fresh SSH sessions can run
+`skirk` directly.
 
 After install, run `skirk` for the operator menu or run setup directly:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 On Linux, setup installs/enables `skirk-exit.service` and starts it after Google
@@ -80,7 +80,7 @@ Google Cloud SDK OAuth client when Drive scopes are requested, so Skirk uses
 Google's device-code OAuth flow with Skirk's own OAuth client instead:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 In an interactive terminal this opens the setup picker for easy Skirk OAuth or a
@@ -90,7 +90,7 @@ personal Google OAuth project. Non-interactive runs default to easy mode unless
 Source builds and forks can use an OAuth override when needed:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
+skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
 ## OAuth And Drive Quota Modes
@@ -114,7 +114,7 @@ Personal quota mode:
   client:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init \
+skirk setup init \
   --out skirk-kit \
   --reset-google-login \
   --oauth-mode personal
@@ -158,7 +158,7 @@ rerunning setup:
 
 ```bash
 sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf'
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 This is a host networking fix, not a Skirk protocol setting. It prevents OAuth
@@ -167,8 +167,8 @@ tools from choosing a blackholed IPv6 route for Google OAuth.
 ## Exit Machine Flow
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
-"$HOME/.local/bin/skirk" service status
+skirk setup init --out skirk-kit --reset-google-login
+skirk service status
 ```
 
 Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
@@ -176,15 +176,15 @@ Send `skirk-kit/client.skirk` to clients. Do not send `exit.json`.
 The same operations are available in the interactive operator menu:
 
 ```bash
-"$HOME/.local/bin/skirk"
+skirk
 ```
 
 If you used `--start-exit=false`, install the persistent Linux exit service
 later:
 
 ```bash
-"$HOME/.local/bin/skirk" service install --config skirk-kit/exit.json
-"$HOME/.local/bin/skirk" service status
+skirk service install --config skirk-kit/exit.json
+skirk service status
 ```
 
 Use `service stop`, `service restart`, or `service uninstall` with
@@ -195,8 +195,8 @@ Use `service stop`, `service restart`, or `service uninstall` with
 From the installed binary:
 
 ```bash
-"$HOME/.local/bin/skirk" uninstall --dry-run
-"$HOME/.local/bin/skirk" uninstall --yes
+skirk uninstall --dry-run
+skirk uninstall --yes
 ```
 
 From the installer script:
@@ -214,7 +214,7 @@ ask for those actions.
 Common complete cleanup:
 
 ```bash
-"$HOME/.local/bin/skirk" uninstall --yes \
+skirk uninstall --yes \
   --delete-drive \
   --revoke-oauth \
   --delete-kit \

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 func TestUpdateExitProxyConfigSetsAndUnsetsProxy(t *testing.T) {

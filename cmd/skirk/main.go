@@ -15,6 +15,7 @@ import (
 	"net/http/httptrace"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 var (
@@ -283,6 +284,7 @@ func serveClient(ctx context.Context, args []string) error {
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
 	downloadConcurrency := fs.Int("download-concurrency", 0, "override Drive download concurrency")
 	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
+	metricsPath := fs.String("metrics-path", "", "write runtime metrics JSON to this path")
 	clientID := fs.String("client-id", "", "stable per-device client id; generated automatically when omitted")
 	watchParentPID := fs.Int("watch-parent-pid", 0, "exit when this parent process disappears")
 	if err := fs.Parse(args); err != nil {
@@ -354,6 +356,7 @@ func serveClient(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	startRuntimeMetricsWriter(ctx, *metricsPath, "client", cfg, drive, tunnel)
 	addr := firstNonEmpty(*listen, cfg.Tunnel.Listen)
 	log.Printf("skirk client SOCKS5 listening on %s session=%s client=%s run=%s route=%s transport=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Client.ID, cfg.Client.RunID, cfg.Route.Mode, cfg.Tunnel.Transport, firstNonEmpty(cfg.Route.Proxy, "none"))
 	errCh := make(chan error, 2)
@@ -377,6 +380,7 @@ func serveExit(ctx context.Context, args []string) error {
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy for exit traffic, for example socks5h://127.0.0.1:40000")
 	exitIPFamily := fs.String("exit-ip-family", "", "exit target dial family: auto, prefer_ipv4, ipv4_only, prefer_ipv6, or ipv6_only")
 	observe := fs.Bool("observe", false, "enable verbose mux observability logs")
+	metricsPath := fs.String("metrics-path", "", "write runtime metrics JSON to this path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -408,16 +412,17 @@ func serveExit(ctx context.Context, args []string) error {
 		return err
 	}
 	defer lock.Close()
+	startRuntimeMetricsWriter(ctx, *metricsPath, "exit", cfg, drive, tunnel)
 	startMailboxJanitor(ctx, drive)
 	log.Printf("skirk exit polling session=%s transport=%s exit_proxy=%s exit_ip_family=%s", skirk.SessionString(tunnel.SessionID), cfg.Tunnel.Transport, firstNonEmpty(tunnel.ExitProxy, "none"), firstNonEmpty(tunnel.ExitIPFamily, "prefer_ipv4"))
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 2 * time.Hour
-const mailboxJanitorDefaultInterval = 10 * time.Minute
-const mailboxJanitorDefaultDeleteConcurrency = 1
-const mailboxJanitorDefaultMaxDeletesPerPrefix = 20
-const mailboxJanitorDefaultDeleteDelay = time.Second
+const mailboxJanitorDefaultOlderThan = 10 * time.Minute
+const mailboxJanitorDefaultInterval = 2 * time.Minute
+const mailboxJanitorDefaultDeleteConcurrency = 2
+const mailboxJanitorDefaultMaxDeletesPerPrefix = 500
+const mailboxJanitorDefaultDeleteDelay = 100 * time.Millisecond
 
 var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
 
@@ -549,6 +554,31 @@ type benchQuotaRequestSummary struct {
 	Units         float64 `json:"units"`
 	Errors        float64 `json:"errors"`
 	ResponseBytes float64 `json:"response_bytes"`
+}
+
+type runtimeMetricsFile struct {
+	Version                     int                                   `json:"version"`
+	Role                        string                                `json:"role"`
+	StartedAt                   string                                `json:"started_at"`
+	UpdatedAt                   string                                `json:"updated_at"`
+	DurationSeconds             float64                               `json:"duration_seconds"`
+	RouteMode                   string                                `json:"route_mode"`
+	Transport                   string                                `json:"transport"`
+	PollMS                      int                                   `json:"poll_ms"`
+	UploadConcurrency           int                                   `json:"upload_concurrency"`
+	DownloadConcurrency         int                                   `json:"download_concurrency"`
+	BurstPoll                   bool                                  `json:"burst_poll"`
+	BurstPollMS                 int                                   `json:"burst_poll_ms"`
+	BurstPollWindowMS           int                                   `json:"burst_poll_window_ms"`
+	EstimatedProjectUnitsPerMin int64                                 `json:"estimated_project_units_per_min"`
+	EstimatedUserUnitsPerMin    int64                                 `json:"estimated_user_units_per_min"`
+	Quota                       skirk.DriveQuotaSnapshot              `json:"quota"`
+	RecentQuota                 skirk.DriveQuotaSnapshot              `json:"recent_quota"`
+	RecentQuotaPerMinute        benchQuotaMinuteSummary               `json:"recent_quota_per_minute"`
+	RecentQuotaOps              string                                `json:"recent_quota_ops"`
+	DriveBackoff                skirk.DriveQuotaBackoffSnapshot       `json:"drive_backoff"`
+	DriveOps                    map[string]skirk.DriveQuotaOpSnapshot `json:"drive_ops"`
+	Note                        string                                `json:"note"`
 }
 
 type benchDriveResult struct {
@@ -1738,6 +1768,87 @@ func quotaPerRequest(snapshot skirk.DriveQuotaSnapshot, requests int) benchQuota
 		Units:         float64(snapshot.Units) / scale,
 		Errors:        float64(snapshot.Errors) / scale,
 		ResponseBytes: float64(snapshot.ResponseBytes) / scale,
+	}
+}
+
+func startRuntimeMetricsWriter(ctx context.Context, path, role string, cfg *skirk.Config, drive *skirk.DriveStore, tunnel *skirk.Tunnel) {
+	path = strings.TrimSpace(path)
+	if path == "" || drive == nil || tunnel == nil || cfg == nil {
+		return
+	}
+	startedAt := time.Now()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		previousAt := startedAt
+		previous := drive.QuotaSnapshot()
+		writeRuntimeMetricsFile(path, runtimeMetricsSnapshot(role, startedAt, previousAt, time.Second, cfg, previous, skirk.DriveQuotaSnapshot{}, drive.QuotaBackoffSnapshot()))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				current := drive.QuotaSnapshot()
+				recent := current.Delta(previous)
+				writeRuntimeMetricsFile(path, runtimeMetricsSnapshot(role, startedAt, now, now.Sub(previousAt), cfg, current, recent, drive.QuotaBackoffSnapshot()))
+				previous = current
+				previousAt = now
+			}
+		}
+	}()
+}
+
+func runtimeMetricsSnapshot(role string, startedAt, now time.Time, recentDuration time.Duration, cfg *skirk.Config, total, recent skirk.DriveQuotaSnapshot, backoff skirk.DriveQuotaBackoffSnapshot) runtimeMetricsFile {
+	duration := now.Sub(startedAt)
+	if duration < 0 {
+		duration = 0
+	}
+	if recentDuration <= 0 {
+		recentDuration = time.Second
+	}
+	return runtimeMetricsFile{
+		Version:                     1,
+		Role:                        role,
+		StartedAt:                   startedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:                   now.UTC().Format(time.RFC3339Nano),
+		DurationSeconds:             duration.Seconds(),
+		RouteMode:                   cfg.Route.Mode,
+		Transport:                   cfg.Tunnel.Transport,
+		PollMS:                      cfg.Tunnel.PollIntervalMS,
+		UploadConcurrency:           cfg.Tunnel.UploadConcurrency,
+		DownloadConcurrency:         cfg.Tunnel.DownloadConcurrency,
+		BurstPoll:                   cfg.Tunnel.BurstPoll,
+		BurstPollMS:                 cfg.Tunnel.BurstPollMS,
+		BurstPollWindowMS:           cfg.Tunnel.BurstPollWindowMS,
+		EstimatedProjectUnitsPerMin: 1_000_000,
+		EstimatedUserUnitsPerMin:    325_000,
+		Quota:                       total,
+		RecentQuota:                 recent,
+		RecentQuotaPerMinute:        quotaPerMinute(recent, recentDuration),
+		RecentQuotaOps:              recent.OpSummary(),
+		DriveBackoff:                backoff,
+		DriveOps:                    recent.Ops,
+		Note:                        "Estimated local Drive API units from this Skirk process only; not project-wide remaining quota.",
+	}
+}
+
+func writeRuntimeMetricsFile(path string, metrics runtimeMetricsFile) {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		_ = os.MkdirAll(dir, 0o700)
+	}
+	data, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		log.Printf("metrics encode failed path=%s error=%v", path, err)
+		return
+	}
+	data = append(data, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		log.Printf("metrics write failed path=%s error=%v", path, err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("metrics rename failed path=%s error=%v", path, err)
 	}
 }
 

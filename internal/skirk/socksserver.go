@@ -222,6 +222,8 @@ func (s *SOCKSServer) serveUDPAssociate(ctx context.Context, control net.Conn) e
 	}()
 
 	buf := make([]byte, 64*1024)
+	lastInvalidLog := time.Time{}
+	suppressedInvalid := 0
 	for {
 		_ = udpConn.SetReadDeadline(time.Now().Add(time.Second))
 		n, clientAddr, err := udpConn.ReadFromUDP(buf)
@@ -241,7 +243,18 @@ func (s *SOCKSServer) serveUDPAssociate(ctx context.Context, control net.Conn) e
 		packet, err := parseSOCKSUDPDatagram(buf[:n])
 		if err != nil {
 			if s.Logger != nil {
-				s.Logger.Printf("socks udp datagram ignored: %v", err)
+				now := time.Now()
+				if lastInvalidLog.IsZero() || now.Sub(lastInvalidLog) >= 30*time.Second {
+					if suppressedInvalid > 0 {
+						s.Logger.Printf("socks udp datagram ignored: %v suppressed=%d", err, suppressedInvalid)
+					} else {
+						s.Logger.Printf("socks udp datagram ignored: %v", err)
+					}
+					lastInvalidLog = now
+					suppressedInvalid = 0
+				} else {
+					suppressedInvalid++
+				}
 			}
 			continue
 		}

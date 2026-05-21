@@ -33,10 +33,16 @@ class AndroidSkirkEngine(
 
         val logsDir = File(context.filesDir, "logs").apply { mkdirs() }
         val logFile = File(logsDir, logFileName)
+        val metricsFile = File(logsDir, metricsFileName())
+        metricsFile.delete()
         logFile.writeText("")
-        Log.i(TAG, "Starting ${engine.absolutePath} on ${profile.socksAddress}")
-        appendLogLine(logFile, "android starting mode=${profile.connectionMode} listen=${profile.socksAddress}")
-        process = ProcessBuilder(buildProcessArgs(engine, configFile, profile))
+        val httpListen = if (profile.httpProxyEnabled) profile.httpAddress else "disabled"
+        Log.i(TAG, "Starting ${engine.absolutePath} on SOCKS ${profile.socksAddress} HTTP $httpListen")
+        appendLogLine(
+            logFile,
+            "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen",
+        )
+        process = ProcessBuilder(buildProcessArgs(engine, configFile, profile, metricsFile))
             .directory(context.filesDir)
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
@@ -62,7 +68,7 @@ class AndroidSkirkEngine(
         activeProfile = profile
     }
 
-    fun waitUntilReady(host: String, port: Int, timeoutMs: Long = 120_000L) {
+    fun waitUntilReady(label: String, host: String, port: Int, timeoutMs: Long = 120_000L) {
         val deadline = System.currentTimeMillis() + timeoutMs
         var lastError: Throwable? = null
         while (System.currentTimeMillis() < deadline) {
@@ -79,7 +85,7 @@ class AndroidSkirkEngine(
                 Thread.sleep(200L)
             }
         }
-        error("local SOCKS proxy did not start on $host:$port: ${lastError?.message ?: "timeout"}")
+        error("$label did not start on $host:$port: ${lastError?.message ?: "timeout"}")
     }
 
     private fun ensureProcessAlive() {
@@ -119,17 +125,23 @@ class AndroidSkirkEngine(
 		}
 	}
 
-	private fun waitForListenPortRelease(profile: ClientProfile, timeoutMs: Long = 3_000L) {
-		val host = if (profile.socksHost == "0.0.0.0") "127.0.0.1" else profile.socksHost
-		val deadline = System.currentTimeMillis() + timeoutMs
-		while (System.currentTimeMillis() < deadline) {
-			if (!canConnect(host, profile.socksPort)) {
-				return
-			}
-			Thread.sleep(100L)
-		}
-		error("local SOCKS port is still in use on $host:${profile.socksPort}")
-	}
+    private fun waitForListenPortRelease(profile: ClientProfile, timeoutMs: Long = 3_000L) {
+        waitForPortRelease("local SOCKS port", readinessHost(profile.socksHost), profile.socksPort, timeoutMs)
+        if (profile.httpProxyEnabled) {
+            waitForPortRelease("local HTTP proxy port", readinessHost(profile.httpHost), profile.httpPort, timeoutMs)
+        }
+    }
+
+    private fun waitForPortRelease(label: String, host: String, port: Int, timeoutMs: Long) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (!canConnect(host, port)) {
+                return
+            }
+            Thread.sleep(100L)
+        }
+        error("$label is still in use on $host:$port")
+    }
 
 	private fun canConnect(host: String, port: Int): Boolean =
 		runCatching {
@@ -166,8 +178,9 @@ class AndroidSkirkEngine(
         }
     }
 
-    private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile): List<String> {
+    private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile, metricsFile: File): List<String> {
         val routeMode = "google_front_pinned"
+        val performance = profile.performance
         val args = mutableListOf(
             engine.absolutePath,
             "serve-client",
@@ -180,28 +193,32 @@ class AndroidSkirkEngine(
             "--route-mode",
             routeMode,
         )
-        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+        if (profile.httpProxyEnabled) {
             args += listOf(
-                "--no-burst-poll",
-                "--poll-ms",
-                "1000",
-                "--upload-concurrency",
-                "8",
-                "--download-concurrency",
-                "16",
-            )
-        } else {
-            args += listOf(
-                "--no-burst-poll",
-                "--poll-ms",
-                "1000",
-                "--upload-concurrency",
-                "8",
-                "--download-concurrency",
-                "16",
+                "--http-proxy-listen",
+                profile.httpAddress,
             )
         }
+        if (performance.burstPoll) {
+            args += listOf(
+                "--burst-poll",
+                "--burst-poll-ms",
+                performance.burstPollMs.toString(),
+                "--burst-poll-window-ms",
+                performance.burstPollWindowMs.toString(),
+            )
+        } else {
+            args += "--no-burst-poll"
+        }
         args += listOf(
+            "--poll-ms",
+            performance.pollMs.toString(),
+            "--upload-concurrency",
+            performance.uploadConcurrency.toString(),
+            "--download-concurrency",
+            performance.downloadConcurrency.toString(),
+            "--metrics-path",
+            metricsFile.absolutePath,
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
         )
@@ -210,6 +227,15 @@ class AndroidSkirkEngine(
         }
         return args
     }
+
+    private val ClientProfile.httpProxyEnabled: Boolean
+        get() = connectionMode == ClientProfile.CONNECTION_MODE_PROXY
+
+    private fun metricsFileName(): String =
+        logFileName.removeSuffix(".log") + ".metrics.json"
+
+    private fun readinessHost(host: String): String =
+        if (host == "0.0.0.0") "127.0.0.1" else host
 
     private fun writeRuntimeConfig(profile: ClientProfile): File {
         val configsDir = File(context.filesDir, "configs").apply { mkdirs() }

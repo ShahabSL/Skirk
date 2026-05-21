@@ -81,8 +81,9 @@ normal Google API hostnames are blocked or unreliable.
 - `serve-client`: SOCKS5 listener for Linux, macOS, Windows, and desktop apps.
 - `serve-client --http-proxy-listen`: optional HTTP/HTTPS proxy listener using
   the same tunnel.
-- Android app: whole-device VPN mode and optional SOCKS/LAN sharing.
-- Windows desktop app: profile import and local SOCKS proxy control.
+- Android app: whole-device VPN mode and optional SOCKS/HTTP LAN sharing.
+- Windows desktop app: profile import, SOCKS/HTTP proxy control, system proxy,
+  VPN mode, performance presets, and local Drive API estimate.
 
 ## Constraints
 

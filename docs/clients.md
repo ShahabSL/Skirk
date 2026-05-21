@@ -19,7 +19,6 @@ Install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Run:
@@ -59,24 +58,52 @@ skirk serve-client \
   --http-proxy-listen 127.0.0.1:18081
 ```
 
-## Windows Desktop
+Trusted-LAN sharing is the same command with both listeners bound to all
+interfaces:
 
-The preferred Windows UX is the portable desktop app from release assets:
-`Skirk_windows_x64_portable.zip`. Extract it and open the root `Skirk.exe`.
+```bash
+skirk serve-client \
+  --config client.skirk \
+  --listen 0.0.0.0:18080 \
+  --http-proxy-listen 0.0.0.0:18081
+```
+
+Only do this on a LAN you control, and rely on host firewall rules if the
+machine is reachable from untrusted networks.
+
+## Desktop GUI
+
+The preferred desktop UX is the portable app from release assets:
+
+- Windows: `Skirk_windows_x64_portable.zip`. Extract it and open the root
+  `Skirk.exe`.
+- Linux: `Skirk_linux_x64_portable.zip`. Extract it and run the root `./Skirk`.
+  Run with root or `CAP_NET_ADMIN` privileges when using VPN mode.
+- macOS Apple Silicon: `Skirk_macos_arm64.app.zip`. Extract it and open
+  `Skirk.app`.
+- macOS Intel: `Skirk_macos_x64.app.zip`. Extract it and open `Skirk.app`.
+
 The `skirk-windows-amd64.zip` asset is the CLI-only build for PowerShell users.
+The `skirk-linux-*.tar.gz` assets are CLI-only builds for shell/headless users.
 
 The desktop app:
 
 - imports one-line `skirk:` profiles or `client.json`;
 - stores profiles in portable data;
 - assigns each imported profile a local client identity;
-- starts and stops the Go Skirk SOCKS sidecar;
-- can bind the SOCKS listener to `0.0.0.0` for LAN sharing;
+- starts and stops the Go Skirk SOCKS and HTTP sidecar;
+- can bind both proxy listeners to `0.0.0.0` for LAN sharing;
+- exposes performance presets for Drive polling and worker concurrency;
+- shows an estimated local Drive API units/min rate for the current desktop
+  process;
 - shows connection status and logs.
 
-Windows is currently proxy-first. It does not install a system VPN/TUN driver.
-Configure the browser or application proxy settings to SOCKS5
-`127.0.0.1:18080`.
+Windows supports Proxy, System Proxy, and VPN modes. Linux desktop supports
+Proxy and VPN modes. macOS desktop supports Proxy mode in this release. Linux
+VPN mode uses the bundled sing-box TUN sidecar and requires root or
+`CAP_NET_ADMIN` privileges. Proxy mode exposes SOCKS5
+`127.0.0.1:18080` and HTTP `127.0.0.1:18081` by default. LAN sharing is
+explicit and should only be enabled on trusted networks.
 
 Command-line client:
 
@@ -98,6 +125,17 @@ clients/desktop/scripts/stage_sidecars.sh
 cd clients/desktop
 npm install
 npm run tauri dev
+```
+
+Linux portable package:
+
+```bash
+clients/desktop/scripts/stage_sidecars.sh
+cd clients/desktop
+npm install
+npm run tauri build -- --no-bundle
+cd ../..
+python clients/desktop/scripts/package_linux_portable.py
 ```
 
 ## Android
@@ -127,8 +165,20 @@ Use:
 4. Tap `Connect`.
 5. Approve Android's VPN permission prompt the first time.
 
-Proxy/LAN sharing is explicit. In `Proxy` mode, enable LAN sharing only when
-another device should use the phone as a SOCKS5 proxy.
+Proxy/LAN sharing is explicit. In `Proxy` mode, the Android app starts SOCKS5
+and HTTP proxy listeners. Enable LAN sharing only when another trusted device
+should use the phone as a proxy.
+
+Android exposes the same performance presets as desktop:
+
+- `Recommended`: balanced default for normal browsing and mixed traffic.
+- `Lower usage`: slower polling and fewer workers to reduce Drive API burn.
+- `Responsive`: burst polling after traffic, with a visible quota warning.
+- `Bulk transfer`: more workers for large downloads.
+
+The Android Drive API estimate is local to the active sidecar process. It is not
+project-wide remaining quota and does not include other clients or exits using
+the same OAuth project.
 
 Telegram note: when Skirk VPN mode is connected, Telegram's built-in proxy
 setting should be off. If Telegram's internal proxy remains enabled, Telegram
@@ -147,6 +197,7 @@ adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
   --es name Android-E2E \
   --es config "$CONFIG" \
   --ei port 18080 \
+  --ei httpPort 18081 \
   --ez shareLan false \
   --es mode vpn
 adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
@@ -158,5 +209,6 @@ adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
   -a app.skirk.client.debug.STOP
 ```
 
-For SOCKS/LAN sharing tests, import with `--es mode proxy --ez shareLan true`
-and connect another device to `PHONE_LAN_IP:18080`.
+For LAN sharing tests, import with `--es mode proxy --ez shareLan true`.
+Configure another device with SOCKS5 `PHONE_LAN_IP:18080` or HTTP proxy
+`PHONE_LAN_IP:18081`.

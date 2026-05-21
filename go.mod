@@ -1,4 +1,4 @@
-module skirk
+module github.com/ShahabSL/Skirk
 
 go 1.25.0
 

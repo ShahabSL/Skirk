@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added macOS desktop release artifacts for Apple Silicon and Intel, with CI
+  smoke checks for the `.app` bundle and bundled Skirk sidecar.
+- Added Android `armeabi-v7a` support and release-signed universal/per-ABI APK
+  assets while keeping `skirk-android-arm64.apk` as a compatibility alias.
+- Fixed source installs by changing the Go module path to
+  `github.com/ShahabSL/Skirk`.
+- Throttled repeated malformed SOCKS UDP datagram logs so one bad app cannot
+  flood Linux client logs.
+- Started processed-object cleanup during prolonged foreground pressure much
+  sooner to reduce Drive storage buildup during heavy downloads.
+
 ## v0.1.52 - 2026-05-19
 
 - Restored Windows VPN route-level destination sniffing for the sing-box TUN

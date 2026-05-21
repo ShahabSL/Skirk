@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 func TestSummarizeHTTPSamples(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 func menu(ctx context.Context) error {
@@ -26,7 +26,7 @@ func menu(ctx context.Context) error {
 		fmt.Println("3. Run exit in this terminal")
 		fmt.Println("4. Run client SOCKS in this terminal")
 		fmt.Println("5. Run optional desktop dashboard")
-		fmt.Println("6. Manage exit service")
+		fmt.Println("6. Manage exit services and instances")
 		fmt.Println("7. Revoke, clean, or delete kit")
 		fmt.Println("8. Update installed Skirk")
 		fmt.Println("9. Show commands")
@@ -77,7 +77,7 @@ func menu(ctx context.Context) error {
 			}
 			return clientUI(ctx, []string{"--config", config, "--socks", socks, "--ui", ui})
 		case "6":
-			if err := serviceMenu(ctx, reader); err != nil {
+			if err := instancesMenu(ctx, reader); err != nil {
 				return err
 			}
 		case "7":
@@ -343,6 +343,10 @@ func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName st
 	if err != nil {
 		return err
 	}
+	return outboundProxyMenuForConfig(ctx, reader, serviceName, configPath)
+}
+
+func outboundProxyMenuForConfig(ctx context.Context, reader *bufio.Reader, serviceName, configPath string) error {
 	cfg, err := skirk.LoadConfig(configPath)
 	if err != nil {
 		return err

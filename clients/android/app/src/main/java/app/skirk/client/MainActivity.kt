@@ -19,11 +19,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,17 +37,24 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.DataUsage
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material.icons.rounded.WifiTethering
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -89,6 +98,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.io.File
+import org.json.JSONObject
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF111111),
@@ -158,15 +168,18 @@ fun ConfigScreen() {
     var rawConfig by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf("") }
     var profileName by remember { mutableStateOf("Skirk profile") }
-    var socksPort by remember { mutableStateOf("18080") }
+    var socksPort by remember { mutableStateOf(ClientProfile.DEFAULT_SOCKS_PORT.toString()) }
+    var httpPort by remember { mutableStateOf(ClientProfile.DEFAULT_HTTP_PORT.toString()) }
     var selectedMode by remember { mutableStateOf(ClientProfile.CONNECTION_MODE_VPN) }
     var proxyShareLan by remember { mutableStateOf(false) }
     val running = connectionState.running
     var message by remember { mutableStateOf(connectionState.message) }
     var logText by remember { mutableStateOf(readSkirkLogs(context, connectionState.mode)) }
+    var driveMetrics by remember { mutableStateOf(readDriveMetrics(context, connectionState.mode)) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
     var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
     var importExpanded by remember { mutableStateOf(profiles.isEmpty()) }
+    var advancedSettingsOpen by remember { mutableStateOf(false) }
 
     fun refreshConnectionState() {
         val raw = connectionStore.read()
@@ -186,6 +199,7 @@ fun ConfigScreen() {
 
     fun refreshLogs(mode: String = connectionStore.read().mode) {
         logText = readSkirkLogs(context, mode)
+        driveMetrics = readDriveMetrics(context, mode)
     }
 
     val notificationPermission = rememberLauncherForActivityResult(
@@ -197,7 +211,9 @@ fun ConfigScreen() {
         val profile = pendingVpnProfile
         pendingVpnProfile = null
         if (result.resultCode == Activity.RESULT_OK && profile != null) {
-            SkirkProxyService.stop(context)
+            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+                SkirkProxyService.stop(context)
+            }
             connectionStore.connecting(profile, "VPN connecting")
             refreshConnectionState()
             SkirkVpnService.start(context, profile)
@@ -223,24 +239,42 @@ fun ConfigScreen() {
         store.saveProfile(runtimeProfile)
         refresh()
         if (runtimeProfile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+                SkirkProxyService.stop(context)
+            }
             val intent = VpnService.prepare(context)
             if (intent != null) {
                 pendingVpnProfile = runtimeProfile
                 vpnPermission.launch(intent)
             } else {
-                SkirkProxyService.stop(context)
                 connectionStore.connecting(runtimeProfile, "VPN connecting")
                 refreshConnectionState()
                 SkirkVpnService.start(context, runtimeProfile)
                 message = "VPN connecting"
             }
         } else {
-            SkirkVpnService.stop(context)
-            connectionStore.connecting(runtimeProfile, "SOCKS connecting on ${runtimeProfile.socksAddress}")
+            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_VPN) {
+                SkirkVpnService.stop(context)
+            }
+            connectionStore.connecting(runtimeProfile, "Proxy connecting on ${proxyAddress(runtimeProfile, runtimeProfile.shareLan)}")
             refreshConnectionState()
             SkirkProxyService.start(context, runtimeProfile)
-            message = "SOCKS connecting on ${runtimeProfile.socksAddress}"
+            message = "Proxy connecting on ${proxyAddress(runtimeProfile, runtimeProfile.shareLan)}"
         }
+    }
+
+    fun disconnectActive(reason: String = "Disconnected") {
+        when (connectionStore.read().mode) {
+            ClientProfile.CONNECTION_MODE_VPN -> SkirkVpnService.stop(context)
+            ClientProfile.CONNECTION_MODE_PROXY -> SkirkProxyService.stop(context)
+            else -> {
+                SkirkVpnService.stop(context)
+                SkirkProxyService.stop(context)
+            }
+        }
+        connectionStore.stopped(reason)
+        refreshConnectionState()
+        message = reason
     }
 
     LaunchedEffect(Unit) {
@@ -282,10 +316,14 @@ fun ConfigScreen() {
             val port = socksPort.toIntOrNull()
                 ?.let { ClientProfile.validateSocksPort(it) }
                 ?: error("Local SOCKS port is required")
+            val httpProxyPort = httpPort.toIntOrNull()
+                ?.let { ClientProfile.validateHttpPort(it, port) }
+                ?: error("Local HTTP proxy port is required")
             val profile = ClientProfile.fromRawConfig(
                 name = profileName,
                 rawConfig = rawConfig,
                 socksPort = port,
+                httpPort = httpProxyPort,
                 shareLan = false,
                 connectionMode = ClientProfile.CONNECTION_MODE_VPN,
             )
@@ -357,10 +395,12 @@ fun ConfigScreen() {
                     ImportPanel(
                         profileName = profileName,
                         socksPort = socksPort,
+                        httpPort = httpPort,
                         rawConfig = rawConfig,
                         importError = importError,
                         onProfileNameChange = { profileName = it },
                         onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
+                        onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
                         onRawConfigChange = {
                             rawConfig = it
                             importError = ""
@@ -369,38 +409,38 @@ fun ConfigScreen() {
                         onImport = ::importProfile,
                     )
                 }
-            }
-
-            item {
-                ConnectionPanel(
-                    selected = selected,
-                    selectedMode = selectedMode,
-                    proxyShareLan = proxyShareLan,
-                    running = running,
-                    message = message,
-                    onModeChange = { selectedMode = it },
-                    onProxyShareLanChange = { proxyShareLan = it },
-                    onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
-                    onDisconnect = {
-                        SkirkVpnService.stop(context)
-                        SkirkProxyService.stop(context)
-                        connectionStore.stopped("Disconnected")
-                        refreshConnectionState()
-                        message = "Disconnected"
-                    },
-                )
-            }
-
-            if (!profiles.isEmpty()) {
+            } else {
+                item {
+                    ProfilesPanel(
+                        profiles = profiles,
+                        selectedId = selected?.id,
+                        running = running,
+                        onSelect = { profile ->
+                            store.selectProfile(profile.id)
+                            selectedMode = profile.connectionMode
+                            proxyShareLan = profile.shareLan
+                            refresh()
+                        },
+                        onDelete = { profile ->
+                            if (running && selected?.id == profile.id) {
+                                disconnectActive()
+                            }
+                            store.deleteProfile(profile.id)
+                            refresh()
+                        },
+                    )
+                }
                 item {
                     if (importExpanded) {
                         ImportPanel(
                             profileName = profileName,
                             socksPort = socksPort,
+                            httpPort = httpPort,
                             rawConfig = rawConfig,
                             importError = importError,
                             onProfileNameChange = { profileName = it },
                             onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
+                            onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
                             onRawConfigChange = {
                                 rawConfig = it
                                 importError = ""
@@ -415,26 +455,18 @@ fun ConfigScreen() {
             }
 
             item {
-                ProfilesPanel(
-                    profiles = profiles,
-                    selectedId = selected?.id,
+                ConnectionPanel(
+                    selected = selected,
+                    selectedMode = selectedMode,
+                    proxyShareLan = proxyShareLan,
                     running = running,
-                    onSelect = { profile ->
-                        store.selectProfile(profile.id)
-                        selectedMode = profile.connectionMode
-                        proxyShareLan = profile.shareLan
-                        refresh()
-                    },
-                    onDelete = { profile ->
-                        if (running && selected?.id == profile.id) {
-                            SkirkVpnService.stop(context)
-                            SkirkProxyService.stop(context)
-                            connectionStore.stopped("Disconnected")
-                            refreshConnectionState()
-                        }
-                        store.deleteProfile(profile.id)
-                        refresh()
-                    },
+                    message = message,
+                    metrics = driveMetrics,
+                    onModeChange = { selectedMode = it },
+                    onProxyShareLanChange = { proxyShareLan = it },
+                    onOpenAdvanced = { advancedSettingsOpen = true },
+                    onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
+                    onDisconnect = { disconnectActive() },
                 )
             }
 
@@ -451,6 +483,20 @@ fun ConfigScreen() {
                 )
             }
         }
+        if (advancedSettingsOpen) {
+            AdvancedSettingsDialog(
+                performance = selected?.performance ?: PerformanceSettings.recommended(),
+                metrics = driveMetrics,
+                enabled = selected != null && !running,
+                onDismiss = { advancedSettingsOpen = false },
+                onPerformanceChange = { performance ->
+                    selected?.let { profile ->
+                        store.saveProfile(profile.copy(performance = performance))
+                        refresh()
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -461,8 +507,10 @@ private fun ConnectionPanel(
     proxyShareLan: Boolean,
     running: Boolean,
     message: String,
+    metrics: DriveMetrics?,
     onModeChange: (String) -> Unit,
     onProxyShareLanChange: (Boolean) -> Unit,
+    onOpenAdvanced: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -507,6 +555,11 @@ private fun ConnectionPanel(
             )
             Text(if (running) "Disconnect" else "Connect")
         }
+        DriveUsageSummary(
+            metrics = metrics,
+            performance = selected?.performance ?: PerformanceSettings.recommended(),
+            onOpenAdvanced = onOpenAdvanced,
+        )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.PowerSettingsNew, "Connection mode", modeLabel(selectedMode))
         ModeSelector(
@@ -525,6 +578,295 @@ private fun ConnectionPanel(
         } else {
             InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
         }
+    }
+}
+
+@Composable
+private fun AdvancedSettingsDialog(
+    performance: PerformanceSettings,
+    metrics: DriveMetrics?,
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onPerformanceChange: (PerformanceSettings) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+        icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
+        title = { Text("Advanced settings") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                DriveUsageDetails(metrics = metrics, performance = performance)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                PerformanceSettingsPanel(
+                    performance = performance,
+                    enabled = enabled,
+                    onPerformanceChange = onPerformanceChange,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun PerformanceSettingsPanel(
+    performance: PerformanceSettings,
+    enabled: Boolean,
+    onPerformanceChange: (PerformanceSettings) -> Unit,
+) {
+    SectionHeader(Icons.Rounded.Speed, "Performance", performancePresetLabel(performance.preset))
+    listOf(
+        listOf(PerformanceSettings.PRESET_LOWER_USAGE, PerformanceSettings.PRESET_RECOMMENDED),
+        listOf(PerformanceSettings.PRESET_RESPONSIVE, PerformanceSettings.PRESET_BULK_TRANSFER),
+    ).forEach { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            row.forEach { preset ->
+                ModeCard(
+                    icon = Icons.Rounded.Speed,
+                    title = performancePresetLabel(preset),
+                    subtitle = performancePresetDetail(PerformanceSettings.forPreset(preset)),
+                    selected = performance.preset == preset,
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPerformanceChange(PerformanceSettings.forPreset(preset)) },
+                )
+            }
+        }
+    }
+    OutlinedButton(
+        onClick = { onPerformanceChange(performance.copy(preset = PerformanceSettings.PRESET_CUSTOM)) },
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Rounded.Settings, contentDescription = null)
+        Text("Custom keeps current values")
+    }
+    if (performance.preset == PerformanceSettings.PRESET_CUSTOM) {
+        AdjustValueRow(
+            title = "Check interval",
+            detail = "Higher values use fewer Drive list calls.",
+            valueText = "${performance.pollMs} ms",
+            enabled = enabled,
+            onDecrease = {
+                onPerformanceChange(performance.copy(pollMs = (performance.pollMs - 250).coerceAtLeast(250)))
+            },
+            onIncrease = {
+                onPerformanceChange(performance.copy(pollMs = (performance.pollMs + 250).coerceAtMost(60000)))
+            },
+        )
+        AdjustValueRow(
+            title = "Upload workers",
+            detail = "More workers can open streams faster but spend quota sooner.",
+            valueText = performance.uploadConcurrency.toString(),
+            enabled = enabled,
+            onDecrease = {
+                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency - 2).coerceAtLeast(1)))
+            },
+            onIncrease = {
+                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency + 2).coerceAtMost(64)))
+            },
+        )
+        AdjustValueRow(
+            title = "Download workers",
+            detail = "More workers help bulk downloads and can crowd interactive traffic.",
+            valueText = performance.downloadConcurrency.toString(),
+            enabled = enabled,
+            onDecrease = {
+                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency - 2).coerceAtLeast(1)))
+            },
+            onIncrease = {
+                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency + 2).coerceAtMost(64)))
+            },
+        )
+        SwitchRow(
+            title = "Burst polling",
+            detail = "Faster short window after traffic; useful but costly.",
+            checked = performance.burstPoll,
+            enabled = enabled,
+            onCheckedChange = { onPerformanceChange(performance.copy(burstPoll = it)) },
+        )
+    }
+    InfoRow(
+        Icons.Rounded.Tune,
+        "Current limits",
+        "${performance.pollMs}ms check · ${performance.uploadConcurrency} up · ${performance.downloadConcurrency} down · ${if (performance.burstPoll) "burst on" else "burst off"}",
+    )
+    if (performance.burstPoll) {
+        InfoRow(
+            Icons.Rounded.CloudQueue,
+            "Drive API warning",
+            "Burst polling checks faster after traffic and can burn list quota quickly.",
+        )
+    }
+}
+
+@Composable
+private fun AdjustValueRow(
+    title: String,
+    detail: String,
+    valueText: String,
+    enabled: Boolean,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        OutlinedButton(onClick = onDecrease, enabled = enabled) {
+            Text("-")
+        }
+        Text(valueText, fontWeight = FontWeight.SemiBold)
+        OutlinedButton(onClick = onIncrease, enabled = enabled) {
+            Text("+")
+        }
+    }
+}
+
+@Composable
+private fun DriveUsageSummary(
+    metrics: DriveMetrics?,
+    performance: PerformanceSettings,
+    onOpenAdvanced: () -> Unit,
+) {
+    val displayUnits = metrics?.unitsPerMinute ?: estimatedIdleUnits(performance)
+    val errors = metrics?.errorsPerMinute ?: 0.0
+    val label = drivePressureLabel(displayUnits, errors)
+    val percent = drivePressurePercent(displayUnits)
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.DataUsage, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Drive API pressure", fontWeight = FontWeight.Medium)
+                        Text(
+                            if (metrics == null) "Idle estimate from this phone." else "Measured from this phone.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                TextButton(onClick = onOpenAdvanced) {
+                    Icon(Icons.Rounded.Settings, contentDescription = null)
+                    Text("Advanced")
+                }
+            }
+            QuotaBar(unitsPerMinute = displayUnits, errorsPerMinute = errors)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("$label · $percent%", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "~${displayUnits.toInt()} units/min",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(
+                "Performance: ${performancePresetLabel(performance.preset)} · ${performancePresetDetail(performance)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (metrics?.backoffActive == true) {
+                Text(
+                    "Drive cooldown: ${metrics.backoffReason.ifBlank { "rate limited" }} · ${metrics.backoffWaitSeconds.toInt()}s",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DriveUsageDetails(metrics: DriveMetrics?, performance: PerformanceSettings) {
+    val idleEstimate = estimatedIdleUnits(performance)
+    val measuredUnits = metrics?.unitsPerMinute
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader(
+            Icons.Rounded.CloudQueue,
+            "Drive API usage",
+            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute) } ?: "Estimate",
+        )
+        QuotaBar(unitsPerMinute = measuredUnits ?: idleEstimate, errorsPerMinute = metrics?.errorsPerMinute ?: 0.0)
+        InfoRow(
+            Icons.Rounded.DataUsage,
+            "Current phone",
+            measuredUnits?.let { "${it.toInt()} units/min · ${metrics.ops.ifBlank { "no ops yet" }}" }
+                ?: "Connect to measure this phone's local Drive API usage.",
+        )
+        InfoRow(
+            Icons.Rounded.Speed,
+            "Idle estimate",
+            "~${idleEstimate.toInt()} units/min from the selected check interval.",
+        )
+        InfoRow(
+            Icons.Rounded.CloudQueue,
+            "What this means",
+            "Skirk uses Google Drive requests, not Drive storage. The exit and other clients share the same Google budget.",
+        )
+        if (metrics?.backoffActive == true) {
+            InfoRow(
+                Icons.Rounded.CloudQueue,
+                "Drive cooldown",
+                "${metrics.backoffReason.ifBlank { "rate limited" }} · ${metrics.backoffWaitSeconds.toInt()}s remaining",
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuotaBar(unitsPerMinute: Double, errorsPerMinute: Double) {
+    val pressure = drivePressureFraction(unitsPerMinute)
+    val color = when {
+        errorsPerMinute > 0.0 -> Color(0xFFDC2626)
+        pressure >= 0.7f -> Color(0xFFEA580C)
+        pressure >= 0.3f -> Color(0xFFEAB308)
+        else -> Color(0xFF22C55E)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(9.dp)
+            .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(999.dp)),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(pressure.coerceIn(0.03f, 1f))
+                .height(9.dp)
+                .background(color, RoundedCornerShape(999.dp)),
+        )
     }
 }
 
@@ -630,10 +972,12 @@ private fun AddProfilePanel(onExpand: () -> Unit) {
 private fun ImportPanel(
     profileName: String,
     socksPort: String,
+    httpPort: String,
     rawConfig: String,
     importError: String,
     onProfileNameChange: (String) -> Unit,
     onSocksPortChange: (String) -> Unit,
+    onHttpPortChange: (String) -> Unit,
     onRawConfigChange: (String) -> Unit,
     onPaste: () -> Unit,
     onImport: () -> Unit,
@@ -687,6 +1031,14 @@ private fun ImportPanel(
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         )
+        OutlinedTextField(
+            value = httpPort,
+            onValueChange = onHttpPortChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Local HTTP proxy port") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
     }
 }
 
@@ -699,7 +1051,7 @@ private fun ProfilesPanel(
     onDelete: (ClientProfile) -> Unit,
 ) {
     Panel {
-        SectionHeader(Icons.Rounded.Storage, "Profiles", "${profiles.size} saved")
+        SectionHeader(Icons.Rounded.AccountCircle, "Profiles", "${profiles.size} saved")
         if (profiles.isEmpty()) {
             EmptyState()
         } else {
@@ -768,7 +1120,7 @@ private fun ModeSelector(
         ModeCard(
             icon = Icons.Rounded.WifiTethering,
             title = "Proxy",
-            subtitle = "SOCKS5",
+            subtitle = "SOCKS5 + HTTP",
             selected = selectedMode == ClientProfile.CONNECTION_MODE_PROXY,
             enabled = enabled,
             modifier = Modifier.weight(1f),
@@ -890,12 +1242,12 @@ private fun ProfileRow(
                     if (selected) {
                         Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     } else {
-                        Icon(Icons.Rounded.Shield, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Rounded.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                     }
                     Text(profile.name, fontWeight = FontWeight.SemiBold)
                 }
                 Text(
-                    "${profile.routeMode} / ${profile.socksAddress}",
+                    "${profile.routeMode} / SOCKS ${profile.socksAddress} / HTTP ${profile.httpAddress}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -973,6 +1325,7 @@ private fun connectionActionableMessage(message: String): String? {
         lower == "disconnected" ||
         lower == "vpn connected" ||
         lower.startsWith("socks connected") ||
+        lower.startsWith("proxy connected") ||
         lower.endsWith("stopped") ||
         lower.startsWith("imported ")
     ) {
@@ -1009,10 +1362,10 @@ private fun connectionRouteDetail(
     proxyShareLan: Boolean,
 ): String = when {
     selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan ->
-        "LAN SOCKS5 · ${proxyAddress(selected, true).removePrefix("Trusted LAN only: ")}"
+        "LAN proxy · ${proxyEndpoints(selected, true)}"
     selectedMode == ClientProfile.CONNECTION_MODE_PROXY ->
-        "Local SOCKS5 · ${selected.socksAddress}"
-    else -> "Device VPN · ${selected.socksAddress}"
+        "Local proxy · ${proxyEndpoints(selected, false)}"
+    else -> "Device VPN · no manual proxy setup"
 }
 
 private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
@@ -1020,12 +1373,22 @@ private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
         return "Import or select a profile first."
     }
     if (!shareLan) {
-        return "127.0.0.1:${profile.socksPort}"
+        return "This phone only: ${proxyEndpoints(profile, false)}"
     }
-    val address = AndroidSkirkEngine.lanAddresses(profile.socksPort)
+    return "Use only on trusted networks: ${proxyEndpoints(profile, true)}"
+}
+
+private fun proxyEndpoints(profile: ClientProfile, shareLan: Boolean): String {
+    if (!shareLan) {
+        return "SOCKS5 ${profile.socksAddress} · HTTP ${profile.httpAddress}"
+    }
+    val socksAddress = AndroidSkirkEngine.lanAddresses(profile.socksPort)
         .firstOrNull()
         ?: "0.0.0.0:${profile.socksPort}"
-    return "Trusted LAN only: $address"
+    val httpAddress = AndroidSkirkEngine.lanAddresses(profile.httpPort)
+        .firstOrNull()
+        ?: "0.0.0.0:${profile.httpPort}"
+    return "SOCKS5 $socksAddress · HTTP $httpAddress"
 }
 
 @Suppress("DEPRECATION")
@@ -1061,7 +1424,81 @@ private fun readSkirkLogs(context: Context, activeMode: String): String {
         .takeLast(96 * 1024)
 }
 
+private data class DriveMetrics(
+    val unitsPerMinute: Double,
+    val errorsPerMinute: Double,
+    val ops: String,
+    val backoffActive: Boolean,
+    val backoffReason: String,
+    val backoffWaitSeconds: Double,
+)
+
+private fun readDriveMetrics(context: Context, activeMode: String): DriveMetrics? {
+    val logsDir = File(context.filesDir, "logs")
+    val fileName = when (activeMode) {
+        ClientProfile.CONNECTION_MODE_PROXY -> "skirk-client.metrics.json"
+        ClientProfile.CONNECTION_MODE_VPN -> "skirk-vpn-client.metrics.json"
+        else -> return null
+    }
+    val file = File(logsDir, fileName)
+    if (!file.exists() || file.length() == 0L) {
+        return null
+    }
+    return runCatching {
+        val json = JSONObject(file.readText())
+        val rate = json.optJSONObject("recent_quota_per_minute")
+            ?: json.optJSONObject("recentQuotaPerMinute")
+            ?: JSONObject()
+        val backoff = json.optJSONObject("drive_backoff")
+            ?: json.optJSONObject("driveBackoff")
+            ?: JSONObject()
+        DriveMetrics(
+            unitsPerMinute = rate.optDouble("units", 0.0),
+            errorsPerMinute = rate.optDouble("errors", 0.0),
+            ops = json.optString(
+                "recent_quota_ops",
+                json.optString("recentQuotaOps", ""),
+            ),
+            backoffActive = backoff.optBoolean("active", false),
+            backoffReason = backoff.optString("reason", ""),
+            backoffWaitSeconds = backoff.optDouble("wait_seconds", backoff.optDouble("waitSeconds", 0.0)),
+        )
+    }.getOrNull()
+}
+
+private fun estimatedIdleUnits(performance: PerformanceSettings): Double =
+    (60_000.0 / performance.pollMs.coerceAtLeast(250)) * DRIVE_LIST_UNITS
+
+private fun drivePressureFraction(unitsPerMinute: Double): Float =
+    (unitsPerMinute / DRIVE_USER_UNITS_PER_MINUTE).coerceIn(0.0, 1.0).toFloat()
+
+private fun drivePressurePercent(unitsPerMinute: Double): Int =
+    (drivePressureFraction(unitsPerMinute) * 100).toInt().coerceAtLeast(if (unitsPerMinute > 0.0) 1 else 0)
+
+private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double): String = when {
+    errorsPerMinute > 0.0 -> "Google errors seen"
+    unitsPerMinute <= 0.0 -> "Not measured"
+    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.08 -> "Normal"
+    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.30 -> "Moderate"
+    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.70 -> "High"
+    else -> "Limit risk"
+}
+
+private fun performancePresetLabel(preset: String): String = when (preset) {
+    PerformanceSettings.PRESET_LOWER_USAGE -> "Lower usage"
+    PerformanceSettings.PRESET_RESPONSIVE -> "Responsive"
+    PerformanceSettings.PRESET_BULK_TRANSFER -> "Bulk transfer"
+    PerformanceSettings.PRESET_CUSTOM -> "Custom"
+    else -> "Recommended"
+}
+
+private fun performancePresetDetail(performance: PerformanceSettings): String =
+    "${performance.pollMs}ms · ${performance.uploadConcurrency}/${performance.downloadConcurrency}" +
+        if (performance.burstPoll) " · burst" else ""
+
 private const val SERVICE_STATE_GRACE_MS = 3_000L
+private const val DRIVE_LIST_UNITS = 100.0
+private const val DRIVE_USER_UNITS_PER_MINUTE = 325_000.0
 
 private fun File.readTail(maxBytes: Int, maxLines: Int): String {
     if (!exists() || length() == 0L) {

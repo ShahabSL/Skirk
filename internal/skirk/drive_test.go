@@ -129,6 +129,25 @@ func TestDriveStoreRateLimitBackoffDelaysNextRequest(t *testing.T) {
 	}
 }
 
+func TestDriveStoreQuotaBackoffSnapshotReportsCooldown(t *testing.T) {
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}],"message":"Rate Limit Exceeded"}}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	store.backoff.base = time.Minute
+	store.backoff.max = time.Minute
+	store.backoff.jitter = 0
+
+	_, err := store.PutObject(context.Background(), "object", []byte("data"))
+	if err == nil {
+		t.Fatal("expected Drive rate-limit error")
+	}
+	snapshot := store.QuotaBackoffSnapshot()
+	if !snapshot.Active || snapshot.Reason != "rateLimitExceeded" || snapshot.Op != "upload" || snapshot.Failures != 1 || snapshot.WaitSeconds <= 0 {
+		t.Fatalf("backoff snapshot = %+v, want active upload cooldown", snapshot)
+	}
+}
+
 func TestDriveStoreGenerateObjectIDsUsesAppDataSpace(t *testing.T) {
 	var gotQuery url.Values
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -793,8 +812,8 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	if driveQuotaUnits("changes") != 100 {
 		t.Fatalf("changes quota units = %d, want 100", driveQuotaUnits("changes"))
 	}
-	if driveQuotaUnits("generate_ids") != 50 {
-		t.Fatalf("generate_ids quota units = %d, want 50", driveQuotaUnits("generate_ids"))
+	if driveQuotaUnits("generate_ids") != 5 {
+		t.Fatalf("generate_ids quota units = %d, want 5", driveQuotaUnits("generate_ids"))
 	}
 	snapshot := stats.Snapshot()
 	if snapshot.Calls != 2 || snapshot.Units != 250 || snapshot.Errors != 1 || snapshot.ResponseBytes != 30 {
@@ -802,6 +821,31 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	}
 	if snapshot.Ops["download"].P50DurationMS != 250 || snapshot.Ops["upload"].P95DurationMS != 100 {
 		t.Fatalf("snapshot ops = %+v, want duration percentiles", snapshot.Ops)
+	}
+}
+
+func TestDriveQuotaSnapshotDeltaOmitsIdleOps(t *testing.T) {
+	before := DriveQuotaSnapshot{
+		Calls: 1,
+		Units: 100,
+		Ops: map[string]DriveQuotaOpSnapshot{
+			"list": {Calls: 1, Units: 100},
+		},
+	}
+	after := DriveQuotaSnapshot{
+		Calls: 2,
+		Units: 200,
+		Ops: map[string]DriveQuotaOpSnapshot{
+			"list":     {Calls: 2, Units: 200},
+			"download": {Calls: 0, Units: 0},
+		},
+	}
+	delta := after.Delta(before)
+	if _, ok := delta.Ops["download"]; ok {
+		t.Fatalf("delta included idle download op: %+v", delta.Ops["download"])
+	}
+	if got := delta.Ops["list"].Calls; got != 1 {
+		t.Fatalf("list delta calls = %d, want 1", got)
 	}
 }
 

@@ -22,13 +22,6 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-const DESKTOP_CLIENT_POLL_MS: &str = "1000";
-const DESKTOP_CLIENT_UPLOAD_CONCURRENCY: &str = "8";
-const DESKTOP_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
-const DESKTOP_VPN_CLIENT_POLL_MS: &str = "1000";
-const DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY: &str = "8";
-const DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY: &str = "16";
-
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::CloseHandle,
@@ -55,6 +48,30 @@ struct ClientProfile {
     google_ip: String,
     drive_space: String,
     drive_folder_id: String,
+    #[serde(default = "default_performance_settings")]
+    performance: ClientPerformanceSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PerformancePreset {
+    LowerUsage,
+    Recommended,
+    Responsive,
+    BulkTransfer,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientPerformanceSettings {
+    preset: PerformancePreset,
+    poll_ms: u16,
+    upload_concurrency: u16,
+    download_concurrency: u16,
+    burst_poll: bool,
+    burst_poll_ms: u16,
+    burst_poll_window_ms: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +109,7 @@ struct ConnectionStatus {
     socks_address: Option<String>,
     http_address: Option<String>,
     lan_addresses: Vec<String>,
+    lan_http_addresses: Vec<String>,
     system_proxy_enabled: bool,
     tunnel_active: bool,
     tunnel_interface_name: Option<String>,
@@ -118,8 +136,61 @@ struct DesktopSnapshot {
     config_dir: String,
     log_tail: String,
     tunnel_log_tail: String,
+    metrics: Option<RuntimeMetrics>,
     platform: String,
     capabilities: PlatformCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+struct RuntimeMetrics {
+    version: i32,
+    role: String,
+    started_at: String,
+    updated_at: String,
+    duration_seconds: f64,
+    route_mode: String,
+    transport: String,
+    poll_ms: i32,
+    upload_concurrency: i32,
+    download_concurrency: i32,
+    burst_poll: bool,
+    estimated_project_units_per_min: i64,
+    estimated_user_units_per_min: i64,
+    recent_quota: QuotaSnapshot,
+    recent_quota_per_minute: QuotaRate,
+    recent_quota_ops: String,
+    drive_backoff: Option<DriveBackoff>,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+struct QuotaSnapshot {
+    calls: i64,
+    units: i64,
+    errors: i64,
+    response_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+struct QuotaRate {
+    calls: f64,
+    units: f64,
+    errors: f64,
+    response_bytes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+struct DriveBackoff {
+    active: bool,
+    until: Option<String>,
+    wait_seconds: Option<f64>,
+    reason: Option<String>,
+    op: Option<String>,
+    failures: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -136,6 +207,7 @@ struct ManagedClient {
     mode: ConnectionMode,
     socks_address: String,
     http_address: String,
+    metrics_path: PathBuf,
     system_proxy_enabled: bool,
 }
 
@@ -168,6 +240,84 @@ fn default_http_port() -> u16 {
 
 fn default_google_ip() -> String {
     "216.239.38.120".into()
+}
+
+fn default_performance_settings() -> ClientPerformanceSettings {
+    performance_for_preset(PerformancePreset::Recommended)
+}
+
+fn performance_for_preset(preset: PerformancePreset) -> ClientPerformanceSettings {
+    match preset {
+        PerformancePreset::LowerUsage => ClientPerformanceSettings {
+            preset,
+            poll_ms: 2000,
+            upload_concurrency: 4,
+            download_concurrency: 8,
+            burst_poll: false,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        },
+        PerformancePreset::Recommended => ClientPerformanceSettings {
+            preset,
+            poll_ms: 1000,
+            upload_concurrency: 8,
+            download_concurrency: 16,
+            burst_poll: false,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        },
+        PerformancePreset::Responsive => ClientPerformanceSettings {
+            preset,
+            poll_ms: 1000,
+            upload_concurrency: 8,
+            download_concurrency: 16,
+            burst_poll: true,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        },
+        PerformancePreset::BulkTransfer => ClientPerformanceSettings {
+            preset,
+            poll_ms: 1000,
+            upload_concurrency: 16,
+            download_concurrency: 32,
+            burst_poll: false,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        },
+        PerformancePreset::Custom => ClientPerformanceSettings {
+            preset,
+            poll_ms: 1000,
+            upload_concurrency: 8,
+            download_concurrency: 16,
+            burst_poll: false,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        },
+    }
+}
+
+fn normalize_performance_settings(
+    settings: ClientPerformanceSettings,
+) -> Result<ClientPerformanceSettings, String> {
+    if settings.preset != PerformancePreset::Custom {
+        return Ok(performance_for_preset(settings.preset));
+    }
+    if settings.poll_ms < 250 || settings.poll_ms > 60_000 {
+        return Err("check interval must be between 250 ms and 60000 ms".into());
+    }
+    if settings.upload_concurrency < 1 || settings.upload_concurrency > 64 {
+        return Err("upload workers must be between 1 and 64".into());
+    }
+    if settings.download_concurrency < 1 || settings.download_concurrency > 64 {
+        return Err("download workers must be between 1 and 64".into());
+    }
+    if settings.burst_poll_ms < 25 || settings.burst_poll_ms > 1000 {
+        return Err("burst interval must be between 25 ms and 1000 ms".into());
+    }
+    if settings.burst_poll_window_ms < 1000 || settings.burst_poll_window_ms > 30000 {
+        return Err("burst window must be between 1000 ms and 30000 ms".into());
+    }
+    Ok(settings)
 }
 
 struct DesktopRuntime {
@@ -220,6 +370,7 @@ impl DesktopRuntime {
                 socks_address: Some(client.socks_address.clone()),
                 http_address: Some(client.http_address.clone()),
                 lan_addresses: share_addresses(&client.socks_address),
+                lan_http_addresses: share_addresses(&client.http_address),
                 system_proxy_enabled: client.system_proxy_enabled,
                 tunnel_active: state.tunnel.is_some(),
                 tunnel_interface_name: state
@@ -238,6 +389,7 @@ impl DesktopRuntime {
                 socks_address: None,
                 http_address: None,
                 lan_addresses: Vec::new(),
+                lan_http_addresses: Vec::new(),
                 system_proxy_enabled: false,
                 tunnel_active: false,
                 tunnel_interface_name: None,
@@ -253,6 +405,10 @@ impl DesktopRuntime {
             config_dir: self.paths.config_dir.display().to_string(),
             log_tail: read_log_tail(&client_log_path(&self.paths), 80),
             tunnel_log_tail: read_log_tail(&tunnel_log_path(&self.paths), 80),
+            metrics: state
+                .client
+                .as_ref()
+                .and_then(|client| read_runtime_metrics(&client.metrics_path)),
             platform: std::env::consts::OS.to_string(),
             capabilities: self.platform_capabilities(),
         })
@@ -336,6 +492,7 @@ impl DesktopRuntime {
             google_ip,
             drive_space,
             drive_folder_id,
+            performance: default_performance_settings(),
         };
         let mut profiles = load_profiles(&self.paths)?;
         profiles.retain(|existing| existing.id != profile.id);
@@ -407,6 +564,27 @@ impl DesktopRuntime {
         Ok(())
     }
 
+    fn update_profile_performance(
+        &self,
+        profile_id: &str,
+        performance: ClientPerformanceSettings,
+    ) -> Result<(), String> {
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        refresh_state(&mut state, &self.paths);
+        if state.client.is_some() {
+            return Err("disconnect before changing performance settings".into());
+        }
+        drop(state);
+        let performance = normalize_performance_settings(performance)?;
+        let mut profiles = load_profiles(&self.paths)?;
+        let profile = profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "profile was not found".to_string())?;
+        profile.performance = performance;
+        save_profiles(&self.paths, &profiles)
+    }
+
     fn select_profile(&self, profile_id: Option<String>) -> Result<(), String> {
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         refresh_state(&mut state, &self.paths);
@@ -459,6 +637,7 @@ impl DesktopRuntime {
             .ok_or_else(|| "no profile selected".to_string())?
             .clone();
         let mode = settings.connection_mode;
+        let performance = normalize_performance_settings(profile.performance.clone())?;
         if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
             return Err("system proxy mode is only available on Windows".into());
         }
@@ -474,6 +653,8 @@ impl DesktopRuntime {
         let skirk = self.resolve_sidecar()?;
         let sidecar_process_path = process_path_for_rules(&skirk);
         let log_path = client_log_path(&self.paths);
+        let metrics_path = client_metrics_path(&self.paths);
+        let _ = fs::remove_file(&metrics_path);
         let log = OpenOptions::new()
             .create(true)
             .append(true)
@@ -497,26 +678,25 @@ impl DesktopRuntime {
             .arg(route_mode)
             .arg("--google-ip")
             .arg(&google_ip);
-        if matches!(mode, ConnectionMode::Vpn) {
+        if performance.burst_poll {
             command
-                .arg("--no-burst-poll")
-                .arg("--poll-ms")
-                .arg(DESKTOP_VPN_CLIENT_POLL_MS)
-                .arg("--upload-concurrency")
-                .arg(DESKTOP_VPN_CLIENT_UPLOAD_CONCURRENCY)
-                .arg("--download-concurrency")
-                .arg(DESKTOP_VPN_CLIENT_DOWNLOAD_CONCURRENCY);
+                .arg("--burst-poll")
+                .arg("--burst-poll-ms")
+                .arg(performance.burst_poll_ms.to_string())
+                .arg("--burst-poll-window-ms")
+                .arg(performance.burst_poll_window_ms.to_string());
         } else {
-            command
-                .arg("--no-burst-poll")
-                .arg("--poll-ms")
-                .arg(DESKTOP_CLIENT_POLL_MS)
-                .arg("--upload-concurrency")
-                .arg(DESKTOP_CLIENT_UPLOAD_CONCURRENCY)
-                .arg("--download-concurrency")
-                .arg(DESKTOP_CLIENT_DOWNLOAD_CONCURRENCY);
+            command.arg("--no-burst-poll");
         }
         command
+            .arg("--poll-ms")
+            .arg(performance.poll_ms.to_string())
+            .arg("--upload-concurrency")
+            .arg(performance.upload_concurrency.to_string())
+            .arg("--download-concurrency")
+            .arg(performance.download_concurrency.to_string())
+            .arg("--metrics-path")
+            .arg(&metrics_path)
             .arg("--watch-parent-pid")
             .arg(std::process::id().to_string())
             .stdout(Stdio::from(log))
@@ -586,6 +766,7 @@ impl DesktopRuntime {
             mode: mode.clone(),
             socks_address,
             http_address,
+            metrics_path,
             system_proxy_enabled,
         });
         state.tunnel = tunnel;
@@ -623,11 +804,12 @@ impl DesktopRuntime {
 
     fn platform_capabilities(&self) -> PlatformCapabilities {
         let vpn_sidecar_present = self.resolve_tunnel_sidecar().is_ok();
-        let vpn_requires_admin = cfg!(windows);
-        let vpn_admin = windows_is_admin();
+        let vpn_requires_admin = cfg!(windows) || cfg!(target_os = "linux");
+        let vpn_admin = platform_has_tun_privileges();
+        let vpn_platform_supported = cfg!(windows) || cfg!(target_os = "linux");
         PlatformCapabilities {
             system_proxy_supported: cfg!(windows),
-            vpn_mode_supported: cfg!(windows) && vpn_sidecar_present,
+            vpn_mode_supported: vpn_platform_supported && vpn_sidecar_present,
             vpn_requires_admin,
             vpn_admin,
             vpn_sidecar_present,
@@ -640,13 +822,11 @@ impl DesktopRuntime {
         sidecar_process_path: &str,
         google_ip: &str,
     ) -> Result<ManagedTunnel, String> {
-        if !cfg!(windows) {
-            return Err("VPN mode is only available on Windows".into());
+        if !cfg!(windows) && !cfg!(target_os = "linux") {
+            return Err("VPN mode is only available on Windows and Linux".into());
         }
-        if !windows_is_admin() {
-            return Err(
-                "VPN mode needs Administrator privileges to create the Windows TUN adapter".into(),
-            );
+        if !platform_has_tun_privileges() {
+            return Err(vpn_admin_required_message());
         }
         let tunnel = self.resolve_tunnel_sidecar()?;
         let log_path = tunnel_log_path(&self.paths);
@@ -733,12 +913,8 @@ fn sidecar_candidate_paths(
     resource_dir: Option<&Path>,
     current_dir: Option<&Path>,
 ) -> Vec<PathBuf> {
-    let names: &[&str] = if cfg!(windows) {
-        &["skirk-sidecar.exe", "skirk.exe", "skirk-windows-amd64.exe"]
-    } else {
-        &["skirk", "skirk-linux-amd64"]
-    };
-    let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+    let names = sidecar_names();
+    let os_dir = sidecar_os_dir();
     let mut candidates = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -818,7 +994,7 @@ fn tunnel_sidecar_candidate_paths(
     } else {
         &["skirk-tunnel", "sing-box"]
     };
-    let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+    let os_dir = sidecar_os_dir();
     let mut candidates = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -886,6 +1062,26 @@ fn tunnel_sidecar_candidate_paths(
     candidates
 }
 
+fn sidecar_os_dir() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
+fn sidecar_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["skirk-sidecar.exe", "skirk.exe", "skirk-windows-amd64.exe"]
+    } else if cfg!(target_os = "macos") {
+        &["skirk", "skirk-darwin-arm64", "skirk-darwin-amd64"]
+    } else {
+        &["skirk", "skirk-linux-amd64"]
+    }
+}
+
 fn push_sidecar_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut BTreeSet<PathBuf>,
@@ -903,9 +1099,14 @@ fn sidecar_not_found_message(candidates: &[PathBuf]) -> String {
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join("; ");
-    "skirk sidecar not found; place skirk-sidecar.exe under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
-        .to_string()
-        + &searched
+    let guidance = if cfg!(windows) {
+        "skirk sidecar not found; place skirk-sidecar.exe under sidecars/windows/ or resources/sidecars/windows/, or set SKIRK_DESKTOP_SIDECAR. searched: "
+    } else if cfg!(target_os = "macos") {
+        "skirk sidecar not found; place skirk under sidecars/macos/ or resources/sidecars/macos/, or set SKIRK_DESKTOP_SIDECAR. searched: "
+    } else {
+        "skirk sidecar not found; place skirk under sidecars/linux/ or resources/sidecars/linux/, or set SKIRK_DESKTOP_SIDECAR. searched: "
+    };
+    guidance.to_string() + &searched
 }
 
 fn tunnel_sidecar_not_found_message(candidates: &[PathBuf]) -> String {
@@ -915,7 +1116,14 @@ fn tunnel_sidecar_not_found_message(candidates: &[PathBuf]) -> String {
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join("; ");
-    "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe. searched: ".to_string() + &searched
+    let guidance = if cfg!(windows) {
+        "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe. searched: "
+    } else if cfg!(target_os = "linux") {
+        "VPN mode needs the bundled TUN sidecar skirk-tunnel. searched: "
+    } else {
+        "VPN mode is not available on this platform. A TUN sidecar was searched only for diagnostics: "
+    };
+    guidance.to_string() + &searched
 }
 
 fn looks_like_inline_config(raw_config: &str) -> bool {
@@ -1030,6 +1238,7 @@ fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
 fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) {
     if let Some(mut tunnel) = state.tunnel.take() {
         terminate_child(&mut tunnel.child);
+        cleanup_linux_tun_routes();
     }
     if let Some(mut client) = state.client.take() {
         if client.system_proxy_enabled {
@@ -1044,6 +1253,35 @@ fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) {
 fn terminate_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn cleanup_linux_tun_routes() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    for pref in ["9000", "9001", "9002", "9003", "9010", "32768"] {
+        for _ in 0..8 {
+            if run_quiet("ip", &["rule", "del", "pref", pref]).is_err() {
+                break;
+            }
+        }
+    }
+    let _ = run_quiet("ip", &["route", "flush", "table", "2022"]);
+    let _ = run_quiet("ip", &["link", "del", &tunnel_interface_name()]);
+}
+
+fn run_quiet(program: &str, args: &[&str]) -> Result<(), ()> {
+    let status = Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| ())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 fn wait_for_tcp_endpoint(address: &str, timeout: Duration) -> bool {
@@ -1114,13 +1352,25 @@ fn connected_message(mode: &ConnectionMode) -> String {
 }
 
 fn vpn_unavailable_message() -> String {
-    if !cfg!(windows) {
-        return "VPN mode is only available on Windows".into();
+    if !cfg!(windows) && !cfg!(target_os = "linux") {
+        return "VPN mode is only available on Windows and Linux".into();
     }
-    if !windows_is_admin() {
-        return "VPN mode needs Administrator privileges".into();
+    if !platform_has_tun_privileges() {
+        return vpn_admin_required_message();
     }
-    "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe".into()
+    if cfg!(windows) {
+        "VPN mode needs the bundled TUN sidecar skirk-tunnel.exe".into()
+    } else {
+        "VPN mode needs the bundled TUN sidecar skirk-tunnel".into()
+    }
+}
+
+fn vpn_admin_required_message() -> String {
+    if cfg!(windows) {
+        "VPN mode needs Administrator privileges to create the Windows TUN adapter".into()
+    } else {
+        "VPN mode needs root or CAP_NET_ADMIN privileges to create the Linux TUN interface".into()
+    }
 }
 
 fn tunnel_log_path(paths: &AppPaths) -> PathBuf {
@@ -1132,7 +1382,11 @@ fn tunnel_config_path(paths: &AppPaths) -> PathBuf {
 }
 
 fn tunnel_interface_name() -> String {
-    "Skirk Tunnel".into()
+    if cfg!(target_os = "linux") {
+        "skirk-tun0".into()
+    } else {
+        "Skirk Tunnel".into()
+    }
 }
 
 fn loopback_probe_address(address: &str) -> String {
@@ -1188,6 +1442,11 @@ fn google_control_cidr(google_ip: &str) -> String {
 fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -> Value {
     let google_control_cidr = google_control_cidr(google_ip);
     let google_control_route_cidr = google_control_cidr.clone();
+    let sidecar_process_names = if cfg!(windows) {
+        json!(["skirk-sidecar.exe", "skirk.exe", "skirk-windows-amd64.exe"])
+    } else {
+        json!(["skirk", "skirk-linux-amd64"])
+    };
     // The sidecar's Drive control plane must stay outside the TUN path. Keep
     // the pinned Google CIDR as a deterministic fallback for process matching.
     json!({
@@ -1216,6 +1475,8 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -
                 "auto_route": true,
                 "strict_route": true,
                 "stack": "mixed",
+                // Keep auto_redirect off for now; Linux E2E showed sing-box
+                // can leave nftables/ip-rule state behind after GUI shutdown.
                 "route_exclude_address": [
                     "127.0.0.0/8",
                     "10.0.0.0/8",
@@ -1260,11 +1521,7 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -
                     "mode": "or",
                     "rules": [
                         {
-                            "process_name": [
-                                "skirk-sidecar.exe",
-                                "skirk.exe",
-                                "skirk-windows-amd64.exe"
-                            ]
+                            "process_name": sidecar_process_names
                         },
                         {
                             "process_path": [
@@ -1339,6 +1596,37 @@ fn windows_is_admin() -> bool {
     false
 }
 
+fn platform_has_tun_privileges() -> bool {
+    if cfg!(windows) {
+        return windows_is_admin();
+    }
+    if cfg!(target_os = "linux") {
+        return linux_has_net_admin();
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn linux_has_net_admin() -> bool {
+    let Ok(status) = fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    status.lines().any(|line| {
+        let Some(hex) = line.strip_prefix("CapEff:") else {
+            return false;
+        };
+        let Ok(caps) = u64::from_str_radix(hex.trim(), 16) else {
+            return false;
+        };
+        caps & (1 << 12) != 0
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_has_net_admin() -> bool {
+    false
+}
+
 #[tauri::command]
 async fn load_snapshot(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapshot, String> {
     runtime.snapshot()
@@ -1385,6 +1673,16 @@ async fn set_connection_mode(
 }
 
 #[tauri::command]
+async fn update_profile_performance(
+    runtime: State<'_, DesktopRuntime>,
+    profile_id: String,
+    performance: ClientPerformanceSettings,
+) -> Result<DesktopSnapshot, String> {
+    runtime.update_profile_performance(&profile_id, performance)?;
+    runtime.snapshot()
+}
+
+#[tauri::command]
 async fn connect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapshot, String> {
     runtime.connect()?;
     runtime.snapshot()
@@ -1411,6 +1709,7 @@ pub fn run() {
             delete_profile,
             select_profile,
             set_connection_mode,
+            update_profile_performance,
             connect,
             disconnect
         ])
@@ -1515,6 +1814,15 @@ fn client_log_path(paths: &AppPaths) -> PathBuf {
     paths.logs_dir.join("skirk-client.log")
 }
 
+fn client_metrics_path(paths: &AppPaths) -> PathBuf {
+    paths.runtime_dir.join("skirk-client-metrics.json")
+}
+
+fn read_runtime_metrics(path: &Path) -> Option<RuntimeMetrics> {
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 fn read_log_tail(path: &Path, limit: usize) -> String {
     let Ok(content) = fs::read_to_string(path) else {
         return String::new();
@@ -1604,7 +1912,7 @@ mod tests {
 
     #[test]
     fn sidecar_candidates_cover_portable_and_tauri_resource_layouts() {
-        let os_dir = if cfg!(windows) { "windows" } else { "linux" };
+        let os_dir = sidecar_os_dir();
         let sidecar_name = if cfg!(windows) {
             "skirk-sidecar.exe"
         } else {
@@ -1725,7 +2033,11 @@ mod tests {
             config
                 .pointer("/route/rules/1/rules/0/process_name/0")
                 .and_then(Value::as_str),
-            Some("skirk-sidecar.exe")
+            if cfg!(windows) {
+                Some("skirk-sidecar.exe")
+            } else {
+                Some("skirk")
+            }
         );
         assert_eq!(
             config
@@ -1775,6 +2087,7 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(true)
         );
+        assert!(config.pointer("/inbounds/0/auto_redirect").is_none());
     }
 
     #[test]

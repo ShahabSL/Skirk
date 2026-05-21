@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 type clientUIState struct {

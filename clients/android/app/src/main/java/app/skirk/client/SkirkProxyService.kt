@@ -28,7 +28,7 @@ class SkirkProxyService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             Log.w(TAG, "Ignoring proxy service restart without an explicit start intent")
-            connectionState.stopped("SOCKS stopped")
+            connectionState.stopped("Proxy stopped")
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
@@ -46,10 +46,12 @@ class SkirkProxyService : Service() {
 			stopSelfResult(startId)
 			return START_NOT_STICKY
 		}
-		SkirkVpnService.stop(this)
+            if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_VPN) {
+                SkirkVpnService.stop(this)
+            }
 
-		val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
-			?.let { ClientProfile.fromJson(JSONObject(it)) }
+			val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
+				?.let { ClientProfile.fromJson(JSONObject(it)) }
             ?: ProfileStore(this).selectedProfile()
 
         if (profile == null) {
@@ -58,9 +60,18 @@ class SkirkProxyService : Service() {
             return START_NOT_STICKY
         }
 
-        startForegroundCompat(profile)
-        stopRequested = false
-        connectionState.connecting(profile, "SOCKS connecting on ${profile.socksAddress}")
+        val foregroundStarted = runCatching { startForegroundCompat(profile) }
+            .onFailure { error ->
+                Log.e(TAG, "Could not start proxy foreground service", error)
+                connectionState.failed("Proxy failed: ${error.message ?: "foreground service failed"}")
+                stopSelfResult(startId)
+            }
+            .isSuccess
+        if (!foregroundStarted) {
+            return START_NOT_STICKY
+        }
+	        stopRequested = false
+	        connectionState.connecting(profile, "Proxy connecting on ${localProxySummary(profile)}")
         if (startInProgress.compareAndSet(false, true)) {
             thread(name = "skirk-proxy-start", start = true) {
                 runCatching { startProxy(profile) }
@@ -70,7 +81,7 @@ class SkirkProxyService : Service() {
 							if (stopRequested) {
 								connectionState.stopped("Disconnected")
 							} else {
-								connectionState.failed("SOCKS failed: ${error.message ?: "start failed"}")
+								connectionState.failed("Proxy failed: ${error.message ?: "start failed"}")
 							}
 						}
 						stopProxy()
@@ -88,13 +99,24 @@ class SkirkProxyService : Service() {
         val state = connectionState.read()
         if (state.running && state.mode == ClientProfile.CONNECTION_MODE_PROXY) {
             stopRequested = true
-            connectionState.stopped("SOCKS stopped")
+            connectionState.stopped("Proxy stopped")
         }
         super.onDestroy()
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Proxy foreground service timed out type=$fgsType")
+        stopRequested = true
+        stopProxy()
+        if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+            connectionState.failed("Proxy stopped by Android foreground service timeout")
+        }
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelfResult(startId)
+    }
+
 	private fun startProxy(profile: ClientProfile) {
-		Log.i(TAG, "Starting proxy on ${profile.socksAddress}")
+		Log.i(TAG, "Starting proxy on ${localProxySummary(profile)}")
 		stopProxy()
 		if (stopRequested) {
 			return
@@ -104,13 +126,14 @@ class SkirkProxyService : Service() {
 			stopProxy()
 			return
 		}
-		engine.waitUntilReady(readinessHost(profile), profile.socksPort)
+		engine.waitUntilReady("local SOCKS proxy", readinessHost(profile.socksHost), profile.socksPort)
+		engine.waitUntilReady("local HTTP proxy", readinessHost(profile.httpHost), profile.httpPort)
 		if (stopRequested) {
 			stopProxy()
 			return
 		}
-		connectionState.connected(profile, "SOCKS connected on ${displayAddress(profile)}")
-        Log.i(TAG, "Proxy ready on ${profile.socksAddress}")
+		connectionState.connected(profile, "Proxy connected on ${displayProxySummary(profile)}")
+        Log.i(TAG, "Proxy ready on ${displayProxySummary(profile)}")
     }
 
     private fun stopProxy() {
@@ -145,15 +168,10 @@ class SkirkProxyService : Service() {
             Intent(this, SkirkProxyService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val address = if (profile.shareLan) {
-            lanAddresses(profile.socksPort).firstOrNull() ?: profile.socksAddress
-        } else {
-            profile.socksAddress
-        }
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle("Skirk is connected")
-            .setContentText("SOCKS5 $address")
+            .setContentText(displayProxySummary(profile))
             .setContentIntent(contentIntent)
             .addAction(
                 Notification.Action.Builder(
@@ -166,15 +184,22 @@ class SkirkProxyService : Service() {
             .build()
     }
 
-    private fun readinessHost(profile: ClientProfile): String =
-        if (profile.socksHost == "0.0.0.0") "127.0.0.1" else profile.socksHost
+    private fun readinessHost(host: String): String =
+        if (host == "0.0.0.0") "127.0.0.1" else host
 
-    private fun displayAddress(profile: ClientProfile): String =
+    private fun displayAddress(profile: ClientProfile, port: Int, loopbackAddress: String): String =
         if (profile.shareLan) {
-            lanAddresses(profile.socksPort).firstOrNull() ?: profile.socksAddress
+            lanAddresses(port).firstOrNull() ?: "0.0.0.0:$port"
         } else {
-            profile.socksAddress
+            loopbackAddress
         }
+
+    private fun displayProxySummary(profile: ClientProfile): String =
+        "SOCKS5 ${displayAddress(profile, profile.socksPort, profile.socksAddress)} · " +
+            "HTTP ${displayAddress(profile, profile.httpPort, profile.httpAddress)}"
+
+    private fun localProxySummary(profile: ClientProfile): String =
+        "SOCKS5 ${profile.socksAddress}, HTTP ${profile.httpAddress}"
 
     private fun ensureNotificationChannel() {
         val manager = getSystemService(NotificationManager::class.java)

@@ -3,9 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"github.com/ShahabSL/Skirk/internal/skirk"
 	"os"
 	"path/filepath"
-	"skirk/internal/skirk"
 	"strings"
 	"testing"
 )

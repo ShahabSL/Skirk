@@ -51,10 +51,13 @@ const (
 	autoExitExplicitUploadWindow   = 16
 	exitFamilyPreferenceTimeout    = 2 * time.Second
 	cleanupQuietWindow             = 15 * time.Second
-	cleanupMaxForegroundDelay      = 2 * time.Minute
+	cleanupMaxForegroundDelay      = 10 * time.Second
 	cleanupForegroundDeleteDelay   = 1 * time.Second
 	cleanupIdleDeleteDelay         = 1 * time.Second
 	cleanupDeleteTimeout           = 60 * time.Second
+	cleanupEnqueueWait             = 250 * time.Millisecond
+	cleanupEmergencyDeleteBatch    = 64
+	cleanupOverflowWorkers         = 4
 	exitDialTimeout                = 30 * time.Second
 	burstSlowListThreshold         = 3 * time.Second
 	burstCooldownAfterSlow         = 20 * time.Second

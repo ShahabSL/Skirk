@@ -66,17 +66,26 @@ This writes:
 Client release assets are built by GitHub Actions:
 
 - Windows portable desktop zip (`Skirk_windows_x64_portable.zip`) for normal GUI use.
+- Linux portable desktop zip (`Skirk_linux_x64_portable.zip`) for normal Linux
+  GUI proxy use.
+- macOS Apple Silicon desktop app zip (`Skirk_macos_arm64.app.zip`) for proxy
+  mode.
+- macOS Intel desktop app zip (`Skirk_macos_x64.app.zip`) for proxy mode.
 - Windows CLI zip (`skirk-windows-amd64.zip`) for manual PowerShell use. This
   asset is not the desktop app.
-- Android arm64 APK (`skirk-android-arm64.apk`) for sideload testing. The
-  GitHub release tag carries the version; the APK filename intentionally stays
-  stable for simple user instructions.
+- Android universal APK (`skirk-android-universal.apk`) for sideload testing on
+  both `arm64-v8a` and `armeabi-v7a` devices.
+- Android per-ABI APKs (`skirk-android-arm64-v8a.apk` and
+  `skirk-android-armeabi-v7a.apk`) for smaller downloads.
+- Android arm64 compatibility alias (`skirk-android-arm64.apk`) for existing
+  links. The GitHub release tag carries the version; APK filenames intentionally
+  stay stable for simple user instructions.
 
 The workflow publishes SHA-256 checksums and GitHub artifact attestations for
 the APK and archives. Verify a downloaded asset with:
 
 ```bash
-gh attestation verify ./skirk-android-arm64.apk -R ShahabSL/Skirk
+gh attestation verify ./skirk-android-universal.apk -R ShahabSL/Skirk
 sha256sum -c SHA256SUMS
 ```
 
@@ -126,7 +135,6 @@ Before tagging, validate the public setup flow from a clean Linux machine:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | SKIRK_VERSION=vX.Y.Z sh
-export PATH="$HOME/.local/bin:$PATH"
 skirk version
 skirk setup init --out skirk-kit --reset-google-login
 skirk serve-exit --config skirk-kit/exit.json

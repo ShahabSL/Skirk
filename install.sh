@@ -28,6 +28,10 @@ default_install_dir() {
     printf '%s\n' "$SKIRK_INSTALL_DIR"
     return 0
   fi
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\n' "/usr/local/bin"
+    return 0
+  fi
   printf '%s\n' "$HOME/.local/bin"
 }
 
@@ -39,7 +43,8 @@ Usage: install.sh [--version VERSION] [--wireproxy-only] [--dev-install] [uninst
 
 Environment:
   SKIRK_VERSION=latest|vX.Y.Z  Select the Skirk release.
-  SKIRK_INSTALL_DIR=PATH       Install directory. Default: \$HOME/.local/bin.
+  SKIRK_INSTALL_DIR=PATH       Install directory. Default: /usr/local/bin for root,
+                                  \$HOME/.local/bin for non-root users.
   SKIRK_REQUIRE_RELEASE_ASSET=1 Fail instead of building from source if release assets are unavailable.
                                   Defaults to 1 for explicit vX.Y.Z versions.
   SKIRK_INSTALL_WIREPROXY=1    Install Skirk-managed WARP wireproxy.
@@ -178,6 +183,113 @@ need() {
     echo "error: missing required command: $1" >&2
     exit 1
   }
+}
+
+is_skirk_binary_path() {
+  candidate="$1"
+  [ -x "$candidate" ] || return 1
+  output="$("$candidate" version 2>/dev/null || true)"
+  case "$output" in
+    "skirk "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+install_global_command_shim() {
+  if [ "$(id -u)" -ne 0 ]; then
+    return 1
+  fi
+  installed_bin="$install_dir/skirk"
+  command_path="/usr/local/bin/skirk"
+  [ "$installed_bin" != "$command_path" ] || return 1
+
+  mkdir -p /usr/local/bin
+  if [ -e "$command_path" ] || [ -L "$command_path" ]; then
+    if [ -L "$command_path" ]; then
+      rm -f "$command_path"
+    elif is_skirk_binary_path "$command_path"; then
+      rm -f "$command_path"
+    else
+      echo "Warning: $command_path exists and is not a Skirk binary; leaving it unchanged." >&2
+      return 1
+    fi
+  fi
+  ln -s "$installed_bin" "$command_path"
+  echo "Command available: $command_path -> $installed_bin"
+  return 0
+}
+
+remove_global_command_shim() {
+  installed_bin="$1"
+  command_path="/usr/local/bin/skirk"
+  [ "$installed_bin" != "$command_path" ] || return 0
+  [ -L "$command_path" ] || return 0
+  link_target="$(readlink "$command_path" 2>/dev/null || true)"
+  if [ "$link_target" = "$installed_bin" ]; then
+    run_root rm -f "$command_path"
+    echo "Removed command shim: $command_path"
+  fi
+}
+
+path_profile_expr() {
+  case "$install_dir" in
+    "$HOME"/*) printf '%s/%s\n' "\$HOME" "${install_dir#"$HOME"/}" ;;
+    *) printf '%s\n' "$install_dir" ;;
+  esac
+}
+
+append_path_to_profile() {
+  profile="$1"
+  path_expr="$2"
+  [ -n "$profile" ] || return 0
+  [ -f "$profile" ] || return 0
+  if grep -Fq "# Added by Skirk installer" "$profile" || grep -Fq "$path_expr" "$profile"; then
+    return 0
+  fi
+  cat >>"$profile" <<EOF
+
+# Added by Skirk installer
+case ":\$PATH:" in
+  *":$path_expr:"*) ;;
+  *) export PATH="$path_expr:\$PATH" ;;
+esac
+EOF
+  echo "Added Skirk PATH entry to $profile"
+}
+
+persist_user_path() {
+  [ -n "${HOME:-}" ] || return 0
+  case ":$PATH:" in
+    *":$install_dir:"*) return 0 ;;
+  esac
+  case "$install_dir" in
+    "$HOME"/*|/*) ;;
+    *) return 0 ;;
+  esac
+  path_expr="$(path_profile_expr)"
+  case "$path_expr" in
+    *"'"*) return 0 ;;
+  esac
+
+  profile="$HOME/.profile"
+  if [ ! -e "$profile" ]; then
+    touch "$profile" 2>/dev/null || true
+  fi
+  append_path_to_profile "$profile" "$path_expr"
+  append_path_to_profile "$HOME/.bashrc" "$path_expr"
+  append_path_to_profile "$HOME/.zprofile" "$path_expr"
+  append_path_to_profile "$HOME/.zshrc" "$path_expr"
+}
+
+ensure_skirk_command() {
+  if install_global_command_shim; then
+    return 0
+  fi
+  persist_user_path
+  case ":$PATH:" in
+    *":$install_dir:"*) echo "Command available: skirk" ;;
+    *) echo "Open a new shell or run: export PATH=\"$install_dir:\$PATH\"" ;;
+  esac
 }
 
 detect_platform() {
@@ -476,6 +588,7 @@ uninstall_skirk() {
     else
       rm -f "$skirk_bin"
       echo "Removed installed binary: $skirk_bin"
+      remove_global_command_shim "$skirk_bin"
     fi
   fi
   echo "Skirk uninstall complete."
@@ -841,13 +954,10 @@ main() {
   echo
   "$install_dir/skirk" version
   echo "Installed: $install_dir/skirk"
-  case ":$PATH:" in
-    *":$install_dir:"*) ;;
-    *) echo "Current shell may not find skirk yet. Run: export PATH=\"$install_dir:\$PATH\"" ;;
-  esac
+  ensure_skirk_command
   echo
-  echo "Next: run '$install_dir/skirk' for guided setup, including easy or personal OAuth."
-  echo "Direct setup is also available: '$install_dir/skirk setup init --out skirk-kit --reset-google-login'."
+  echo "Next: run 'skirk' for guided setup, including easy or personal OAuth."
+  echo "Direct setup is also available: 'skirk setup init --out skirk-kit --reset-google-login'."
 
   run_server_setup
 }

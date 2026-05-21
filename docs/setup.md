@@ -15,8 +15,7 @@ port because both sides exchange encrypted objects through Google Drive.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-"$HOME/.local/bin/skirk" version
+skirk version
 ```
 
 From a source checkout:
@@ -31,7 +30,7 @@ make build
 Reliable new-install path:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 On Linux this starts the exit as `skirk-exit.service` after Google login and
@@ -64,7 +63,7 @@ If IPv4 returns quickly but IPv6 times out, prefer IPv4 before rerunning setup:
 
 ```bash
 sudo sh -c 'grep -q "^precedence ::ffff:0:0/96 100" /etc/gai.conf || echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf'
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 This uses Google's OAuth device authorization flow.
@@ -118,13 +117,13 @@ To create a personal Skirk OAuth client:
 Then run:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
+skirk setup init --out skirk-kit --reset-google-login --oauth-client-file ./oauth-client.json
 ```
 
 The guided equivalent is:
 
 ```bash
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login --oauth-mode personal
+skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal
 ```
 
 The personal OAuth wizard prints the exact Google Cloud pages to open:
@@ -161,7 +160,7 @@ Or set environment variables for local builds:
 SKIRK_OAUTH_CLIENT_ID='...' \
 SKIRK_OAUTH_CLIENT_SECRET='...' \
 SKIRK_OAUTH_FLOW=desktop \
-"$HOME/.local/bin/skirk" setup init --out skirk-kit --reset-google-login
+skirk setup init --out skirk-kit --reset-google-login
 ```
 
 `SKIRK_OAUTH_FLOW=desktop` is the personal-project path that works cleanly on a
@@ -230,6 +229,24 @@ setup:
 skirk setup init --out skirk-kit --reset-google-login --exit-proxy socks5h://127.0.0.1:40000
 ```
 
+## Multiple Exit Instances
+
+One Linux exit machine can run more than one Skirk instance when you want to
+split traffic across multiple OAuth projects or Drive mailboxes. Run `skirk`
+and choose `Manage exit services and instances`:
+
+- `Create another Skirk exit instance` generates a separate kit under
+  `~/.config/skirk/instances/<id>/` and installs a service named
+  `skirk-exit-<id>` by default.
+- `Manage an existing exit instance` shows status, start/stop/restart, outbound
+  proxy/WARP configuration, Drive cleanup, and per-instance performance tuning.
+- `Delete this instance` has separate prompts for service removal, Drive object
+  deletion, OAuth revocation, and local kit deletion. It does not remove the
+  Skirk binary.
+
+The original `skirk-kit/exit.json` plus `skirk-exit.service` flow remains the
+default simple setup.
+
 When using `install.sh`, `SKIRK_INSTALL_WIREPROXY=1` installs Skirk-managed
 wgcf/wireproxy under fixed system paths, starts `wireproxy.service` as the
 unprivileged `skirk-wireproxy` user, and defaults `SKIRK_EXIT_PROXY` to the
@@ -290,6 +307,32 @@ skirk serve-client \
   --listen 127.0.0.1:18080 \
   --http-proxy-listen 127.0.0.1:18081
 ```
+
+For trusted-LAN sharing, bind both listeners to `0.0.0.0` and restrict access
+with host firewall rules:
+
+```bash
+skirk serve-client \
+  --config "$SKIRK_CLIENT_CONFIG" \
+  --listen 0.0.0.0:18080 \
+  --http-proxy-listen 0.0.0.0:18081
+```
+
+Clients can also override Drive runtime behavior:
+
+```bash
+skirk serve-client \
+  --config "$SKIRK_CLIENT_CONFIG" \
+  --listen 127.0.0.1:18080 \
+  --poll-ms 1000 \
+  --upload-concurrency 8 \
+  --download-concurrency 16 \
+  --metrics-path /tmp/skirk-client.metrics.json
+```
+
+Desktop and Android clients expose this through presets and show the same local
+metrics estimate in the UI. Treat it as local burn rate only, not remaining
+project quota.
 
 ## Restricted Networks
 

@@ -96,20 +96,41 @@ jobs:
         run: |
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           test -n "$apksigner"
-          "$apksigner" verify --print-certs clients/android/app/build/outputs/apk/release/app-release.apk
+          find clients/android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print0 \
+            | while IFS= read -r -d '' apk; do
+                echo "Verifying $apk"
+                "$apksigner" verify --print-certs "$apk"
+              done
 
       - name: Prepare Android release APK
         run: |
+          set -euo pipefail
+          apk_dir="clients/android/app/build/outputs/apk/release"
+          universal="$(find "$apk_dir" -maxdepth 1 -type f \( -name '*universal*release*.apk' -o -name 'app-release.apk' \) | sort | head -n 1)"
+          arm64="$(find "$apk_dir" -maxdepth 1 -type f -name '*arm64-v8a*release*.apk' | sort | head -n 1)"
+          armv7="$(find "$apk_dir" -maxdepth 1 -type f -name '*armeabi-v7a*release*.apk' | sort | head -n 1)"
+          test -n "$universal"
+          test -n "$arm64"
+          test -n "$armv7"
           mkdir -p dist/android
-          cp clients/android/app/build/outputs/apk/release/app-release.apk dist/android/skirk-android-arm64.apk
-          (cd dist/android && sha256sum skirk-android-arm64.apk > skirk-android-arm64.apk.sha256)
+          cp "$universal" dist/android/skirk-android-universal.apk
+          cp "$arm64" dist/android/skirk-android-arm64-v8a.apk
+          cp "$arm64" dist/android/skirk-android-arm64.apk
+          cp "$armv7" dist/android/skirk-android-armeabi-v7a.apk
+          (cd dist/android && for apk in *.apk; do sha256sum "$apk" > "$apk.sha256"; done)
 
       - uses: actions/upload-artifact@v7
         with:
           name: android-release
           path: |
+            dist/android/skirk-android-universal.apk
+            dist/android/skirk-android-universal.apk.sha256
+            dist/android/skirk-android-arm64-v8a.apk
+            dist/android/skirk-android-arm64-v8a.apk.sha256
             dist/android/skirk-android-arm64.apk
             dist/android/skirk-android-arm64.apk.sha256
+            dist/android/skirk-android-armeabi-v7a.apk
+            dist/android/skirk-android-armeabi-v7a.apk.sha256
           if-no-files-found: error
 
   windows-desktop:
@@ -205,6 +226,190 @@ jobs:
             dist/windows-portable/Skirk_windows_x64_portable.zip.sha256
           if-no-files-found: error
 
+  linux-desktop:
+    name: Build Linux Desktop Client
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
+
+      - name: Build Skirk Linux sidecar
+        env:
+          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
+          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+        run: clients/desktop/scripts/stage_sidecars.sh
+
+      - name: Stage Linux VPN sidecar
+        run: |
+          version="1.13.12"
+          expected_sha256="1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4"
+          archive="$RUNNER_TEMP/sing-box-$version-linux-amd64.tar.gz"
+          url="https://github.com/SagerNet/sing-box/releases/download/v$version/sing-box-$version-linux-amd64.tar.gz"
+          curl -fsSL "$url" -o "$archive"
+          actual_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          if [ "$actual_sha256" != "$expected_sha256" ]; then
+            echo "sing-box checksum mismatch: expected $expected_sha256 got $actual_sha256" >&2
+            exit 1
+          fi
+          extract="$RUNNER_TEMP/sing-box-linux"
+          mkdir -p "$extract" clients/desktop/src-tauri/resources/sidecars/linux
+          tar -xzf "$archive" -C "$extract"
+          sing_box="$(find "$extract" -type f -name sing-box -perm -111 | head -n 1)"
+          test -n "$sing_box"
+          cp "$sing_box" clients/desktop/src-tauri/resources/sidecars/linux/skirk-tunnel
+          license="$(find "$extract" -type f -name 'LICENSE*' | head -n 1)"
+          test -n "$license"
+          cp "$license" clients/desktop/src-tauri/resources/sidecars/linux/sing-box-LICENSE.txt
+
+      - name: Build Tauri desktop app
+        working-directory: clients/desktop
+        run: |
+          npm ci
+          npm run tauri build -- --no-bundle
+
+      - name: Build portable zip
+        run: python clients/desktop/scripts/package_linux_portable.py
+
+      - name: Prepare Linux desktop release checksums
+        run: |
+          (cd dist/linux-portable && sha256sum Skirk_linux_x64_portable.zip > Skirk_linux_x64_portable.zip.sha256)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-desktop-release
+          path: |
+            dist/linux-portable/Skirk_linux_x64_portable.zip
+            dist/linux-portable/Skirk_linux_x64_portable.zip.sha256
+          if-no-files-found: error
+
+  macos-desktop:
+    name: Build macOS Desktop Client (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            goarch: arm64
+            rust_target: aarch64-apple-darwin
+            file_arch: arm64
+          - arch: x64
+            runner: macos-15-intel
+            goarch: amd64
+            rust_target: x86_64-apple-darwin
+            file_arch: x86_64
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build Skirk macOS sidecar
+        env:
+          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
+          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p clients/desktop/src-tauri/resources/sidecars/macos
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          commit="${GITHUB_SHA::7}"
+          ldflags="-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${commit} -X main.date=${date}"
+          if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH}" = "1" ] && { [ -z "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -z "${SKIRK_OAUTH_CLIENT_SECRET}" ]; }; then
+            echo "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET for the built-in device-code OAuth client" >&2
+            exit 1
+          fi
+          if [ -n "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -n "${SKIRK_OAUTH_CLIENT_SECRET}" ]; then
+            if [ -z "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -z "${SKIRK_OAUTH_CLIENT_SECRET}" ]; then
+              echo "SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together" >&2
+              exit 1
+            fi
+            ldflags="${ldflags} -X main.defaultOAuthClientID=${SKIRK_OAUTH_CLIENT_ID} -X main.defaultOAuthClientSecret=${SKIRK_OAUTH_CLIENT_SECRET}"
+          fi
+          GOOS=darwin GOARCH="${{ matrix.goarch }}" CGO_ENABLED=0 go build -trimpath -ldflags "${ldflags}" -o clients/desktop/src-tauri/resources/sidecars/macos/skirk ./cmd/skirk
+          chmod +x clients/desktop/src-tauri/resources/sidecars/macos/skirk
+
+      - name: Build Tauri macOS app
+        working-directory: clients/desktop
+        run: |
+          npm ci
+          npm run tauri build -- --target "${{ matrix.rust_target }}" --bundles app --no-sign
+
+      - name: Smoke macOS bundle
+        run: |
+          set -euo pipefail
+          app="$(find "clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -name 'Skirk.app' -type d | head -n 1)"
+          test -d "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          app_exe="$app/Contents/MacOS/skirk-desktop"
+          sidecar="$app/Contents/Resources/resources/sidecars/macos/skirk"
+          test -x "$app_exe"
+          test -x "$sidecar"
+          file "$app_exe" | grep -F "${{ matrix.file_arch }}"
+          file "$sidecar" | grep -F "${{ matrix.file_arch }}"
+          "$sidecar" version
+
+      - name: Package macOS app zip
+        run: |
+          set -euo pipefail
+          app="$(find "clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -name 'Skirk.app' -type d | head -n 1)"
+          out_dir="dist/macos-${{ matrix.arch }}"
+          mkdir -p "$out_dir"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$out_dir/Skirk_macos_${{ matrix.arch }}.app.zip"
+          (cd "$out_dir" && shasum -a 256 "Skirk_macos_${{ matrix.arch }}.app.zip" > "Skirk_macos_${{ matrix.arch }}.app.zip.sha256")
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-desktop-${{ matrix.arch }}-release
+          path: |
+            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}.app.zip
+            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}.app.zip.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-24.04
@@ -212,7 +417,10 @@ jobs:
       - release
       - android
       - windows-desktop
+      - linux-desktop
+      - macos-desktop
     permissions:
+      actions: read
       contents: write
       attestations: write
       id-token: write
@@ -226,7 +434,10 @@ jobs:
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --dir dist-release \
             --name cli-release \
             --name android-release \
-            --name windows-desktop-release
+            --name windows-desktop-release \
+            --name linux-desktop-release \
+            --name macos-desktop-arm64-release \
+            --name macos-desktop-x64-release
           find dist-release -mindepth 2 -type f -print0 | while IFS= read -r -d '' file; do
             mv "$file" "dist-release/$(basename "$file")"
           done
@@ -241,9 +452,15 @@ jobs:
         with:
           subject-path: |
             dist-release/skirk-android-arm64.apk
+            dist-release/skirk-android-arm64-v8a.apk
+            dist-release/skirk-android-armeabi-v7a.apk
+            dist-release/skirk-android-universal.apk
             dist-release/skirk-linux-amd64.tar.gz
             dist-release/skirk-linux-arm64.tar.gz
             dist-release/skirk-windows-amd64.zip
+            dist-release/Skirk_linux_x64_portable.zip
+            dist-release/Skirk_macos_arm64.app.zip
+            dist-release/Skirk_macos_x64.app.zip
             dist-release/Skirk_windows_x64_portable.zip
 
       - name: Publish release assets
@@ -258,7 +475,7 @@ jobs:
           fi
           stale_android_asset="skirk-${GITHUB_REF_NAME}-android-arm64.apk"
           stale_android_checksum="${stale_android_asset}.sha256"
-          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-android-arm64.apk: release-signed Android arm64 APK for sideloading.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APK.\n- GitHub artifact attestations are generated for the APK and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
+          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- Skirk_linux_x64_portable.zip: Linux GUI portable app with proxy and VPN modes, local/LAN SOCKS, and local/LAN HTTP proxy endpoints. Extract it and run ./Skirk; VPN mode needs root or CAP_NET_ADMIN.\n- Skirk_macos_arm64.app.zip: macOS Apple Silicon desktop app, proxy mode only in this release.\n- Skirk_macos_x64.app.zip: macOS Intel desktop app, proxy mode only in this release.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-android-universal.apk: release-signed Android APK for arm64-v8a and armeabi-v7a devices.\n- skirk-android-arm64-v8a.apk: smaller Android APK for 64-bit ARM devices.\n- skirk-android-armeabi-v7a.apk: smaller Android APK for 32-bit ARM devices.\n- skirk-android-arm64.apk: compatibility alias for skirk-android-arm64-v8a.apk.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APKs.\n- GitHub artifact attestations are generated for the APKs and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             existing_assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
             for stale in "${stale_android_asset}" "${stale_android_checksum}"; do
