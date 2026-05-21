@@ -89,9 +89,9 @@ type Tunnel struct {
 	downloadLimiter      *adaptiveLimiter
 	muxMu                sync.Mutex
 	clientMux            *driveMux
-	lastActivityNS       int64
-	lastUploadNS         int64
-	burstDisabledUntilNS int64
+	lastActivityNS       atomic.Int64
+	lastUploadNS         atomic.Int64
+	burstDisabledUntilNS atomic.Int64
 	PollInterval         time.Duration
 	CleanupProcessed     bool
 	Logger               *log.Logger
@@ -219,30 +219,30 @@ func controlIsFresh(info ObjectInfo, startedAt time.Time) bool {
 }
 
 func (t *Tunnel) markActivity() {
-	atomic.StoreInt64(&t.lastActivityNS, time.Now().UnixNano())
+	t.lastActivityNS.Store(time.Now().UnixNano())
 }
 
 func (t *Tunnel) markUpload() {
 	now := time.Now()
-	atomic.StoreInt64(&t.lastUploadNS, now.UnixNano())
-	atomic.StoreInt64(&t.lastActivityNS, now.UnixNano())
+	t.lastUploadNS.Store(now.UnixNano())
+	t.lastActivityNS.Store(now.UnixNano())
 }
 
 func (t *Tunnel) markSlowList(duration time.Duration) {
 	if !t.BurstPoll || duration < burstSlowListThreshold {
 		return
 	}
-	atomic.StoreInt64(&t.burstDisabledUntilNS, time.Now().Add(burstCooldownAfterSlow).UnixNano())
+	t.burstDisabledUntilNS.Store(time.Now().Add(burstCooldownAfterSlow).UnixNano())
 }
 
 func (t *Tunnel) burstPollActive(now time.Time) bool {
 	if t == nil || !t.BurstPoll || t.BurstPollInterval <= 0 || t.BurstPollWindow <= 0 {
 		return false
 	}
-	if disabledUntil := atomic.LoadInt64(&t.burstDisabledUntilNS); disabledUntil > 0 && now.Before(time.Unix(0, disabledUntil)) {
+	if disabledUntil := t.burstDisabledUntilNS.Load(); disabledUntil > 0 && now.Before(time.Unix(0, disabledUntil)) {
 		return false
 	}
-	lastUpload := atomic.LoadInt64(&t.lastUploadNS)
+	lastUpload := t.lastUploadNS.Load()
 	if lastUpload <= 0 {
 		return false
 	}
@@ -253,7 +253,7 @@ func (t *Tunnel) burstPollActive(now time.Time) bool {
 }
 
 func (t *Tunnel) recentActivity() bool {
-	last := atomic.LoadInt64(&t.lastActivityNS)
+	last := t.lastActivityNS.Load()
 	return last > 0 && time.Since(time.Unix(0, last)) <= openPollWarmWindow
 }
 
@@ -843,7 +843,7 @@ func (t *Tunnel) foregroundBusy() bool {
 	if t.activeStreams.Load() > 0 {
 		return true
 	}
-	last := atomic.LoadInt64(&t.lastActivityNS)
+	last := t.lastActivityNS.Load()
 	return last > 0 && time.Since(time.Unix(0, last)) < cleanupQuietWindow
 }
 

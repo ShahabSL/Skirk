@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.1.54 - 2026-05-20
+
+- Fixed the Android ARMv7 engine startup crash by replacing raw 64-bit atomic
+  fields with Go typed atomics, which are correctly aligned on 32-bit runtimes.
+- Added a 32-bit Go regression gate to preflight so `NewTunnel` startup is
+  exercised under a 32-bit runtime class before release.
+
+## v0.1.53 - 2026-05-20
+
 - Added macOS desktop release artifacts for Apple Silicon and Intel, with CI
   smoke checks for the `.app` bundle and bundled Skirk sidecar.
 - Added Android `armeabi-v7a` support and release-signed universal/per-ABI APK

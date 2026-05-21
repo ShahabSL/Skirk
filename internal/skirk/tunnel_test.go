@@ -87,6 +87,28 @@ func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	}
 }
 
+// Run this test under a 32-bit GOARCH in preflight. ARMv7 panics at runtime if
+// 64-bit atomics are stored in fields that are not 64-bit aligned.
+func TestNewTunnelStartsOn32BitAtomicRuntime(t *testing.T) {
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
+		Tunnel: TunnelConfig{
+			ChunkSize:      64,
+			PollIntervalMS: 10,
+		},
+	}
+	cfg.ApplyDefaults()
+	if _, err := NewTunnel(NewMemoryStore(), cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTunnelExitProxyWithMemoryStores(t *testing.T) {
 	proxyTargets := make(chan string, 1)
 	proxy := SOCKSServer{
@@ -3854,7 +3876,7 @@ func TestCleanupForegroundBusyState(t *testing.T) {
 	if !tunnel.foregroundBusy() {
 		t.Fatal("recent activity should make cleanup wait")
 	}
-	atomic.StoreInt64(&tunnel.lastActivityNS, time.Now().Add(-cleanupQuietWindow-time.Second).UnixNano())
+	tunnel.lastActivityNS.Store(time.Now().Add(-cleanupQuietWindow - time.Second).UnixNano())
 	if tunnel.foregroundBusy() {
 		t.Fatal("old activity should allow cleanup")
 	}
