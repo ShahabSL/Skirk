@@ -1,0 +1,32 @@
+name: Skirk Proxy
+
+on:
+  schedule:
+    - cron: '0 */5 * * *'
+  workflow_dispatch:
+
+jobs:
+  skirk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install skirk
+        run: |
+          curl -fsSL https://github.com/ShahabSL/Skirk/releases/latest/download/skirk-linux-amd64.tar.gz -o /tmp/skirk.tar.gz
+          mkdir -p /tmp/skirk-extract
+          tar -xzf /tmp/skirk.tar.gz -C /tmp/skirk-extract
+          sudo mv /tmp/skirk-extract/skirk /usr/local/bin/skirk
+
+      - name: Run skirk exit
+        run: |
+          echo '${{ secrets.EXIT_JSON }}' > /tmp/exit.json
+          skirk serve-exit --config /tmp/exit.json &
+
+      - name: Run skirk client
+        run: |
+          skirk serve-client --config '${{ secrets.CLIENT_SKIRK }}' --listen 127.0.0.1:18080 &
+          sleep infinity
