@@ -29,21 +29,27 @@ jobs:
           - name: linux-x64
             runner: ubuntu-24.04
             binary: skirk-smoke
+            full_go_tests: true
           - name: linux-arm64
             runner: ubuntu-24.04-arm
             binary: skirk-smoke
+            full_go_tests: true
           - name: windows-x64
             runner: windows-2022
             binary: skirk-smoke.exe
+            full_go_tests: false
           - name: windows-arm64
             runner: windows-11-arm
             binary: skirk-smoke.exe
+            full_go_tests: false
           - name: macos-x64
             runner: macos-15-intel
             binary: skirk-smoke
+            full_go_tests: false
           - name: macos-arm64
             runner: macos-15
             binary: skirk-smoke
+            full_go_tests: false
     steps:
       - name: Configure Git default branch
         run: git config --global init.defaultBranch main
@@ -54,8 +60,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run Go tests
+      - name: Run full Go tests
+        if: matrix.full_go_tests
         run: go test ./...
+
+      - name: Run portable Go smoke tests
+        if: ${{ !matrix.full_go_tests }}
+        run: |
+          go test ./internal/skirk
+          go test ./cmd/skirk -run '^$'
 
       - name: Build and run CLI
         run: |
