@@ -47,13 +47,13 @@ func menu(ctx context.Context) error {
 		case "2":
 			return createGoogleKitFromMenu(ctx, reader, "personal")
 		case "3":
-			config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+			config, err := prompt(ctx, reader, "Exit config", defaultKitFile("exit.json"))
 			if err != nil {
 				return err
 			}
 			return serveExit(ctx, []string{"--config", config})
 		case "4":
-			config, err := prompt(ctx, reader, "Client config or pasted text", "skirk-kit/client.skirk")
+			config, err := prompt(ctx, reader, "Client config or pasted text", defaultKitFile("client.skirk"))
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ func menu(ctx context.Context) error {
 			}
 			return serveClient(ctx, []string{"--config", config, "--listen", listen})
 		case "5":
-			config, err := prompt(ctx, reader, "Client config or pasted text", "skirk-kit/client.skirk")
+			config, err := prompt(ctx, reader, "Client config or pasted text", defaultKitFile("client.skirk"))
 			if err != nil {
 				return err
 			}
@@ -81,7 +81,7 @@ func menu(ctx context.Context) error {
 				return err
 			}
 		case "7":
-			config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+			config, err := prompt(ctx, reader, "Exit config", defaultKitFile("exit.json"))
 			if err != nil {
 				return err
 			}
@@ -165,7 +165,7 @@ func uninstallFromMenu(ctx context.Context, reader *bufio.Reader) error {
 	if err != nil {
 		return err
 	}
-	configPath, err := prompt(ctx, reader, "Exit config for optional cleanup/revoke", "skirk-kit/exit.json")
+	configPath, err := prompt(ctx, reader, "Exit config for optional cleanup/revoke", defaultKitFile("exit.json"))
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 	}
 	switch choice {
 	case "1":
-		config, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+		config, err := prompt(ctx, reader, "Exit config", defaultKitFile("exit.json"))
 		if err != nil {
 			return err
 		}
@@ -339,7 +339,7 @@ func serviceMenu(ctx context.Context, reader *bufio.Reader) error {
 }
 
 func outboundProxyMenu(ctx context.Context, reader *bufio.Reader, serviceName string) error {
-	configPath, err := prompt(ctx, reader, "Exit config", "skirk-kit/exit.json")
+	configPath, err := prompt(ctx, reader, "Exit config", defaultKitFile("exit.json"))
 	if err != nil {
 		return err
 	}

@@ -50,6 +50,23 @@ go vet ./...
 go test -race ./internal/skirk
 ```
 
+## GitHub Smoke Coverage
+
+The public repository has a heavier `Smoke` workflow for platform coverage that
+is too broad for every local edit. It runs on GitHub's standard hosted runners
+for:
+
+- Linux x64 and arm64 CLI tests;
+- Windows x64 and arm64 CLI tests;
+- macOS Intel and Apple Silicon CLI tests;
+- Linux, Windows, and macOS desktop build/package smoke;
+- Android debug APK build plus static ABI/package validation.
+
+This uses public-repository hosted runners only. It does not prove physical
+Android VPN behavior, Windows administrator VPN behavior, hostile-network
+latency, or live Google Drive quota behavior. Those still need real devices,
+real Windows hosts, and live Drive credentials under `.skirk-runs/`.
+
 ## Live Transport Testing
 
 Live Drive tests require real credentials and should remain manual. Keep outputs

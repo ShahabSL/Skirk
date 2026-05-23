@@ -22,6 +22,11 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+const CLIENT_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const CUSTOM_MIN_POLL_MS: u16 = 250;
+const CUSTOM_MAX_UPLOAD_WORKERS: u16 = 64;
+const CUSTOM_MAX_DOWNLOAD_WORKERS: u16 = 64;
+
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::CloseHandle,
@@ -170,6 +175,7 @@ struct QuotaSnapshot {
     calls: i64,
     units: i64,
     errors: i64,
+    last_error_reason: Option<String>,
     response_bytes: i64,
 }
 
@@ -179,6 +185,7 @@ struct QuotaRate {
     calls: f64,
     units: f64,
     errors: f64,
+    last_error_reason: Option<String>,
     response_bytes: f64,
 }
 
@@ -302,13 +309,15 @@ fn normalize_performance_settings(
     if settings.preset != PerformancePreset::Custom {
         return Ok(performance_for_preset(settings.preset));
     }
-    if settings.poll_ms < 250 || settings.poll_ms > 60_000 {
+    if settings.poll_ms < CUSTOM_MIN_POLL_MS || settings.poll_ms > 60_000 {
         return Err("check interval must be between 250 ms and 60000 ms".into());
     }
-    if settings.upload_concurrency < 1 || settings.upload_concurrency > 64 {
+    if settings.upload_concurrency < 1 || settings.upload_concurrency > CUSTOM_MAX_UPLOAD_WORKERS {
         return Err("upload workers must be between 1 and 64".into());
     }
-    if settings.download_concurrency < 1 || settings.download_concurrency > 64 {
+    if settings.download_concurrency < 1
+        || settings.download_concurrency > CUSTOM_MAX_DOWNLOAD_WORKERS
+    {
         return Err("download workers must be between 1 and 64".into());
     }
     if settings.burst_poll_ms < 25 || settings.burst_poll_ms > 1000 {
@@ -644,8 +653,7 @@ impl DesktopRuntime {
         if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
             return Err(vpn_unavailable_message());
         }
-        let socks_address = format!("{}:{}", profile.socks_host, profile.socks_port);
-        let http_address = format!("{}:{}", profile.http_host, profile.http_port);
+        let (socks_address, http_address) = listener_addresses_for_mode(&profile, &mode);
         let route_mode = "google_front_pinned";
         let google_ip = canonical_google_ip(&profile.google_ip)?;
         ensure_port_free(&socks_address)?;
@@ -657,7 +665,8 @@ impl DesktopRuntime {
         let _ = fs::remove_file(&metrics_path);
         let log = OpenOptions::new()
             .create(true)
-            .append(true)
+            .write(true)
+            .truncate(true)
             .open(&log_path)
             .map_err(|error| format!("failed to open log: {error}"))?;
         let log_err = log
@@ -715,21 +724,26 @@ impl DesktopRuntime {
 
         let socks_probe_address = loopback_probe_address(&socks_address);
         let http_probe_address = loopback_probe_address(&http_address);
-        if !wait_for_socks5_endpoint(&socks_probe_address, Duration::from_secs(10)) {
+        if let Err(error) = wait_for_socks5_endpoint_or_exit(
+            &mut child,
+            &socks_probe_address,
+            CLIENT_READY_TIMEOUT,
+            &log_path,
+        ) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(self.mark_connect_error(format!(
-                "Skirk did not open SOCKS endpoint {socks_address}\n{}",
-                read_log_tail(&log_path, 80)
-            )));
+            return Err(self.mark_connect_error(error));
         }
-        if !wait_for_tcp_endpoint(&http_probe_address, Duration::from_secs(10)) {
+        if let Err(error) = wait_for_tcp_endpoint_or_exit(
+            &mut child,
+            &http_probe_address,
+            "HTTP proxy",
+            CLIENT_READY_TIMEOUT,
+            &log_path,
+        ) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(self.mark_connect_error(format!(
-                "Skirk did not open HTTP proxy endpoint {http_address}\n{}",
-                read_log_tail(&log_path, 80)
-            )));
+            return Err(self.mark_connect_error(error));
         }
 
         let mut tunnel = None;
@@ -1284,26 +1298,98 @@ fn run_quiet(program: &str, args: &[&str]) -> Result<(), ()> {
     }
 }
 
-fn wait_for_tcp_endpoint(address: &str, timeout: Duration) -> bool {
+fn wait_for_tcp_endpoint_or_exit(
+    child: &mut Child,
+    address: &str,
+    label: &str,
+    timeout: Duration,
+    log_path: &Path,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if TcpStream::connect(address).is_ok() {
-            return true;
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().map_err(|error| {
+            format!("Skirk sidecar status check failed while waiting for {label}: {error}")
+        })? {
+            return Err(startup_probe_error(
+                label,
+                address,
+                Some(&format!("sidecar exited with {status}")),
+                log_path,
+            ));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    false
+    Err(startup_probe_error(label, address, None, log_path))
 }
 
-fn wait_for_socks5_endpoint(address: &str, timeout: Duration) -> bool {
+fn wait_for_socks5_endpoint_or_exit(
+    child: &mut Child,
+    address: &str,
+    timeout: Duration,
+    log_path: &Path,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if socks5_no_auth_probe(address) {
-            return true;
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().map_err(|error| {
+            format!("Skirk sidecar status check failed while waiting for SOCKS: {error}")
+        })? {
+            return Err(startup_probe_error(
+                "SOCKS",
+                address,
+                Some(&format!("sidecar exited with {status}")),
+                log_path,
+            ));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    false
+    Err(startup_probe_error("SOCKS", address, None, log_path))
+}
+
+fn startup_probe_error(
+    label: &str,
+    address: &str,
+    detail: Option<&str>,
+    log_path: &Path,
+) -> String {
+    let mut message = format!(
+        "Skirk could not verify the local {label} listener at {address}. Skirk was stopped."
+    );
+    if let Some(detail) = detail {
+        message.push(' ');
+        message.push_str(detail);
+        message.push('.');
+    }
+    if let Some(line) = last_meaningful_log_line(log_path) {
+        message.push_str(" Last log: ");
+        message.push_str(&line);
+        message.push('.');
+    }
+    message.push_str(" Open Logs for full sidecar details.");
+    message
+}
+
+fn last_meaningful_log_line(path: &Path) -> Option<String> {
+    let tail = read_log_tail(path, 24);
+    tail.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| {
+            const MAX_LINE: usize = 220;
+            let mut chars = line.chars();
+            let shortened: String = chars.by_ref().take(MAX_LINE).collect();
+            if chars.next().is_some() {
+                format!("{shortened}...")
+            } else {
+                line.to_string()
+            }
+        })
 }
 
 fn socks5_no_auth_probe(address: &str) -> bool {
@@ -1394,6 +1480,19 @@ fn loopback_probe_address(address: &str) -> String {
         .strip_prefix("0.0.0.0:")
         .map(|port| format!("127.0.0.1:{port}"))
         .unwrap_or_else(|| address.to_string())
+}
+
+fn listener_addresses_for_mode(profile: &ClientProfile, mode: &ConnectionMode) -> (String, String) {
+    if matches!(mode, ConnectionMode::Vpn) {
+        return (
+            format!("127.0.0.1:{}", profile.socks_port),
+            format!("127.0.0.1:{}", profile.http_port),
+        );
+    }
+    (
+        format!("{}:{}", profile.socks_host, profile.socks_port),
+        format!("{}:{}", profile.http_host, profile.http_port),
+    )
 }
 
 fn process_path_for_rules(path: &Path) -> String {
@@ -1770,13 +1869,19 @@ fn portable_root() -> Option<PathBuf> {
 }
 
 fn load_profiles(paths: &AppPaths) -> Result<Vec<ClientProfile>, String> {
-    read_json(&paths.profiles_file).or_else(|error| {
+    let mut profiles: Vec<ClientProfile> = read_json(&paths.profiles_file).or_else(|error| {
         if paths.profiles_file.exists() {
             Err(error)
         } else {
             Ok(Vec::new())
         }
-    })
+    })?;
+    for profile in &mut profiles {
+        if profile.socks_host == "0.0.0.0" || profile.http_host == "0.0.0.0" {
+            profile.share_lan = true;
+        }
+    }
+    Ok(profiles)
 }
 
 fn save_profiles(paths: &AppPaths, profiles: &[ClientProfile]) -> Result<(), String> {
@@ -1952,6 +2057,59 @@ mod tests {
     }
 
     #[test]
+    fn listener_addresses_force_loopback_for_vpn_when_profile_shares_lan() {
+        let profile = test_profile(true);
+        let (socks, http) = listener_addresses_for_mode(&profile, &ConnectionMode::Vpn);
+        assert_eq!(socks, "127.0.0.1:18080");
+        assert_eq!(http, "127.0.0.1:18081");
+    }
+
+    #[test]
+    fn listener_addresses_preserve_lan_for_proxy_and_system() {
+        let profile = test_profile(true);
+        assert_eq!(
+            listener_addresses_for_mode(&profile, &ConnectionMode::Proxy),
+            ("0.0.0.0:18080".into(), "0.0.0.0:18081".into())
+        );
+        assert_eq!(
+            listener_addresses_for_mode(&profile, &ConnectionMode::System),
+            ("0.0.0.0:18080".into(), "0.0.0.0:18081".into())
+        );
+    }
+
+    #[test]
+    fn normalize_performance_settings_accepts_explicit_high_custom_combo() {
+        let result = normalize_performance_settings(ClientPerformanceSettings {
+            preset: PerformancePreset::Custom,
+            poll_ms: 250,
+            upload_concurrency: 64,
+            download_concurrency: 64,
+            burst_poll: true,
+            burst_poll_ms: 75,
+            burst_poll_window_ms: 5000,
+        });
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn startup_probe_error_does_not_dump_log_tail() {
+        let dir = std::env::temp_dir().join(format!("skirk-test-{}", epoch_millis()));
+        fs::create_dir_all(&dir).expect("tempdir");
+        let log_path = dir.join("skirk-client.log");
+        fs::write(
+            &log_path,
+            "old line\nskirk client SOCKS5 listening on 127.0.0.1:18080\nanother detailed line\n",
+        )
+        .expect("write log");
+
+        let message = startup_probe_error("SOCKS", "127.0.0.1:18080", None, &log_path);
+        assert!(message.contains("Open Logs for full sidecar details"));
+        assert!(!message.contains("old line"));
+        assert!(!message.contains("skirk client SOCKS5 listening"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn tunnel_config_uses_sing_box_1_13_tun_fields() {
         let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "216.239.38.120");
         let inbound = config
@@ -2118,5 +2276,23 @@ mod tests {
             "8.8.8.8"
         );
         assert!(canonical_google_ip("not-an-ip").is_err());
+    }
+
+    fn test_profile(share_lan: bool) -> ClientProfile {
+        ClientProfile {
+            id: "profile-test".into(),
+            name: "Test profile".into(),
+            config_path: "/tmp/client.skirk".into(),
+            socks_host: if share_lan { "0.0.0.0" } else { "127.0.0.1" }.into(),
+            socks_port: 18080,
+            http_host: if share_lan { "0.0.0.0" } else { "127.0.0.1" }.into(),
+            http_port: 18081,
+            share_lan,
+            route_mode: "google_front_pinned".into(),
+            google_ip: "216.239.38.120".into(),
+            drive_space: "appDataFolder".into(),
+            drive_folder_id: String::new(),
+            performance: default_performance_settings(),
+        }
     }
 }

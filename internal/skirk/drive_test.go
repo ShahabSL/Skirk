@@ -797,14 +797,17 @@ func TestDriveStoreCleanupHonorsMaxDeletes(t *testing.T) {
 func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	stats := newDriveQuotaStats(time.Minute)
 	stats.since = time.Now().Add(-time.Second)
-	stats.Record("upload", http.StatusOK, 10, 100*time.Millisecond, nil)
+	stats.Record("upload", http.StatusOK, 10, 100*time.Millisecond, nil, "")
 	stats.since = time.Now().Add(-time.Minute)
-	report, ok := stats.Record("download", http.StatusTooManyRequests, 20, 250*time.Millisecond, nil)
+	report, ok := stats.Record("download", http.StatusTooManyRequests, 20, 250*time.Millisecond, nil, "rateLimitExceeded")
 	if !ok {
 		t.Fatal("expected report")
 	}
 	if report.Calls != 2 || report.Units != 250 || report.Errors != 1 || report.ResponseBytes != 30 {
 		t.Fatalf("report = %+v, want 2 calls, 250 units, 1 error, 30 bytes", report)
+	}
+	if report.LastErrorReason != "rateLimitExceeded" {
+		t.Fatalf("last error reason = %q, want rateLimitExceeded", report.LastErrorReason)
 	}
 	if report.Ops["upload"].Units != 50 || report.Ops["download"].Units != 200 {
 		t.Fatalf("ops = %#v, want upload=50 and download=200 units", report.Ops)
@@ -818,6 +821,9 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	snapshot := stats.Snapshot()
 	if snapshot.Calls != 2 || snapshot.Units != 250 || snapshot.Errors != 1 || snapshot.ResponseBytes != 30 {
 		t.Fatalf("snapshot = %+v, want lifetime totals after window reset", snapshot)
+	}
+	if snapshot.LastErrorReason != "rateLimitExceeded" {
+		t.Fatalf("snapshot last error reason = %q, want rateLimitExceeded", snapshot.LastErrorReason)
 	}
 	if snapshot.Ops["download"].P50DurationMS != 250 || snapshot.Ops["upload"].P95DurationMS != 100 {
 		t.Fatalf("snapshot ops = %+v, want duration percentiles", snapshot.Ops)
@@ -846,6 +852,30 @@ func TestDriveQuotaSnapshotDeltaOmitsIdleOps(t *testing.T) {
 	}
 	if got := delta.Ops["list"].Calls; got != 1 {
 		t.Fatalf("list delta calls = %d, want 1", got)
+	}
+}
+
+func TestDriveQuotaSnapshotDeltaCarriesErrorReasonFromOps(t *testing.T) {
+	before := DriveQuotaSnapshot{
+		Calls:  1,
+		Errors: 0,
+		Ops: map[string]DriveQuotaOpSnapshot{
+			"upload": {Calls: 1, Errors: 0},
+		},
+	}
+	after := DriveQuotaSnapshot{
+		Calls:  2,
+		Errors: 1,
+		Ops: map[string]DriveQuotaOpSnapshot{
+			"upload": {Calls: 2, Errors: 1, LastErrorReason: "storageQuotaExceeded"},
+		},
+	}
+	delta := after.Delta(before)
+	if delta.LastErrorReason != "storageQuotaExceeded" {
+		t.Fatalf("delta last error reason = %q, want storageQuotaExceeded", delta.LastErrorReason)
+	}
+	if delta.Ops["upload"].LastErrorReason != "storageQuotaExceeded" {
+		t.Fatalf("op last error reason = %q, want storageQuotaExceeded", delta.Ops["upload"].LastErrorReason)
 	}
 }
 

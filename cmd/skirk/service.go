@@ -102,6 +102,9 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	if err := validateSystemdUser(user); err != nil {
 		return err
 	}
+	if err := validateServicePathsForUser(exe, configPath, user); err != nil {
+		return err
+	}
 	unitText := systemdUnitText(exe, configPath, user)
 	tmp, err := os.CreateTemp("", "skirk-*.service")
 	if err != nil {
@@ -513,6 +516,24 @@ func validateSystemdUser(user string) error {
 		}
 	}
 	return nil
+}
+
+func validateServicePathsForUser(exePath, configPath, serviceUser string) error {
+	if serviceUser == "root" {
+		return nil
+	}
+	if isRootPrivatePath(exePath) {
+		return fmt.Errorf("systemd service user %q cannot execute Skirk from %s; install Skirk under /usr/local/bin or run the service as root", serviceUser, exePath)
+	}
+	if isRootPrivatePath(configPath) {
+		return fmt.Errorf("systemd service user %q cannot read Skirk config from %s; move the kit outside /root or run the service as root", serviceUser, configPath)
+	}
+	return nil
+}
+
+func isRootPrivatePath(path string) bool {
+	clean := filepath.Clean(path)
+	return clean == "/root" || strings.HasPrefix(clean, "/root/")
 }
 
 func systemdUnitValue(value string) string {

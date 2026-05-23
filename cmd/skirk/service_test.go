@@ -88,6 +88,18 @@ func TestValidateSystemdUserRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestValidateServicePathsForUserRejectsRootPrivatePathsForNonRootUser(t *testing.T) {
+	if err := validateServicePathsForUser("/root/.local/bin/skirk", "/home/ubuntu/skirk-kit/exit.json", "ubuntu"); err == nil {
+		t.Fatal("validateServicePathsForUser accepted /root binary for non-root service user")
+	}
+	if err := validateServicePathsForUser("/usr/local/bin/skirk", "/root/skirk-kit/exit.json", "ubuntu"); err == nil {
+		t.Fatal("validateServicePathsForUser accepted /root config for non-root service user")
+	}
+	if err := validateServicePathsForUser("/root/.local/bin/skirk", "/root/skirk-kit/exit.json", "root"); err != nil {
+		t.Fatalf("validateServicePathsForUser rejected root service user: %v", err)
+	}
+}
+
 func TestAssertSkirkDropInDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "10-wireproxy.conf")

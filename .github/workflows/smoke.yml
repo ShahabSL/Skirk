@@ -1,0 +1,416 @@
+name: Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-platform:
+    name: Go CLI (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            binary: skirk-smoke
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            binary: skirk-smoke
+          - name: windows-x64
+            runner: windows-2022
+            binary: skirk-smoke.exe
+          - name: windows-arm64
+            runner: windows-11-arm
+            binary: skirk-smoke.exe
+          - name: macos-x64
+            runner: macos-15-intel
+            binary: skirk-smoke
+          - name: macos-arm64
+            runner: macos-15
+            binary: skirk-smoke
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build and run CLI
+        run: |
+          go build -trimpath -o "${{ matrix.binary }}" ./cmd/skirk
+          "./${{ matrix.binary }}" version
+          "./${{ matrix.binary }}" help
+
+  go-vet:
+    name: Go vet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run go vet
+        run: go vet ./...
+
+  cli-release-archives:
+    name: CLI release archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build package-release artifacts
+        env:
+          VERSION: v0.0.0-smoke
+        run: scripts/package_release.sh
+
+      - name: Verify package-release artifacts
+        run: |
+          set -euo pipefail
+          test -s dist/skirk-linux-amd64.tar.gz
+          test -s dist/skirk-linux-arm64.tar.gz
+          test -s dist/skirk-windows-amd64.zip
+          test -s dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+
+          linux_x64="$RUNNER_TEMP/linux-amd64"
+          mkdir -p "$linux_x64"
+          tar -xzf dist/skirk-linux-amd64.tar.gz -C "$linux_x64"
+          test -x "$linux_x64/skirk"
+          "$linux_x64/skirk" version | grep -F "v0.0.0-smoke"
+
+          tar -tzf dist/skirk-linux-arm64.tar.gz | grep -Fx './skirk'
+          python3 -m zipfile -l dist/skirk-windows-amd64.zip | grep -F 'skirk.exe'
+
+  desktop-frontend:
+    name: Desktop frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/desktop/package-lock.json
+
+      - name: Build desktop frontend
+        working-directory: clients/desktop
+        run: |
+          npm ci
+          npm run build
+
+  desktop-tauri:
+    name: Desktop Tauri (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            goos: linux
+            goarch: amd64
+            rust_target: ""
+            app_file_arch: x86-64
+          - name: windows-x64
+            runner: windows-2022
+            os: windows
+            goos: windows
+            goarch: amd64
+            rust_target: ""
+            app_file_arch: ""
+          - name: macos-x64
+            runner: macos-15-intel
+            os: macos
+            goos: darwin
+            goarch: amd64
+            rust_target: x86_64-apple-darwin
+            app_file_arch: x86_64
+          - name: macos-arm64
+            runner: macos-15
+            os: macos
+            goos: darwin
+            goarch: arm64
+            rust_target: aarch64-apple-darwin
+            app_file_arch: arm64
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Linux Tauri dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+
+      - name: Build desktop sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          sidecar_dir="clients/desktop/src-tauri/resources/sidecars/${{ matrix.os }}"
+          mkdir -p "$sidecar_dir"
+          output="$sidecar_dir/skirk"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            output="$sidecar_dir/skirk-sidecar.exe"
+          fi
+          GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" CGO_ENABLED=0 \
+            go build -trimpath -o "$output" ./cmd/skirk
+          if [ "${{ matrix.os }}" != "windows" ]; then
+            chmod +x "$output"
+          fi
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            clients/desktop/src-tauri/resources/sidecars/linux/skirk version
+          elif [ "${{ matrix.os }}" = "windows" ]; then
+            clients/desktop/src-tauri/resources/sidecars/windows/skirk-sidecar.exe version
+          else
+            clients/desktop/src-tauri/resources/sidecars/macos/skirk version
+          fi
+
+      - name: Install desktop dependencies
+        working-directory: clients/desktop
+        run: npm ci
+
+      - name: Run Tauri command tests
+        working-directory: clients/desktop/src-tauri
+        run: cargo test
+
+      - name: Build Tauri app
+        working-directory: clients/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "macos" ]; then
+            npm run tauri build -- --target "${{ matrix.rust_target }}" --bundles app --no-sign
+          else
+            npm run tauri build -- --no-bundle
+          fi
+
+      - name: Smoke Linux portable package
+        if: matrix.os == 'linux'
+        run: |
+          set -euo pipefail
+          python3 clients/desktop/scripts/package_linux_portable.py
+          test -s dist/linux-portable/Skirk_linux_x64_portable.zip
+          unzip -t dist/linux-portable/Skirk_linux_x64_portable.zip
+
+      - name: Smoke Windows portable package
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          python clients/desktop/scripts/package_windows_portable.py
+          if (!(Test-Path dist/windows-portable/Skirk_windows_x64_portable.zip)) {
+            throw "Windows portable zip was not created"
+          }
+          tar -tf dist/windows-portable/Skirk_windows_x64_portable.zip | Select-String -SimpleMatch "Skirk.exe"
+
+      - name: Smoke macOS bundle
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find "clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -name 'Skirk.app' -type d | head -n 1)"
+          test -d "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          app_exe="$app/Contents/MacOS/skirk-desktop"
+          sidecar="$app/Contents/Resources/resources/sidecars/macos/skirk"
+          test -x "$app_exe"
+          test -x "$sidecar"
+          file "$app_exe" | grep -F "${{ matrix.app_file_arch }}"
+          file "$sidecar" | grep -F "${{ matrix.app_file_arch }}"
+          "$sidecar" version
+
+  android-apk:
+    name: Android APK static smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Configure Git default branch
+        run: git config --global init.defaultBranch main
+
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+
+      - name: Build debug APKs
+        working-directory: clients/android
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Verify APK ABI contents
+        run: |
+          set -euo pipefail
+          apk_dir="clients/android/app/build/outputs/apk/debug"
+          universal="$(find "$apk_dir" -maxdepth 1 -type f -name '*universal*debug*.apk' | sort | head -n 1)"
+          arm64="$(find "$apk_dir" -maxdepth 1 -type f -name '*arm64-v8a*debug*.apk' | sort | head -n 1)"
+          armv7="$(find "$apk_dir" -maxdepth 1 -type f -name '*armeabi-v7a*debug*.apk' | sort | head -n 1)"
+          test -n "$universal"
+          test -n "$arm64"
+          test -n "$armv7"
+
+          verify_apk() {
+            local apk="$1"
+            shift
+            local expected=("$@")
+            local listing
+            local actual
+            local want
+
+            test -s "$apk"
+            unzip -t "$apk" >/dev/null
+            listing="$RUNNER_TEMP/$(basename "$apk").listing"
+            zipinfo -1 "$apk" > "$listing"
+            actual="$(sed -n 's#^lib/\([^/]*\)/.*#\1#p' "$listing" | sort -u | xargs)"
+            want="$(printf '%s\n' "${expected[@]}" | sort | xargs)"
+            if [ "$actual" != "$want" ]; then
+              echo "$apk ABIs=$actual want=$want" >&2
+              exit 1
+            fi
+            for abi in "${expected[@]}"; do
+              grep -qx "lib/$abi/libskirk.so" "$listing"
+              grep -qx "lib/$abi/libhev-socks5-tunnel.so" "$listing"
+            done
+          }
+
+          verify_apk "$universal" arm64-v8a armeabi-v7a
+          verify_apk "$arm64" arm64-v8a
+          verify_apk "$armv7" armeabi-v7a
+
+          for apk in "$universal" "$arm64" "$armv7"; do
+            echo "== $apk =="
+            unzip -t "$apk" >/dev/null
+          done
+
+          inspect="$RUNNER_TEMP/android-libs"
+          mkdir -p "$inspect"
+          for abi in arm64-v8a armeabi-v7a; do
+            for lib in libskirk.so libhev-socks5-tunnel.so; do
+              out="$inspect/$abi-$lib"
+              unzip -p "$universal" "lib/$abi/$lib" > "$out"
+              file "$out"
+            done
+          done
+
+      - name: Verify Android VPN invariants
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          ns = "{http://schemas.android.com/apk/res/android}"
+          root = ET.parse("clients/android/app/src/main/AndroidManifest.xml").getroot()
+          service = next(
+              element
+              for element in root.findall(".//service")
+              if element.get(ns + "name") == ".SkirkVpnService"
+          )
+          assert service.get(ns + "exported") == "false"
+          assert service.get(ns + "permission") == "android.permission.BIND_VPN_SERVICE"
+          assert any(
+              action.get(ns + "name") == "android.net.VpnService"
+              for action in service.findall("./intent-filter/action")
+          )
+          assert any(
+              meta.get(ns + "name") == "android.net.VpnService.SUPPORTS_ALWAYS_ON"
+              and meta.get(ns + "value") == "false"
+              for meta in service.findall("./meta-data")
+          )
+          PY
+          grep -Fq '.addAddress(TUN_IPV4_ADDRESS, 30)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
+          grep -Fq '.addRoute("0.0.0.0", 0)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
+          grep -Fq 'addDisallowedApplication(packageName)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
+          grep -Fq 'builder.setMetered(true)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
+
+      - name: Verify Android package metadata
+        run: |
+          set -euo pipefail
+          apk="$(find clients/android/app/build/outputs/apk/debug -maxdepth 1 -type f -name '*universal*debug*.apk' | sort | head -n 1)"
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_root"
+          aapt="$(find "$sdk_root/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+          test -n "$aapt"
+          "$aapt" dump badging "$apk" | tee "$RUNNER_TEMP/android-badging.txt"
+          grep -F "package: name='app.skirk.client'" "$RUNNER_TEMP/android-badging.txt"
+          grep -F "sdkVersion:'26'" "$RUNNER_TEMP/android-badging.txt"
+          grep -F "targetSdkVersion:'35'" "$RUNNER_TEMP/android-badging.txt"

@@ -543,10 +543,11 @@ func (r benchLiveResult) benchmarkFailure() error {
 }
 
 type benchQuotaMinuteSummary struct {
-	Calls         float64 `json:"calls"`
-	Units         float64 `json:"units"`
-	Errors        float64 `json:"errors"`
-	ResponseBytes float64 `json:"response_bytes"`
+	Calls           float64 `json:"calls"`
+	Units           float64 `json:"units"`
+	Errors          float64 `json:"errors"`
+	LastErrorReason string  `json:"last_error_reason,omitempty"`
+	ResponseBytes   float64 `json:"response_bytes"`
 }
 
 type benchQuotaRequestSummary struct {
@@ -1751,10 +1752,11 @@ func quotaPerMinute(snapshot skirk.DriveQuotaSnapshot, duration time.Duration) b
 	}
 	scale := 60 / duration.Seconds()
 	return benchQuotaMinuteSummary{
-		Calls:         float64(snapshot.Calls) * scale,
-		Units:         float64(snapshot.Units) * scale,
-		Errors:        float64(snapshot.Errors) * scale,
-		ResponseBytes: float64(snapshot.ResponseBytes) * scale,
+		Calls:           float64(snapshot.Calls) * scale,
+		Units:           float64(snapshot.Units) * scale,
+		Errors:          float64(snapshot.Errors) * scale,
+		LastErrorReason: snapshot.LastErrorReason,
+		ResponseBytes:   float64(snapshot.ResponseBytes) * scale,
 	}
 }
 

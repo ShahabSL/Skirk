@@ -22,7 +22,4 @@ LOCAL_MODULE    := liblwip
 LOCAL_SRC_FILES := $(patsubst $(SRCDIR)/%,src/%,$(SRCFILES))
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/src/include $(LOCAL_PATH)/src/ports/include
 LOCAL_CFLAGS += -DFD_SET_DEFINED -DSOCKLEN_T_DEFINED
-ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
-LOCAL_CFLAGS += -mfpu=neon
-endif
 include $(BUILD_STATIC_LIBRARY)

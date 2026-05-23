@@ -844,6 +844,23 @@ install_exit_service() {
     /*) ;;
     *) config_path="$(pwd)/$config_path" ;;
   esac
+  service_bin="$install_dir/skirk"
+  if [ "$service_user" != "root" ]; then
+    case "$service_bin" in
+      /root|/root/*)
+        echo "error: service user $service_user cannot execute Skirk from $service_bin" >&2
+        echo "Install Skirk under /usr/local/bin or run the service as root." >&2
+        exit 1
+        ;;
+    esac
+    case "$config_path" in
+      /root|/root/*)
+        echo "error: service user $service_user cannot read Skirk config from $config_path" >&2
+        echo "Move the kit outside /root or run the service as root." >&2
+        exit 1
+        ;;
+    esac
+  fi
   service_unit="$(normalize_service_unit "$service_name")"
   unit="/etc/systemd/system/$service_unit"
   if [ -e "$unit" ] && ! is_skirk_unit_file "$unit"; then
@@ -862,7 +879,7 @@ Wants=network-online.target
 Type=simple
 User=$service_user
 WorkingDirectory=$(dirname "$config_path")
-ExecStart=$install_dir/skirk serve-exit --config $config_path
+ExecStart=$service_bin serve-exit --config $config_path
 Restart=always
 RestartSec=5
 AmbientCapabilities=CAP_NET_BIND_SERVICE

@@ -42,6 +42,9 @@ type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "m
 const APP_VERSION = packageInfo.version;
 const DRIVE_USER_UNITS_PER_MINUTE = 325_000;
 const DRIVE_LIST_UNITS = 100;
+const CUSTOM_MIN_POLL_MS = 250;
+const CUSTOM_MAX_UPLOAD_WORKERS = 64;
+const CUSTOM_MAX_DOWNLOAD_WORKERS = 64;
 
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
@@ -719,12 +722,13 @@ function SettingsStrip({
 }) {
   const units = snapshot?.metrics?.recentQuotaPerMinute.units ?? estimatedIdleUnits(performance);
   const errors = snapshot?.metrics?.recentQuotaPerMinute.errors ?? 0;
+  const errorReason = snapshot?.metrics?.recentQuotaPerMinute.lastErrorReason;
   return (
     <div className="settings-strip" aria-label="Advanced connection summary">
       <div>
         <Cloud aria-hidden="true" />
         <span>Drive</span>
-        <strong>{drivePressureLabel(units, errors)}</strong>
+        <strong>{drivePressureLabel(units, errors, errorReason)}</strong>
       </div>
       <div>
         <SlidersHorizontal aria-hidden="true" />
@@ -826,8 +830,7 @@ function PerformanceSettingsPanel({
       </div>
       {performance.burstPoll ? (
         <div className="warning-note">
-          Burst polling checks Drive much faster after traffic. It can improve startup latency, but it burns list
-          quota quickly.
+          Fast wake checks Drive much faster after traffic. Use it only when responsiveness matters more than quota.
         </div>
       ) : null}
       {custom ? (
@@ -836,7 +839,7 @@ function PerformanceSettingsPanel({
             label="Check interval"
             suffix="ms"
             value={performance.pollMs}
-            min={250}
+            min={CUSTOM_MIN_POLL_MS}
             max={60000}
             disabled={disabled || busy}
             onChange={(value) => onChange({ ...performance, pollMs: value })}
@@ -845,7 +848,7 @@ function PerformanceSettingsPanel({
             label="Upload workers"
             value={performance.uploadConcurrency}
             min={1}
-            max={64}
+            max={CUSTOM_MAX_UPLOAD_WORKERS}
             disabled={disabled || busy}
             onChange={(value) => onChange({ ...performance, uploadConcurrency: value })}
           />
@@ -853,7 +856,7 @@ function PerformanceSettingsPanel({
             label="Download workers"
             value={performance.downloadConcurrency}
             min={1}
-            max={64}
+            max={CUSTOM_MAX_DOWNLOAD_WORKERS}
             disabled={disabled || busy}
             onChange={(value) => onChange({ ...performance, downloadConcurrency: value })}
           />
@@ -866,10 +869,15 @@ function PerformanceSettingsPanel({
             />
             <span>
               <strong>Fast wake after upload</strong>
-              <small>Uses more Drive list calls.</small>
+              <small>Costs extra Drive list calls after traffic.</small>
             </span>
           </label>
         </div>
+      ) : null}
+      {custom ? (
+        <small className="field-help">
+          Lower check intervals and higher worker counts can burn Drive quota quickly. Use aggressive values only when you understand the tradeoff.
+        </small>
       ) : null}
       {disabled ? <small className="field-help">Disconnect to change performance settings.</small> : null}
     </div>
@@ -926,11 +934,12 @@ function QuotaPanel({
   const unitsPerMinute = metrics?.recentQuotaPerMinute.units ?? 0;
   const displayedUnits = metrics ? unitsPerMinute : idleUnits;
   const errors = metrics?.recentQuotaPerMinute.errors ?? 0;
+  const errorReason = metrics?.recentQuotaPerMinute.lastErrorReason;
   return (
     <div className="quota-copy">
       <div className="quota-meter-header">
         <div>
-          <strong>{drivePressureLabel(displayedUnits, errors)}</strong>
+          <strong>{drivePressureLabel(displayedUnits, errors, errorReason)}</strong>
           <span>{metrics ? "Measured from this desktop process" : "Idle estimate before connection"}</span>
         </div>
         <span>{formatNumber(Math.round(displayedUnits))} units/min</span>
@@ -946,7 +955,7 @@ function QuotaPanel({
       </div>
       <div className="quota-line">
         <span>Errors</span>
-        <strong>{metrics ? formatNumber(Math.round(errors)) : "-"}</strong>
+        <strong>{metrics ? `${formatNumber(Math.round(errors))}${errorReason ? ` · ${driveErrorReasonLabel(errorReason)}` : ""}` : "-"}</strong>
       </div>
       {metrics?.driveBackoff?.active ? (
         <div className="quota-line warning">
@@ -1111,16 +1120,17 @@ function formatNumber(value: number) {
 }
 
 function estimatedIdleUnits(performance: ClientPerformanceSettings) {
-  return (60_000 / Math.max(250, performance.pollMs)) * DRIVE_LIST_UNITS;
+  const base = (60_000 / Math.max(CUSTOM_MIN_POLL_MS, performance.pollMs)) * DRIVE_LIST_UNITS;
+  return performance.burstPoll ? base * 2 : base;
 }
 
 function drivePressureFraction(units: number) {
   return Math.max(0, Math.min(1, units / DRIVE_USER_UNITS_PER_MINUTE));
 }
 
-function drivePressureLabel(units: number, errors: number) {
+function drivePressureLabel(units: number, errors: number, reason?: string) {
   if (errors > 0) {
-    return "Errors seen";
+    return driveErrorReasonLabel(reason);
   }
   if (units <= 0) {
     return "Not measured";
@@ -1135,6 +1145,27 @@ function drivePressureLabel(units: number, errors: number) {
     return "High";
   }
   return "Limit risk";
+}
+
+function driveErrorReasonLabel(reason?: string) {
+  const value = (reason ?? "").toLowerCase();
+  const compact = value.replace(/[^a-z0-9]/g, "");
+  if (compact.includes("storagequotaexceeded")) {
+    return "Drive storage full";
+  }
+  if (compact.includes("ratelimit") || compact.includes("toomany") || compact === "status429") {
+    return "Drive rate limited";
+  }
+  if (compact.includes("unauthorized") || compact === "status401") {
+    return "Google login expired";
+  }
+  if (compact.includes("notfound")) {
+    return "Drive mailbox missing";
+  }
+  if (compact.includes("timeout") || compact.includes("deadline")) {
+    return "Drive timeout";
+  }
+  return "Drive errors";
 }
 
 function runtimeMetric(snapshot: DesktopSnapshot | null) {

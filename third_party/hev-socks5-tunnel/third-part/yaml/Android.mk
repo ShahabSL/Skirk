@@ -23,7 +23,4 @@ LOCAL_MODULE    := libyaml
 LOCAL_SRC_FILES := $(patsubst $(SRCDIR)/%,src/%,$(SRCFILES))
 LOCAL_C_INCLUDES := $(SRCDIR)
 LOCAL_CFLAGS += $(CONFIG_CFLAGS)
-ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
-LOCAL_CFLAGS += -mfpu=neon
-endif
 include $(BUILD_STATIC_LIBRARY)

@@ -25,7 +25,4 @@ LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/src \
 	$(LOCAL_PATH)/include
 LOCAL_CFLAGS += -fvisibility=hidden $(CONFIG_CFLAGS)
-ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
-LOCAL_CFLAGS += -mfpu=neon
-endif
 include $(BUILD_STATIC_LIBRARY)

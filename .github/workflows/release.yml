@@ -106,18 +106,55 @@ jobs:
         run: |
           set -euo pipefail
           apk_dir="clients/android/app/build/outputs/apk/release"
+          apk_count="$(find "$apk_dir" -maxdepth 1 -type f -name '*.apk' | wc -l | tr -d ' ')"
+          if [ "$apk_count" != "3" ]; then
+            echo "expected exactly 3 Android release APKs, found $apk_count" >&2
+            find "$apk_dir" -maxdepth 1 -type f -name '*.apk' -print >&2
+            exit 1
+          fi
           universal="$(find "$apk_dir" -maxdepth 1 -type f \( -name '*universal*release*.apk' -o -name 'app-release.apk' \) | sort | head -n 1)"
           arm64="$(find "$apk_dir" -maxdepth 1 -type f -name '*arm64-v8a*release*.apk' | sort | head -n 1)"
           armv7="$(find "$apk_dir" -maxdepth 1 -type f -name '*armeabi-v7a*release*.apk' | sort | head -n 1)"
           test -n "$universal"
           test -n "$arm64"
           test -n "$armv7"
+
+          verify_apk() {
+            local apk="$1"
+            shift
+            local expected=("$@")
+            local listing
+            local actual
+            local want
+
+            test -s "$apk"
+            unzip -t "$apk" >/dev/null
+            listing="$RUNNER_TEMP/$(basename "$apk").listing"
+            zipinfo -1 "$apk" > "$listing"
+            actual="$(sed -n 's#^lib/\([^/]*\)/.*#\1#p' "$listing" | sort -u | xargs)"
+            want="$(printf '%s\n' "${expected[@]}" | sort | xargs)"
+            if [ "$actual" != "$want" ]; then
+              echo "$apk ABIs=$actual want=$want" >&2
+              exit 1
+            fi
+            for abi in "${expected[@]}"; do
+              grep -qx "lib/$abi/libskirk.so" "$listing"
+              grep -qx "lib/$abi/libhev-socks5-tunnel.so" "$listing"
+            done
+          }
+
+          verify_apk "$universal" arm64-v8a armeabi-v7a
+          verify_apk "$arm64" arm64-v8a
+          verify_apk "$armv7" armeabi-v7a
+
           mkdir -p dist/android
           cp "$universal" dist/android/skirk-android-universal.apk
           cp "$arm64" dist/android/skirk-android-arm64-v8a.apk
           cp "$arm64" dist/android/skirk-android-arm64.apk
           cp "$armv7" dist/android/skirk-android-armeabi-v7a.apk
           (cd dist/android && for apk in *.apk; do sha256sum "$apk" > "$apk.sha256"; done)
+          (cd dist/android && sha256sum -c ./*.sha256)
+          cmp -s dist/android/skirk-android-arm64-v8a.apk dist/android/skirk-android-arm64.apk
 
       - uses: actions/upload-artifact@v7
         with:
@@ -211,6 +248,21 @@ jobs:
       - name: Build portable zip
         run: python clients/desktop/scripts/package_windows_portable.py
 
+      - name: Smoke Windows portable zip
+        shell: pwsh
+        run: |
+          $zip = "dist/windows-portable/Skirk_windows_x64_portable.zip"
+          $extract = "$env:RUNNER_TEMP\windows-portable-smoke"
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $app = Join-Path $extract "Skirk\Skirk.exe"
+          $sidecar = Join-Path $extract "Skirk\sidecars\windows\skirk-sidecar.exe"
+          $tunnel = Join-Path $extract "Skirk\sidecars\windows\skirk-tunnel.exe"
+          if (!(Test-Path $app)) { throw "Skirk.exe missing from portable zip" }
+          if (!(Test-Path $sidecar)) { throw "skirk-sidecar.exe missing from portable zip" }
+          if (!(Test-Path $tunnel)) { throw "skirk-tunnel.exe missing from portable zip" }
+          & $sidecar version
+          & $tunnel version
+
       - name: Prepare Windows release checksums
         shell: pwsh
         run: |
@@ -298,6 +350,18 @@ jobs:
 
       - name: Build portable zip
         run: python clients/desktop/scripts/package_linux_portable.py
+
+      - name: Smoke Linux portable zip
+        run: |
+          set -euo pipefail
+          zip="dist/linux-portable/Skirk_linux_x64_portable.zip"
+          extract="$RUNNER_TEMP/linux-portable-smoke"
+          unzip -q "$zip" -d "$extract"
+          test -x "$extract/Skirk/Skirk"
+          test -x "$extract/Skirk/sidecars/linux/skirk"
+          test -x "$extract/Skirk/sidecars/linux/skirk-tunnel"
+          "$extract/Skirk/sidecars/linux/skirk" version
+          "$extract/Skirk/sidecars/linux/skirk-tunnel" version
 
       - name: Prepare Linux desktop release checksums
         run: |

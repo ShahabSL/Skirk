@@ -167,6 +167,9 @@ data class PerformanceSettings(
         const val PRESET_RESPONSIVE = "responsive"
         const val PRESET_BULK_TRANSFER = "bulk_transfer"
         const val PRESET_CUSTOM = "custom"
+        const val CUSTOM_MIN_POLL_MS = 250
+        const val CUSTOM_MAX_UPLOAD_WORKERS = 64
+        const val CUSTOM_MAX_DOWNLOAD_WORKERS = 64
 
         fun lowerUsage(): PerformanceSettings = PerformanceSettings(
             preset = PRESET_LOWER_USAGE,
@@ -216,9 +219,9 @@ data class PerformanceSettings(
             }
             return PerformanceSettings(
                 preset = PRESET_CUSTOM,
-                pollMs = json.optInt("pollMs", 1000).coerceIn(250, 60000),
-                uploadConcurrency = json.optInt("uploadConcurrency", 8).coerceIn(1, 64),
-                downloadConcurrency = json.optInt("downloadConcurrency", 16).coerceIn(1, 64),
+                pollMs = json.optInt("pollMs", 1000).coerceIn(CUSTOM_MIN_POLL_MS, 60000),
+                uploadConcurrency = json.optInt("uploadConcurrency", 8).coerceIn(1, CUSTOM_MAX_UPLOAD_WORKERS),
+                downloadConcurrency = json.optInt("downloadConcurrency", 16).coerceIn(1, CUSTOM_MAX_DOWNLOAD_WORKERS),
                 burstPoll = json.optBoolean("burstPoll", false),
                 burstPollMs = json.optInt("burstPollMs", 75).coerceIn(25, 1000),
                 burstPollWindowMs = json.optInt("burstPollWindowMs", 5000).coerceIn(1000, 30000),

@@ -48,12 +48,14 @@ export type RuntimeMetrics = {
     calls: number;
     units: number;
     errors: number;
+    lastErrorReason?: string;
     responseBytes: number;
   };
   recentQuotaPerMinute: {
     calls: number;
     units: number;
     errors: number;
+    lastErrorReason?: string;
     responseBytes: number;
   };
   recentQuotaOps: string;

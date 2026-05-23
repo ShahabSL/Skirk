@@ -1048,7 +1048,7 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 		attempts = 1
 	}
 	if d.quota != nil {
-		if report, ok := d.quota.Record(label, status, len(body), duration, err, attempts); ok && d.Logger != nil {
+		if report, ok := d.quota.Record(label, status, len(body), duration, err, driveQuotaErrorReason(status, body, err), attempts); ok && d.Logger != nil {
 			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",
 				report.Duration.Round(time.Second), report.Calls, report.Units, report.Errors, report.ResponseBytes, report.OpSummary())
 		}
@@ -1073,6 +1073,20 @@ func (d *DriveStore) logDriveRequest(label string, attempts int, status int, bod
 	case duration >= driveSlowRequestThreshold:
 		d.Logger.Printf("drive request slow op=%s attempts=%d status=%d duration=%s", label, attempts, status, duration)
 	}
+}
+
+func driveQuotaErrorReason(status int, body []byte, err error) string {
+	if err != nil {
+		return sanitizeTransportErrorText(err.Error())
+	}
+	if status >= 400 {
+		reason := strings.TrimSpace(driveErrorReason(body))
+		if reason != "" && reason != "unknown" {
+			return reason
+		}
+		return "status_" + strconv.Itoa(status)
+	}
+	return ""
 }
 
 func (d *DriveStore) mediaRequest(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
@@ -1213,56 +1227,62 @@ func isDriveRateLimitResult(result *HTTPResult) bool {
 }
 
 type driveQuotaStats struct {
-	mu         sync.Mutex
-	interval   time.Duration
-	since      time.Time
-	calls      int64
-	units      int64
-	errors     int64
-	bytes      int64
-	ops        map[string]driveQuotaOpStats
-	totalCalls int64
-	totalUnits int64
-	totalError int64
-	totalBytes int64
-	totalOps   map[string]driveQuotaOpStats
+	mu                   sync.Mutex
+	interval             time.Duration
+	since                time.Time
+	calls                int64
+	units                int64
+	errors               int64
+	lastErrorReason      string
+	bytes                int64
+	ops                  map[string]driveQuotaOpStats
+	totalCalls           int64
+	totalUnits           int64
+	totalError           int64
+	totalLastErrorReason string
+	totalBytes           int64
+	totalOps             map[string]driveQuotaOpStats
 }
 
 type driveQuotaOpStats struct {
 	Calls           int64
 	Units           int64
 	Errors          int64
+	LastErrorReason string
 	TotalDurationMS int64
 	MaxDurationMS   int64
 	SamplesMS       []int64
 }
 
 type driveQuotaReport struct {
-	Duration      time.Duration
-	Calls         int64
-	Units         int64
-	Errors        int64
-	ResponseBytes int64
-	Ops           map[string]driveQuotaOpStats
+	Duration        time.Duration
+	Calls           int64
+	Units           int64
+	Errors          int64
+	LastErrorReason string
+	ResponseBytes   int64
+	Ops             map[string]driveQuotaOpStats
 }
 
 type DriveQuotaOpSnapshot struct {
-	Calls           int64 `json:"calls"`
-	Units           int64 `json:"units"`
-	Errors          int64 `json:"errors"`
-	TotalDurationMS int64 `json:"total_duration_ms"`
-	AvgDurationMS   int64 `json:"avg_duration_ms"`
-	P50DurationMS   int64 `json:"p50_duration_ms"`
-	P95DurationMS   int64 `json:"p95_duration_ms"`
-	MaxDurationMS   int64 `json:"max_duration_ms"`
+	Calls           int64  `json:"calls"`
+	Units           int64  `json:"units"`
+	Errors          int64  `json:"errors"`
+	LastErrorReason string `json:"last_error_reason,omitempty"`
+	TotalDurationMS int64  `json:"total_duration_ms"`
+	AvgDurationMS   int64  `json:"avg_duration_ms"`
+	P50DurationMS   int64  `json:"p50_duration_ms"`
+	P95DurationMS   int64  `json:"p95_duration_ms"`
+	MaxDurationMS   int64  `json:"max_duration_ms"`
 }
 
 type DriveQuotaSnapshot struct {
-	Calls         int64                           `json:"calls"`
-	Units         int64                           `json:"units"`
-	Errors        int64                           `json:"errors"`
-	ResponseBytes int64                           `json:"response_bytes"`
-	Ops           map[string]DriveQuotaOpSnapshot `json:"ops"`
+	Calls           int64                           `json:"calls"`
+	Units           int64                           `json:"units"`
+	Errors          int64                           `json:"errors"`
+	LastErrorReason string                          `json:"last_error_reason,omitempty"`
+	ResponseBytes   int64                           `json:"response_bytes"`
+	Ops             map[string]DriveQuotaOpSnapshot `json:"ops"`
 }
 
 type DriveQuotaBackoffSnapshot struct {
@@ -1286,7 +1306,7 @@ func newDriveQuotaStats(interval time.Duration) *driveQuotaStats {
 	}
 }
 
-func (s *driveQuotaStats) Record(op string, status int, responseBytes int, duration time.Duration, err error, httpAttempts ...int) (driveQuotaReport, bool) {
+func (s *driveQuotaStats) Record(op string, status int, responseBytes int, duration time.Duration, err error, errorReason string, httpAttempts ...int) (driveQuotaReport, bool) {
 	if s == nil {
 		return driveQuotaReport{}, false
 	}
@@ -1314,6 +1334,8 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	if failed {
 		s.errors += attempts
 		s.totalError += attempts
+		s.lastErrorReason = errorReason
+		s.totalLastErrorReason = errorReason
 	}
 	current := s.ops[op]
 	current.Calls += attempts
@@ -1321,6 +1343,7 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	addDriveQuotaDuration(&current, durationMS)
 	if failed {
 		current.Errors += attempts
+		current.LastErrorReason = errorReason
 	}
 	s.ops[op] = current
 	totalCurrent := s.totalOps[op]
@@ -1329,23 +1352,26 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	addDriveQuotaDuration(&totalCurrent, durationMS)
 	if failed {
 		totalCurrent.Errors += attempts
+		totalCurrent.LastErrorReason = errorReason
 	}
 	s.totalOps[op] = totalCurrent
 	if s.interval == 0 || time.Since(s.since) < s.interval {
 		return driveQuotaReport{}, false
 	}
 	report := driveQuotaReport{
-		Duration:      time.Since(s.since),
-		Calls:         s.calls,
-		Units:         s.units,
-		Errors:        s.errors,
-		ResponseBytes: s.bytes,
-		Ops:           cloneDriveQuotaOps(s.ops),
+		Duration:        time.Since(s.since),
+		Calls:           s.calls,
+		Units:           s.units,
+		Errors:          s.errors,
+		LastErrorReason: s.lastErrorReason,
+		ResponseBytes:   s.bytes,
+		Ops:             cloneDriveQuotaOps(s.ops),
 	}
 	s.since = time.Now()
 	s.calls = 0
 	s.units = 0
 	s.errors = 0
+	s.lastErrorReason = ""
 	s.bytes = 0
 	clear(s.ops)
 	return report, true
@@ -1361,11 +1387,13 @@ func (s *driveQuotaStats) Reset() {
 	s.calls = 0
 	s.units = 0
 	s.errors = 0
+	s.lastErrorReason = ""
 	s.bytes = 0
 	clear(s.ops)
 	s.totalCalls = 0
 	s.totalUnits = 0
 	s.totalError = 0
+	s.totalLastErrorReason = ""
 	s.totalBytes = 0
 	clear(s.totalOps)
 }
@@ -1397,11 +1425,12 @@ func (s *driveQuotaStats) Snapshot() DriveQuotaSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return DriveQuotaSnapshot{
-		Calls:         s.totalCalls,
-		Units:         s.totalUnits,
-		Errors:        s.totalError,
-		ResponseBytes: s.totalBytes,
-		Ops:           exportedDriveQuotaOps(s.totalOps),
+		Calls:           s.totalCalls,
+		Units:           s.totalUnits,
+		Errors:          s.totalError,
+		LastErrorReason: s.totalLastErrorReason,
+		ResponseBytes:   s.totalBytes,
+		Ops:             exportedDriveQuotaOps(s.totalOps),
 	}
 }
 
@@ -1440,6 +1469,9 @@ func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot 
 		ResponseBytes: s.ResponseBytes - before.ResponseBytes,
 		Ops:           map[string]DriveQuotaOpSnapshot{},
 	}
+	if out.Errors > 0 {
+		out.LastErrorReason = s.LastErrorReason
+	}
 	for key, after := range s.Ops {
 		prev := before.Ops[key]
 		delta := DriveQuotaOpSnapshot{
@@ -1454,6 +1486,12 @@ func (s DriveQuotaSnapshot) Delta(before DriveQuotaSnapshot) DriveQuotaSnapshot 
 		}
 		if delta.Calls == 0 && delta.Units == 0 && delta.Errors == 0 && delta.TotalDurationMS == 0 {
 			continue
+		}
+		if delta.Errors > 0 {
+			delta.LastErrorReason = after.LastErrorReason
+			if out.LastErrorReason == "" {
+				out.LastErrorReason = delta.LastErrorReason
+			}
 		}
 		out.Ops[key] = delta
 	}
@@ -1493,6 +1531,7 @@ func driveQuotaOpSnapshot(stats driveQuotaOpStats) DriveQuotaOpSnapshot {
 		Calls:           stats.Calls,
 		Units:           stats.Units,
 		Errors:          stats.Errors,
+		LastErrorReason: stats.LastErrorReason,
 		TotalDurationMS: stats.TotalDurationMS,
 		MaxDurationMS:   stats.MaxDurationMS,
 	}

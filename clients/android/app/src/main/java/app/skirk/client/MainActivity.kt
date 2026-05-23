@@ -658,7 +658,7 @@ private fun PerformanceSettingsPanel(
             valueText = "${performance.pollMs} ms",
             enabled = enabled,
             onDecrease = {
-                onPerformanceChange(performance.copy(pollMs = (performance.pollMs - 250).coerceAtLeast(250)))
+                onPerformanceChange(performance.copy(pollMs = (performance.pollMs - 250).coerceAtLeast(PerformanceSettings.CUSTOM_MIN_POLL_MS)))
             },
             onIncrease = {
                 onPerformanceChange(performance.copy(pollMs = (performance.pollMs + 250).coerceAtMost(60000)))
@@ -673,7 +673,7 @@ private fun PerformanceSettingsPanel(
                 onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency - 2).coerceAtLeast(1)))
             },
             onIncrease = {
-                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency + 2).coerceAtMost(64)))
+                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency + 2).coerceAtMost(PerformanceSettings.CUSTOM_MAX_UPLOAD_WORKERS)))
             },
         )
         AdjustValueRow(
@@ -685,7 +685,7 @@ private fun PerformanceSettingsPanel(
                 onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency - 2).coerceAtLeast(1)))
             },
             onIncrease = {
-                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency + 2).coerceAtMost(64)))
+                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency + 2).coerceAtMost(PerformanceSettings.CUSTOM_MAX_DOWNLOAD_WORKERS)))
             },
         )
         SwitchRow(
@@ -706,6 +706,13 @@ private fun PerformanceSettingsPanel(
             Icons.Rounded.CloudQueue,
             "Drive API warning",
             "Burst polling checks faster after traffic and can burn list quota quickly.",
+        )
+    }
+    if (performance.preset == PerformanceSettings.PRESET_CUSTOM) {
+        InfoRow(
+            Icons.Rounded.Tune,
+            "Custom warning",
+            "Low check intervals and high workers can burn Drive quota quickly.",
         )
     }
 }
@@ -749,7 +756,7 @@ private fun DriveUsageSummary(
 ) {
     val displayUnits = metrics?.unitsPerMinute ?: estimatedIdleUnits(performance)
     val errors = metrics?.errorsPerMinute ?: 0.0
-    val label = drivePressureLabel(displayUnits, errors)
+    val label = drivePressureLabel(displayUnits, errors, metrics?.lastErrorReason.orEmpty())
     val percent = drivePressurePercent(displayUnits)
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -817,7 +824,7 @@ private fun DriveUsageDetails(metrics: DriveMetrics?, performance: PerformanceSe
         SectionHeader(
             Icons.Rounded.CloudQueue,
             "Drive API usage",
-            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute) } ?: "Estimate",
+            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute, metrics.lastErrorReason) } ?: "Estimate",
         )
         QuotaBar(unitsPerMinute = measuredUnits ?: idleEstimate, errorsPerMinute = metrics?.errorsPerMinute ?: 0.0)
         InfoRow(
@@ -1427,6 +1434,7 @@ private fun readSkirkLogs(context: Context, activeMode: String): String {
 private data class DriveMetrics(
     val unitsPerMinute: Double,
     val errorsPerMinute: Double,
+    val lastErrorReason: String,
     val ops: String,
     val backoffActive: Boolean,
     val backoffReason: String,
@@ -1455,6 +1463,7 @@ private fun readDriveMetrics(context: Context, activeMode: String): DriveMetrics
         DriveMetrics(
             unitsPerMinute = rate.optDouble("units", 0.0),
             errorsPerMinute = rate.optDouble("errors", 0.0),
+            lastErrorReason = rate.optString("last_error_reason", rate.optString("lastErrorReason", "")),
             ops = json.optString(
                 "recent_quota_ops",
                 json.optString("recentQuotaOps", ""),
@@ -1467,7 +1476,9 @@ private fun readDriveMetrics(context: Context, activeMode: String): DriveMetrics
 }
 
 private fun estimatedIdleUnits(performance: PerformanceSettings): Double =
-    (60_000.0 / performance.pollMs.coerceAtLeast(250)) * DRIVE_LIST_UNITS
+    (60_000.0 / performance.pollMs.coerceAtLeast(PerformanceSettings.CUSTOM_MIN_POLL_MS)) *
+        DRIVE_LIST_UNITS *
+        if (performance.burstPoll) 2.0 else 1.0
 
 private fun drivePressureFraction(unitsPerMinute: Double): Float =
     (unitsPerMinute / DRIVE_USER_UNITS_PER_MINUTE).coerceIn(0.0, 1.0).toFloat()
@@ -1476,12 +1487,30 @@ private fun drivePressurePercent(unitsPerMinute: Double): Int =
     (drivePressureFraction(unitsPerMinute) * 100).toInt().coerceAtLeast(if (unitsPerMinute > 0.0) 1 else 0)
 
 private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double): String = when {
-    errorsPerMinute > 0.0 -> "Google errors seen"
+    errorsPerMinute > 0.0 -> driveErrorReasonLabel("")
     unitsPerMinute <= 0.0 -> "Not measured"
     unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.08 -> "Normal"
     unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.30 -> "Moderate"
     unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.70 -> "High"
     else -> "Limit risk"
+}
+
+private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double, reason: String): String = when {
+    errorsPerMinute > 0.0 -> driveErrorReasonLabel(reason)
+    else -> drivePressureLabel(unitsPerMinute, errorsPerMinute)
+}
+
+private fun driveErrorReasonLabel(reason: String): String {
+    val value = reason.lowercase()
+    val compact = value.filter { it.isLetterOrDigit() }
+    return when {
+        "storagequotaexceeded" in compact -> "Drive storage full"
+        "ratelimit" in compact || "toomany" in compact || compact == "status429" -> "Drive rate limited"
+        "unauthorized" in compact || compact == "status401" -> "Google login expired"
+        "notfound" in compact -> "Drive mailbox missing"
+        "timeout" in compact || "deadline" in compact -> "Drive timeout"
+        else -> "Drive errors"
+    }
 }
 
 private fun performancePresetLabel(preset: String): String = when (preset) {

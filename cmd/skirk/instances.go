@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -279,6 +280,7 @@ func exitPerformanceMenu(ctx context.Context, reader *bufio.Reader, configPath s
 		cfg.Tunnel.DownloadConcurrency = 32
 		cfg.Tunnel.BurstPoll = false
 	case "5":
+		fmt.Println("Warning: low poll intervals, high worker counts, and burst polling can burn Drive quota quickly.")
 		pollMS, err := promptBoundedInt(ctx, reader, "Poll interval ms", cfg.Tunnel.PollIntervalMS, 250, 60000)
 		if err != nil {
 			return err
@@ -404,8 +406,9 @@ func deleteExitInstanceFromMenu(ctx context.Context, reader *bufio.Reader, insta
 func discoverExitInstances() ([]exitInstance, error) {
 	var out []exitInstance
 	seen := map[string]bool{}
-	if _, err := os.Stat("skirk-kit/exit.json"); err == nil {
-		kitDir, _ := filepath.Abs("skirk-kit")
+	if kitDir, ok, err := existingDefaultKitDir(); err != nil {
+		return nil, err
+	} else if ok {
 		configPath, _ := filepath.Abs(filepath.Join(kitDir, "exit.json"))
 		out = append(out, exitInstance{
 			ID:          "default",
@@ -416,8 +419,6 @@ func discoverExitInstances() ([]exitInstance, error) {
 			Legacy:      true,
 		})
 		seen["default"] = true
-	} else if err != nil && !os.IsNotExist(err) {
-		return nil, err
 	}
 	root, err := skirkInstancesRoot()
 	if err != nil {
@@ -468,6 +469,37 @@ func discoverExitInstances() ([]exitInstance, error) {
 		return out[i].ID < out[j].ID
 	})
 	return out, nil
+}
+
+var defaultKitDirCandidates = func() []string {
+	candidates := []string{"skirk-kit"}
+	if runtime.GOOS == "linux" {
+		candidates = append(candidates, "/opt/skirk-kit")
+	}
+	return candidates
+}
+
+func existingDefaultKitDir() (string, bool, error) {
+	for _, dir := range defaultKitDirCandidates() {
+		exitPath := filepath.Join(dir, "exit.json")
+		if _, err := os.Stat(exitPath); err == nil {
+			kitDir, absErr := filepath.Abs(dir)
+			if absErr != nil {
+				return "", false, absErr
+			}
+			return kitDir, true, nil
+		} else if err != nil && !os.IsNotExist(err) {
+			return "", false, err
+		}
+	}
+	return "", false, nil
+}
+
+func defaultKitFile(name string) string {
+	if kitDir, ok, err := existingDefaultKitDir(); err == nil && ok {
+		return filepath.Join(kitDir, name)
+	}
+	return filepath.Join("skirk-kit", name)
 }
 
 func readExitInstanceManifest(path string) (exitInstance, error) {
