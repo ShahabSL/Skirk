@@ -488,7 +488,7 @@ func existingDefaultKitDir() (string, bool, error) {
 				return "", false, absErr
 			}
 			return kitDir, true, nil
-		} else if err != nil && !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return "", false, err
 		}
 	}

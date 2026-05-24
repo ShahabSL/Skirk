@@ -343,7 +343,7 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		sendDir:               sendDir,
 		recvDir:               recvDir,
 		epoch:                 epoch,
-		transport:             normalizeMuxTransport(t.Transport),
+		transport:             "muxv4",
 		streams:               map[muxStreamKey]*muxStream{},
 		opening:               map[muxStreamKey]struct{}{},
 		closed:                map[muxStreamKey]time.Time{},
@@ -386,10 +386,6 @@ func newMuxLane(m *driveMux, idx int) *muxLane {
 		normalQueueFirstAt:  map[muxStreamKey]time.Time{},
 		normalQueuedStreams: map[muxStreamKey]bool{},
 	}
-}
-
-func normalizeMuxTransport(transport string) string {
-	return "muxv4"
 }
 
 func (t *Tunnel) serveMuxClient(ctx context.Context, listen string) error {
@@ -2724,7 +2720,7 @@ func normalReceivePauseStateForStream(stream *muxStream) (bool, bool) {
 	}
 	frames, bytes := stream.reassemblyBacklog()
 	reassemblyPaused := frames >= muxStreamPauseFrames || bytes >= muxStreamPauseBytes
-	inboundPaused := stream != nil && len(stream.inbound) >= muxStreamInboundPause
+	inboundPaused := len(stream.inbound) >= muxStreamInboundPause
 	return reassemblyPaused, inboundPaused
 }
 
