@@ -2720,7 +2720,7 @@ func normalReceivePauseStateForStream(stream *muxStream) (bool, bool) {
 	}
 	frames, bytes := stream.reassemblyBacklog()
 	reassemblyPaused := frames >= muxStreamPauseFrames || bytes >= muxStreamPauseBytes
-	inboundPaused := stream != nil && len(stream.inbound) >= muxStreamInboundPause
+	inboundPaused := len(stream.inbound) >= muxStreamInboundPause
 	return reassemblyPaused, inboundPaused
 }
 
