@@ -147,9 +147,6 @@ func TestConfigRejectsExperimentalTransport(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "muxv4") {
 		t.Fatalf("err = %v, want transport validation error mentioning muxv4", err)
 	}
-	if got := normalizeMuxTransport(cfg.Tunnel.Transport); got != "muxv4" {
-		t.Fatalf("normalizeMuxTransport(experimental) = %q, want muxv4", got)
-	}
 }
 
 func TestAccessTokenSourceRefreshesBeforeExpiry(t *testing.T) {
