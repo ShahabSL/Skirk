@@ -240,7 +240,7 @@ func TestOAuthTokenAttemptsIncludeHostileRoutes(t *testing.T) {
 	route := RouteConfig{
 		Mode:           "google_front",
 		Proxy:          "socks5h://127.0.0.1:11093",
-		GoogleIP:       "216.239.38.120",
+		GoogleIP:       defaultGoogleIP(),
 		TimeoutSeconds: 240,
 	}
 	attempts := oauthTokenAttempts(route)
@@ -280,7 +280,7 @@ func TestTextConfigRoundTrip(t *testing.T) {
 			RefreshToken: "refresh-token",
 			TokenURL:     "https://oauth2.googleapis.com/token",
 		},
-		Route:  RouteConfig{Mode: "google_front_pinned", GoogleIP: "216.239.38.120"},
+		Route:  RouteConfig{Mode: "google_front_pinned", GoogleIP: defaultGoogleIP()},
 		Drive:  DriveConfig{FolderID: "drive-folder"},
 		Tunnel: TunnelConfig{Listen: "127.0.0.1:18080", ChunkSize: 1024 * 1024, PollIntervalMS: 1200, Concurrency: 4, CleanupProcessed: true},
 	}

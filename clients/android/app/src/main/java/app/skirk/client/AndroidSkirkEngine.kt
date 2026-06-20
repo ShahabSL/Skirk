@@ -28,6 +28,7 @@ class AndroidSkirkEngine(
 		waitForListenPortRelease(profile)
 
 		val configFile = writeRuntimeConfig(profile)
+		val googleIpListFile = prepareGoogleIpListFile()
 		val engine = File(context.applicationInfo.nativeLibraryDir, ENGINE_NAME)
         check(engine.exists()) { "Skirk engine was not packaged at ${engine.absolutePath}" }
 
@@ -40,12 +41,15 @@ class AndroidSkirkEngine(
         Log.i(TAG, "Starting ${engine.absolutePath} on SOCKS ${profile.socksAddress} HTTP $httpListen")
         appendLogLine(
             logFile,
-            "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen",
+            "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen googleIpList=${googleIpListFile.absolutePath}",
         )
-        process = ProcessBuilder(buildProcessArgs(engine, configFile, profile, metricsFile))
+        val processBuilder = ProcessBuilder(buildProcessArgs(engine, configFile, profile, metricsFile))
             .directory(context.filesDir)
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        processBuilder.environment()["SKIRK_GOOGLE_IP_LIST"] = googleIpListFile.absolutePath
+        processBuilder.environment()["SKIRK_CACHED_LIST"] = googleIpListFile.absolutePath
+        process = processBuilder
             .start()
             .also { child ->
                 watchProcessExit(child, logFile)
@@ -236,6 +240,21 @@ class AndroidSkirkEngine(
 
     private fun readinessHost(host: String): String =
         if (host == "0.0.0.0") "127.0.0.1" else host
+
+    private fun prepareGoogleIpListFile(): File {
+        val googleIpDir = File(context.filesDir, "google-ip").apply { mkdirs() }
+        val target = File(googleIpDir, "ip-list.txt")
+        runCatching {
+            context.assets.open("ip-list.txt").use { input ->
+                target.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }.getOrElse { error ->
+            throw IllegalStateException("Skirk Android assets did not include ip-list.txt", error)
+        }
+        return target
+    }
 
     private fun writeRuntimeConfig(profile: ClientProfile): File {
         val configsDir = File(context.filesDir, "configs").apply { mkdirs() }

@@ -1394,7 +1394,7 @@ func sampleConfig(args []string) error {
 	session := fs.String("session", "", "fixed 32-hex session id")
 	proxy := fs.String("proxy", "socks5h://127.0.0.1:1080", "upstream restricted-network proxy")
 	routeMode := fs.String("route-mode", "google_front_pinned", "route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
-	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routing")
+	googleIP := fs.String("google-ip", skirk.DefaultGoogleIP(), "Google edge IP for pinned routes (IP, path, or ${SKIRK_GOOGLE_IP_LIST}; defaults to assets/ip-list.txt)")
 	concurrency := fs.Int("concurrency", 8, "Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {
 		return err

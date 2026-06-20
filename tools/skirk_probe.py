@@ -17,10 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from google_ip import cache_list, resolve_ip
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_ROOT = Path(os.environ.get("SKIRK_PROBE_OUT", ROOT / ".skirk-runs" / "probe_results"))
 DEFAULT_PROXY = "socks5h://127.0.0.1:1080"
+GOOGLE_IP = resolve_ip(os.environ.get("SKIRK_GOOGLE_IP_LIST", os.environ.get("SKIRK_CACHED_LIST", cache_list.path)))
 
 
 @dataclass
@@ -131,13 +134,13 @@ def probes_from_env() -> list[Probe]:
     tests = [
         Probe("google_generate_204_h1", "https://www.google.com/generate_204", "1.1"),
         Probe("google_generate_204_h2", "https://www.google.com/generate_204", "2"),
-        Probe("google_ip_216_239_38_120_h1", "https://www.google.com/generate_204", "1.1", connect_to=["www.google.com:443:216.239.38.120:443"]),
+        Probe("google_ip_216_239_38_120_h1", "https://www.google.com/generate_204", "1.1", connect_to=[f"www.google.com:443:{GOOGLE_IP}:443"]),
         Probe("script_google_root_h1", "https://script.google.com/", "1.1"),
         Probe("script_google_invalid_exec_h1", "https://script.google.com/macros/s/AKfycbxInvalidSkirkProbe/exec", "1.1"),
         Probe("googleapis_discovery_h1", "https://www.googleapis.com/discovery/v1/apis?fields=kind", "1.1"),
         Probe("googleapis_discovery_h2", "https://www.googleapis.com/discovery/v1/apis?fields=kind", "2"),
         Probe("drive_about_unauth_h1", "https://www.googleapis.com/drive/v3/about?fields=user", "1.1"),
-        Probe("googleapis_drive_via_google_ip_sni_googleapis_h1", "https://www.googleapis.com/drive/v3/about?fields=user", "1.1", connect_to=["www.googleapis.com:443:216.239.38.120:443"]),
+        Probe("googleapis_drive_via_google_ip_sni_googleapis_h1", "https://www.googleapis.com/drive/v3/about?fields=user", "1.1", connect_to=[f"www.googleapis.com:443:{GOOGLE_IP}:443"]),
         Probe("run_googleapis_discovery_h1", "https://run.googleapis.com/$discovery/rest?version=v2", "1.1"),
         Probe("accounts_google_h1", "https://accounts.google.com/", "1.1"),
         Probe("storage_google_root_h1", "https://storage.googleapis.com/", "1.1"),
@@ -181,7 +184,7 @@ def probes_from_env() -> list[Probe]:
             "https://www.google.com/discovery/v1/apis?fields=kind",
             "1.1",
             headers=["Host: www.googleapis.com"],
-            connect_to=["www.google.com:443:216.239.38.120:443"],
+            connect_to=[f"www.google.com:443:{GOOGLE_IP}:443"],
             note="Same as googleapis fronting test, pinned to the Google IP used by several repos.",
         ),
         Probe(
@@ -189,7 +192,7 @@ def probes_from_env() -> list[Probe]:
             "https://www.google.com/drive/v3/about?fields=user",
             "1.1",
             headers=["Host: www.googleapis.com"],
-            connect_to=["www.google.com:443:216.239.38.120:443"],
+            connect_to=[f"www.google.com:443:{GOOGLE_IP}:443"],
             note="Drive API fronting test pinned to the Google IP used by several repos.",
         ),
         Probe(
@@ -197,7 +200,7 @@ def probes_from_env() -> list[Probe]:
             "https://www.google.com/macros/s/AKfycbxInvalidSkirkProbe/exec",
             "1.1",
             headers=["Host: script.google.com"],
-            connect_to=["www.google.com:443:216.239.38.120:443"],
+            connect_to=[f"www.google.com:443:{GOOGLE_IP}:443"],
             note="Apps Script fronting test pinned to the Google IP used by several repos.",
         ),
         Probe(
@@ -212,7 +215,7 @@ def probes_from_env() -> list[Probe]:
             "https://www.google.com/$discovery/rest?version=v2",
             "1.1",
             headers=["Host: run.googleapis.com"],
-            connect_to=["www.google.com:443:216.239.38.120:443"],
+            connect_to=[f"www.google.com:443:{GOOGLE_IP}:443"],
             note="Cloud Run Admin API reachability via Google SNI and pinned Google IP; not a run.app service test.",
         ),
         Probe(

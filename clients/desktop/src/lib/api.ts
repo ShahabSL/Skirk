@@ -107,6 +107,10 @@ const isTauriRuntime =
   typeof window !== "undefined" &&
   "__TAURI_INTERNALS__" in (window as unknown as { __TAURI_INTERNALS__?: unknown });
 const useBrowserPreview = import.meta.env.DEV && !isTauriRuntime;
+const googleIpList =
+  import.meta.env.VITE_SKIRK_GOOGLE_IP_LIST?.trim() ||
+  import.meta.env.VITE_SKIRK_CACHED_LIST?.trim() ||
+  "assets/ip-list.txt";
 
 let mockProfiles: ClientProfile[] = [
   {
@@ -119,7 +123,7 @@ let mockProfiles: ClientProfile[] = [
     httpPort: 18081,
     shareLan: false,
     routeMode: "google_front_pinned",
-    googleIp: "216.239.38.120",
+    googleIp: googleIpList,
     driveSpace: "appDataFolder",
     driveFolderId: "",
     performance: recommendedPerformance(),
@@ -220,7 +224,7 @@ const browserPreviewApi = {
         httpPort,
         shareLan,
         routeMode: "google_front_pinned",
-        googleIp: "216.239.38.120",
+        googleIp: googleIpList,
         driveSpace: "appDataFolder",
         driveFolderId: "",
         performance: recommendedPerformance(),

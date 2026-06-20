@@ -269,12 +269,20 @@ func isRawURLBase64Rune(r rune) bool {
 		r == '_'
 }
 
+func normalizeGoogleIPSpec(spec string) string {
+	spec = strings.TrimSpace(os.ExpandEnv(spec))
+	if spec == "" {
+		return ""
+	}
+	return spec
+}
+
 func (c *Config) ApplyDefaults() {
 	if c.Route.Mode == "" {
 		c.Route.Mode = "real_pinned"
 	}
-	if c.Route.GoogleIP == "" {
-		c.Route.GoogleIP = "216.239.38.120"
+	if c.Route.GoogleIP = normalizeGoogleIPSpec(c.Route.GoogleIP); c.Route.GoogleIP == "" {
+		c.Route.GoogleIP = defaultGoogleIP()
 	}
 	if c.Route.TimeoutSeconds == 0 {
 		c.Route.TimeoutSeconds = 240

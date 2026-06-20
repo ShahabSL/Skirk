@@ -69,7 +69,7 @@ func setupInit(ctx context.Context, args []string) error {
 	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
-	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
+	googleIP := fs.String("google-ip", skirk.DefaultGoogleIP(), "Google edge IP for pinned routes (IP, path, or ${SKIRK_GOOGLE_IP_LIST}; defaults to assets/ip-list.txt)")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 8*1024*1024, "maximum tunnel chunk size")
 	pollMS := fs.Int("poll-ms", 1000, "Drive mailbox poll interval in milliseconds")

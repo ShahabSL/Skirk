@@ -9,7 +9,8 @@ use std::{
     net::{IpAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 use tauri::{Manager, State};
@@ -246,7 +247,7 @@ fn default_http_port() -> u16 {
 }
 
 fn default_google_ip() -> String {
-    "216.239.38.120".into()
+    cache_list_path()
 }
 
 fn default_performance_settings() -> ClientPerformanceSettings {
@@ -446,8 +447,8 @@ impl DesktopRuntime {
         let google_ip = parsed
             .pointer("/route/google_ip")
             .and_then(Value::as_str)
-            .unwrap_or("");
-        let google_ip = canonical_google_ip(google_ip)?;
+            .map(normalize_ip_set)
+            .unwrap_or_else(default_google_ip);
         let drive_space = parsed
             .pointer("/drive/space")
             .and_then(Value::as_str)
@@ -655,7 +656,7 @@ impl DesktopRuntime {
         }
         let (socks_address, http_address) = listener_addresses_for_mode(&profile, &mode);
         let route_mode = "google_front_pinned";
-        let google_ip = canonical_google_ip(&profile.google_ip)?;
+        let google_ip = normalize_ip_set(&profile.google_ip);
         ensure_port_free(&socks_address)?;
         ensure_port_free(&http_address)?;
         let skirk = self.resolve_sidecar()?;
@@ -845,7 +846,7 @@ impl DesktopRuntime {
         let tunnel = self.resolve_tunnel_sidecar()?;
         let log_path = tunnel_log_path(&self.paths);
         let config_path = tunnel_config_path(&self.paths);
-        let config = tunnel_config(socks_port, sidecar_process_path, google_ip);
+        let config = tunnel_config(socks_port, sidecar_process_path, google_ip)?;
         fs::write(
             &config_path,
             serde_json::to_vec_pretty(&config)
@@ -1512,25 +1513,205 @@ fn normalize_windows_process_path(path: &str) -> String {
     path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
 }
 
-fn parse_google_ip(value: &str) -> Result<IpAddr, String> {
+
+#[allow(non_upper_case_globals)]
+static cache_list: OnceLock<Mutex<CachedListState>> = OnceLock::new();
+static cache_list_rotation: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone)]
+struct CachedListState {
+    path: String,
+    entries: Vec<IpAddr>,
+    loaded_path: String,
+}
+
+fn init_cache_list() -> String {
+    std::env::var("SKIRK_GOOGLE_IP_LIST").or_else(|_| std::env::var("SKIRK_CACHED_LIST"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "assets/ip-list.txt".into())
+}
+
+impl CachedListState {
+    fn new() -> Self {
+        Self {
+            path: init_cache_list(),
+            entries: Vec::new(),
+            loaded_path: String::new(),
+        }
+    }
+}
+
+fn cache_list_state() -> &'static Mutex<CachedListState> {
+    cache_list.get_or_init(|| Mutex::new(CachedListState::new()))
+}
+
+fn cache_list_path() -> String {
+    cache_list_state().lock().unwrap().path.clone()
+}
+
+fn set_cache_list_path(spec: &str) {
+    let mut state = cache_list_state().lock().unwrap();
+    let path = spec.trim();
+    let path = if path.is_empty() {
+        init_cache_list()
+    } else {
+        path.to_string()
+    };
+    if state.path != path {
+        state.path = path;
+        state.entries.clear();
+        state.loaded_path.clear();
+    }
+}
+
+fn normalize_ip_set(value: &str) -> String {
     let value = value.trim();
-    let value = if value.is_empty() {
+    if value.is_empty() {
         default_google_ip()
     } else {
         value.to_string()
-    };
-    value
-        .parse::<IpAddr>()
-        .map_err(|_| "profile route.google_ip must be an IP address".to_string())
+    }
+}
+
+fn parse_google_ip(value: &str) -> Result<IpAddr, String> {
+    resolve_ip_list(value, 1)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Google edge IP did not produce any IP".to_string())
+}
+
+fn resolve_ip_list(value: &str, limit: usize) -> Result<Vec<IpAddr>, String> {
+    let value = normalize_ip_set(value);
+    if limit == 0 {
+        return Err("google IP list limit must be greater than zero".into());
+    }
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Ok(vec![ip]);
+    }
+    let list_path = resolve_ip_list_path(&value)
+        .ok_or_else(|| format!("could not read Google IP list `{value}`"))?;
+
+    {
+        let cache = cache_list_state().lock().unwrap();
+        if cache.loaded_path == list_path.to_string_lossy().to_string() && !cache.entries.is_empty() {
+            return Ok(cache.entries.iter().copied().take(limit).collect());
+        }
+    }
+
+    let data = fs::read_to_string(&list_path).map_err(|err| {
+        format!(
+            "could not read Google IP list `{}`: {err}",
+            list_path.display()
+        )
+    })?;
+    let mut ips = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_line in data.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(idx) = line.find('#') {
+            line = line[..idx].trim();
+            if line.is_empty() {
+                continue;
+            }
+        }
+        let mut candidates: Vec<&str> = line
+            .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';')
+            .collect();
+        candidates.push(line);
+        for candidate in candidates {
+            let candidate = candidate.trim().trim_matches(|c| c == '"' || c == '\'');
+            if candidate.is_empty() {
+                continue;
+            }
+            let Ok(ip) = candidate.parse::<IpAddr>() else {
+                continue;
+            };
+            if seen.insert(ip) {
+                ips.push(ip);
+            }
+        }
+    }
+    if ips.is_empty() {
+        return Err(format!(
+            "Google IP list `{}` did not contain a valid IP address",
+            list_path.display()
+        ));
+    }
+
+    let ordered = ips_by_latency(ips);
+    {
+        let mut cache = cache_list_state().lock().unwrap();
+        cache.path = value.clone();
+        cache.entries = ordered.clone();
+        cache.loaded_path = list_path.to_string_lossy().to_string();
+    }
+
+    let take = limit.min(ordered.len());
+    Ok(ordered.into_iter().take(take).collect())
+}
+
+fn resolve_ip_list_path(spec: &str) -> Option<PathBuf> {
+    let path = Path::new(spec);
+    if path.exists() {
+        return Some(path.to_path_buf());
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        for ancestor in cwd.ancestors() {
+            let candidate = ancestor.join(spec);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            let resources_candidate = ancestor.join("resources").join(spec);
+            if resources_candidate.exists() {
+                return Some(resources_candidate);
+            }
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            for ancestor in parent.ancestors() {
+                let candidate = ancestor.join(spec);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+                let resources_candidate = ancestor.join("resources").join(spec);
+                if resources_candidate.exists() {
+                    return Some(resources_candidate);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_google_ip(value: &str) -> Result<IpAddr, String> {
+    resolve_ip_list(value, 1)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Google edge IP did not produce any IP".to_string())
 }
 
 fn canonical_google_ip(value: &str) -> Result<String, String> {
-    Ok(parse_google_ip(value)?.to_string())
+    Ok(resolve_google_ip(value)?.to_string())
+}
+
+fn google_control_cidr(google_ip: &str, limit: usize) -> Result<Vec<String>, String> {
+    Ok(resolve_ip_list(google_ip, limit)?
+        .into_iter()
+        .map(|ip| if ip.is_ipv4() { format!("{ip}/32") } else { format!("{ip}/128") })
+        .collect())
 }
 
 fn google_control_cidr(google_ip: &str) -> String {
-    let ip =
-        parse_google_ip(google_ip).expect("Google control IP must be canonical before routing");
+    let ip = resolve_google_ip(google_ip).expect("Google control IP must be canonical before routing");
     if ip.is_ipv4() {
         format!("{ip}/32")
     } else {
@@ -1538,9 +1719,40 @@ fn google_control_cidr(google_ip: &str) -> String {
     }
 }
 
-fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -> Value {
+fn ips_by_latency(ips: Vec<IpAddr>) -> Vec<IpAddr> {
+    if ips.len() <= 1 || std::env::var("SKIRK_GOOGLE_IP_PROBE_DISABLE").ok().as_deref() == Some("1") {
+        return ips;
+    }
+    let mut candidates = Vec::new();
+    for ip in ips.iter().take(6).copied() {
+        candidates.push((measure_google_ip_latency(ip, Duration::from_millis(450)), ip));
+    }
+    candidates.sort_by_key(|(latency, _)| *latency);
+    let mut ordered: Vec<IpAddr> = candidates.into_iter().map(|(_, ip)| ip).collect();
+    let skip = ordered.len();
+    ordered.extend(ips.into_iter().skip(skip));
+    if !ordered.is_empty() {
+        let rotation = cache_list_rotation.fetch_add(1, Ordering::Relaxed) % ordered.len();
+        ordered.rotate_left(rotation);
+    }
+    ordered
+}
+
+fn measure_google_ip_latency(ip: IpAddr, timeout: Duration) -> Duration {
+    let started = Instant::now();
+    let socket = std::net::SocketAddr::new(ip, 443);
+    match std::net::TcpStream::connect_timeout(&socket, timeout) {
+        Ok(stream) => {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            started.elapsed().max(Duration::from_millis(1))
+        }
+        Err(_) => timeout + Duration::from_secs(10),
+    }
+}
+
+fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -> Result<Value, String> {
     let google_control_cidr = google_control_cidr(google_ip);
-    let google_control_route_cidr = google_control_cidr.clone();
+    let google_control_route_cidr = google_control_cidr(google_ip, 12)?;
     let sidecar_process_names = if cfg!(windows) {
         json!(["skirk-sidecar.exe", "skirk.exe", "skirk-windows-amd64.exe"])
     } else {
@@ -1587,7 +1799,7 @@ fn tunnel_config(socks_port: u16, sidecar_process_path: &str, google_ip: &str) -
                     "::1/128",
                     "fc00::/7",
                     "fe80::/10",
-                    google_control_cidr
+                    google_control_cidr.clone()
                 ]
             }
         ],
@@ -1960,9 +2172,11 @@ fn share_addresses(address: &str) -> Vec<String> {
 
 fn discover_lan_ips() -> Vec<String> {
     let mut ips = Vec::new();
-    for target in ["8.8.8.8:80", "1.1.1.1:80"] {
+    let targets = resolve_ip_list(&default_google_ip(), 4).unwrap_or_default();
+    for target in targets {
+        let target = format!("{target}:80");
         if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            if socket.connect(target).is_ok() {
+            if socket.connect(&target).is_ok() {
                 if let Ok(addr) = socket.local_addr() {
                     let ip = addr.ip().to_string();
                     if ip != "0.0.0.0" && !ips.contains(&ip) {
@@ -2111,7 +2325,8 @@ mod tests {
 
     #[test]
     fn tunnel_config_uses_sing_box_1_13_tun_fields() {
-        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "216.239.38.120");
+        std::env::set_var("SKIRK_GOOGLE_IP_PROBE_DISABLE", "1");
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", &default_google_ip()).expect("tunnel config");
         let inbound = config
             .pointer("/inbounds/0")
             .and_then(Value::as_object)
@@ -2145,17 +2360,25 @@ mod tests {
             config.pointer("/dns/strategy").and_then(Value::as_str),
             Some("ipv4_only")
         );
-        assert!(config
+        let route_excludes = config
             .pointer("/inbounds/0/route_exclude_address")
             .and_then(Value::as_array)
-            .expect("route_exclude_address")
-            .iter()
-            .any(|value| value.as_str() == Some("216.239.38.120/32")));
+            .expect("route_exclude_address");
+        let google_control_route_cidr = google_control_cidr(&default_google_ip(), 12)
+            .expect("google control cidrs");
+        let selected_google_cidr = google_control_route_cidr
+            .first()
+            .cloned()
+            .expect("google control cidr");
+        assert!(route_excludes.iter().any(|value| value.as_str() == Some(selected_google_cidr.as_str())));
+        for expected in google_control_route_cidr.iter().skip(1).take(1) {
+            assert!(route_excludes.iter().any(|value| value.as_str() == Some(expected.as_str())));
+        }
         assert_eq!(
             config
                 .pointer("/route/rules/0/ip_cidr/0")
                 .and_then(Value::as_str),
-            Some("216.239.38.120/32")
+            Some(selected_google_cidr.as_str())
         );
         assert_eq!(
             config
@@ -2250,30 +2473,50 @@ mod tests {
 
     #[test]
     fn tunnel_config_uses_custom_google_control_ip() {
-        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", "8.8.8.8");
+        let temp_path = std::env::temp_dir().join(format!(
+            "skirk-google-ip-test-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&temp_path, "127.0.0.1\n").expect("write temp ip list");
+        let temp_path = temp_path.to_string_lossy().to_string();
+        let config = tunnel_config(18080, r"C:\Skirk\skirk-sidecar.exe", &temp_path).expect("tunnel config");
         assert!(config
             .pointer("/inbounds/0/route_exclude_address")
             .and_then(Value::as_array)
             .expect("route_exclude_address")
             .iter()
-            .any(|value| value.as_str() == Some("8.8.8.8/32")));
+            .any(|value| value.as_str() == Some("127.0.0.1/32")));
         assert_eq!(
             config
                 .pointer("/route/rules/0/ip_cidr/0")
                 .and_then(Value::as_str),
-            Some("8.8.8.8/32")
+            Some("127.0.0.1/32")
         );
     }
 
     #[test]
     fn google_control_ip_is_canonicalized() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "skirk-google-ip-canon-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&temp_path, "127.0.0.1\n127.0.0.2\n").expect("write temp ip list");
+        let temp_path = temp_path.to_string_lossy().to_string();
         assert_eq!(
-            canonical_google_ip("").expect("default Google IP"),
-            "216.239.38.120"
+            canonical_google_ip(&temp_path).expect("default Google IP"),
+            "127.0.0.1"
         );
         assert_eq!(
-            canonical_google_ip(" 8.8.8.8 ").expect("custom Google IP"),
-            "8.8.8.8"
+            canonical_google_ip(" 127.0.0.1 ").expect("custom Google IP"),
+            "127.0.0.1"
         );
         assert!(canonical_google_ip("not-an-ip").is_err());
     }
@@ -2289,7 +2532,7 @@ mod tests {
             http_port: 18081,
             share_lan,
             route_mode: "google_front_pinned".into(),
-            google_ip: "216.239.38.120".into(),
+            google_ip: default_google_ip(),
             drive_space: "appDataFolder".into(),
             drive_folder_id: String::new(),
             performance: default_performance_settings(),

@@ -7,7 +7,7 @@
   "route": {
     "mode": "google_front",
     "proxy": "socks5h://127.0.0.1:1080",
-    "google_ip": "216.239.38.120",
+    "google_ip": "${SKIRK_GOOGLE_IP_LIST}",
     "timeout_seconds": 240
   },
   "drive": {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -53,13 +54,24 @@ func (e *GoogleAPIError) IsStorageQuotaExceeded() bool {
 }
 
 type GoogleHTTPClient struct {
-	client *http.Client
-	route  RouteConfig
+	client           *http.Client
+	route            RouteConfig
+	googleIPs        []string
+	googleIPResolve  error
+	googleIPRotation atomic.Uint64
 }
 
 func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 	if route.TimeoutSeconds == 0 {
 		route.TimeoutSeconds = 240
+	}
+	client := &GoogleHTTPClient{route: route}
+	if shouldPinGoogleIP(route.Mode) {
+		spec := strings.TrimSpace(route.GoogleIP)
+		if spec == "" {
+			spec = defaultGoogleIP()
+		}
+		client.googleIPs, client.googleIPResolve = resolveGoogleIPList(spec, 12)
 	}
 	baseDialer := &net.Dialer{Timeout: 25 * time.Second, KeepAlive: 30 * time.Second}
 	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -68,8 +80,17 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			return nil, err
 		}
 		target := addr
-		if route.GoogleIP != "" && port == "443" && shouldPinGoogleIP(route.Mode) {
-			target = net.JoinHostPort(route.GoogleIP, port)
+		if port == "443" && shouldPinGoogleIP(route.Mode) {
+			if len(client.googleIPs) > 0 {
+				idx := client.googleIPRotation.Add(1) - 1
+				target = net.JoinHostPort(client.googleIPs[idx%uint64(len(client.googleIPs))], port)
+			} else if client.googleIPResolve != nil {
+				return nil, client.googleIPResolve
+			} else if resolved, err := resolveGoogleIPSpec(route.GoogleIP); err == nil {
+				target = net.JoinHostPort(resolved, port)
+			} else {
+				return nil, err
+			}
 		} else if host == "" {
 			target = addr
 		}
@@ -104,10 +125,8 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			ReadIdleTimeout: 30 * time.Second,
 			PingTimeout:     15 * time.Second,
 		}
-		return &GoogleHTTPClient{
-			client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
-			route:  route,
-		}
+		client.client = &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second}
+		return client
 	}
 	tlsDialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		raw, err := dialContext(ctx, network, addr)
@@ -149,10 +168,8 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 	if isGoogleFrontHTTP1Route(route.Mode) {
 		transport.DialTLSContext = tlsDialContext
 	}
-	return &GoogleHTTPClient{
-		client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
-		route:  route,
-	}
+	client.client = &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second}
+	return client
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {

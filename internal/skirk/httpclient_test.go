@@ -32,7 +32,7 @@ func TestGoogleFrontRouteProtocolSelection(t *testing.T) {
 }
 
 func TestGoogleHTTPRouteAttemptsAddGoogleSNIFallback(t *testing.T) {
-	directProxy := RouteConfig{Mode: "direct", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: "216.239.38.120", TimeoutSeconds: 240}
+	directProxy := RouteConfig{Mode: "direct", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: defaultGoogleIP(), TimeoutSeconds: 240}
 	attempts := googleHTTPRouteAttempts(directProxy)
 	if len(attempts) != 2 {
 		t.Fatalf("direct proxy attempts = %d, want 2", len(attempts))
@@ -46,7 +46,7 @@ func TestGoogleHTTPRouteAttemptsAddGoogleSNIFallback(t *testing.T) {
 		t.Fatalf("clean fronted route attempts = %d, want 1", len(got))
 	}
 
-	pinned := RouteConfig{Mode: "google_front_pinned", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: "216.239.38.120"}
+	pinned := RouteConfig{Mode: "google_front_pinned", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: defaultGoogleIP()}
 	attempts = googleHTTPRouteAttempts(pinned)
 	if len(attempts) != 1 || attempts[0].Mode != "google_front_pinned" || attempts[0].GoogleIP != pinned.GoogleIP {
 		t.Fatalf("pinned route attempts = %+v", attempts)

@@ -6,6 +6,7 @@ plugins {
 
 val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
+val generatedSkirkAssets = layout.buildDirectory.dir("generated/skirk-assets")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
 val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.55").get()
@@ -75,6 +76,19 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
                 environment("CC", requireNotNull(cCompilers[abi]) { "missing Android compiler for $abi" })
             }
         }
+    }
+}
+
+val copySkirkAndroidAssets = tasks.register("copySkirkAndroidAssets") {
+    group = "build"
+    description = "Copy shared Skirk assets into the Android APK."
+    inputs.file(repoRoot.file("assets/ip-list.txt"))
+    outputs.dir(generatedSkirkAssets)
+
+    doLast {
+        val outputDir = generatedSkirkAssets.get().asFile
+        outputDir.mkdirs()
+        repoRoot.file("assets/ip-list.txt").asFile.copyTo(outputDir.resolve("ip-list.txt"), overwrite = true)
     }
 }
 
@@ -199,6 +213,7 @@ android {
         getByName("main") {
             jniLibs.srcDir(generatedSkirkJniLibs)
             jniLibs.srcDir(generatedHevJniLibs)
+            assets.srcDir(generatedSkirkAssets)
         }
     }
 
@@ -212,6 +227,7 @@ android {
 tasks.named("preBuild") {
     dependsOn(buildSkirkAndroidSidecar)
     dependsOn(buildHevTun2socks)
+    dependsOn(copySkirkAndroidAssets)
 }
 
 dependencies {
