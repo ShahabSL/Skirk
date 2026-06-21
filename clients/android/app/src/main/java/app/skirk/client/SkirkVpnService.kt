@@ -204,8 +204,32 @@ class SkirkVpnService : VpnService() {
             .setConfigureIntent(configureIntent)
 
         addLocalNetworkExclusions(builder)
-        runCatching { builder.addDisallowedApplication(packageName) }
-            .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
+        if (localProfile.splitTunnelingEnabled) {
+            if (localProfile.splitTunnelingMode == ClientProfile.SPLIT_TUNNEL_PROXY) {
+                localProfile.splitTunnelingApps.forEach { pkg ->
+                    runCatching {
+                        builder.addAllowedApplication(pkg)
+                    }.onFailure { error ->
+                        Log.w(TAG, "Could not add allowed application $pkg", error)
+                    }
+                }
+            } else {
+                localProfile.splitTunnelingApps.forEach { pkg ->
+                    if (pkg != packageName) {
+                        runCatching {
+                            builder.addDisallowedApplication(pkg)
+                        }.onFailure { error ->
+                            Log.w(TAG, "Could not add disallowed application $pkg", error)
+                        }
+                    }
+                }
+                runCatching { builder.addDisallowedApplication(packageName) }
+                    .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
+            }
+        } else {
+            runCatching { builder.addDisallowedApplication(packageName) }
+                .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             builder.setUnderlyingNetworks(underlyingNetworks)
         }

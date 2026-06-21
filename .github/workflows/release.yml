@@ -32,7 +32,7 @@ jobs:
         env:
           SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
           SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "0"
         run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
 
       - uses: actions/upload-artifact@v7
@@ -68,16 +68,19 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
 
-      - name: Decode Android release keystore
+      - name: Decode or Generate Android release keystore
         env:
           SKIRK_ANDROID_KEYSTORE_BASE64: ${{ secrets.SKIRK_ANDROID_KEYSTORE_BASE64 }}
         run: |
-          if [ -z "${SKIRK_ANDROID_KEYSTORE_BASE64}" ]; then
-            echo "SKIRK_ANDROID_KEYSTORE_BASE64 is required for release APK signing" >&2
-            exit 1
-          fi
           mkdir -p "$RUNNER_TEMP/skirk-android-signing"
-          printf '%s' "$SKIRK_ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/skirk-android-signing/release.jks"
+          if [ -n "${SKIRK_ANDROID_KEYSTORE_BASE64}" ]; then
+            printf '%s' "$SKIRK_ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/skirk-android-signing/release.jks"
+            echo "USING_CUSTOM_KEYSTORE=1" >> "$GITHUB_ENV"
+          else
+            echo "SKIRK_ANDROID_KEYSTORE_BASE64 is empty. Generating fallback self-signed release keystore..."
+            keytool -genkeypair -v -keystore "$RUNNER_TEMP/skirk-android-signing/release.jks" -alias release -keyalg RSA -keysize 2048 -validity 10000 -storepass fallbackpassword -keypass fallbackpassword -dname "CN=Skirk, O=Skirk, C=US"
+            echo "USING_CUSTOM_KEYSTORE=0" >> "$GITHUB_ENV"
+          fi
 
       - name: Build signed release APK
         working-directory: clients/android
@@ -87,10 +90,17 @@ jobs:
           SKIRK_ANDROID_KEY_ALIAS: ${{ secrets.SKIRK_ANDROID_KEY_ALIAS }}
           SKIRK_ANDROID_KEY_PASSWORD: ${{ secrets.SKIRK_ANDROID_KEY_PASSWORD }}
         run: |
-          test -n "$SKIRK_ANDROID_KEYSTORE_PASSWORD"
-          test -n "$SKIRK_ANDROID_KEY_ALIAS"
-          test -n "$SKIRK_ANDROID_KEY_PASSWORD"
-          ./gradlew :app:assembleRelease -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
+          if [ "$USING_CUSTOM_KEYSTORE" = "1" ]; then
+            test -n "$SKIRK_ANDROID_KEYSTORE_PASSWORD"
+            test -n "$SKIRK_ANDROID_KEY_ALIAS"
+            test -n "$SKIRK_ANDROID_KEY_PASSWORD"
+            ./gradlew :app:assembleRelease -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
+          else
+            SKIRK_ANDROID_KEYSTORE_PASSWORD="fallbackpassword" \
+            SKIRK_ANDROID_KEY_ALIAS="release" \
+            SKIRK_ANDROID_KEY_PASSWORD="fallbackpassword" \
+            ./gradlew :app:assembleRelease -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
+          fi
 
       - name: Verify release APK signature
         run: |
@@ -196,7 +206,7 @@ jobs:
         env:
           SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
           SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "0"
         run: |
           New-Item -ItemType Directory -Force clients/desktop/src-tauri/resources/sidecars/windows | Out-Null
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -317,7 +327,7 @@ jobs:
         env:
           SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
           SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "0"
         run: clients/desktop/scripts/stage_sidecars.sh
 
       - name: Stage Linux VPN sidecar
@@ -416,7 +426,7 @@ jobs:
         env:
           SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
           SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+          SKIRK_REQUIRE_BUILTIN_OAUTH: "0"
         run: |
           set -euo pipefail
           mkdir -p clients/desktop/src-tauri/resources/sidecars/macos

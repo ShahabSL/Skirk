@@ -77,6 +77,21 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -180,6 +195,7 @@ fun ConfigScreen() {
     var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
     var importExpanded by remember { mutableStateOf(profiles.isEmpty()) }
     var advancedSettingsOpen by remember { mutableStateOf(false) }
+    var splitTunnelingOpen by remember { mutableStateOf(false) }
 
     fun refreshConnectionState() {
         val raw = connectionStore.read()
@@ -467,6 +483,13 @@ fun ConfigScreen() {
                     onOpenAdvanced = { advancedSettingsOpen = true },
                     onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
                     onDisconnect = { disconnectActive() },
+                    onSplitTunnelingEnabledChange = { enabled ->
+                        selected?.let { profile ->
+                            store.saveProfile(profile.copy(splitTunnelingEnabled = enabled))
+                            refresh()
+                        }
+                    },
+                    onOpenSplitTunnelingConfig = { splitTunnelingOpen = true },
                 )
             }
 
@@ -497,6 +520,17 @@ fun ConfigScreen() {
                 },
             )
         }
+        if (splitTunnelingOpen && selected != null) {
+            SplitTunnelingDialog(
+                profile = selected,
+                onDismiss = { splitTunnelingOpen = false },
+                onSave = { updatedProfile ->
+                    store.saveProfile(updatedProfile)
+                    refresh()
+                    splitTunnelingOpen = false
+                },
+            )
+        }
     }
 }
 
@@ -513,6 +547,8 @@ private fun ConnectionPanel(
     onOpenAdvanced: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onSplitTunnelingEnabledChange: (Boolean) -> Unit,
+    onOpenSplitTunnelingConfig: () -> Unit,
 ) {
     val uiState = connectionUiState(running, selected, message)
     Panel {
@@ -577,6 +613,28 @@ private fun ConnectionPanel(
             )
         } else {
             InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            SwitchRow(
+                title = "Split Tunneling",
+                detail = if (selected?.splitTunnelingEnabled == true) {
+                    if (selected.splitTunnelingMode == ClientProfile.SPLIT_TUNNEL_PROXY) "Tunnel selected apps only" else "Bypass selected apps"
+                } else {
+                    "Disabled (all apps routed except Skirk)"
+                },
+                checked = selected?.splitTunnelingEnabled == true,
+                enabled = selected != null && !running,
+                onCheckedChange = onSplitTunnelingEnabledChange,
+            )
+            if (selected?.splitTunnelingEnabled == true) {
+                OutlinedButton(
+                    onClick = onOpenSplitTunnelingConfig,
+                    enabled = selected != null && !running,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.Settings, contentDescription = null)
+                    Text("Configure Apps (${selected.splitTunnelingApps.size} selected)")
+                }
+            }
         }
     }
 }
@@ -1183,6 +1241,7 @@ private fun SwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -1194,7 +1253,7 @@ private fun SwitchRow(
         Switch(
             checked = checked,
             enabled = enabled,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
@@ -1548,4 +1607,273 @@ private fun File.readTail(maxBytes: Int, maxLines: Int): String {
             .takeLast(maxLines)
             .joinToString("\n")
     }
+}
+
+@Composable
+private fun SplitTunnelingDialog(
+    profile: ClientProfile,
+    onDismiss: () -> Unit,
+    onSave: (ClientProfile) -> Unit,
+) {
+    val context = LocalContext.current
+    val pm = remember(context) { context.packageManager }
+    
+    var mode by remember { mutableStateOf(profile.splitTunnelingMode) }
+    val selectedApps = remember { mutableStateOf(profile.splitTunnelingApps.toMutableSet()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var showSystemApps by remember { mutableStateOf(false) }
+    
+    var appList by remember { mutableStateOf<List<AppInfo>>(emptyList()) }
+    var isLoadingApps by remember { mutableStateOf(true) }
+    
+    LaunchedEffect(Unit) {
+        isLoadingApps = true
+        withContext(Dispatchers.IO) {
+            val installedApps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            val launcherIntent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
+            val launcherPackages = pm.queryIntentActivities(launcherIntent, 0)
+                .map { it.activityInfo.packageName }
+                .toSet()
+
+            val list = installedApps.map { app ->
+                val isSystem = (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val name = runCatching { pm.getApplicationLabel(app).toString() }.getOrDefault(app.packageName)
+                AppInfo(
+                    packageName = app.packageName,
+                    name = name,
+                    isSystem = isSystem,
+                    isLauncher = launcherPackages.contains(app.packageName)
+                )
+            }.sortedBy { it.name.lowercase() }
+            
+            withContext(Dispatchers.Main) {
+                appList = list
+                isLoadingApps = false
+            }
+        }
+    }
+
+    val filteredApps = appList.filter { app ->
+        val matchesSearch = app.name.contains(searchQuery, ignoreCase = true) ||
+                app.packageName.contains(searchQuery, ignoreCase = true)
+        val matchesSystemFilter = showSystemApps || !app.isSystem || app.isLauncher
+        matchesSearch && matchesSystemFilter
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(profile.copy(splitTunnelingMode = mode, splitTunnelingApps = selectedApps.value))
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        title = {
+            Text("Split Tunneling Settings")
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 550.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ModeCard(
+                        icon = Icons.Rounded.Shield,
+                        title = "Bypass Mode",
+                        subtitle = "Selected apps bypass VPN",
+                        selected = mode == ClientProfile.SPLIT_TUNNEL_BYPASS,
+                        enabled = true,
+                        modifier = Modifier.weight(1f),
+                        onClick = { mode = ClientProfile.SPLIT_TUNNEL_BYPASS }
+                    )
+                    ModeCard(
+                        icon = Icons.Rounded.VpnKey,
+                        title = "Proxy Mode",
+                        subtitle = "Only selected apps tunneled",
+                        selected = mode == ClientProfile.SPLIT_TUNNEL_PROXY,
+                        enabled = true,
+                        modifier = Modifier.weight(1f),
+                        onClick = { mode = ClientProfile.SPLIT_TUNNEL_PROXY }
+                    )
+                }
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search apps...") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Rounded.Clear, contentDescription = null)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { showSystemApps = !showSystemApps }
+                    ) {
+                        Checkbox(
+                            checked = showSystemApps,
+                            onCheckedChange = { showSystemApps = it }
+                        )
+                        Text("Show System Apps", style = MaterialTheme.typography.bodyMedium)
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = {
+                                val currentFilteredPkgs = filteredApps.map { it.packageName }
+                                val nextSelected = selectedApps.value.toMutableSet()
+                                nextSelected.addAll(currentFilteredPkgs)
+                                selectedApps.value = nextSelected
+                            }
+                        ) {
+                            Text("All", style = MaterialTheme.typography.labelMedium)
+                        }
+                        TextButton(
+                            onClick = {
+                                val currentFilteredPkgs = filteredApps.map { it.packageName }
+                                val nextSelected = selectedApps.value.toMutableSet()
+                                nextSelected.removeAll(currentFilteredPkgs)
+                                selectedApps.value = nextSelected
+                            }
+                        ) {
+                            Text("None", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+
+                if (isLoadingApps) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredApps, key = { it.packageName }) { app ->
+                            AppRow(
+                                app = app,
+                                pm = pm,
+                                isSelected = selectedApps.value.contains(app.packageName),
+                                onToggle = {
+                                    val nextSelected = selectedApps.value.toMutableSet()
+                                    if (nextSelected.contains(app.packageName)) {
+                                        nextSelected.remove(app.packageName)
+                                    } else {
+                                        nextSelected.add(app.packageName)
+                                    }
+                                    selectedApps.value = nextSelected
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun AppRow(
+    app: AppInfo,
+    pm: PackageManager,
+    isSelected: Boolean,
+    onToggle: () -> Unit,
+) {
+    val iconBitmap = remember(app.packageName) {
+        runCatching {
+            val appInfo = pm.getApplicationInfo(app.packageName, 0)
+            pm.getApplicationIcon(appInfo).toBitmap().asImageBitmap()
+        }.getOrNull()
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                else Color.Transparent,
+                RoundedCornerShape(6.dp)
+            )
+            .padding(vertical = 6.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (iconBitmap != null) {
+            Image(
+                bitmap = iconBitmap,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp)
+            )
+        } else {
+            Icon(
+                Icons.Rounded.AccountCircle,
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(app.name, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+            Text(app.packageName, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        }
+
+        Checkbox(
+            checked = isSelected,
+            onCheckedChange = { onToggle() }
+        )
+    }
+}
+
+private data class AppInfo(
+    val packageName: String,
+    val name: String,
+    val isSystem: Boolean,
+    val isLauncher: Boolean
+)
+
+private fun Drawable.toBitmap(): Bitmap {
+    val bitmap = Bitmap.createBitmap(
+        if (intrinsicWidth > 0) intrinsicWidth else 48,
+        if (intrinsicHeight > 0) intrinsicHeight else 48,
+        Bitmap.Config.ARGB_8888
+    )
+    val canvas = Canvas(bitmap)
+    setBounds(0, 0, canvas.width, canvas.height)
+    draw(canvas)
+    return bitmap
 }

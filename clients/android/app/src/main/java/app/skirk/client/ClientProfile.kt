@@ -16,6 +16,9 @@ data class ClientProfile(
     val driveSpace: String,
     val driveFolderId: String,
     val performance: PerformanceSettings = PerformanceSettings.recommended(),
+    val splitTunnelingEnabled: Boolean = false,
+    val splitTunnelingMode: String = SPLIT_TUNNEL_BYPASS,
+    val splitTunnelingApps: Set<String> = emptySet(),
 ) {
     val socksHost: String
         get() = if (shareLan) "0.0.0.0" else "127.0.0.1"
@@ -45,6 +48,9 @@ data class ClientProfile(
         .put("driveSpace", driveSpace)
         .put("driveFolderId", driveFolderId)
         .put("performance", performance.toJson())
+        .put("splitTunnelingEnabled", splitTunnelingEnabled)
+        .put("splitTunnelingMode", splitTunnelingMode)
+        .put("splitTunnelingApps", org.json.JSONArray(splitTunnelingApps))
 
     companion object {
         fun fromRawConfig(
@@ -91,6 +97,13 @@ data class ClientProfile(
             } else {
                 storedHttpPort
             }
+            val splitAppsArray = json.optJSONArray("splitTunnelingApps")
+            val splitAppsSet = mutableSetOf<String>()
+            if (splitAppsArray != null) {
+                for (i in 0 until splitAppsArray.length()) {
+                    splitAppsSet.add(splitAppsArray.getString(i))
+                }
+            }
             return ClientProfile(
                 id = json.getString("id"),
                 name = json.getString("name"),
@@ -104,11 +117,16 @@ data class ClientProfile(
                 driveSpace = json.optString("driveSpace", json.optString("space")),
                 driveFolderId = json.optString("driveFolderId"),
                 performance = PerformanceSettings.fromJson(json.optJSONObject("performance")),
+                splitTunnelingEnabled = json.optBoolean("splitTunnelingEnabled", false),
+                splitTunnelingMode = json.optString("splitTunnelingMode", SPLIT_TUNNEL_BYPASS),
+                splitTunnelingApps = splitAppsSet,
             )
         }
 
         const val CONNECTION_MODE_PROXY = "proxy"
         const val CONNECTION_MODE_VPN = "vpn"
+        const val SPLIT_TUNNEL_BYPASS = "bypass"
+        const val SPLIT_TUNNEL_PROXY = "proxy"
         const val DEFAULT_SOCKS_PORT = 18080
         const val DEFAULT_HTTP_PORT = 18081
         const val MIN_SOCKS_PORT = 1024
