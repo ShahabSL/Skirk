@@ -12,6 +12,7 @@ def main() -> int:
     desktop = repo / "clients" / "desktop"
     exe_candidates = [
         desktop / "src-tauri" / "target" / "release" / "skirk-desktop.exe",
+        desktop / "src-tauri" / "target" / "x86_64-pc-windows-msvc" / "release" / "skirk-desktop.exe",
         desktop / "src-tauri" / "target" / "x86_64-pc-windows-gnu" / "release" / "skirk-desktop.exe",
         desktop / "src-tauri" / "target" / "release" / "bundle" / "nsis" / "Skirk.exe",
         desktop

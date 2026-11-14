@@ -19,6 +19,416 @@ import (
 	"time"
 )
 
+type expiringListStore struct {
+	*MemoryStore
+	calls       atomic.Int64
+	err         error
+	onRecovered func()
+}
+
+type clientAuthFailureStore struct {
+	BlobStore
+	putErr    error
+	getErr    error
+	listErr   error
+	putCalls  atomic.Int64
+	getCalls  atomic.Int64
+	listCalls atomic.Int64
+}
+
+func (s *clientAuthFailureStore) Put(ctx context.Context, name string, data []byte) error {
+	s.putCalls.Add(1)
+	if s.putErr != nil {
+		return s.putErr
+	}
+	return s.BlobStore.Put(ctx, name, data)
+}
+
+func (s *clientAuthFailureStore) Get(ctx context.Context, name string) ([]byte, error) {
+	s.getCalls.Add(1)
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.BlobStore.Get(ctx, name)
+}
+
+func (s *clientAuthFailureStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	s.listCalls.Add(1)
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.BlobStore.List(ctx, prefix)
+}
+
+func authFailureClientTunnel(t *testing.T, store BlobStore) *Tunnel {
+	t.Helper()
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
+		Tunnel:    TunnelConfig{ChunkSize: 1024, PollIntervalMS: 10},
+	}
+	cfg.ApplyDefaults()
+	tunnel, err := NewTunnel(store, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tunnel
+}
+
+func waitForAuthClientListener(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 25*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("client listener %s did not start: %v", addr, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func assertClientAuthFailureStopsListeners(t *testing.T, store *clientAuthFailureStore, withHTTP bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	tunnel := authFailureClientTunnel(t, store)
+	socksAddr := freeTCPAddr(t)
+	errs := make(chan error, 2)
+	go func() { errs <- tunnel.ServeClient(ctx, socksAddr) }()
+	listeners := 1
+	if withHTTP {
+		httpAddr := freeTCPAddr(t)
+		go func() { errs <- tunnel.ServeHTTPProxyClient(ctx, httpAddr) }()
+		waitForAuthClientListener(t, httpAddr)
+		listeners++
+	}
+	waitForAuthClientListener(t, socksAddr)
+	conn, dialErr := dialViaSOCKS5(ctx, "socks5h://"+socksAddr, "example.com:443")
+	if conn != nil {
+		defer conn.Close()
+		_, _ = conn.Write([]byte("hello"))
+	}
+	for range listeners {
+		select {
+		case err := <-errs:
+			if !IsTerminalOAuthTokenError(err) {
+				t.Fatalf("client listener error = %v, dial error = %v; want terminal OAuth error", err, dialErr)
+			}
+		case <-ctx.Done():
+			t.Fatalf("client listeners did not stop after terminal OAuth error: %v (dial error: %v)", ctx.Err(), dialErr)
+		}
+	}
+	if store.putCalls.Load() == 0 {
+		t.Fatalf("no Drive upload attempted; SOCKS dial error = %v", dialErr)
+	}
+}
+
+func TestClientUploadOAuthFailureStopsSharedSOCKSAndHTTPListeners(t *testing.T) {
+	store := &clientAuthFailureStore{
+		BlobStore: NewMemoryStore(),
+		putErr:    &OAuthTokenError{Status: 400, Code: "invalid_grant", Description: "expired"},
+	}
+	assertClientAuthFailureStopsListeners(t, store, true)
+}
+
+func TestClientListOAuthFailureStopsRunningListener(t *testing.T) {
+	store := &clientAuthFailureStore{
+		BlobStore: NewMemoryStore(),
+		listErr:   &OAuthTokenError{Status: 400, Code: "invalid_grant", Description: "expired"},
+	}
+	assertClientAuthFailureStopsListeners(t, store, false)
+	if store.listCalls.Load() == 0 {
+		t.Fatal("no Drive list attempted after client upload")
+	}
+}
+
+func TestClientDownloadOAuthFailureSignalsFatalError(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		fatal bool
+	}{
+		{name: "expired", err: &OAuthTokenError{Status: 400, Code: "invalid_grant"}, fatal: true},
+		{name: "temporary", err: errors.New("temporary download failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &clientAuthFailureStore{BlobStore: NewMemoryStore(), getErr: tc.err}
+			tunnel := authFailureClientTunnel(t, store)
+			mux, err := newDriveMux(tunnel, "client", DirectionUp, DirectionDown)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = mux.downloadMuxObjectOnce(context.Background(), muxObjectMeta{Name: "response-object", Priority: true})
+			if !errors.Is(err, tc.err) || store.getCalls.Load() != 1 {
+				t.Fatalf("download error = %v, get calls = %d", err, store.getCalls.Load())
+			}
+			select {
+			case <-mux.fatalDone:
+				if !tc.fatal || !errors.Is(mux.fatalCause, tc.err) {
+					t.Fatalf("unexpected fatal error %v", mux.fatalCause)
+				}
+			default:
+				if tc.fatal {
+					t.Fatal("terminal download error did not stop the client mux")
+				}
+			}
+		})
+	}
+}
+
+func TestMuxInlineDiscoveryDataAuthenticatesAndFallsBackToMedia(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		corrupt  bool
+		wantGets int64
+	}{
+		{name: "valid inline", wantGets: 0},
+		{name: "corrupt inline", corrupt: true, wantGets: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &clientAuthFailureStore{BlobStore: NewMemoryStore()}
+			tunnel := authFailureClientTunnel(t, store)
+			mux, err := newDriveMux(tunnel, "client", DirectionUp, DirectionDown)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const streamID = uint64(7)
+			stream := mux.registerStream(streamID, tunnel.ClientID, tunnel.RunID, nil)
+			defer stream.close()
+			raw, err := encodeMuxBatch([]muxFrame{{Kind: muxFrameData, StreamID: streamID, Seq: 1, Payload: []byte("reply")}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := DeriveMuxLaneKeyV4(tunnel.Secret, tunnel.SessionID, DirectionDown, tunnel.ClientID, tunnel.RunID, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sealed, err := Seal(key, tunnel.SessionID, DirectionDown, 1, raw, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := muxObjectNameWithStreamIDs(tunnel.SessionID, DirectionDown, tunnel.ClientID, tunnel.RunID, "epoch-test", streamID, []uint64{streamID}, 0, 1, 1, 1, 1, len(raw), true)
+			if err := store.BlobStore.Put(context.Background(), name, sealed); err != nil {
+				t.Fatal(err)
+			}
+			inline := bytes.Clone(sealed)
+			if tc.corrupt {
+				inline[len(inline)-1] ^= 1
+			}
+			info := ObjectInfo{Name: name, Size: int64(len(sealed)), InlineData: inline}
+			meta, ok := parseMuxObjectInfo(info)
+			if !ok || !bytes.Equal(meta.InlineData, inline) {
+				t.Fatal("inline discovery data was not parsed")
+			}
+			info.InlineData[0] ^= 1
+			if bytes.Equal(meta.InlineData, info.InlineData) {
+				t.Fatal("parsed inline data aliases the discovery response")
+			}
+			if err := mux.processMuxObject(context.Background(), meta); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case payload := <-stream.inbound:
+				if string(payload) != "reply" {
+					t.Fatalf("delivered payload = %q", payload)
+				}
+			default:
+				t.Fatal("authenticated inline reply was not delivered")
+			}
+			if got := store.getCalls.Load(); got != tc.wantGets {
+				t.Fatalf("media Get calls = %d, want %d", got, tc.wantGets)
+			}
+		})
+	}
+}
+
+func TestClientMuxReleasedAfterListenerBindFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		serve func(*Tunnel, context.Context, string) error
+	}{
+		{name: "socks", serve: (*Tunnel).ServeClient},
+		{name: "http", serve: (*Tunnel).ServeHTTPProxyClient},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			occupied, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer occupied.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tunnel := authFailureClientTunnel(t, NewMemoryStore())
+			if err := tc.serve(tunnel, ctx, occupied.Addr().String()); err == nil {
+				t.Fatal("listener unexpectedly bound occupied port")
+			}
+			tunnel.muxMu.Lock()
+			cached, listeners := tunnel.clientMux, tunnel.clientMuxListeners
+			tunnel.muxMu.Unlock()
+			if cached != nil || listeners != 0 {
+				t.Fatalf("failed listener retained mux=%t listeners=%d", cached != nil, listeners)
+			}
+
+			listen := freeTCPAddr(t)
+			served := make(chan error, 1)
+			go func() { served <- tc.serve(tunnel, ctx, listen) }()
+			waitForAuthClientListener(t, listen)
+			cancel()
+			select {
+			case err := <-served:
+				if err != nil {
+					t.Fatalf("restarted listener returned %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("restarted listener did not stop on cancellation")
+			}
+			tunnel.muxMu.Lock()
+			cached, listeners = tunnel.clientMux, tunnel.clientMuxListeners
+			tunnel.muxMu.Unlock()
+			if cached != nil || listeners != 0 {
+				t.Fatalf("stopped listener retained mux=%t listeners=%d", cached != nil, listeners)
+			}
+		})
+	}
+}
+
+func TestSharedClientMuxSurvivesFirstListenerCancellation(t *testing.T) {
+	store := &clientAuthFailureStore{BlobStore: NewMemoryStore()}
+	tunnel := authFailureClientTunnel(t, store)
+	socksCtx, cancelSOCKS := context.WithCancel(context.Background())
+	defer cancelSOCKS()
+	httpCtx, cancelHTTP := context.WithCancel(context.Background())
+	defer cancelHTTP()
+	socksAddr := freeTCPAddr(t)
+	socksErr, httpErr := make(chan error, 1), make(chan error, 1)
+	go func() { socksErr <- tunnel.ServeClient(socksCtx, socksAddr) }()
+	waitForAuthClientListener(t, socksAddr)
+	httpAddr := freeTCPAddr(t)
+	go func() { httpErr <- tunnel.ServeHTTPProxyClient(httpCtx, httpAddr) }()
+	waitForAuthClientListener(t, httpAddr)
+
+	cancelSOCKS()
+	select {
+	case err := <-socksErr:
+		if err != nil {
+			t.Fatalf("SOCKS listener cancellation returned %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SOCKS listener did not stop")
+	}
+	conn, err := net.DialTimeout("tcp", httpAddr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for store.putCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if store.putCalls.Load() == 0 {
+		t.Fatal("remaining HTTP listener could not upload after SOCKS stopped")
+	}
+	cancelHTTP()
+	select {
+	case err := <-httpErr:
+		if err != nil {
+			t.Fatalf("HTTP listener cancellation returned %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP listener did not stop")
+	}
+}
+
+func (s *expiringListStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	call := s.calls.Add(1)
+	if s.onRecovered != nil {
+		if call == 1 {
+			return nil, s.err
+		}
+		s.onRecovered()
+		return s.MemoryStore.List(ctx, prefix)
+	}
+	if call > 1 {
+		return nil, s.err
+	}
+	return s.MemoryStore.List(ctx, prefix)
+}
+
+func TestExitRetriesTransientListError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	store := &expiringListStore{
+		MemoryStore: NewMemoryStore(),
+		err:         errors.New("temporary list failure"),
+		onRecovered: cancel,
+	}
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel:    TunnelConfig{PollIntervalMS: 10},
+	}
+	cfg.ApplyDefaults()
+	exit, err := NewTunnel(store, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exit.ServeExit(ctx); err != nil {
+		t.Fatalf("ServeExit on a recovered transient list error: %v", err)
+	}
+	if got := store.calls.Load(); got < 2 {
+		t.Fatalf("list calls = %d, want a retry", got)
+	}
+}
+
+func TestExitReturnsTerminalOAuthErrorAfterStartup(t *testing.T) {
+	store := &expiringListStore{
+		MemoryStore: NewMemoryStore(),
+		err:         &OAuthTokenError{Status: 400, Code: "invalid_grant", Description: "expired"},
+	}
+	secret, err := RandomSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Secret:    secret,
+		SessionID: "00112233445566778899aabbccddeeff",
+		Tunnel:    TunnelConfig{PollIntervalMS: 10},
+	}
+	cfg.ApplyDefaults()
+	exit, err := NewTunnel(store, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	err = exit.ServeExit(ctx)
+	if !IsTerminalOAuthTokenError(err) {
+		t.Fatalf("ServeExit error = %v after %d lists, want terminal OAuth error", err, store.calls.Load())
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("ServeExit returned only after context timeout: %v", ctx.Err())
+	}
+	if got := store.calls.Load(); got < 2 {
+		t.Fatalf("list calls = %d, want first successful poll then expired grant", got)
+	}
+}
+
 func TestTunnelSOCKSToExitWithMemoryStores(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -697,6 +1107,38 @@ func TestMuxCleanupDoesNotBurstDeleteWhileForegroundBusy(t *testing.T) {
 	}
 	if got := store.count.Load(); got != 0 {
 		t.Fatalf("cleanup deletes = %d, want 0 while foreground busy", got)
+	}
+}
+
+func TestMuxCleanupBatchesWhenForegroundQueueGrows(t *testing.T) {
+	store := newCountingCleanupStore(cleanupForegroundPressureQueue)
+	tunnel := &Tunnel{
+		Data:             store,
+		CleanupProcessed: true,
+	}
+	tunnel.activeStreams.Store(1)
+	mux := &driveMux{
+		t:            tunnel,
+		cleanupQueue: make(chan cleanupTask, cleanupForegroundPressureQueue),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mux.runCleanupLoop(ctx)
+
+	for i := 0; i < cleanupForegroundPressureQueue; i++ {
+		mux.cleanupQueue <- cleanupTask{id: fmt.Sprintf("id-%d", i)}
+	}
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if got := store.count.Load(); got >= cleanupForegroundBatchMid {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("cleanup deletes = %d, want at least one foreground batch of %d", store.count.Load(), cleanupForegroundBatchMid)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -2575,6 +3017,244 @@ func TestMuxUploadSuccessAcksFrames(t *testing.T) {
 	}
 }
 
+func TestMuxUploadStorageQuotaKicksCleanupAndRetries(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &storageQuotaOnceStore{
+		MemoryStore: NewMemoryStore(),
+		deleted:     make(chan string, 1),
+	}
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	mux, err := newDriveMux(&Tunnel{
+		Data:             store,
+		SessionID:        sid,
+		ClientID:         "client-a",
+		RunID:            "run-a",
+		PollInterval:     time.Second,
+		CleanupProcessed: true,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go mux.runCleanupLoop(ctx)
+	frame := muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: "client-a",
+		RunID:    "run-a",
+		StreamID: 42,
+		Payload:  encodeMuxOpenPayload("example.com:443", []byte("hello")),
+		Ack:      newMuxFrameAck(),
+	}
+	lane := mux.lanes[mux.frameLane(frame)]
+	go lane.runUploadLoop(ctx, true)
+	mux.cleanupQueue <- cleanupTask{id: "stale-object"}
+	lane.urgentUpload <- []muxFrame{frame}
+
+	select {
+	case err := <-frame.Ack.ch:
+		if err != nil {
+			t.Fatalf("upload after storage quota cleanup retry = %v, want nil", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("upload was not retried after storage quota cleanup")
+	}
+	if got := store.putCalls.Load(); got < 2 {
+		t.Fatalf("put calls = %d, want storage quota failure followed by retry", got)
+	}
+	select {
+	case id := <-store.deleted:
+		if id != "stale-object" {
+			t.Fatalf("cleanup deleted %q, want stale-object", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("storage quota retry did not kick cleanup")
+	}
+}
+
+func TestMuxUploadStorageQuotaRunsEmergencyStaleCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &storageQuotaOnceCleanupStore{
+		MemoryStore:     NewMemoryStore(),
+		cleanupStarted:  make(chan struct{}),
+		cleanupFinished: make(chan struct{}),
+	}
+	sid := [16]byte{0xaa, 0xbb, 0xcc}
+	mux, err := newDriveMux(&Tunnel{
+		Data:             store,
+		SessionID:        sid,
+		ClientID:         "client-a",
+		RunID:            "run-a",
+		PollInterval:     time.Second,
+		CleanupProcessed: true,
+	}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go mux.runCleanupLoop(ctx)
+	frame := muxFrame{
+		Kind:     muxFrameOpen,
+		ClientID: "client-a",
+		RunID:    "run-a",
+		StreamID: 42,
+		Payload:  encodeMuxOpenPayload("example.com:443", []byte("hello")),
+		Ack:      newMuxFrameAck(),
+	}
+	lane := mux.lanes[mux.frameLane(frame)]
+	go lane.runUploadLoop(ctx, true)
+	lane.urgentUpload <- []muxFrame{frame}
+
+	select {
+	case <-store.cleanupStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("storage quota retry did not start emergency stale cleanup")
+	}
+	select {
+	case <-store.cleanupFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("emergency stale cleanup did not finish")
+	}
+	select {
+	case err := <-frame.Ack.ch:
+		if err != nil {
+			t.Fatalf("upload after emergency stale cleanup = %v, want nil", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("upload was not retried after emergency stale cleanup")
+	}
+	if got := store.putCalls.Load(); got < 2 {
+		t.Fatalf("put calls = %d, want storage quota failure followed by retry", got)
+	}
+	if got := store.cleanupCalls.Load(); got == 0 {
+		t.Fatal("cleanup calls = 0, want emergency cleanup")
+	}
+	deadline := time.After(2 * time.Second)
+	for store.cleanupCalls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("cleanup calls = %d, want both runtime prefixes", store.cleanupCalls.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	opts := store.cleanupOptions()
+	if len(opts) < 2 {
+		t.Fatalf("cleanup options = %#v, want both runtime prefixes", opts)
+	}
+	for i, wantPrefix := range []string{"muxv4/", "bench-drive/"} {
+		if opts[i].Prefix != wantPrefix {
+			t.Fatalf("cleanup prefix[%d] = %q, want %q", i, opts[i].Prefix, wantPrefix)
+		}
+		if opts[i].OlderThan != 10*time.Minute {
+			t.Fatalf("cleanup older-than[%d] = %s, want 10m", i, opts[i].OlderThan)
+		}
+		if opts[i].DeleteConcurrency != 2 || opts[i].MaxDeletes != cleanupEmergencyDeleteBatch || opts[i].DeleteDelay != 25*time.Millisecond || opts[i].MaxPages != 20000 {
+			t.Fatalf("cleanup options[%d] = %+v, want conservative emergency limits", i, opts[i])
+		}
+		if opts[i].DryRun {
+			t.Fatalf("cleanup options[%d] dry-run = true, want deleting cleanup", i)
+		}
+	}
+}
+
+func TestMuxStoragePressureCleanupContinuesAfterPrefixError(t *testing.T) {
+	store := &storageQuotaPrefixErrorStore{}
+	mux := &driveMux{
+		t: &Tunnel{},
+	}
+	mux.runStoragePressureCleanup(context.Background(), store)
+
+	opts := store.cleanupOptions()
+	if len(opts) != 2 {
+		t.Fatalf("cleanup calls = %d, want both runtime prefixes", len(opts))
+	}
+	if opts[0].Prefix != "muxv4/" || opts[1].Prefix != "bench-drive/" {
+		t.Fatalf("cleanup prefixes = %#v, want muxv4/ then bench-drive/", opts)
+	}
+	if got := mux.cleanupDeleted.Load(); got != 1 {
+		t.Fatalf("cleanup progress = %d, want successful second prefix to count", got)
+	}
+}
+
+type storageQuotaOnceStore struct {
+	*MemoryStore
+	putCalls atomic.Int32
+	deleted  chan string
+}
+
+func (s *storageQuotaOnceStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
+	if s.putCalls.Add(1) == 1 {
+		return ObjectInfo{}, &GoogleAPIError{Op: "drive upload", Status: http.StatusForbidden, Reason: "storageQuotaExceeded"}
+	}
+	return s.MemoryStore.PutObject(ctx, name, data)
+}
+
+func (s *storageQuotaOnceStore) DeleteID(ctx context.Context, fileID string) error {
+	select {
+	case s.deleted <- fileID:
+	default:
+	}
+	return s.MemoryStore.DeleteID(ctx, fileID)
+}
+
+type storageQuotaOnceCleanupStore struct {
+	*MemoryStore
+	putCalls        atomic.Int32
+	cleanupCalls    atomic.Int32
+	cleanupStarted  chan struct{}
+	cleanupFinished chan struct{}
+	startOnce       sync.Once
+	finishOnce      sync.Once
+	optsMu          sync.Mutex
+	opts            []DriveCleanupOptions
+}
+
+func (s *storageQuotaOnceCleanupStore) PutObject(ctx context.Context, name string, data []byte) (ObjectInfo, error) {
+	if s.putCalls.Add(1) == 1 {
+		return ObjectInfo{}, &GoogleAPIError{Op: "drive upload", Status: http.StatusForbidden, Reason: "storageQuotaExceeded"}
+	}
+	return s.MemoryStore.PutObject(ctx, name, data)
+}
+
+func (s *storageQuotaOnceCleanupStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
+	s.cleanupCalls.Add(1)
+	s.optsMu.Lock()
+	s.opts = append(s.opts, opts)
+	s.optsMu.Unlock()
+	s.startOnce.Do(func() { close(s.cleanupStarted) })
+	s.finishOnce.Do(func() { close(s.cleanupFinished) })
+	return DriveCleanupResult{Prefix: opts.Prefix, Matched: 1, Deleted: 1}, nil
+}
+
+func (s *storageQuotaOnceCleanupStore) cleanupOptions() []DriveCleanupOptions {
+	s.optsMu.Lock()
+	defer s.optsMu.Unlock()
+	return append([]DriveCleanupOptions(nil), s.opts...)
+}
+
+type storageQuotaPrefixErrorStore struct {
+	calls  atomic.Int32
+	optsMu sync.Mutex
+	opts   []DriveCleanupOptions
+}
+
+func (s *storageQuotaPrefixErrorStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
+	call := s.calls.Add(1)
+	s.optsMu.Lock()
+	s.opts = append(s.opts, opts)
+	s.optsMu.Unlock()
+	if call == 1 {
+		return DriveCleanupResult{}, errors.New("first prefix failed")
+	}
+	return DriveCleanupResult{Prefix: opts.Prefix, Matched: 1, Deleted: 1}, nil
+}
+
+func (s *storageQuotaPrefixErrorStore) cleanupOptions() []DriveCleanupOptions {
+	s.optsMu.Lock()
+	defer s.optsMu.Unlock()
+	return append([]DriveCleanupOptions(nil), s.opts...)
+}
+
 func TestMuxOpenWaitsForUploadAckBeforeReadingPostOpenData(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -3935,6 +4615,16 @@ func TestActivePollDelayStaysAtBaseDuringActiveStreams(t *testing.T) {
 	mux.active.Add(1)
 	if got := mux.pollDelay(); got != 100*time.Millisecond {
 		t.Fatalf("active poll delay = %s, want base interval", got)
+	}
+}
+
+func TestExitIdlePollDelayRespectsLowerUsageBaseInterval(t *testing.T) {
+	mux := &driveMux{
+		role: "exit",
+		t:    &Tunnel{PollInterval: 2 * time.Second},
+	}
+	if got := mux.pollDelay(); got != 2*time.Second {
+		t.Fatalf("exit idle poll delay = %s, want lower usage base interval", got)
 	}
 }
 

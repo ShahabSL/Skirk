@@ -22,7 +22,7 @@ Mux v4 is the best proven default under the current constraints:
 
 - one Google Drive mailbox;
 - current credential scope and setup model;
-- Drive `appDataFolder` runtime objects;
+- Skirk-owned Drive folder or legacy `appDataFolder` runtime objects;
 - prefix-scoped `files.list` discovery;
 - no inbound connectivity requirement for clients;
 - Google-fronted/pinned client API route when needed.
@@ -80,6 +80,51 @@ The repeated failure pattern is consistent: candidates that look cleaner inside
 the mux often create more Drive objects, more list/change pages, more metadata
 polls, or worse upload tails. Those costs dominate the live transport. Exact raw
 artifacts stay in `.skirk-runs/` rather than public docs.
+
+## Cloudflare Free Relay Boundary
+
+Cloudflare's free tier gives Skirk useful control-plane pieces: Workers,
+SQLite-backed Durable Objects, Cron triggers, limited KV/D1/Queues/R2 usage, and
+the edge cache. Those are enough for a Drive webhook receiver, session state,
+metrics, cleanup scheduling, and a bounded HTTP fetch relay.
+
+They are not enough for a VPS-equivalent Skirk exit. Worker-only deployments are
+request/event driven, cannot run the current Go exit daemon continuously, and do
+not provide a production-quality generic SOCKS/VPN/CONNECT runtime. The
+implemented free-tier product under `experiments/cloudflare-worker-exit/` is
+therefore intentionally scoped to:
+
+- Drive-backed HTTP `GET`/`HEAD` relay through Worker `fetch()`;
+- Drive push/pump management with Durable Object state;
+- local HTTP proxy testing for plain HTTP URLs;
+- explicit rejection of HTTPS `CONNECT`, SOCKS, VPN, UDP, and arbitrary
+  long-lived TCP.
+
+An opaque SOCKS probe was implemented and deployed on 2026-05-25 to test the
+hard boundary directly. The local path successfully uploaded the stream-open
+Drive object, woke the Worker, and received a Worker-side error object. The
+Worker failed at `cloudflare:sockets.connect()` for `example.com:443` with the
+runtime message that HTTP-based services should use `fetch` instead. A single
+failed connect attempt took about 6.9 seconds, consumed roughly 1,700 estimated
+Drive units in the local bridge accounting, and left zero `cfstream/v1/`
+leftovers. That failed destination did not establish a blanket ban on opaque
+HTTPS. The November 14 recheck below supersedes that inference.
+
+On November 14, a separate authenticated, fixed-destination probe opened raw
+TCP port 443 to Google and GitHub and carried client-terminated, certificate-
+verified TLS 1.3 through a Worker WebSocket bridge. Both returned HTTP 200;
+the Cloudflare-hosted control was blocked. The same runtime error therefore
+cannot be interpreted as a ban on all web ports. [Cloudflare documents blocked
+Cloudflare IP ranges](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/),
+along with socket lifecycle restrictions. The probe used direct Worker access,
+not the Drive path, and proves neither free-plan capacity nor a full Skirk exit.
+The code is in `experiments/cloudflare-tcp-probe/`; the temporary deployment was
+removed after the test. This reopens a bounded serverless exit experiment but
+does not remove the destination-coverage, Drive-discovery, and lifecycle work.
+
+Cloudflare Containers are the closest Cloudflare-hosted path to a real Skirk
+exit because they can run the existing daemon shape. Containers require Workers
+Paid, so they are not part of the free-tier product.
 
 ## Drive Primitive Lessons
 

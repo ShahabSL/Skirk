@@ -412,6 +412,13 @@ func TestApplyTunnelOverridesSplitCapsRemainExplicit(t *testing.T) {
 	}
 }
 
+func TestSetupRejectsInvalidQuotaProjectBeforeGoogleLogin(t *testing.T) {
+	err := setupInit(context.Background(), []string{"--quota-project", "invalid_project", "--no-gcloud-login"})
+	if err == nil || !strings.Contains(err.Error(), "--quota-project") {
+		t.Fatalf("setup error = %v, want quota-project validation error", err)
+	}
+}
+
 func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "README.md")
 	err := writeSetupReadme(path, setupSummary{

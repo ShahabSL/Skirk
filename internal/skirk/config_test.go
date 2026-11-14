@@ -59,6 +59,19 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 }
 
+func TestConfigDefaultsToGoogleFrontButKeepsExplicitDirect(t *testing.T) {
+	cfg := &Config{}
+	cfg.ApplyDefaults()
+	if cfg.Route.Mode != "google_front_pinned" {
+		t.Fatalf("default route = %q, want google_front_pinned", cfg.Route.Mode)
+	}
+	cfg.Route.Mode = "direct"
+	cfg.ApplyDefaults()
+	if cfg.Route.Mode != "direct" {
+		t.Fatalf("explicit route = %q, want direct", cfg.Route.Mode)
+	}
+}
+
 func TestConfigValidatesExitProxy(t *testing.T) {
 	cfg := &Config{
 		Secret: strings.Repeat("a", 64),
@@ -93,6 +106,67 @@ func TestConfigValidatesClientNamespace(t *testing.T) {
 	cfg.Client.RunID = "x"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.client.run_id") {
 		t.Fatalf("err = %v, want run id validation error", err)
+	}
+}
+
+func TestValidateGoogleProjectID(t *testing.T) {
+	for _, id := range []string{"abcdef", "a-1234", "flowing-precept-514715-p1"} {
+		if err := ValidateGoogleProjectID(id); err != nil {
+			t.Errorf("valid project ID %q: %v", id, err)
+		}
+	}
+	for _, id := range []string{"", "abcde", "1abcde", "Abcdef", "abcde-", "abc_def", " abcdef", "abcdef\n", strings.Repeat("a", 31)} {
+		if err := ValidateGoogleProjectID(id); err == nil {
+			t.Errorf("accepted invalid project ID %q", id)
+		}
+	}
+
+	cfg := &Config{Secret: strings.Repeat("a", 64), Drive: DriveConfig{QuotaProject: "flowing-precept-514715-p1"}}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid quota project rejected: %v", err)
+	}
+	cfg.Drive.QuotaProject = "bad_project"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.drive.quota_project") {
+		t.Fatalf("invalid quota project error = %v", err)
+	}
+}
+
+func TestConfigUploadHedgeDelayIsOptInAndBounded(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64)}
+	cfg.ApplyDefaults()
+	if cfg.Drive.UploadHedgeDelayMS != 0 {
+		t.Fatalf("default upload hedge delay = %d, want disabled", cfg.Drive.UploadHedgeDelayMS)
+	}
+	if cfg.Drive.SeparateUploadPool {
+		t.Fatal("separate upload pool enabled by default")
+	}
+	for _, delay := range []int{0, 1000, 3000, 10000} {
+		cfg.Drive.UploadHedgeDelayMS = delay
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("delay %d rejected: %v", delay, err)
+		}
+	}
+	for _, delay := range []int{-1, 1, 999, 10001} {
+		cfg.Drive.UploadHedgeDelayMS = delay
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "upload_hedge_delay_ms") {
+			t.Errorf("delay %d error = %v, want hedge validation", delay, err)
+		}
+	}
+	var decoded struct {
+		Drive DriveConfig `json:"drive"`
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"upload_hedge_delay_ms":3000}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Drive.UploadHedgeDelayMS != 3000 {
+		t.Fatalf("decoded hedge delay = %d, want 3000", decoded.Drive.UploadHedgeDelayMS)
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"separate_upload_pool":true}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Drive.SeparateUploadPool {
+		t.Fatal("separate upload pool JSON option was ignored")
 	}
 }
 
@@ -236,6 +310,53 @@ func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
 	}
 }
 
+func TestAccessTokenSourceLate401KeepsNewToken(t *testing.T) {
+	source := NewAccessTokenSource(AuthConfig{}, RouteConfig{})
+	source.token = "new-token"
+	source.expiresAt = time.Now().Add(time.Hour)
+	source.invalidateRejectedToken("old-token")
+	if token, err := source.Token(context.Background()); err != nil || token != "new-token" {
+		t.Fatalf("late 401 discarded newer token: token=%q err=%v", token, err)
+	}
+	source.invalidateRejectedToken("new-token")
+	if source.token != "" {
+		t.Fatal("rejected current token remained cached")
+	}
+}
+
+func TestAccessTokenSourceOldBackgroundRefreshCannotOverwriteNewGrant(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := "new-token"
+		if requests.Add(1) == 1 {
+			close(entered)
+			<-release
+			token = "superseded-background-token"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": token, "expires_in": 3600})
+	}))
+	defer server.Close()
+	source := NewAccessTokenSource(AuthConfig{ClientID: "test", RefreshToken: "test", TokenURL: server.URL}, RouteConfig{Mode: "direct"})
+	source.token, source.refreshing = "rejected-token", true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		source.refreshInBackground(0)
+	}()
+	<-entered
+	source.invalidateRejectedToken("rejected-token")
+	token, err := source.Token(context.Background())
+	close(release)
+	<-done
+	if err != nil || token != "new-token" {
+		t.Fatalf("foreground refresh token=%q error=%v", token, err)
+	}
+	if got, err := source.Token(context.Background()); err != nil || got != "new-token" {
+		t.Fatalf("old background result replaced new token: token=%q error=%v", got, err)
+	}
+}
+
 func TestOAuthTokenAttemptsIncludeHostileRoutes(t *testing.T) {
 	route := RouteConfig{
 		Mode:           "google_front",
@@ -267,6 +388,14 @@ func TestTerminalOAuthTokenError(t *testing.T) {
 	}
 	if terminalOAuthTokenError(http.StatusNotFound, []byte(`<html>wrong edge</html>`)) {
 		t.Fatal("wrong-edge response should allow another token attempt")
+	}
+	_, err := parseOAuthTokenResponse(http.StatusBadRequest, []byte(`{"error":"invalid_grant","error_description":"expired"}`))
+	if !IsTerminalOAuthTokenError(err) {
+		t.Fatalf("parsed error = %v, want terminal OAuth token error", err)
+	}
+	_, err = parseOAuthTokenResponse(http.StatusBadRequest, []byte(`{"error":"temporarily_unavailable"}`))
+	if IsTerminalOAuthTokenError(err) {
+		t.Fatalf("parsed error = %v, want retryable OAuth token error", err)
 	}
 }
 

@@ -141,8 +141,8 @@ hev_socks5_session_udp_fwd_b (HevSocks5SessionUDP *self)
     buf->len = res;
     buf->tot_len = res;
 
-    if (self->addr && self->port) {
-        ip_2_ip4 (&saddr)->addr = self->addr;
+    if (self->port) {
+        ip_addr_copy (saddr, self->addr);
         port = self->port;
     } else {
         res = hev_socks5_addr_into_lwip (&addr, &saddr, &port);
@@ -196,7 +196,7 @@ udp_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
     hev_socks5_addr_from_lwip (&frame->addr, &pcb->local_ip, pcb->local_port);
 
     if (frame->addr.atype == HEV_SOCKS5_ADDR_TYPE_NAME) {
-        self->addr = ip_2_ip4 (&pcb->local_ip)->addr;
+        ip_addr_copy (self->addr, pcb->local_ip);
         self->port = pcb->local_port;
     }
 

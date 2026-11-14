@@ -1,0 +1,26 @@
+{
+  "name": "@skirk/cloudflare-worker-exit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Free Worker/Durable Object Drive-backed HTTP relay for Skirk.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dry-run": "wrangler deploy --dry-run --outdir dist-worker",
+    "deploy": "wrangler deploy",
+    "bench:drive-exit": "node scripts/bench-drive-exit.mjs",
+    "http-proxy": "node scripts/http-drive-worker-proxy.mjs",
+    "web-proxy": "node scripts/http-drive-worker-proxy.mjs --mitm",
+    "socks": "node scripts/socks-drive-worker.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260524.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.94.0"
+  },
+  "dependencies": {
+    "node-forge": "^1.4.0"
+  }
+}

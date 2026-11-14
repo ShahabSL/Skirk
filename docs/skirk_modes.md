@@ -55,7 +55,7 @@ Client profiles default to:
 
 ```text
 client route: google_front_pinned
-exit route: direct
+exit route: google_front_pinned
 ```
 
 Existing Linux profiles generated before v0.1.51 keep their embedded route.
@@ -68,8 +68,10 @@ Available route modes:
 - `direct`: normal Google API hostnames and TLS.
 - `real_pinned`: connect to a configured Google edge IP while preserving the
   real Google API TLS name.
-- `google_front`: use a Google-looking TLS/SNI path for Google API traffic.
-- `google_front_pinned`: same idea pinned to `--google-ip`.
+- `google_front`: use `www.google.com` TLS SNI for Google API traffic while
+  sending the API hostname in the HTTP authority.
+- `google_front_pinned`: the same Google front with an edge IP pinned by
+  `--google-ip`.
 - `google_front_h1` and `google_front_h1_pinned`: HTTP/1.1 variants used for
   route experiments.
 

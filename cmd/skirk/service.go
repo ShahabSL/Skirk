@@ -460,7 +460,6 @@ func normalizeSystemdServiceName(name string) (string, error) {
 }
 
 func systemdUnitText(exePath, configPath, serviceUser string) string {
-	workDir := filepath.Dir(configPath)
 	return fmt.Sprintf(`[Unit]
 Description=Skirk exit
 # Managed by Skirk
@@ -470,17 +469,18 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=%s
-WorkingDirectory=%s
+WorkingDirectory=/
 ExecStart=%s serve-exit --config %s
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
-`, systemdUnitValue(serviceUser), systemdUnitValue(workDir), systemdExecArg(exePath), systemdExecArg(configPath))
+`, systemdUnitValue(serviceUser), systemdExecArg(exePath), systemdExecArg(configPath))
 }
 
 func isSkirkSystemdUnitText(text string) bool {

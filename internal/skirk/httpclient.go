@@ -6,13 +6,18 @@ import (
 	"context"
 	stdtls "crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -24,6 +29,27 @@ type HTTPResult struct {
 	Body     []byte
 	Header   http.Header
 	Attempts int
+}
+
+// Failed network attempts may have reached Google even without a response.
+// Preserve their count so quota estimates include the complete retry path.
+type httpAttemptError struct {
+	err      error
+	attempts int
+}
+
+func (e *httpAttemptError) Error() string { return e.err.Error() }
+func (e *httpAttemptError) Unwrap() error { return e.err }
+
+func httpAttemptCount(result *HTTPResult, err error) int {
+	var attemptErr *httpAttemptError
+	if errors.As(err, &attemptErr) {
+		return attemptErr.attempts
+	}
+	if result != nil && result.Attempts > 0 {
+		return result.Attempts
+	}
+	return 1
 }
 
 type GoogleAPIError struct {
@@ -166,26 +192,30 @@ func (c *GoogleHTTPClient) RequestNoRateLimitRetry(ctx context.Context, method, 
 func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
 	var lastErr error
 	var lastResult *HTTPResult
+	totalAttempts := 0
 	for i, route := range googleHTTPRouteAttempts(c.route) {
 		client := c
 		if i > 0 {
 			client = NewGoogleHTTPClient(route)
 		}
 		result, err := client.requestWithRetries(ctx, method, host, path, headers, body, retryRateLimit)
+		totalAttempts += httpAttemptCount(result, err)
+		if result != nil {
+			result.Attempts = totalAttempts
+		}
 		if err == nil && !shouldRetryResultWithPolicy(result, retryRateLimit) {
 			return result, nil
 		}
-		if err == nil {
-			lastResult = result
-		} else {
-			lastErr = err
+		lastResult, lastErr = result, err
+		if ctx.Err() != nil {
+			break
 		}
 		if !shouldTryNextGoogleRoute(result, err) {
 			break
 		}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return lastResult, &httpAttemptError{err: lastErr, attempts: totalAttempts}
 	}
 	return lastResult, nil
 }
@@ -197,31 +227,26 @@ func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host,
 	}
 	var lastErr error
 	var lastResult *HTTPResult
+	attempted := 0
 	for attempt := 0; attempt < attempts; attempt++ {
 		result, err := c.requestOnce(ctx, method, host, path, headers, body)
+		attempted++
 		if result != nil {
 			result.Attempts = attempt + 1
 		}
 		if err == nil && !shouldRetryResultWithPolicy(result, retryRateLimit) {
 			return result, nil
 		}
-		if err == nil {
-			lastResult = result
-		} else {
-			lastErr = err
-		}
+		lastResult, lastErr = result, err
 		if attempt == attempts-1 {
 			break
 		}
 		if err := sleepBeforeRetry(ctx, attempt, retryAfter(result)); err != nil {
-			if lastErr != nil {
-				return nil, lastErr
-			}
-			return lastResult, err
+			return lastResult, &httpAttemptError{err: err, attempts: attempted}
 		}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return lastResult, &httpAttemptError{err: lastErr, attempts: attempted}
 	}
 	return lastResult, nil
 }
@@ -273,6 +298,31 @@ func shouldTryNextGoogleRoute(result *HTTPResult, err error) bool {
 }
 
 func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	status := 0
+	if os.Getenv("SKIRK_HTTP_TRACE") == "1" {
+		started := time.Now()
+		var acquired, wrote, firstByte atomic.Int64
+		var reused, writeFailed atomic.Bool
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) {
+				acquired.Store(time.Since(started).Microseconds())
+				reused.Store(info.Reused)
+			},
+			WroteRequest: func(info httptrace.WroteRequestInfo) {
+				wrote.Store(time.Since(started).Microseconds())
+				writeFailed.Store(info.Err != nil)
+			},
+			GotFirstResponseByte: func() { firstByte.Store(time.Since(started).Microseconds()) },
+		})
+		defer func() {
+			// Deliberately omit URLs, headers, payloads and credentials.
+			if time.Since(started) >= time.Second || status == 0 {
+				log.Printf("http timing op=%s body_bytes=%d duration=%s acquired_ms=%.3f reused=%t wrote_ms=%.3f write_failed=%t first_byte_ms=%.3f status=%d canceled=%t",
+					driveRequestLabel(method, path), len(body), time.Since(started).Round(time.Millisecond), float64(acquired.Load())/1000,
+					reused.Load(), float64(wrote.Load())/1000, writeFailed.Load(), float64(firstByte.Load())/1000, status, ctx.Err() != nil)
+			}
+		}()
+	}
 	requestHost := host
 	if isGoogleFrontRoute(c.route.Mode) {
 		requestHost = "www.google.com"
@@ -311,6 +361,7 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		return nil, err
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 	bodyReader := resp.Body
 	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		gzipReader, err := gzip.NewReader(resp.Body)

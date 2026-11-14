@@ -6,10 +6,11 @@ import (
 )
 
 type ObjectInfo struct {
-	Name    string
-	ID      string
-	Size    int64
-	Updated string
+	Name       string
+	ID         string
+	Size       int64
+	Updated    string
+	InlineData []byte // Optional encrypted object bytes from discovery metadata.
 }
 
 type ObjectListInfo struct {

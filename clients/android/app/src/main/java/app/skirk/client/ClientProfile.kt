@@ -1,5 +1,6 @@
 package app.skirk.client
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
@@ -16,6 +17,8 @@ data class ClientProfile(
     val driveSpace: String,
     val driveFolderId: String,
     val performance: PerformanceSettings = PerformanceSettings.recommended(),
+    val vpnAppMode: String = VPN_APPS_ALL,
+    val vpnAllowedApps: List<String> = emptyList(),
 ) {
     val socksHost: String
         get() = if (shareLan) "0.0.0.0" else "127.0.0.1"
@@ -30,7 +33,40 @@ data class ClientProfile(
         get() = "$httpHost:$httpPort"
 
     val runtimeKey: String
-        get() = listOf(id, rawConfig, socksAddress, httpAddress, routeMode, connectionMode, performance.runtimeKey).joinToString("|")
+        get() = listOf(id, rawConfig, socksAddress, httpAddress, routeMode, connectionMode, performance.runtimeKey,
+            vpnAppMode, vpnAllowedApps.sorted().joinToString(",")).joinToString("|")
+
+    fun withRenewedConfig(newRawConfig: String): ClientProfile {
+        val originalIdentity = SkirkConfig.parse(rawConfig)
+        val renewedIdentity = SkirkConfig.parse(newRawConfig)
+        require(originalIdentity.secret.isNotBlank() && originalIdentity.secret == renewedIdentity.secret) {
+            "This config has a different tunnel secret. Add it as a new profile instead."
+        }
+        require(originalIdentity.oauthClientId.isNotBlank() &&
+            originalIdentity.oauthClientId == renewedIdentity.oauthClientId) {
+            "This config has a different OAuth client ID. Add it as a new profile instead."
+        }
+        val renewed = fromRawConfig(
+            name = name,
+            rawConfig = newRawConfig,
+            socksPort = socksPort,
+            httpPort = httpPort,
+            shareLan = shareLan,
+            connectionMode = connectionMode,
+            id = id,
+        )
+        require(renewed.sessionId == sessionId && renewed.driveSpace == driveSpace &&
+            renewed.driveFolderId == driveFolderId) {
+            "This config belongs to a different Skirk session or Drive mailbox."
+        }
+        require(renewed.rawConfig != rawConfig) { "This profile is already using that config." }
+        return renewed.copy(
+            routeMode = routeMode,
+            performance = performance,
+            vpnAppMode = vpnAppMode,
+            vpnAllowedApps = vpnAllowedApps,
+        )
+    }
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -45,6 +81,8 @@ data class ClientProfile(
         .put("driveSpace", driveSpace)
         .put("driveFolderId", driveFolderId)
         .put("performance", performance.toJson())
+        .put("vpnAppMode", vpnAppMode)
+        .put("vpnAllowedApps", JSONArray(vpnAllowedApps))
 
     companion object {
         fun fromRawConfig(
@@ -57,6 +95,10 @@ data class ClientProfile(
             httpPort: Int = 0,
         ): ClientProfile {
             val parsed = SkirkConfig.parse(rawConfig)
+            require(parsed.sessionId.isNotBlank() && parsed.secret.isNotBlank() &&
+                parsed.oauthClientId.isNotBlank()) {
+                "Config is missing its Skirk tunnel identity or Google OAuth client ID"
+            }
             val normalizedSocksPort = validateSocksPort(socksPort)
             val normalizedHttpPort = validateHttpPort(
                 if (httpPort == 0) defaultHttpPortFor(normalizedSocksPort) else httpPort,
@@ -99,16 +141,26 @@ data class ClientProfile(
                 httpPort = httpPort,
                 shareLan = json.optBoolean("shareLan", false),
                 connectionMode = normalizeConnectionMode(json.optString("connectionMode", CONNECTION_MODE_VPN)),
-                routeMode = json.optString("routeMode", "real_pinned"),
+                routeMode = json.optString("routeMode", ROUTE_GOOGLE_FRONT),
                 sessionId = json.optString("sessionId"),
                 driveSpace = json.optString("driveSpace", json.optString("space")),
                 driveFolderId = json.optString("driveFolderId"),
                 performance = PerformanceSettings.fromJson(json.optJSONObject("performance")),
+                vpnAppMode = normalizeVpnAppMode(json.optString("vpnAppMode", VPN_APPS_ALL)),
+                vpnAllowedApps = json.optJSONArray("vpnAllowedApps")?.let { array ->
+                    (0 until array.length()).mapNotNull { index ->
+                        array.optString(index).takeIf { it.isNotBlank() }
+                    }.distinct()
+                } ?: emptyList(),
             )
         }
 
         const val CONNECTION_MODE_PROXY = "proxy"
         const val CONNECTION_MODE_VPN = "vpn"
+        const val ROUTE_GOOGLE_FRONT = "google_front_pinned"
+        const val ROUTE_DIRECT = "direct"
+        const val VPN_APPS_ALL = "all"
+        const val VPN_APPS_SELECTED = "selected"
         const val DEFAULT_SOCKS_PORT = 18080
         const val DEFAULT_HTTP_PORT = 18081
         const val MIN_SOCKS_PORT = 1024
@@ -116,6 +168,9 @@ data class ClientProfile(
 
         fun normalizeConnectionMode(value: String): String =
             if (value == CONNECTION_MODE_PROXY) CONNECTION_MODE_PROXY else CONNECTION_MODE_VPN
+
+        fun normalizeVpnAppMode(value: String): String =
+            if (value == VPN_APPS_SELECTED) VPN_APPS_SELECTED else VPN_APPS_ALL
 
         fun validateSocksPort(port: Int): Int {
             require(port in MIN_SOCKS_PORT..MAX_SOCKS_PORT) {

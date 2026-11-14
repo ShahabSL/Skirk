@@ -31,8 +31,8 @@ The public setup flow uses a Skirk-created Drive mailbox folder with
 files and folders created by the Skirk app, while keeping the Google device-code
 login flow available for normal users.
 
-Drive is an object API, not a stream API. Every request/response path contains
-at least these carrier operations:
+Drive is an object API, not a stream API. The default media path contains
+these carrier operations:
 
 1. upload an encrypted object;
 2. wait for Drive object visibility;
@@ -40,8 +40,11 @@ at least these carrier operations:
 4. download by Drive file ID;
 5. delete the processed object after foreground traffic is quiet.
 
-This is the hard latency floor. Skirk can reduce avoidable objects and polling
-fanout, but it cannot make Drive behave like a socket.
+The experimental `drive.inline_small_objects` path can carry eligible sealed
+priority payloads in discovery metadata, omitting step 4 for those objects while
+retaining their media body for compatibility. It remains off by default. This
+removes one API round trip; it does not remove upload, visibility, discovery,
+or cleanup. See the [audit experiments](audit-experiments-2026.md).
 
 ## Mux v4
 
@@ -90,9 +93,8 @@ Generated configs enable runtime cleanup. The exit also runs a conservative
 stale-object janitor at startup and then every 2 minutes for interrupted
 clients and crashed exits. The janitor is not the primary hot-path cleanup:
 consumed mux objects are deleted by foreground-aware runtime cleanup, while the
-janitor uses a 10 minute age window and low delete concurrency so Drive stalls
-do not make live frames look stale and long-running VPN sessions do not prevent
-stale-object cleanup forever.
+janitor uses a 24 hour age window and low delete concurrency so slow
+long-running downloads are not mistaken for stale crash leftovers.
 
 Operators should monitor:
 

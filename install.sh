@@ -276,6 +276,8 @@ persist_user_path() {
     touch "$profile" 2>/dev/null || true
   fi
   append_path_to_profile "$profile" "$path_expr"
+  append_path_to_profile "$HOME/.bash_profile" "$path_expr"
+  append_path_to_profile "$HOME/.bash_login" "$path_expr"
   append_path_to_profile "$HOME/.bashrc" "$path_expr"
   append_path_to_profile "$HOME/.zprofile" "$path_expr"
   append_path_to_profile "$HOME/.zshrc" "$path_expr"
@@ -882,6 +884,7 @@ WorkingDirectory=$(dirname "$config_path")
 ExecStart=$service_bin serve-exit --config $config_path
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true

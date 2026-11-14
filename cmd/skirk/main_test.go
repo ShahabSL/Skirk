@@ -4,12 +4,54 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ShahabSL/Skirk/internal/skirk"
 )
+
+func TestExitStatusForTerminalOAuthGrantError(t *testing.T) {
+	err := &skirk.OAuthTokenError{Status: 400, Code: "invalid_grant", Description: "expired"}
+	if got := exitStatusForError([]string{"skirk", "serve-exit"}, err); got != 78 {
+		t.Fatalf("exit status = %d, want 78", got)
+	}
+	if got := exitStatusForError([]string{"skirk", "serve-client"}, err); got != 78 {
+		t.Fatalf("client exit status = %d, want 78", got)
+	}
+	if got := exitStatusForError([]string{"skirk", "--config", "client.json"}, err); got != 78 {
+		t.Fatalf("implicit client exit status = %d, want 78", got)
+	}
+	if got := exitStatusForError([]string{"skirk", "serve-exit"}, errors.New("temporary network failure")); got != 1 {
+		t.Fatalf("temporary error exit status = %d, want 1", got)
+	}
+}
+
+func TestServeExitStopsRestartingForExpiredGrant(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"Token has expired"}`))
+	}))
+	defer tokenServer.Close()
+	path := filepath.Join(t.TempDir(), "exit.json")
+	if err := writeJSONFile(path, skirk.Config{
+		Secret: "test-secret",
+		Auth: skirk.AuthConfig{
+			ClientID: "test-client", RefreshToken: "expired-refresh-token", TokenURL: tokenServer.URL,
+		},
+		Route: skirk.RouteConfig{Mode: "direct"},
+		Drive: skirk.DriveConfig{Space: "appDataFolder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := serveExit(context.Background(), []string{"--config", path})
+	if got := exitStatusForError([]string{"skirk", "serve-exit"}, err); got != 78 {
+		t.Fatalf("expired-grant exit status = %d, error = %v; want 78", got, err)
+	}
+}
 
 func TestSummarizeHTTPSamples(t *testing.T) {
 	got := summarizeHTTPSamples([]benchHTTPResult{
@@ -84,6 +126,43 @@ func TestQuotaPerRequest(t *testing.T) {
 	got := quotaPerRequest(skirk.DriveQuotaSnapshot{Calls: 10, Units: 500, Errors: 1, ResponseBytes: 2000}, 2)
 	if got.Calls != 5 || got.Units != 250 || got.Errors != 0.5 || got.ResponseBytes != 1000 {
 		t.Fatalf("quotaPerRequest = %+v", got)
+	}
+}
+
+func TestDefaultCleanupPrefixesMatchJanitor(t *testing.T) {
+	got := defaultCleanupPrefixes()
+	if strings.Join(got, ",") != strings.Join(mailboxJanitorPrefixes, ",") {
+		t.Fatalf("default cleanup prefixes = %#v, want janitor prefixes %#v", got, mailboxJanitorPrefixes)
+	}
+	got[0] = "changed/"
+	if mailboxJanitorPrefixes[0] == "changed/" {
+		t.Fatal("default cleanup prefixes should not expose mutable janitor prefix slice")
+	}
+}
+
+func TestMailboxJanitorDefaultAgeProtectsLongTransfers(t *testing.T) {
+	if mailboxJanitorDefaultOlderThan < 24*time.Hour {
+		t.Fatalf("mailbox janitor default age = %s, want at least 24h to avoid deleting live slow-transfer objects", mailboxJanitorDefaultOlderThan)
+	}
+}
+
+func TestImplicitServeClientCompatibility(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "double dash config", args: []string{"--config", "client.skirk"}, want: true},
+		{name: "single dash config", args: []string{"-config", "client.skirk"}, want: true},
+		{name: "command remains explicit", args: []string{"serve-client", "--config", "client.skirk"}, want: false},
+		{name: "unknown flag is not captured", args: []string{"--listen", "127.0.0.1:18080"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isImplicitServeClient(tt.args); got != tt.want {
+				t.Fatalf("isImplicitServeClient(%v) = %t, want %t", tt.args, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -603,6 +603,10 @@ mapped_dns_init (void)
     if (!dns)
         return -1;
 
+    if (hev_config_get_mapdns_ipv6_network ())
+        hev_mapped_dns_set_ipv6_network (
+            dns, hev_config_get_mapdns_ipv6_network ());
+
     hev_mapped_dns_put (dns);
 
     return 0;

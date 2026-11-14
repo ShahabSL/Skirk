@@ -3,7 +3,8 @@
 The Android client packages the Go `skirk` engine and runs it as a foreground
 service. It supports two user-selectable modes:
 
-- `VPN`: whole-device Android `VpnService` mode for normal apps.
+- `VPN`: Android `VpnService` mode for all apps by default, or only the apps
+  selected on this device.
 - `Proxy`: local SOCKS5 and HTTP proxy mode for apps or LAN devices that
   explicitly support a proxy.
 
@@ -18,6 +19,10 @@ run on another phone or desktop client without response races.
 cd clients/android
 ./gradlew :app:assembleDebug --console=plain
 ```
+
+The pinned NDK version is used by default. When validating against an already
+installed compatible NDK, set `SKIRK_ANDROID_NDK_VERSION` (for example,
+`SKIRK_ANDROID_NDK_VERSION=27.1.12297006 ./gradlew :app:assembleDebug`).
 
 The Gradle build compiles two native pieces for both `arm64-v8a` and
 `armeabi-v7a`, then emits a universal APK plus per-ABI APKs:
@@ -34,9 +39,11 @@ skirk serve-client --config <profile-config> --listen <socks-host:port> --http-p
 ```
 
 The app may use the internal `client` compatibility alias, but `serve-client` is
-the public command name. The real launch also passes `--client-id <profile-id>`.
-On Android the service forces the Google API route to a fronted pinned mode so
-the carrier path does not depend on Android's local resolver during startup.
+the public command name. The real launch also passes `--client-id <profile-id>`
+and the route selected under **Google access route**. The default generated
+profile uses **Google front**, with `www.google.com` TLS SNI and a pinned Google
+edge IP. Choose **Direct Google** only if the direct Drive API hosts work on
+your network. The choice is saved with the profile and applies on reconnect.
 The HTTP listener is started in `Proxy` mode. VPN mode keeps the engine
 loopback-only for the internal TUN-to-SOCKS bridge.
 
@@ -46,6 +53,26 @@ Install the APK, paste the generated one-line `skirk:` profile, select `VPN`,
 then tap `Connect`. Android shows the standard VPN consent dialog the first
 time. After approval, ordinary apps should use Skirk without per-app proxy
 settings.
+
+Before connecting, select **Google front** or **Direct Google** under
+**Google access route**. This remains a user choice because regional access to
+direct Google differs. The app uses the selected route for both VPN and Proxy
+mode.
+
+For per-app VPN routing, tap **Choose apps** under Connection mode while
+disconnected, switch on **Only selected apps**, and select at least one app.
+Only those apps enter Skirk; other apps use their normal network. If Android's
+**Block connections without VPN** setting is enabled, those other apps may be
+blocked instead. The picker lists launchable apps, and Skirk itself remains
+outside the VPN to avoid a routing loop. Reconnect after changing the selection.
+If every selected app is removed from the device, Skirk refuses to start the
+VPN rather than silently routing all apps.
+
+On Android 15 and newer, VPN mode uses the `systemExempted` foreground service
+type once the VPN tunnel is active. This avoids Android's six-hour daily
+`dataSync` limit for a running VPN. If Android rejects that type, Skirk keeps the
+VPN connected with `dataSync` and marks the notification as time limited. Proxy
+mode remains a `dataSync` service and is subject to that limit on Android 15.
 
 For Telegram, turn Telegram's built-in proxy setting off when using Skirk VPN
 mode. If Telegram's own proxy is enabled, Telegram may keep testing its internal
@@ -66,32 +93,14 @@ The app has performance presets:
 The Drive API estimate shown in the app is measured from the local sidecar
 process. It does not know project-wide remaining quota.
 
-## Debug E2E
+## Emulator UI smoke
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
 adb shell am start -n app.skirk.client/.MainActivity
-
-CONFIG="$(cat /tmp/skirk-client-config.txt)"
-adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
-  -a app.skirk.client.debug.IMPORT \
-  --es name Android-E2E \
-  --es config "$CONFIG" \
-  --ei port 18080 \
-  --ei httpPort 18081 \
-  --ez shareLan false \
-  --es mode vpn
-adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
-  -a app.skirk.client.debug.START
-
-adb shell am start -a android.intent.action.VIEW -d http://example.com/
-
-adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
-  -a app.skirk.client.debug.STOP
-adb shell am broadcast -n app.skirk.client/.DebugControlReceiver \
-  -a app.skirk.client.debug.DELETE_ALL
 ```
 
-For LAN sharing tests, import with `--es mode proxy --ez shareLan true`.
-Configure another device with SOCKS5 `PHONE_LAN_IP:18080` or HTTP proxy
-`PHONE_LAN_IP:18081`.
+Import a disposable test profile in the UI, open **Choose apps**, select a
+launchable app, save, force-stop/relaunch Skirk, and confirm the choice remains.
+An app launch smoke does not validate real VPN packet routing: that needs a
+working Skirk exit and a signed-in test account.

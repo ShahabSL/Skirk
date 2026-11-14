@@ -41,8 +41,18 @@ func main() {
 			os.Exit(130)
 		}
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(exitStatusForError(os.Args, err))
 	}
+}
+
+func exitStatusForError(args []string, err error) int {
+	if len(args) > 1 && skirk.IsTerminalOAuthTokenError(err) {
+		switch args[1] {
+		case "serve-exit", "exit", "serve-client", "client", "--config", "-config":
+			return 78
+		}
+	}
+	return 1
 }
 
 func run(args []string) error {
@@ -59,6 +69,9 @@ func run(args []string) error {
 	}()
 	if len(args) < 2 {
 		return menu(ctx)
+	}
+	if isImplicitServeClient(args[1:]) {
+		return serveClient(ctx, args[1:])
 	}
 	switch args[1] {
 	case "help", "--help", "-h":
@@ -110,13 +123,21 @@ func run(args []string) error {
 	}
 }
 
+func isImplicitServeClient(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return args[0] == "--config" || args[0] == "-config"
+}
+
 func usage() {
 	fmt.Println(`skirk commands:
   help
   version
   keygen
   sample-config --out skirk.json --secret SECRET
-  setup init --out skirk-kit --reset-google-login [--oauth-mode easy|personal] [--start-exit=false] [--exit-service-name skirk-exit] [--oauth-client-file oauth-client.json]
+  setup init --out skirk-kit --reset-google-login [--oauth-mode easy|personal] [--start-exit=false] [--exit-service-name skirk-exit] [--oauth-client-file oauth-client.json] [--quota-project PROJECT_ID]
+  setup renew-oauth --kit skirk-kit [--oauth-client-file oauth-client.json] [--restart-exit]
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode --config client.skirk --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
@@ -126,6 +147,7 @@ func usage() {
   service status|start|stop|restart|uninstall [--name skirk-exit]
   uninstall --dry-run
   uninstall --yes [--name skirk-exit] [--bin /path/to/skirk] [--delete-kit] [--revoke-oauth] [--delete-drive] [--wireproxy]
+  --config skirk.json --listen 127.0.0.1:18080  (compatibility alias for serve-client)
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
   revoke --config skirk-kit/exit.json [--revoke-oauth]
@@ -212,7 +234,7 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to Skirk runtime prefixes")
 	all := fs.Bool("all", false, "delete/list every non-trashed object in the configured Skirk Drive mailbox")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
@@ -243,7 +265,7 @@ func cleanup(ctx context.Context, args []string) error {
 	}
 	cleanupPrefixes := []string{strings.TrimSpace(*prefix)}
 	if cleanupPrefixes[0] == "" {
-		cleanupPrefixes = []string{"muxv4/"}
+		cleanupPrefixes = defaultCleanupPrefixes()
 	}
 	results := make([]skirk.DriveCleanupResult, 0, len(cleanupPrefixes))
 	for _, cleanupPrefix := range cleanupPrefixes {
@@ -418,13 +440,17 @@ func serveExit(ctx context.Context, args []string) error {
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 10 * time.Minute
+const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 2 * time.Minute
 const mailboxJanitorDefaultDeleteConcurrency = 2
 const mailboxJanitorDefaultMaxDeletesPerPrefix = 500
 const mailboxJanitorDefaultDeleteDelay = 100 * time.Millisecond
 
 var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
+
+func defaultCleanupPrefixes() []string {
+	return append([]string(nil), mailboxJanitorPrefixes...)
+}
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {

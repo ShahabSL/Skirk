@@ -59,6 +59,29 @@ type OAuthAccessToken struct {
 	Source    string
 }
 
+type OAuthTokenError struct {
+	Status      int
+	Code        string
+	Description string
+}
+
+func (e *OAuthTokenError) Error() string {
+	return fmt.Sprintf("oauth token refresh failed status=%d error=%s description=%s", e.Status, e.Code, e.Description)
+}
+
+func IsTerminalOAuthTokenError(err error) bool {
+	var tokenErr *OAuthTokenError
+	if !errors.As(err, &tokenErr) {
+		return false
+	}
+	switch tokenErr.Code {
+	case "invalid_grant", "invalid_client", "unauthorized_client", "access_denied", "deleted_client":
+		return true
+	default:
+		return false
+	}
+}
+
 type AccessTokenSource struct {
 	auth  AuthConfig
 	route RouteConfig
@@ -68,6 +91,7 @@ type AccessTokenSource struct {
 	expiresAt          time.Time
 	source             string
 	refreshing         bool
+	refreshGeneration  uint64
 	nextRefreshAttempt time.Time
 	Logger             *log.Logger
 }
@@ -80,8 +104,28 @@ type RouteConfig struct {
 }
 
 type DriveConfig struct {
-	FolderID string `json:"folder_id,omitempty"`
-	Space    string `json:"space,omitempty"`
+	FolderID           string `json:"folder_id,omitempty"`
+	Space              string `json:"space,omitempty"`
+	QuotaProject       string `json:"quota_project,omitempty"`
+	InlineSmallObjects bool   `json:"inline_small_objects,omitempty"`
+	UploadHedgeDelayMS int    `json:"upload_hedge_delay_ms,omitempty"`
+	SeparateUploadPool bool   `json:"separate_upload_pool,omitempty"`
+}
+
+// ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
+// form used by X-Goog-User-Project. An empty value is not a project ID.
+func ValidateGoogleProjectID(id string) error {
+	const requirement = "Google Cloud project ID must be 6-30 lowercase letters, digits, or hyphens; start with a letter and not end with a hyphen"
+	if len(id) < 6 || len(id) > 30 || id[0] < 'a' || id[0] > 'z' || id[len(id)-1] == '-' {
+		return errors.New(requirement)
+	}
+	for i := 1; i < len(id); i++ {
+		ch := id[i]
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
+			return errors.New(requirement)
+		}
+	}
+	return nil
 }
 
 type TunnelConfig struct {
@@ -271,7 +315,7 @@ func isRawURLBase64Rune(r rune) bool {
 
 func (c *Config) ApplyDefaults() {
 	if c.Route.Mode == "" {
-		c.Route.Mode = "real_pinned"
+		c.Route.Mode = "google_front_pinned"
 	}
 	if c.Route.GoogleIP == "" {
 		c.Route.GoogleIP = "216.239.38.120"
@@ -314,6 +358,14 @@ func (c *Config) ApplyDefaults() {
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Secret) == "" {
 		return errors.New("config.secret is required")
+	}
+	if c.Drive.QuotaProject != "" {
+		if err := ValidateGoogleProjectID(c.Drive.QuotaProject); err != nil {
+			return fmt.Errorf("config.drive.quota_project: %w", err)
+		}
+	}
+	if delay := c.Drive.UploadHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
+		return errors.New("config.drive.upload_hedge_delay_ms must be 0 or between 1000 and 10000")
 	}
 	switch strings.TrimSpace(c.Route.Mode) {
 	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned":
@@ -410,7 +462,7 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 		if staleSafeTokenRefresh(s.route) && tokenUsableDuringRefresh(now, s.expiresAt) {
 			if !s.refreshing && !now.Before(s.nextRefreshAttempt) {
 				s.refreshing = true
-				go s.refreshInBackground()
+				go s.refreshInBackground(s.refreshGeneration)
 			}
 			return s.token, nil
 		}
@@ -429,6 +481,8 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 	s.token = token.Token
 	s.expiresAt = token.ExpiresAt
 	s.source = token.Source
+	s.refreshGeneration++
+	s.refreshing = false
 	s.nextRefreshAttempt = time.Time{}
 	if s.Logger != nil {
 		if s.expiresAt.IsZero() {
@@ -440,10 +494,14 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 	return s.token, nil
 }
 
-func (s *AccessTokenSource) refreshInBackground() {
+func (s *AccessTokenSource) refreshInBackground(generation uint64) {
 	token, err := s.auth.accessTokenForRoute(context.Background(), s.route)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A rejected token or newer foreground refresh supersedes this request.
+	if generation != s.refreshGeneration {
+		return
+	}
 	s.refreshing = false
 	if err != nil {
 		s.nextRefreshAttempt = time.Now().Add(tokenRefreshRetryDelay)
@@ -468,10 +526,25 @@ func (s *AccessTokenSource) refreshInBackground() {
 func (s *AccessTokenSource) Invalidate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.invalidateLocked()
+}
+
+func (s *AccessTokenSource) invalidateRejectedToken(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Concurrent requests can return a late 401 for an already-replaced token.
+	if s.token != token {
+		return
+	}
+	s.invalidateLocked()
+}
+
+func (s *AccessTokenSource) invalidateLocked() {
 	s.token = ""
 	s.expiresAt = time.Time{}
 	s.source = ""
 	s.refreshing = false
+	s.refreshGeneration++
 	s.nextRefreshAttempt = time.Time{}
 }
 
@@ -724,7 +797,7 @@ func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) 
 	}
 	if status < 200 || status >= 300 {
 		if payload.Error != "" {
-			return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d error=%s description=%s", status, payload.Error, payload.ErrorDescription)
+			return OAuthAccessToken{}, &OAuthTokenError{Status: status, Code: payload.Error, Description: payload.ErrorDescription}
 		}
 		return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d body=%q", status, string(body))
 	}

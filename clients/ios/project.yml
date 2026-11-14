@@ -1,0 +1,82 @@
+name: Skirk
+options:
+  bundleIdPrefix: app.skirk
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Skirk:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Shared
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Skirk
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        SKIRKKeychainAccessGroup: $(AppIdentifierPrefix)app.skirk.ios.shared
+    entitlements:
+      path: App/Skirk.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.skirk.ios
+          - $(AppIdentifierPrefix)app.skirk.ios.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.skirk.ios
+    dependencies:
+      - target: SkirkPacketTunnel
+        embed: true
+  SkirkPacketTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: TunnelExtension
+      - path: Shared
+    info:
+      path: TunnelExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Skirk Tunnel
+        SKIRKKeychainAccessGroup: $(AppIdentifierPrefix)app.skirk.ios.shared
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: TunnelExtension/SkirkPacketTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.skirk.ios.PacketTunnel
+          - $(AppIdentifierPrefix)app.skirk.ios.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.skirk.ios.PacketTunnel
+    dependencies:
+      - framework: Frameworks/Engine.xcframework
+        embed: false
+      - framework: Frameworks/HevSocks5Tunnel.xcframework
+        embed: false
+  SkirkUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.skirk.ios.UITests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Skirk

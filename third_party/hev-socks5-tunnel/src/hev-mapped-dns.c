@@ -74,6 +74,13 @@ hev_mapped_dns_put (HevMappedDNS *self)
     singleton = self;
 }
 
+void
+hev_mapped_dns_set_ipv6_network (HevMappedDNS *self, const uint8_t *network)
+{
+    memcpy (self->ipv6_prefix, network, sizeof (self->ipv6_prefix));
+    self->ipv6_enabled = 1;
+}
+
 static HevMappedDNSNode *
 hev_mapped_dns_node_alloc (const char *name)
 {
@@ -84,6 +91,10 @@ hev_mapped_dns_node_alloc (const char *name)
         return NULL;
 
     node->name = strdup (name);
+    if (!node->name) {
+        hev_free (node);
+        return NULL;
+    }
 
     return node;
 }
@@ -179,48 +190,70 @@ hev_mapped_dns_handle (HevMappedDNS *self, void *req, int qlen, void *res,
     DNSHdr *shdr = res;
     uint8_t *rb = req;
     uint8_t *sb = res;
-    int ips[32];
-    int ipo[32];
+    uint32_t ips[32];
+    uint16_t ipo[32];
+    uint16_t types[32];
     int ipn = 0;
     int off;
     int i;
+    int qd;
 
-    if (slen < qlen)
+    if (qlen < (int)sizeof (DNSHdr) || slen < qlen)
         return -1;
 
     memcpy (res, req, qlen);
-    qhdr->qd = ntohs (qhdr->qd);
+    qd = ntohs (qhdr->qd);
     shdr->fl = ntohs (shdr->fl);
     shdr->ns = 0;
     shdr->an = 0;
+    shdr->ar = 0; /* Request EDNS records are not copied to the response. */
 
-    if (qhdr->qd > 32)
+    if (qd > 32)
         return -1;
 
     off = sizeof (DNSHdr);
-    for (i = 0; i < qhdr->qd; i++) {
-        ipo[ipn] = off;
+    for (i = 0; i < qd; i++) {
+        int question_offset = off;
+        uint16_t type;
+        uint16_t klass;
 
-        while (rb[off]) {
+        for (;;) {
             int poff = off;
+            uint8_t label;
 
-            off += 1 + rb[off];
+            if (off >= qlen)
+                return -1;
+            label = rb[off];
+            if (!label)
+                break;
+            if (label > 63)
+                return -1; /* Reject invalid labels and compressed names. */
+
+            off += 1 + label;
             if (off >= qlen)
                 return -1;
 
             rb[poff] = '.';
         }
 
+        if (off - question_offset + 1 > 255)
+            return -1; /* SOCKS domain names cannot exceed DNS's limit. */
+
         off++;
         if ((off + 3) >= qlen)
             return -1;
 
-        if ((read_u16 (&rb[off + 0]) == 1) && (read_u16 (&rb[off + 2]) == 1)) {
+        type = read_u16 (&rb[off]);
+        klass = read_u16 (&rb[off + 2]);
+        if ((type == 1 || (type == 28 && self->ipv6_enabled)) &&
+            klass == 1) {
             int idx;
 
-            idx = hev_mapped_dns_find (self, (char *)&rb[ipo[ipn] + 1]);
+            idx = hev_mapped_dns_find (self, (char *)&rb[question_offset + 1]);
             if (idx >= 0) {
                 ips[ipn] = self->net | idx;
+                ipo[ipn] = question_offset;
+                types[ipn] = type;
                 ipn++;
             }
         }
@@ -229,18 +262,25 @@ hev_mapped_dns_handle (HevMappedDNS *self, void *req, int qlen, void *res,
     }
 
     for (i = 0; i < ipn; i++) {
-        if ((off + 15) >= slen)
+        int size = types[i] == 28 ? 28 : 16;
+        if (off + size > slen)
             return -1;
 
-        sb[off + 0] = 0xc0;
-        sb[off + 1] = ipo[i];
-        write_u16 (&sb[off + 2], 1);
+        sb[off + 0] = 0xc0 | (ipo[i] >> 8);
+        sb[off + 1] = ipo[i] & 0xff;
+        write_u16 (&sb[off + 2], types[i]);
         write_u16 (&sb[off + 4], 1);
         write_u32 (&sb[off + 6], 1);
-        write_u16 (&sb[off + 10], 4);
-        write_u32 (&sb[off + 12], ips[i]);
+        if (types[i] == 28) {
+            write_u16 (&sb[off + 10], 16);
+            memcpy (&sb[off + 12], self->ipv6_prefix, 12);
+            write_u32 (&sb[off + 24], ips[i]);
+        } else {
+            write_u16 (&sb[off + 10], 4);
+            write_u32 (&sb[off + 12], ips[i]);
+        }
 
-        off += 16;
+        off += size;
     }
 
     shdr->fl = htons (shdr->fl | 0x8000 | ((shdr->fl & 0x100) >> 1));
@@ -254,6 +294,9 @@ hev_mapped_dns_lookup (HevMappedDNS *self, int ip)
 {
     HevMappedDNSNode *node;
     int idx;
+
+    if ((ip & self->mask) != self->net)
+        return NULL;
 
     idx = ip & ~self->mask;
     if (idx >= self->max)

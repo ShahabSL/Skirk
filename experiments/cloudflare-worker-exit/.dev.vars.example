@@ -1,0 +1,16 @@
+SKIRK_ADMIN_TOKEN=replace-with-long-random-admin-token
+SKIRK_WEBHOOK_TOKEN=replace-with-long-random-drive-channel-token
+GOOGLE_OAUTH_CLIENT_ID=replace-with-google-oauth-client-id
+GOOGLE_OAUTH_CLIENT_SECRET=replace-with-google-oauth-client-secret
+GOOGLE_REFRESH_TOKEN=replace-with-google-refresh-token
+SKIRK_DRIVE_FOLDER_ID=replace-with-skirk-drive-folder-id
+SKIRK_EXIT_REQUEST_PREFIX=cfexit/v1/req/
+SKIRK_EXIT_RESPONSE_PREFIX=cfexit/v1/res/
+SKIRK_EXIT_MAX_RESPONSE_BYTES=8388608
+SKIRK_STREAM_UP_PREFIX=cfstream/v1/up/
+SKIRK_STREAM_DOWN_PREFIX=cfstream/v1/down/
+SKIRK_STREAM_IDLE_TIMEOUT_MS=30000
+SKIRK_STREAM_READ_WAIT_MS=150
+SKIRK_FALLBACK_IDLE_POLL_MS=5000
+SKIRK_FALLBACK_ACTIVE_POLL_MS=1000
+SKIRK_FALLBACK_ACTIVE_WINDOW_MS=30000

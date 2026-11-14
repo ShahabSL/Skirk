@@ -52,6 +52,10 @@ const (
 	exitFamilyPreferenceTimeout    = 2 * time.Second
 	cleanupQuietWindow             = 15 * time.Second
 	cleanupMaxForegroundDelay      = 10 * time.Second
+	cleanupForegroundPressureQueue = 32
+	cleanupForegroundBatchMin      = 2
+	cleanupForegroundBatchMid      = 8
+	cleanupForegroundBatchMax      = 16
 	cleanupForegroundDeleteDelay   = 1 * time.Second
 	cleanupIdleDeleteDelay         = 1 * time.Second
 	cleanupDeleteTimeout           = 60 * time.Second
@@ -89,12 +93,18 @@ type Tunnel struct {
 	downloadLimiter      *adaptiveLimiter
 	muxMu                sync.Mutex
 	clientMux            *driveMux
+	clientMuxListeners   int
 	lastActivityNS       atomic.Int64
 	lastUploadNS         atomic.Int64
 	burstDisabledUntilNS atomic.Int64
 	PollInterval         time.Duration
 	CleanupProcessed     bool
 	Logger               *log.Logger
+	roleOnce             sync.Once
+}
+
+func (t *Tunnel) setRole(role string) {
+	t.roleOnce.Do(func() { t.role = role })
 }
 
 func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
@@ -249,7 +259,7 @@ func (t *Tunnel) burstPollActive(now time.Time) bool {
 	if now.Sub(time.Unix(0, lastUpload)) > t.BurstPollWindow {
 		return false
 	}
-	return t.activeStreams.Load() > 0 || t.recentActivity()
+	return t.activeStreams.Load() > 0
 }
 
 func (t *Tunnel) recentActivity() bool {
@@ -827,13 +837,14 @@ type cleanupTask struct {
 	id   string
 }
 
-func (t *Tunnel) deleteCleanupTask(ctx context.Context, task cleanupTask) {
+func (t *Tunnel) deleteCleanupTask(ctx context.Context, task cleanupTask) bool {
 	if t == nil || !t.CleanupProcessed || (task.name == "" && task.id == "") {
-		return
+		return false
 	}
 	taskCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
-	_ = t.deleteData(taskCtx, task.name, task.id)
+	err := t.deleteData(taskCtx, task.name, task.id)
 	cancel()
+	return err == nil
 }
 
 func (t *Tunnel) foregroundBusy() bool {

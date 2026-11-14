@@ -12,8 +12,8 @@ notice in sync with vendored source changes.
 - License file: `third_party/hev-socks5-tunnel/License`
 - Local path: `third_party/hev-socks5-tunnel`
 
-Skirk builds this project into `libhev-socks5-tunnel.so` and uses it as the
-Android TUN-to-SOCKS packet bridge behind `VpnService`.
+Skirk builds this project into `libhev-socks5-tunnel.so` for Android `VpnService`
+and into a static framework for the iOS packet tunnel.
 
 ## sing-box
 

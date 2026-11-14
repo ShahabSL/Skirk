@@ -153,13 +153,22 @@ Windows, Linux, and macOS users should use the portable desktop app from the
 release assets. It imports the same one-line `skirk:` profile and starts the
 Skirk SOCKS and HTTP sidecar. Windows supports Proxy, System Proxy, and VPN
 modes; Linux supports Proxy and VPN modes; macOS supports Proxy mode in this
-release.
+release. On Apple Silicon Macs, use the `Skirk_macos_arm64_signed_notarized.app.zip`
+asset when available. An `_unsigned.app.zip` asset may be blocked by macOS
+Gatekeeper. The x64 build runs through Rosetta and may show macOS Intel-support
+warnings.
 
 Android users should use the Android app. Import the same one-line profile,
 select `VPN`, and tap `Connect`. Android asks for VPN consent on first use.
+VPN mode routes all apps by default; **Choose apps** can limit it to selected
+apps to reduce Drive traffic. Unselected apps use their normal network.
 `Proxy` mode is available when an app or another LAN device explicitly supports
 SOCKS5 or HTTP proxy settings. Use `skirk-android-universal.apk` unless you
 specifically want a smaller per-ABI APK.
+
+An experimental iOS app now lives in [`clients/ios/`](clients/ios/README.md).
+It builds and launches in iPhone Simulator; a signed physical-device test is
+still required before its packet tunnel can be called working.
 
 Current client surfaces:
 
@@ -171,10 +180,12 @@ See [docs/clients.md](docs/clients.md) for build and release details.
 
 ## Restricted-Network Testing
 
-Generated client profiles default to `google_front_pinned`, which uses a
-Google-looking TLS route pinned to the configured Google edge IP for Google API
-traffic. The exit defaults to `direct` because it normally has ordinary internet
-access.
+Generated client profiles default to `google_front_pinned`, which uses
+`www.google.com` TLS SNI and a configured Google edge IP for Google API traffic.
+New exit configs also default to the Google front. Use `--exit-route direct`
+during setup when you explicitly choose direct Google for the exit.
+Android and desktop apps let each user choose the Google front or direct Google
+per profile while disconnected. The apps keep that choice when they reconnect.
 
 Existing Linux profiles generated before v0.1.51 are not rewritten by an
 update. Regenerate the kit or pass
@@ -256,11 +267,12 @@ connectivity.
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts a
 conservative automatic janitor at startup and then every 2 minutes. It deletes
-stale Skirk transport objects older than 10 minutes with low delete concurrency,
-so long VPN or multi-client sessions cannot starve stale-object cleanup
-indefinitely.
+stale Skirk transport objects older than 24 hours with low delete concurrency.
+The long age window avoids deleting live objects from very slow long-running
+downloads while still cleaning crash leftovers eventually.
 
-Manual cleanup is dry-run by default:
+Manual cleanup is dry-run by default. Without `--prefix`, it scans Skirk's
+runtime object prefixes (`muxv4/`, `bench-drive/`, and `setup/`):
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
@@ -272,7 +284,9 @@ Actually delete matching stale objects:
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
 ```
 
-Empty every object in the configured Skirk mailbox:
+Emergency-only cleanup: stop Skirk clients and the exit first, then empty every
+object in the configured Skirk mailbox. Running this while traffic is active can
+delete live mux objects and disconnect clients.
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000

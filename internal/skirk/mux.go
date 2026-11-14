@@ -33,6 +33,7 @@ const (
 	muxNormalFairBatch           = 1 * 1024 * 1024
 	muxNormalBulkBatch           = 4 * 1024 * 1024
 	muxInlineFirst               = 16 * 1024
+	muxInlineSealedMaxBytes      = 8 * 1024
 	muxPendingFrameLimit         = 4096
 	muxUrgentFrameQueue          = 1024
 	muxNormalFrameQueue          = 128
@@ -71,6 +72,10 @@ const (
 	muxPriorityStreamBytes       = 64 * 1024
 	muxUploadPriorityBurst       = 4
 	muxUploadIDPoolSize          = 64
+	muxStorageQuotaMaxAttempts   = 5
+	muxStorageQuotaRetryBase     = 2 * time.Second
+	muxStorageQuotaRetryMax      = 15 * time.Second
+	muxStorageCleanupCooldown    = time.Minute
 	muxPriorityDownloadHedge     = 1500 * time.Millisecond
 	muxNormalActivePollInterval  = 2 * time.Second
 	muxNormalActivePollMin       = 500 * time.Millisecond
@@ -85,6 +90,11 @@ const (
 	muxPendingOpenRepairWindow   = time.Second
 	muxPendingOpenTimeoutBudget  = 8
 	muxExitOpenDialConcurrency   = 64
+	muxClientFinalDrainDelay     = 5 * time.Second
+	cleanupRetryMaxAttempts      = 5
+	cleanupRetryQueueMax         = muxReceiveQueue
+	cleanupRetryBaseDelay        = 2 * time.Second
+	cleanupRetryMaxDelay         = 16 * time.Second
 )
 
 type muxFrame struct {
@@ -127,6 +137,7 @@ func completeMuxFrameAcks(frames []muxFrame, err error) {
 type muxObjectMeta struct {
 	Name            string
 	ID              string
+	InlineData      []byte
 	ClientID        string
 	RunID           string
 	Epoch           string
@@ -152,6 +163,12 @@ type muxReceiveGapState struct {
 	nextMinSeq  uint64
 	nextMaxSeq  uint64
 	repairCount int
+}
+
+type cleanupRetryWork struct {
+	task     cleanupTask
+	attempts int
+	readyAt  time.Time
 }
 
 type muxReceiveGapDecision struct {
@@ -231,9 +248,12 @@ type driveMux struct {
 	pendingTotalBytes  int
 	active             atomic.Int64
 
-	seenMu sync.Mutex
-	seen   map[string]struct{}
-	queued map[string]struct{}
+	seenMu     sync.Mutex
+	seen       map[string]struct{}
+	queued     map[string]struct{}
+	knownIDs   map[string]map[string]struct{}
+	primaryIDs map[string]string
+	processed  map[string]struct{}
 
 	listMu        sync.Mutex
 	listSince     time.Time
@@ -243,6 +263,12 @@ type driveMux struct {
 	priorityListSince     time.Time
 	priorityListPageToken string
 	normalListLastPoll    time.Time
+	clientFinalDrainAt    atomic.Int64
+	fatalOnce             sync.Once
+	fatalDone             chan struct{}
+	fatalCause            error
+	runCancel             context.CancelFunc
+	dialExit              func(context.Context, string) (net.Conn, error)
 
 	recvWake                    chan struct{}
 	recvUrgent                  chan muxObjectMeta
@@ -258,6 +284,10 @@ type driveMux struct {
 	cleanupQueue                chan cleanupTask
 	cleanupKick                 chan struct{}
 	cleanupOverflow             chan struct{}
+	cleanupProgress             chan struct{}
+	cleanupDeleted              atomic.Int64
+	storageCleanupMu            sync.Mutex
+	storageCleanupLast          time.Time
 	exitOpenSlots               chan struct{}
 	startedAt                   time.Time
 	uploadIDMu                  sync.Mutex
@@ -309,6 +339,7 @@ type muxStream struct {
 	inbound chan []byte
 	done    chan struct{}
 	once    sync.Once
+	ready   atomic.Bool
 
 	deliverMu        sync.Mutex
 	mu               sync.Mutex
@@ -351,8 +382,12 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		pendingBytes:          map[muxStreamKey]int{},
 		seen:                  map[string]struct{}{},
 		queued:                map[string]struct{}{},
+		knownIDs:              map[string]map[string]struct{}{},
+		primaryIDs:            map[string]string{},
+		processed:             map[string]struct{}{},
 		listSince:             startedAt,
 		recvWake:              make(chan struct{}, 1),
+		fatalDone:             make(chan struct{}),
 		recvUrgent:            make(chan muxObjectMeta, muxReceiveQueue),
 		recvNormalReady:       make(chan muxStreamKey, muxReceiveQueue),
 		recvNormalFlows:       map[muxStreamKey][]muxObjectMeta{},
@@ -364,6 +399,7 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		cleanupQueue:          make(chan cleanupTask, muxReceiveQueue),
 		cleanupKick:           make(chan struct{}, 1),
 		cleanupOverflow:       make(chan struct{}, cleanupOverflowWorkers),
+		cleanupProgress:       make(chan struct{}, 1),
 		exitOpenSlots:         make(chan struct{}, muxExitOpenDialConcurrency),
 		startedAt:             startedAt,
 	}
@@ -371,6 +407,17 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		m.lanes = append(m.lanes, newMuxLane(m, i))
 	}
 	return m, nil
+}
+
+func (m *driveMux) reportTerminalOAuthError(ctx context.Context, err error) bool {
+	if m == nil || m.fatalDone == nil || ctx.Err() != nil || !IsTerminalOAuthTokenError(err) {
+		return false
+	}
+	m.fatalOnce.Do(func() {
+		m.fatalCause = err
+		close(m.fatalDone)
+	})
+	return true
 }
 
 func newMuxLane(m *driveMux, idx int) *muxLane {
@@ -393,7 +440,7 @@ func normalizeMuxTransport(transport string) string {
 }
 
 func (t *Tunnel) serveMuxClient(ctx context.Context, listen string) error {
-	t.role = "client"
+	t.setRole("client")
 	if strings.TrimSpace(t.ClientID) == "" || strings.TrimSpace(t.RunID) == "" {
 		return errors.New("client id and run id are required for client transport")
 	}
@@ -410,34 +457,93 @@ func (t *Tunnel) serveMuxClient(ctx context.Context, listen string) error {
 			}
 		},
 	}
-	return server.Serve(ctx)
+	return t.serveClientListener(ctx, mux, server.Serve)
+}
+
+func (t *Tunnel) serveClientListener(ctx context.Context, mux *driveMux, serve func(context.Context) error) error {
+	defer t.releaseClientMux(mux)
+	listenerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- serve(listenerCtx) }()
+	select {
+	case err := <-serveErr:
+		select {
+		case <-mux.fatalDone:
+			mux.stopClient()
+			return mux.fatalCause
+		default:
+			return err
+		}
+	case <-mux.fatalDone:
+		cancel()
+		mux.stopClient()
+		<-serveErr
+		return mux.fatalCause
+	}
+}
+
+func (m *driveMux) stopClient() {
+	if m.runCancel != nil {
+		m.runCancel()
+	}
+	m.closeAll()
 }
 
 func (t *Tunnel) getClientMux(ctx context.Context) (*driveMux, error) {
 	t.muxMu.Lock()
 	defer t.muxMu.Unlock()
 	if t.clientMux != nil {
+		t.clientMuxListeners++
 		return t.clientMux, nil
 	}
 	mux, err := newDriveMux(t, "client", DirectionUp, DirectionDown)
 	if err != nil {
 		return nil, err
 	}
-	mux.start(ctx)
+	// The SOCKS and HTTP listeners share this mux, but can have different
+	// lifetimes. The final listener release cancels the workers.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	mux.runCancel = cancel
+	mux.start(runCtx)
 	t.clientMux = mux
+	t.clientMuxListeners = 1
 	return mux, nil
 }
 
+func (t *Tunnel) releaseClientMux(mux *driveMux) {
+	t.muxMu.Lock()
+	if t.clientMux != mux {
+		t.muxMu.Unlock()
+		return
+	}
+	t.clientMuxListeners--
+	if t.clientMuxListeners > 0 {
+		t.muxMu.Unlock()
+		return
+	}
+	t.clientMux = nil
+	t.muxMu.Unlock()
+	mux.stopClient()
+}
+
 func (t *Tunnel) serveMuxExit(ctx context.Context) error {
-	t.role = "exit"
+	t.setRole("exit")
 	mux, err := newDriveMux(t, "exit", DirectionDown, DirectionUp)
 	if err != nil {
 		return err
 	}
-	mux.start(ctx)
-	<-ctx.Done()
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	mux.start(runCtx)
+	select {
+	case <-ctx.Done():
+	case <-mux.fatalDone:
+		err = mux.fatalCause
+	}
+	cancel()
 	mux.closeAll()
-	return nil
+	return err
 }
 
 func (m *driveMux) start(ctx context.Context) {
@@ -489,7 +595,7 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 			return err
 		}
 	case <-ctx.Done():
-		stream.close()
+		m.cancelClientStream(stream)
 		return ctx.Err()
 	}
 	if openUploadDuration := time.Since(openUploadStarted); m.t.Logger != nil && openUploadDuration >= m.t.slowDriveThreshold() {
@@ -498,7 +604,7 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 	go m.readLoop(ctx, stream)
 	select {
 	case <-ctx.Done():
-		stream.close()
+		m.cancelClientStream(stream)
 		return ctx.Err()
 	case <-stream.done:
 		return nil
@@ -537,7 +643,12 @@ func (m *driveMux) openClaimedExitStream(ctx context.Context, frame muxFrame) {
 	}
 	defer releaseDialSlot()
 	started := time.Now()
-	remote, err := m.t.dialExitTarget(ctx, target)
+	var remote net.Conn
+	if m.dialExit != nil {
+		remote, err = m.dialExit(ctx, target)
+	} else {
+		remote, err = m.t.dialExitTarget(ctx, target)
+	}
 	dialDuration := time.Since(started)
 	if m.t.Logger != nil {
 		if err != nil || dialDuration >= time.Second {
@@ -685,6 +796,7 @@ func (m *driveMux) registerStreamInternal(id uint64, clientID, runID string, con
 		recvExpected: 1,
 		recvPending:  map[uint64]muxFrame{},
 	}
+	stream.ready.Store(!rejectClosed)
 	m.streamsMu.Lock()
 	if m.streams == nil {
 		m.streams = map[muxStreamKey]*muxStream{}
@@ -725,8 +837,14 @@ func (m *driveMux) unregisterStream(stream *muxStream) {
 	m.streamsMu.Unlock()
 	m.dropPendingFrames(key)
 	m.dropQueuedNormalMuxObjects(key)
-	m.active.Add(-1)
+	remaining := m.active.Add(-1)
 	m.t.activeStreams.Add(-1)
+	if m.role == "client" && remaining == 0 {
+		// One delayed list removes late reply objects after the final stream
+		// closes without keeping every idle client on a polling timer.
+		m.clientFinalDrainAt.Store(time.Now().Add(muxClientFinalDrainDelay).UnixNano())
+		m.wakeReceiver()
+	}
 }
 
 func (m *driveMux) dropQueuedNormalMuxObjects(key muxStreamKey) {
@@ -849,7 +967,13 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 		n, err := readChunkWithPolicy(stream.conn, buffer, stream.bulkSendCoalescing())
 		if n > 0 {
 			if sendErr := m.sendDataPayload(ctx, stream, buffer[:n]); sendErr != nil {
-				stream.close()
+				if m.role == "client" && ctx.Err() != nil {
+					m.cancelClientStream(stream)
+				} else if m.role == "client" && stream.close() {
+					m.sendRSTBestEffort(context.Background(), stream.key(), []byte("client_send_failed"))
+				} else {
+					stream.close()
+				}
 				return
 			}
 			stream.noteSentPayloadBytes(n)
@@ -859,13 +983,34 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 			continue
 		}
 		if err == io.EOF || strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") {
-			_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Priority: stream.claimPriorityFIN()})
+			if m.role == "client" && ctx.Err() != nil {
+				m.cancelClientStream(stream)
+				return
+			}
+			if sendErr := m.sendFrame(ctx, muxFrame{Kind: muxFrameFIN, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: stream.nextSendSeq(), Priority: stream.claimPriorityFIN()}); sendErr != nil && m.role == "client" && ctx.Err() != nil {
+				m.cancelClientStream(stream)
+				return
+			}
 			stream.markLocalReadDone()
+			return
+		}
+		if m.role == "client" {
+			if stream.close() {
+				m.sendRSTBestEffort(context.Background(), stream.key(), []byte(sanitizeTransportErrorText(err.Error())))
+			}
 			return
 		}
 		_ = m.sendFrame(ctx, muxFrame{Kind: muxFrameRST, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Payload: []byte(sanitizeTransportErrorText(err.Error()))})
 		stream.close()
 		return
+	}
+}
+
+func (m *driveMux) cancelClientStream(stream *muxStream) {
+	if stream != nil && stream.close() {
+		// The request context has already ended, while a shared client mux can
+		// still upload a reset for the exit's otherwise orphaned TCP socket.
+		m.sendRSTBestEffort(context.Background(), stream.key(), []byte("client_canceled"))
 	}
 }
 
@@ -1002,8 +1147,10 @@ func (s *muxStream) markRemoteReadDone() {
 	}
 }
 
-func (s *muxStream) close() {
+func (s *muxStream) close() bool {
+	closed := false
 	s.once.Do(func() {
+		closed = true
 		if s.conn != nil {
 			_ = s.conn.Close()
 		}
@@ -1013,6 +1160,7 @@ func (s *muxStream) close() {
 			s.mux.unregisterStream(s)
 		}
 	})
+	return closed
 }
 
 func (s *muxStream) setObservedTarget(openedAt time.Time, target string) {
@@ -1521,6 +1669,10 @@ uploadLoop:
 			if ctx.Err() != nil {
 				return
 			}
+			if l.mux.reportTerminalOAuthError(ctx, err) {
+				l.failUploadBatch(ctx, frames, err, attempt)
+				return
+			}
 			if attempt >= muxUploadMaxRetries {
 				l.failUploadBatch(ctx, frames, err, attempt)
 				continue uploadLoop
@@ -1549,7 +1701,14 @@ uploadLoop:
 				if ctx.Err() != nil {
 					return
 				}
+				if l.mux.reportTerminalOAuthError(ctx, err) {
+					l.failUploadBatch(ctx, frames, err, attempt)
+					return
+				}
 				if isDriveStorageQuotaExceeded(err) {
+					if l.waitForStorageQuotaCleanupRetry(ctx, frames, attempt) {
+						continue
+					}
 					l.failUploadBatch(ctx, frames, err, attempt)
 					break
 				}
@@ -1573,6 +1732,121 @@ uploadLoop:
 			}
 			break
 		}
+	}
+}
+
+func (l *muxLane) waitForStorageQuotaCleanupRetry(ctx context.Context, frames []muxFrame, attempt int) bool {
+	if l == nil || l.mux == nil || attempt >= muxStorageQuotaMaxAttempts {
+		return false
+	}
+	before := l.mux.cleanupDeleted.Load()
+	l.mux.requestStoragePressureCleanup(ctx)
+	delay := muxStorageQuotaRetryDelay(attempt)
+	if l.mux.t != nil && l.mux.t.Logger != nil {
+		bytes := muxBatchPlainBytes(frames)
+		l.mux.t.Logger.Printf("mux upload storage quota cleanup retry role=%s lane=%d priority=%t frames=%d plain_bytes=%d attempt=%d delay=%s", l.mux.role, l.idx, muxPriorityBatch(frames), len(frames), bytes, attempt, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	for {
+		if l.mux.cleanupDeleted.Load() > before {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-l.mux.cleanupProgress:
+			if l.mux.cleanupDeleted.Load() > before {
+				return true
+			}
+		case <-timer.C:
+			return true
+		}
+	}
+}
+
+func muxStorageQuotaRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := muxStorageQuotaRetryBase << (attempt - 1)
+	if delay > muxStorageQuotaRetryMax {
+		delay = muxStorageQuotaRetryMax
+	}
+	return delay
+}
+
+type driveCleanupStore interface {
+	Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error)
+}
+
+func (m *driveMux) requestStoragePressureCleanup(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.requestCleanupKick()
+	if m.t == nil || m.t.Data == nil {
+		return
+	}
+	store, ok := m.t.Data.(driveCleanupStore)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	m.storageCleanupMu.Lock()
+	if !m.storageCleanupLast.IsZero() && now.Sub(m.storageCleanupLast) < muxStorageCleanupCooldown {
+		m.storageCleanupMu.Unlock()
+		return
+	}
+	m.storageCleanupLast = now
+	m.storageCleanupMu.Unlock()
+	go m.runStoragePressureCleanup(ctx, store)
+}
+
+func (m *driveMux) runStoragePressureCleanup(ctx context.Context, store driveCleanupStore) {
+	if m == nil || store == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
+	defer cancel()
+	for _, prefix := range []string{"muxv4/", "bench-drive/"} {
+		result, err := store.Cleanup(cleanupCtx, DriveCleanupOptions{
+			Prefix:            prefix,
+			OlderThan:         10 * time.Minute,
+			DeleteConcurrency: 2,
+			MaxDeletes:        cleanupEmergencyDeleteBatch,
+			DeleteDelay:       25 * time.Millisecond,
+			MaxPages:          20000,
+		})
+		if err != nil {
+			if m.t != nil && m.t.Logger != nil && cleanupCtx.Err() == nil {
+				m.t.Logger.Printf("mux storage quota stale cleanup prefix=%s error=%s", prefix, errorSummary(err))
+			}
+			if cleanupCtx.Err() != nil {
+				return
+			}
+			continue
+		}
+		if result.Deleted > 0 {
+			m.markCleanupProgress(int64(result.Deleted))
+		}
+		if m.t != nil && m.t.Logger != nil && (result.Matched > 0 || result.Deleted > 0 || result.Failed > 0) {
+			m.t.Logger.Printf("mux storage quota stale cleanup prefix=%s scanned=%d matched=%d deleted=%d failed=%d truncated=%t", prefix, result.Scanned, result.Matched, result.Deleted, result.Failed, result.Truncated)
+		}
+	}
+}
+
+func (m *driveMux) markCleanupProgress(count int64) {
+	if m == nil || count <= 0 {
+		return
+	}
+	m.cleanupDeleted.Add(count)
+	if m.cleanupProgress == nil {
+		return
+	}
+	select {
+	case m.cleanupProgress <- struct{}{}:
+	default:
 	}
 }
 
@@ -1834,20 +2108,49 @@ func (m *driveMux) reserveUploadObjectID(ctx context.Context) (string, error) {
 func (m *driveMux) runReceiveLoop(ctx context.Context) {
 	ticker := time.NewTicker(m.t.PollInterval)
 	defer ticker.Stop()
+	tickerDelay := m.t.PollInterval
 	for {
+		// The client only receives replies to its own streams. With no open
+		// stream, wait for a local upload or one final cleanup list.
+		if m.role == "client" && m.active.Load() == 0 {
+			if drainAt := m.clientFinalDrainAt.Load(); drainAt > 0 {
+				if delay := time.Until(time.Unix(0, drainAt)); delay > 0 {
+					timer := time.NewTimer(delay)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return
+					case <-m.recvWake:
+						timer.Stop()
+					case <-timer.C:
+					}
+				}
+				if m.active.Load() == 0 && time.Now().UnixNano() >= drainAt && m.clientFinalDrainAt.CompareAndSwap(drainAt, 0) {
+					m.pollMuxObjectsWithNormal(ctx, true)
+				}
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-m.recvWake:
+				}
+			}
+			if m.active.Load() == 0 {
+				continue
+			}
+			resetTicker(ticker, m.t.PollInterval)
+			tickerDelay = m.t.PollInterval
+		}
 		m.pollMuxObjects(ctx)
-		delay := m.pollDelay()
-		if delay != m.t.PollInterval {
+		if delay := m.pollDelay(); delay != tickerDelay {
 			resetTicker(ticker, delay)
+			tickerDelay = delay
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-m.recvWake:
 		case <-ticker.C:
-			if delay != m.t.PollInterval {
-				resetTicker(ticker, m.t.PollInterval)
-			}
 		}
 	}
 }
@@ -1875,16 +2178,19 @@ func (m *driveMux) pollDelay() time.Duration {
 	if m.t.burstPollActive(time.Now()) {
 		return m.t.BurstPollInterval
 	}
-	if m.role == "client" && m.active.Load() == 0 {
-		return idleOpenPollInterval
-	}
 	if m.role == "exit" && m.active.Load() == 0 && !m.t.recentActivity() {
-		return idleOpenPollInterval
+		if m.t.PollInterval < idleOpenPollInterval {
+			return idleOpenPollInterval
+		}
 	}
 	return m.t.PollInterval
 }
 
 func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
+	return m.pollMuxObjectsWithNormal(ctx, false)
+}
+
+func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
 	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok {
 		priorityWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -1894,13 +2200,11 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 		}, func(metas []muxObjectMeta) {
 			m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
 		})
-		priorityHasMore := m.hasListFreshPageTokenFor(&m.priorityListMu, &m.priorityListPageToken)
-
 		receiveGapWork := m.maintainReceiveGaps(ctx)
 		pendingOpenWork := m.maintainPendingOpens(ctx)
 		gapWork := receiveGapWork || pendingOpenWork
 		now := time.Now()
-		if !m.shouldPollNormalMuxObjects(now) || priorityHasMore {
+		if !forceNormal && !m.shouldPollNormalMuxObjects(now) {
 			return priorityWork || gapWork
 		}
 		m.normalListLastPoll = now
@@ -1921,6 +2225,7 @@ func (m *driveMux) pollMuxObjectsFromPrefix(ctx context.Context, prefix, source 
 	listDuration := time.Since(started)
 	m.t.markSlowList(listDuration)
 	if err != nil {
+		m.reportTerminalOAuthError(ctx, err)
 		if m.t.Logger != nil && ctx.Err() == nil {
 			m.t.Logger.Printf("mux list direction=%s failed: %v", directionName(m.recvDir), err)
 		}
@@ -1936,7 +2241,7 @@ func (m *driveMux) pollMuxObjectsFromPrefix(ctx context.Context, prefix, source 
 			m.markSeen(meta.Name)
 			continue
 		}
-		if m.isKnown(meta.Name) {
+		if m.isKnownMuxObject(meta) {
 			continue
 		}
 		metas = append(metas, meta)
@@ -2468,7 +2773,7 @@ func (m *driveMux) receiveWorkerCounts() (int, int) {
 }
 
 func (m *driveMux) enqueueMuxObject(ctx context.Context, meta muxObjectMeta) bool {
-	if meta.Name == "" || !m.claimQueued(meta.Name) {
+	if meta.Name == "" || !m.claimQueuedObject(meta) {
 		return false
 	}
 	if meta.Priority {
@@ -2518,7 +2823,7 @@ func (m *driveMux) runReceiveWorker(ctx context.Context, priorityOnly bool) {
 			m.retryMuxObject(ctx, meta)
 			continue
 		}
-		m.markSeen(meta.Name)
+		m.markSeenProcessed(meta)
 		m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
 		if m.t.Observe && m.t.Logger != nil {
 			target, targetID := m.streamObserveTarget(meta.key())
@@ -2949,7 +3254,7 @@ func (m *driveMux) targetedStreamRepairContains(ctx context.Context, key muxStre
 		if !ok || meta.Name == "" || !muxMetaContainsStreamKey(meta, key) {
 			continue
 		}
-		if !controlIsFresh(info, m.startedAt) || m.isKnown(meta.Name) {
+		if !controlIsFresh(info, m.startedAt) || m.isKnownMuxObject(meta) {
 			continue
 		}
 		metas = append(metas, meta)
@@ -3339,13 +3644,26 @@ func (m *driveMux) tryDirectOverflowCleanup(task cleanupTask) {
 	case m.cleanupOverflow <- struct{}{}:
 		go func() {
 			defer func() { <-m.cleanupOverflow }()
-			m.t.deleteCleanupTask(context.Background(), task)
+			if m.t.deleteCleanupTask(context.Background(), task) {
+				m.markCleanupProgress(1)
+			}
 		}()
 	default:
 		if m.t.Logger != nil {
 			m.t.Logger.Printf("mux cleanup overflow workers busy object=%s dropped=true", muxShortName(task.name))
 		}
 	}
+}
+
+func cleanupRetryDelay(failedAttempts int) time.Duration {
+	if failedAttempts < 1 {
+		failedAttempts = 1
+	}
+	delay := cleanupRetryBaseDelay << (failedAttempts - 1)
+	if delay > cleanupRetryMaxDelay {
+		return cleanupRetryMaxDelay
+	}
+	return delay
 }
 
 func (m *driveMux) runCleanupLoop(ctx context.Context) {
@@ -3356,28 +3674,44 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 	defer sweepTicker.Stop()
 	foregroundTicker := time.NewTicker(cleanupForegroundDeleteDelay)
 	defer foregroundTicker.Stop()
-	var tasks []cleanupTask
+	var tasks []cleanupRetryWork
+	var retries []cleanupRetryWork
 	var firstTaskAt time.Time
-	rememberTask := func(task cleanupTask) {
-		if task.name == "" && task.id == "" {
+	rememberWork := func(work cleanupRetryWork) {
+		if work.task.name == "" && work.task.id == "" {
 			return
 		}
 		if len(tasks) == 0 {
 			firstTaskAt = time.Now()
 		}
-		tasks = append(tasks, task)
+		tasks = append(tasks, work)
 	}
-	popTask := func() (cleanupTask, bool) {
-		if len(tasks) == 0 {
-			return cleanupTask{}, false
+	rememberTask := func(task cleanupTask) { rememberWork(cleanupRetryWork{task: task}) }
+	promoteRetries := func(now time.Time) bool {
+		promoted := false
+		remaining := retries[:0]
+		for _, work := range retries {
+			if !now.Before(work.readyAt) {
+				rememberWork(work)
+				promoted = true
+			} else {
+				remaining = append(remaining, work)
+			}
 		}
-		task := tasks[0]
-		tasks[0] = cleanupTask{}
+		retries = remaining
+		return promoted
+	}
+	popTask := func() (cleanupRetryWork, bool) {
+		if len(tasks) == 0 {
+			return cleanupRetryWork{}, false
+		}
+		work := tasks[0]
+		tasks[0] = cleanupRetryWork{}
 		tasks = tasks[1:]
 		if len(tasks) == 0 {
 			firstTaskAt = time.Time{}
 		}
-		return task, true
+		return work, true
 	}
 	cleanupAge := func(now time.Time) time.Duration {
 		if firstTaskAt.IsZero() {
@@ -3389,14 +3723,38 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 		if len(tasks) == 0 || !m.t.foregroundBusy() {
 			return false
 		}
-		return len(tasks) >= deferredCleanupFlushThreshold || cleanupAge(now) >= cleanupMaxForegroundDelay
+		return len(tasks) >= cleanupForegroundPressureQueue || cleanupAge(now) >= cleanupMaxForegroundDelay
+	}
+	foregroundBatch := func() int {
+		switch {
+		case len(tasks) >= deferredCleanupFlushThreshold:
+			return cleanupForegroundBatchMax
+		case len(tasks) >= cleanupForegroundPressureQueue:
+			return cleanupForegroundBatchMid
+		default:
+			return cleanupForegroundBatchMin
+		}
 	}
 	deleteOne := func(deleteCtx context.Context) bool {
-		task, ok := popTask()
+		work, ok := popTask()
 		if !ok {
 			return false
 		}
-		m.t.deleteCleanupTask(deleteCtx, task)
+		if m.t.deleteCleanupTask(deleteCtx, work.task) {
+			m.markCleanupProgress(1)
+		} else if ctx.Err() == nil {
+			work.attempts++
+			if work.attempts < cleanupRetryMaxAttempts && len(retries) < cleanupRetryQueueMax {
+				delay := cleanupRetryDelay(work.attempts)
+				work.readyAt = time.Now().Add(delay)
+				retries = append(retries, work)
+				if m.t.Logger != nil {
+					m.t.Logger.Printf("mux cleanup delete retry object=%s attempt=%d delay=%s", muxShortName(work.task.name), work.attempts, delay)
+				}
+			} else if m.t.Logger != nil {
+				m.t.Logger.Printf("mux cleanup delete abandoned object=%s attempts=%d retry_queue=%d", muxShortName(work.task.name), work.attempts, len(retries))
+			}
+		}
 		return true
 	}
 	drainPendingQueue := func(limit int) {
@@ -3452,19 +3810,24 @@ func (m *driveMux) runCleanupLoop(ctx context.Context) {
 				drainIdle()
 			}
 		case <-m.cleanupKick:
+			promoteRetries(time.Now())
 			drainPendingQueue(cleanupEmergencyDeleteBatch)
 			deleteSome(ctx, cleanupEmergencyDeleteBatch)
 		case <-foregroundTicker.C:
+			promoted := promoteRetries(time.Now())
 			if foregroundDue(time.Now()) {
-				deleteOne(ctx)
+				deleteSome(ctx, foregroundBatch())
+			} else if promoted && !m.t.foregroundBusy() {
+				deleteSome(ctx, cleanupForegroundBatchMin)
 			}
 		case <-sweepTicker.C:
+			promoteRetries(time.Now())
 			if len(tasks) == 0 {
 				continue
 			}
 			if m.t.foregroundBusy() {
 				if foregroundDue(time.Now()) {
-					deleteOne(ctx)
+					deleteSome(ctx, foregroundBatch())
 				}
 				continue
 			}
@@ -3481,18 +3844,31 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 	if err != nil {
 		return err
 	}
+	decodeFrames := func(sealed []byte) ([]muxFrame, error) {
+		env, raw, err := OpenEnvelope(key, sealed)
+		if err != nil {
+			return nil, err
+		}
+		if env.Direction != m.recvDir || env.Sequence != meta.Seq || env.SessionID != m.t.SessionID {
+			return nil, errors.New("mux envelope metadata mismatch")
+		}
+		return decodeMuxBatch(raw)
+	}
 	sealed, err := m.downloadMuxObject(ctx, meta)
 	if err != nil {
 		return err
 	}
-	env, raw, err := OpenEnvelope(key, sealed)
-	if err != nil {
-		return err
+	frames, err := decodeFrames(sealed)
+	if err != nil && len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
+		// The media copy remains authoritative if a description was damaged or
+		// replaced. No frame has been delivered before authentication completes.
+		meta.InlineData = nil
+		sealed, downloadErr := m.downloadMuxObject(ctx, meta)
+		if downloadErr != nil {
+			return downloadErr
+		}
+		frames, err = decodeFrames(sealed)
 	}
-	if env.Direction != m.recvDir || env.Sequence != meta.Seq || env.SessionID != m.t.SessionID {
-		return errors.New("mux envelope metadata mismatch")
-	}
-	frames, err := decodeMuxBatch(raw)
 	if err != nil {
 		return err
 	}
@@ -3515,6 +3891,9 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 }
 
 func (m *driveMux) downloadMuxObject(ctx context.Context, meta muxObjectMeta) ([]byte, error) {
+	if len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
+		return bytes.Clone(meta.InlineData), nil
+	}
 	if !meta.Priority {
 		return m.downloadMuxObjectOnce(ctx, meta)
 	}
@@ -3613,6 +3992,7 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 		logErr = nil
 	}
 	release(releaseErr, int64(len(sealed)))
+	m.reportTerminalOAuthError(ctx, logErr)
 	if m.t.Observe && m.t.Logger != nil {
 		target, targetID := m.streamObserveTarget(meta.key())
 		m.t.Logger.Printf("mux download role=%s direction=%s lane=%d seq=%d priority=%t stream=%016x target=%s target_id=%s plain_bytes=%d sealed_bytes=%d slot_wait=%s get_duration=%s duration=%s object=%s error=%s", m.role, directionName(m.recvDir), meta.Lane, meta.Seq, meta.Priority, meta.StreamID, target, targetID, meta.PlainBytes, len(sealed), slotWait.Round(time.Millisecond), duration.Round(time.Millisecond), (slotWait + duration).Round(time.Millisecond), muxShortName(meta.Name), errorSummary(logErr))
@@ -3628,13 +4008,13 @@ func (m *driveMux) handleFrame(ctx context.Context, frame muxFrame) {
 		}
 	case muxFrameData:
 		stream := m.stream(frame)
-		if stream == nil {
+		if stream == nil || !stream.ready.Load() {
 			m.queuePendingFrame(ctx, frame)
 			return
 		}
 		stream.acceptFrame(ctx, frame)
 	case muxFrameFIN:
-		if stream := m.stream(frame); stream != nil {
+		if stream := m.stream(frame); stream != nil && stream.ready.Load() {
 			stream.acceptFrame(ctx, frame)
 		} else {
 			m.queuePendingFrame(ctx, frame)
@@ -3672,9 +4052,6 @@ func (m *driveMux) queuePendingFrame(ctx context.Context, frame muxFrame) {
 		return
 	}
 	key := frame.key()
-	if m.isClosedStream(key) {
-		return
-	}
 	bytes := pendingFrameBytes(frame)
 	var overflow bool
 	var overflowReason string
@@ -3683,6 +4060,25 @@ func (m *driveMux) queuePendingFrame(ctx context.Context, frame muxFrame) {
 	var pendingBytes int
 	var globalBytes int
 	m.pendingMu.Lock()
+	// Keep the closed-stream check inside pendingMu. Closing a stream marks it
+	// closed and then drops pending frames; checking before this lock could let
+	// a late frame slip in after that final drop.
+	if m.isClosedStream(key) {
+		m.pendingMu.Unlock()
+		return
+	}
+	if stream := m.streamByKey(key); stream != nil {
+		if frame.Kind == muxFrameRST {
+			m.pendingMu.Unlock()
+			stream.close()
+			return
+		}
+		if stream.ready.Load() {
+			m.pendingMu.Unlock()
+			stream.acceptFrame(ctx, frame)
+			return
+		}
+	}
 	if m.pending == nil {
 		m.pending = map[muxStreamKey][]muxFrame{}
 	}
@@ -3976,6 +4372,7 @@ func muxStreamKeyIn(keys []muxStreamKey, key muxStreamKey) bool {
 
 func (m *driveMux) flushPendingFrames(ctx context.Context, stream *muxStream) {
 	m.pendingMu.Lock()
+	stream.ready.Store(true)
 	frames := m.dropPendingFramesLocked(stream.key())
 	m.pendingMu.Unlock()
 	if len(frames) == 0 {
@@ -4113,16 +4510,73 @@ func (m *driveMux) isKnown(name string) bool {
 	return ok
 }
 
-func (m *driveMux) claimQueued(name string) bool {
+func (m *driveMux) isKnownMuxObject(meta muxObjectMeta) bool {
 	m.seenMu.Lock()
-	defer m.seenMu.Unlock()
-	if _, ok := m.seen[name]; ok {
+	_, seen := m.seen[meta.Name]
+	_, queued := m.queued[meta.Name]
+	known := seen || queued
+	duplicate := known && m.noteKnownObjectIDLocked(meta.Name, meta.ID)
+	_, processed := m.processed[meta.Name]
+	m.seenMu.Unlock()
+	if duplicate && processed {
+		// A retried priority POST can create another Drive ID with the same
+		// encrypted mux name. Ignore its frames but remove that exact file.
+		m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+	}
+	return known
+}
+
+func (m *driveMux) noteKnownObjectIDLocked(name, id string) bool {
+	if id == "" {
 		return false
 	}
-	if _, ok := m.queued[name]; ok {
+	if m.knownIDs == nil {
+		m.knownIDs = map[string]map[string]struct{}{}
+	}
+	ids := m.knownIDs[name]
+	if ids == nil {
+		m.knownIDs[name] = map[string]struct{}{id: {}}
 		return false
 	}
-	m.queued[name] = struct{}{}
+	if _, exists := ids[id]; exists {
+		return false
+	}
+	ids[id] = struct{}{}
+	return true
+}
+
+func (m *driveMux) claimQueued(name string) bool {
+	return m.claimQueuedObject(muxObjectMeta{Name: name})
+}
+
+func (m *driveMux) claimQueuedObject(meta muxObjectMeta) bool {
+	m.seenMu.Lock()
+	_, seen := m.seen[meta.Name]
+	_, queued := m.queued[meta.Name]
+	if seen || queued {
+		duplicate := m.noteKnownObjectIDLocked(meta.Name, meta.ID)
+		_, processed := m.processed[meta.Name]
+		m.seenMu.Unlock()
+		if duplicate && processed {
+			m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+		}
+		return false
+	}
+	if m.queued == nil {
+		m.queued = map[string]struct{}{}
+	}
+	m.queued[meta.Name] = struct{}{}
+	if meta.ID != "" {
+		if m.knownIDs == nil {
+			m.knownIDs = map[string]map[string]struct{}{}
+		}
+		m.knownIDs[meta.Name] = map[string]struct{}{meta.ID: {}}
+		if m.primaryIDs == nil {
+			m.primaryIDs = map[string]string{}
+		}
+		m.primaryIDs[meta.Name] = meta.ID
+	}
+	m.seenMu.Unlock()
 	return true
 }
 
@@ -4130,15 +4584,67 @@ func (m *driveMux) unclaimQueued(name string) {
 	m.seenMu.Lock()
 	defer m.seenMu.Unlock()
 	delete(m.queued, name)
+	if _, seen := m.seen[name]; !seen {
+		delete(m.knownIDs, name)
+		delete(m.primaryIDs, name)
+	}
 }
 
 func (m *driveMux) markSeen(name string) {
 	m.seenMu.Lock()
 	defer m.seenMu.Unlock()
+	m.markSeenLocked(name)
+}
+
+func (m *driveMux) markSeenProcessed(meta muxObjectMeta) {
+	m.seenMu.Lock()
+	if m.processed == nil {
+		m.processed = map[string]struct{}{}
+	}
+	m.processed[meta.Name] = struct{}{}
+	if m.primaryIDs == nil {
+		m.primaryIDs = map[string]string{}
+	}
+	if m.primaryIDs[meta.Name] == "" {
+		m.primaryIDs[meta.Name] = meta.ID
+	}
+	m.markSeenLocked(meta.Name)
+	var duplicates []string
+	for id := range m.knownIDs[meta.Name] {
+		if id != m.primaryIDs[meta.Name] {
+			duplicates = append(duplicates, id)
+		}
+	}
+	m.seenMu.Unlock()
+	for _, id := range duplicates {
+		m.enqueueCleanup(cleanupTask{name: meta.Name, id: id})
+	}
+}
+
+func (m *driveMux) markSeenLocked(name string) {
 	delete(m.queued, name)
 	m.seen[name] = struct{}{}
 	if len(m.seen) > 200000 {
 		m.seen = map[string]struct{}{name: struct{}{}}
+		keepIDs := map[string]map[string]struct{}{}
+		keepPrimary := map[string]string{}
+		if ids := m.knownIDs[name]; ids != nil {
+			keepIDs[name] = ids
+			keepPrimary[name] = m.primaryIDs[name]
+		}
+		for queuedName := range m.queued {
+			if ids := m.knownIDs[queuedName]; ids != nil {
+				keepIDs[queuedName] = ids
+				keepPrimary[queuedName] = m.primaryIDs[queuedName]
+			}
+		}
+		m.knownIDs = keepIDs
+		m.primaryIDs = keepPrimary
+		if _, ok := m.processed[name]; ok {
+			m.processed = map[string]struct{}{name: {}}
+		} else {
+			m.processed = map[string]struct{}{}
+		}
 	}
 }
 
@@ -4435,7 +4941,11 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	if strings.TrimSpace(info.Updated) != "" {
 		updated, _ = time.Parse(time.RFC3339Nano, info.Updated)
 	}
-	return muxObjectMeta{Name: name, ID: info.ID, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
+	var inlineData []byte
+	if len(info.InlineData) > 0 && len(info.InlineData) <= muxInlineSealedMaxBytes {
+		inlineData = bytes.Clone(info.InlineData)
+	}
+	return muxObjectMeta{Name: name, ID: info.ID, InlineData: inlineData, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
 }
 
 func muxShortName(name string) string {

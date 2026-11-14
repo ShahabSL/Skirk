@@ -11,6 +11,13 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
+internal fun skirkEngineExitMessage(code: Int): String =
+    if (code == 78) {
+        "Google authorization expired. Renew the exit kit and replace this profile."
+    } else {
+        "Skirk engine exited with code $code"
+    }
+
 class AndroidSkirkEngine(
     private val context: Context,
     private val logFileName: String,
@@ -179,7 +186,6 @@ class AndroidSkirkEngine(
     }
 
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile, metricsFile: File): List<String> {
-        val routeMode = "google_front_pinned"
         val performance = profile.performance
         val args = mutableListOf(
             engine.absolutePath,
@@ -191,7 +197,7 @@ class AndroidSkirkEngine(
             "--client-id",
             profile.id,
             "--route-mode",
-            routeMode,
+            profile.routeMode,
         )
         if (profile.httpProxyEnabled) {
             args += listOf(

@@ -5,16 +5,22 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     net::{IpAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{Manager, State};
 
 use system_proxy::SystemProxyManager;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -26,6 +32,8 @@ const CLIENT_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const CUSTOM_MIN_POLL_MS: u16 = 250;
 const CUSTOM_MAX_UPLOAD_WORKERS: u16 = 64;
 const CUSTOM_MAX_DOWNLOAD_WORKERS: u16 = 64;
+const LOG_TAIL_MAX_BYTES: u64 = 256 * 1024;
+static NEXT_PRIVATE_WRITE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -333,6 +341,17 @@ struct DesktopRuntime {
     paths: AppPaths,
     resource_dir: Option<PathBuf>,
     inner: Mutex<RuntimeState>,
+    profile_lifecycle: Mutex<()>,
+    connect_epoch: AtomicU64,
+    connect_in_progress: AtomicBool,
+}
+
+struct ConnectAttempt<'a>(&'a AtomicBool);
+
+impl Drop for ConnectAttempt<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Clone)]
@@ -350,22 +369,25 @@ impl DesktopRuntime {
             paths,
             resource_dir,
             inner: Mutex::new(RuntimeState::default()),
+            profile_lifecycle: Mutex::new(()),
+            connect_epoch: AtomicU64::new(0),
+            connect_in_progress: AtomicBool::new(false),
         }
     }
 
     fn snapshot(&self) -> Result<DesktopSnapshot, String> {
         let profiles = load_profiles(&self.paths)?;
-        let mut settings = load_settings(&self.paths)?;
-        if settings
+        let settings = load_settings(&self.paths)?;
+        let selected_profile_id = if settings
             .selected_profile_id
             .as_ref()
             .map(|id| profiles.iter().any(|profile| &profile.id == id))
             .unwrap_or(false)
-            == false
         {
-            settings.selected_profile_id = profiles.first().map(|profile| profile.id.clone());
-            save_settings(&self.paths, &settings)?;
-        }
+            settings.selected_profile_id.clone()
+        } else {
+            profiles.first().map(|profile| profile.id.clone())
+        };
 
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         refresh_state(&mut state, &self.paths);
@@ -408,7 +430,7 @@ impl DesktopRuntime {
 
         Ok(DesktopSnapshot {
             profiles,
-            selected_profile_id: settings.selected_profile_id,
+            selected_profile_id,
             connection,
             logs_dir: self.paths.logs_dir.display().to_string(),
             config_dir: self.paths.config_dir.display().to_string(),
@@ -431,6 +453,14 @@ impl DesktopRuntime {
         http_port: u16,
         share_lan: bool,
     ) -> Result<(), String> {
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before importing a profile".into());
+        }
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("importing a profile")?;
         let raw_config = raw_config.trim();
         if raw_config.is_empty() {
             return Err("client config is empty".into());
@@ -438,11 +468,9 @@ impl DesktopRuntime {
         let stored_config =
             extract_inline_config(raw_config).unwrap_or_else(|| raw_config.to_string());
         let parsed = self.decode_config(&stored_config)?;
-        let route_mode = parsed
-            .pointer("/route/mode")
-            .and_then(Value::as_str)
-            .unwrap_or("direct")
-            .to_string();
+        // Import starts on the Google front even when an older kit encodes a
+        // direct route. The user can explicitly choose Direct Google in the UI.
+        let route_mode = "google_front_pinned".to_string();
         let google_ip = parsed
             .pointer("/route/google_ip")
             .and_then(Value::as_str)
@@ -473,8 +501,7 @@ impl DesktopRuntime {
             } else {
                 format!("{id}.json")
             });
-        fs::write(&config_path, &stored_config)
-            .map_err(|error| format!("failed to write config: {error}"))?;
+        write_private_file(&config_path, stored_config.as_bytes())?;
 
         let profile = ClientProfile {
             id: id.clone(),
@@ -513,7 +540,78 @@ impl DesktopRuntime {
                 selected_profile_id: Some(id),
                 ..load_settings(&self.paths)?
             },
-        )
+        )?;
+        self.clear_idle_connection_error()
+    }
+
+    fn replace_profile_config(&self, profile_id: &str, raw_config: String) -> Result<(), String> {
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before replacing a profile".into());
+        }
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("replacing a profile")?;
+
+        let raw_config = raw_config.trim();
+        if raw_config.is_empty() {
+            return Err("client config is empty".into());
+        }
+        let stored_config =
+            extract_inline_config(raw_config).unwrap_or_else(|| raw_config.to_string());
+        let parsed = self.decode_config(&stored_config)?;
+        let drive_space = parsed
+            .pointer("/drive/space")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let drive_folder_id = parsed
+            .pointer("/drive/folder_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if drive_space != "appDataFolder" && drive_folder_id.is_empty() {
+            return Err("client config is missing a Drive mailbox".into());
+        }
+
+        let mut profiles = load_profiles(&self.paths)?;
+        let profile = profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "profile was not found".to_string())?;
+        if profile.drive_space != drive_space || profile.drive_folder_id != drive_folder_id {
+            return Err(
+                "updated client config uses a different Drive mailbox; import it as a new profile"
+                    .into(),
+            );
+        }
+        let previous_raw = fs::read_to_string(&profile.config_path)
+            .map_err(|error| format!("failed to read saved client config: {error}"))?;
+        let previous = self.decode_config(&previous_raw)?;
+        for field in ["/session_id", "/secret", "/auth/client_id"] {
+            let previous_value = previous
+                .pointer(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty());
+            let renewed_value = parsed
+                .pointer(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty());
+            if previous_value.is_none() || previous_value != renewed_value {
+                return Err("updated client config must keep the same session, tunnel secret, and OAuth client; import a different setup as a new profile".into());
+            }
+        }
+        let google_ip = parsed
+            .pointer("/route/google_ip")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let google_ip = canonical_google_ip(google_ip)?;
+        write_private_file(Path::new(&profile.config_path), stored_config.as_bytes())?;
+        profile.google_ip = google_ip;
+        save_profiles(&self.paths, &profiles)?;
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        state.phase = ConnectionPhase::Disconnected;
+        state.message = "Profile updated. Connect again.".into();
+        Ok(())
     }
 
     fn decode_config(&self, raw_config: &str) -> Result<Value, String> {
@@ -559,6 +657,14 @@ impl DesktopRuntime {
     }
 
     fn delete_profile(&self, profile_id: &str) -> Result<(), String> {
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before deleting a profile".into());
+        }
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("deleting a profile")?;
         let mut profiles = load_profiles(&self.paths)?;
         if let Some(profile) = profiles.iter().find(|profile| profile.id == profile_id) {
             let _ = fs::remove_file(&profile.config_path);
@@ -578,12 +684,14 @@ impl DesktopRuntime {
         profile_id: &str,
         performance: ClientPerformanceSettings,
     ) -> Result<(), String> {
-        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        refresh_state(&mut state, &self.paths);
-        if state.client.is_some() {
-            return Err("disconnect before changing performance settings".into());
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before changing performance settings".into());
         }
-        drop(state);
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("changing performance settings")?;
         let performance = normalize_performance_settings(performance)?;
         let mut profiles = load_profiles(&self.paths)?;
         let profile = profiles
@@ -594,29 +702,64 @@ impl DesktopRuntime {
         save_profiles(&self.paths, &profiles)
     }
 
-    fn select_profile(&self, profile_id: Option<String>) -> Result<(), String> {
-        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        refresh_state(&mut state, &self.paths);
-        if state.client.is_some() {
-            return Err("disconnect before switching profiles".into());
+    fn update_profile_route(&self, profile_id: &str, route_mode: &str) -> Result<(), String> {
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before changing the Google access route".into());
         }
-        drop(state);
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("changing the Google access route")?;
+        if !matches!(route_mode, "google_front_pinned" | "direct") {
+            return Err("choose Google front or direct Google".into());
+        }
+        let mut profiles = load_profiles(&self.paths)?;
+        let profile = profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "profile was not found".to_string())?;
+        profile.route_mode = route_mode.to_string();
+        save_profiles(&self.paths, &profiles)
+    }
+
+    fn select_profile(&self, profile_id: Option<String>) -> Result<(), String> {
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before switching profiles".into());
+        }
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("switching profiles")?;
         save_settings(
             &self.paths,
             &Settings {
                 selected_profile_id: profile_id,
                 ..load_settings(&self.paths)?
             },
-        )
+        )?;
+        self.clear_idle_connection_error()
+    }
+
+    fn clear_idle_connection_error(&self) -> Result<(), String> {
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        if state.client.is_none() && matches!(state.phase, ConnectionPhase::Error) {
+            state.phase = ConnectionPhase::Disconnected;
+            state.message = "Profile selected. Connect to test it.".into();
+        }
+        Ok(())
     }
 
     fn set_connection_mode(&self, mode: ConnectionMode) -> Result<(), String> {
-        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        refresh_state(&mut state, &self.paths);
-        if state.client.is_some() {
-            return Err("disconnect before changing connection mode".into());
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err("cancel connection startup before changing connection mode".into());
         }
-        drop(state);
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        self.ensure_idle_for_profile_change("changing connection mode")?;
         if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
             return Err("system proxy mode is only available on Windows".into());
         }
@@ -628,7 +771,28 @@ impl DesktopRuntime {
         save_settings(&self.paths, &settings)
     }
 
+    fn ensure_idle_for_profile_change(&self, action: &str) -> Result<(), String> {
+        let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        refresh_state(&mut state, &self.paths);
+        if state.client.is_some() {
+            return Err(format!("disconnect before {action}"));
+        }
+        if self.connect_in_progress.load(Ordering::Acquire) {
+            return Err(format!("cancel connection startup before {action}"));
+        }
+        Ok(())
+    }
+
     fn connect(&self) -> Result<(), String> {
+        let attempt_epoch = self.connect_epoch.load(Ordering::Acquire);
+        if self.connect_in_progress.swap(true, Ordering::AcqRel) {
+            return Err("connection startup is already in progress".into());
+        }
+        let _attempt_guard = ConnectAttempt(&self.connect_in_progress);
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         refresh_state(&mut state, &self.paths);
         if state.client.is_some() {
@@ -654,7 +818,7 @@ impl DesktopRuntime {
             return Err(vpn_unavailable_message());
         }
         let (socks_address, http_address) = listener_addresses_for_mode(&profile, &mode);
-        let route_mode = "google_front_pinned";
+        let route_mode = profile.route_mode.as_str();
         let google_ip = canonical_google_ip(&profile.google_ip)?;
         ensure_port_free(&socks_address)?;
         ensure_port_free(&http_address)?;
@@ -714,12 +878,15 @@ impl DesktopRuntime {
         command.creation_flags(CREATE_NO_WINDOW);
         {
             let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+            if self.connect_epoch.load(Ordering::Acquire) != attempt_epoch {
+                return Err("Connection cancelled".into());
+            }
             state.phase = ConnectionPhase::Connecting;
             state.message = "Starting Skirk sidecar".into();
         }
-        let child = command
-            .spawn()
-            .map_err(|error| self.mark_connect_error(format!("failed to start skirk: {error}")))?;
+        let child = command.spawn().map_err(|error| {
+            self.mark_connect_error(format!("failed to start skirk: {error}"), attempt_epoch)
+        })?;
         let mut child = child;
 
         let socks_probe_address = loopback_probe_address(&socks_address);
@@ -729,10 +896,11 @@ impl DesktopRuntime {
             &socks_probe_address,
             CLIENT_READY_TIMEOUT,
             &log_path,
+            &|| self.connect_epoch.load(Ordering::Acquire) != attempt_epoch,
         ) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(self.mark_connect_error(error));
+            return Err(self.mark_connect_error(error, attempt_epoch));
         }
         if let Err(error) = wait_for_tcp_endpoint_or_exit(
             &mut child,
@@ -740,10 +908,16 @@ impl DesktopRuntime {
             "HTTP proxy",
             CLIENT_READY_TIMEOUT,
             &log_path,
+            &|| self.connect_epoch.load(Ordering::Acquire) != attempt_epoch,
         ) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(self.mark_connect_error(error));
+            return Err(self.mark_connect_error(error, attempt_epoch));
+        }
+
+        if self.connect_epoch.load(Ordering::Acquire) != attempt_epoch {
+            terminate_child(&mut child);
+            return Err("Connection cancelled".into());
         }
 
         let mut tunnel = None;
@@ -755,7 +929,7 @@ impl DesktopRuntime {
                 Err(error) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(self.mark_connect_error(error));
+                    return Err(self.mark_connect_error(error, attempt_epoch));
                 }
             }
         }
@@ -766,7 +940,7 @@ impl DesktopRuntime {
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(self.mark_connect_error(error));
+                return Err(self.mark_connect_error(error, attempt_epoch));
             }
             true
         } else {
@@ -774,6 +948,17 @@ impl DesktopRuntime {
         };
 
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+        if self.connect_epoch.load(Ordering::Acquire) != attempt_epoch {
+            if system_proxy_enabled {
+                let _ = SystemProxyManager::disable(&self.paths);
+            }
+            if let Some(mut tunnel) = tunnel {
+                terminate_child(&mut tunnel.child);
+                cleanup_linux_tun_routes();
+            }
+            terminate_child(&mut child);
+            return Err("Connection cancelled".into());
+        }
         state.client = Some(ManagedClient {
             child,
             profile_id: profile.id,
@@ -789,8 +974,16 @@ impl DesktopRuntime {
         Ok(())
     }
 
-    fn mark_connect_error(&self, message: String) -> String {
+    fn mark_connect_error(&self, message: String, attempt_epoch: u64) -> String {
+        if message == "Connection cancelled"
+            || self.connect_epoch.load(Ordering::Acquire) != attempt_epoch
+        {
+            return "Connection cancelled".into();
+        }
         if let Ok(mut state) = self.inner.lock() {
+            if self.connect_epoch.load(Ordering::Acquire) != attempt_epoch {
+                return "Connection cancelled".into();
+            }
             if state.client.is_none() {
                 state.phase = ConnectionPhase::Error;
                 state.message = message.clone();
@@ -800,6 +993,7 @@ impl DesktopRuntime {
     }
 
     fn disconnect(&self) -> Result<(), String> {
+        self.connect_epoch.fetch_add(1, Ordering::AcqRel);
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         state.phase = ConnectionPhase::Disconnecting;
         stop_runtime(&mut state, &self.paths);
@@ -876,10 +1070,7 @@ impl DesktopRuntime {
             .map_err(|error| format!("failed to start VPN sidecar: {error}"))?;
         if let Err(error) = wait_for_process_start(&mut child, &log_path, Duration::from_secs(2)) {
             terminate_child(&mut child);
-            return Err(format!(
-                "VPN sidecar failed to start: {error}\n{}",
-                read_log_tail(&log_path, 120)
-            ));
+            return Err(format!("VPN sidecar failed to start: {error}"));
         }
         Ok(ManagedTunnel {
             child,
@@ -1212,7 +1403,10 @@ fn is_raw_url_base64_char(ch: char) -> bool {
 
 fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
     let Some(client) = state.client.as_mut() else {
-        if !matches!(state.phase, ConnectionPhase::Error) {
+        if !matches!(
+            state.phase,
+            ConnectionPhase::Error | ConnectionPhase::Connecting
+        ) {
             state.phase = ConnectionPhase::Disconnected;
         }
         return;
@@ -1236,7 +1430,7 @@ fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
         Ok(Some(status)) => {
             stop_runtime(state, paths);
             state.phase = ConnectionPhase::Error;
-            state.message = format!("Skirk exited: {status}");
+            state.message = client_exit_message(status.code(), &status.to_string());
         }
         Ok(None) => {
             state.phase = ConnectionPhase::Connected;
@@ -1247,6 +1441,13 @@ fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
             state.message = format!("Skirk status failed: {error}");
         }
     }
+}
+
+fn client_exit_message(code: Option<i32>, status: &str) -> String {
+    if code == Some(78) {
+        return "Google authorization expired (invalid_grant). Renew the exit kit and replace this profile.".into();
+    }
+    format!("Skirk exited: {status}")
 }
 
 fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) {
@@ -1304,9 +1505,13 @@ fn wait_for_tcp_endpoint_or_exit(
     label: &str,
     timeout: Duration,
     log_path: &Path,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
+        if cancelled() {
+            return Err("Connection cancelled".into());
+        }
         if TcpStream::connect(address).is_ok() {
             return Ok(());
         }
@@ -1330,9 +1535,13 @@ fn wait_for_socks5_endpoint_or_exit(
     address: &str,
     timeout: Duration,
     log_path: &Path,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
+        if cancelled() {
+            return Err("Connection cancelled".into());
+        }
         if socks5_no_auth_probe(address) {
             return Ok(());
         }
@@ -1415,18 +1624,36 @@ fn wait_for_process_start(
     while Instant::now() < deadline {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let tail = read_log_tail(path, 120);
-                return Err(format!("process exited early with {status}; log: {tail}"));
+                return Err(process_start_error(
+                    path,
+                    &format!("process exited early with {status}"),
+                ));
             }
             Ok(None) => {}
             Err(error) => {
-                let tail = read_log_tail(path, 120);
-                return Err(format!("process status failed: {error}; log: {tail}"));
+                return Err(process_start_error(
+                    path,
+                    &format!("process status failed: {error}"),
+                ));
             }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     Ok(())
+}
+
+fn process_start_error(path: &Path, detail: &str) -> String {
+    let mut message = detail.to_string();
+    if !message.ends_with('.') {
+        message.push('.');
+    }
+    if let Some(line) = last_meaningful_log_line(path) {
+        message.push_str(" Last log: ");
+        message.push_str(&line);
+        message.push('.');
+    }
+    message.push_str(" Open Logs for full sidecar details.");
+    message
 }
 
 fn connected_message(mode: &ConnectionMode) -> String {
@@ -1745,6 +1972,16 @@ async fn import_config(
 }
 
 #[tauri::command]
+async fn replace_profile_config(
+    runtime: State<'_, DesktopRuntime>,
+    profile_id: String,
+    raw_config: String,
+) -> Result<DesktopSnapshot, String> {
+    runtime.replace_profile_config(&profile_id, raw_config)?;
+    runtime.snapshot()
+}
+
+#[tauri::command]
 async fn delete_profile(
     runtime: State<'_, DesktopRuntime>,
     profile_id: String,
@@ -1782,6 +2019,16 @@ async fn update_profile_performance(
 }
 
 #[tauri::command]
+async fn update_profile_route(
+    runtime: State<'_, DesktopRuntime>,
+    profile_id: String,
+    route_mode: String,
+) -> Result<DesktopSnapshot, String> {
+    runtime.update_profile_route(&profile_id, &route_mode)?;
+    runtime.snapshot()
+}
+
+#[tauri::command]
 async fn connect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapshot, String> {
     runtime.connect()?;
     runtime.snapshot()
@@ -1805,10 +2052,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_snapshot,
             import_config,
+            replace_profile_config,
             delete_profile,
             select_profile,
             set_connection_mode,
             update_profile_performance,
+            update_profile_route,
             connect,
             disconnect
         ])
@@ -1838,8 +2087,7 @@ impl AppPaths {
             (config_dir, data_dir.join("runtime"), data_dir.join("logs"))
         };
         for dir in [&config_dir, &runtime_dir, &logs_dir] {
-            fs::create_dir_all(dir)
-                .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
+            ensure_private_dir(dir)?;
         }
         Ok(Self {
             profiles_file: config_dir.join("profiles.json"),
@@ -1849,6 +2097,47 @@ impl AppPaths {
             logs_dir,
         })
     }
+}
+
+fn ensure_private_dir(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("failed to secure {}: {error}", path.display()))?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("invalid private file path: {}", path.display()))?;
+    let temp_path = path.with_file_name(format!(
+        ".{}.tmp-{}-{}",
+        name.to_string_lossy(),
+        std::process::id(),
+        NEXT_PRIVATE_WRITE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let result = (|| {
+        let mut file = options
+            .open(&temp_path)
+            .map_err(|error| format!("failed to create {}: {error}", temp_path.display()))?;
+        file.write_all(content)
+            .map_err(|error| format!("failed to write {}: {error}", temp_path.display()))?;
+        file.sync_all()
+            .map_err(|error| format!("failed to sync {}: {error}", temp_path.display()))?;
+        drop(file);
+        fs::rename(&temp_path, path)
+            .map_err(|error| format!("failed to replace {}: {error}", path.display()))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 fn portable_root() -> Option<PathBuf> {
@@ -1912,7 +2201,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
 fn write_json<T: serde::Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String> {
     let content = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    fs::write(path, content).map_err(|error| format!("failed to write {}: {error}", path.display()))
+    write_private_file(path, content.as_bytes())
 }
 
 fn client_log_path(paths: &AppPaths) -> PathBuf {
@@ -1929,8 +2218,32 @@ fn read_runtime_metrics(path: &Path) -> Option<RuntimeMetrics> {
 }
 
 fn read_log_tail(path: &Path, limit: usize) -> String {
-    let Ok(content) = fs::read_to_string(path) else {
+    if limit == 0 {
         return String::new();
+    }
+    let Ok(mut file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let start = file
+        .metadata()
+        .ok()
+        .map(|metadata| metadata.len().saturating_sub(LOG_TAIL_MAX_BYTES))
+        .unwrap_or(0);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    };
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    let content = String::from_utf8_lossy(&bytes);
+    let content = if start > 0 {
+        content
+            .find('\n')
+            .map(|idx| &content[idx + 1..])
+            .unwrap_or("")
+    } else {
+        content.as_ref()
     };
     let mut lines = content.lines().collect::<Vec<_>>();
     if lines.len() > limit {
@@ -1985,6 +2298,44 @@ fn epoch_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_storage_is_private_on_unix() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-test-private-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("create directory");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))
+            .expect("set broad permissions");
+        ensure_private_dir(&dir).expect("secure directory");
+        assert_eq!(
+            fs::metadata(&dir)
+                .expect("directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let profile_path = dir.join("profile.skirk");
+        fs::write(&profile_path, "old").expect("create profile");
+        fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o644))
+            .expect("set broad permissions");
+        write_private_file(&profile_path, b"secret").expect("secure and update profile");
+        assert_eq!(
+            fs::metadata(&profile_path)
+                .expect("profile metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&profile_path).expect("read profile"), b"secret");
+        fs::remove_dir_all(dir).expect("remove directory");
+    }
 
     #[test]
     fn detects_inline_config_inside_pasted_text() {
@@ -2106,6 +2457,55 @@ mod tests {
         assert!(message.contains("Open Logs for full sidecar details"));
         assert!(!message.contains("old line"));
         assert!(!message.contains("skirk client SOCKS5 listening"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn process_start_error_does_not_dump_log_tail() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-test-process-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("tempdir");
+        let log_path = dir.join("skirk-tunnel.log");
+        fs::write(
+            &log_path,
+            "old line\nfirst detailed line\nlast detailed line with lots of context\n",
+        )
+        .expect("write log");
+
+        let message = process_start_error(&log_path, "process exited early with exit status 1");
+
+        assert!(message.contains("Open Logs for full sidecar details"));
+        assert!(message.contains("Last log: last detailed line"));
+        assert!(!message.contains("old line"));
+        assert!(!message.contains("first detailed line"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_log_tail_bounds_large_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-test-tail-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("tempdir");
+        let log_path = dir.join("skirk-client.log");
+        let mut content = String::new();
+        content.push_str("old-prefix-line\n");
+        content.push_str(&"x".repeat((LOG_TAIL_MAX_BYTES as usize) + 4096));
+        content.push('\n');
+        content.push_str("tail-1\n");
+        content.push_str("tail-2\n");
+        content.push_str("tail-3\n");
+        fs::write(&log_path, content).expect("write log");
+
+        let tail = read_log_tail(&log_path, 2);
+
+        assert_eq!(tail, "tail-2\ntail-3");
+        assert!(!tail.contains("old-prefix-line"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -2276,6 +2676,339 @@ mod tests {
             "8.8.8.8"
         );
         assert!(canonical_google_ip("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn route_choice_preserves_imported_mode_and_survives_reload() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-route-choice-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp route directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        let mut imported = test_profile(false);
+        imported.route_mode = "google_front".into();
+        save_profiles(&paths, &[imported]).expect("save imported profile");
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        assert_eq!(
+            load_profiles(&paths).expect("load imported")[0].route_mode,
+            "google_front"
+        );
+
+        runtime
+            .update_profile_route("profile-test", "direct")
+            .expect("select direct");
+        assert_eq!(
+            load_profiles(&paths).expect("reload direct")[0].route_mode,
+            "direct"
+        );
+        runtime
+            .update_profile_route("profile-test", "google_front_pinned")
+            .expect("select Google front");
+        assert_eq!(
+            load_profiles(&paths).expect("reload Google front")[0].route_mode,
+            "google_front_pinned"
+        );
+        assert!(runtime
+            .update_profile_route("profile-test", "unexpected")
+            .is_err());
+        assert_eq!(
+            load_profiles(&paths).expect("reload after invalid selection")[0].route_mode,
+            "google_front_pinned"
+        );
+        fs::remove_dir_all(dir).expect("remove route test directory");
+    }
+
+    #[test]
+    fn new_import_uses_google_front_even_if_kit_route_is_direct() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-import-front-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp profile directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        let config = json!({
+            "secret": "test-secret",
+            "session_id": "test-session",
+            "auth": {"client_id": "test-client"},
+            "drive": {"folder_id": "test-mailbox"},
+            "route": {"mode": "direct", "google_ip": "216.239.38.120"}
+        });
+        runtime
+            .import_config("Imported".into(), config.to_string(), 18080, 18081, false)
+            .expect("import old direct kit");
+        let saved = load_profiles(&paths).expect("load profiles");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].route_mode, "google_front_pinned");
+        runtime
+            .update_profile_route(&saved[0].id, "direct")
+            .expect("explicit user choice");
+        assert_eq!(
+            load_profiles(&paths).expect("reload")[0].route_mode,
+            "direct"
+        );
+        fs::remove_dir_all(dir).expect("remove profile directory");
+    }
+
+    #[test]
+    fn snapshot_falls_back_without_rewriting_profile_selection() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-snapshot-selection-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp profile directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        save_profiles(&paths, &[test_profile(false)]).expect("save profile");
+        save_settings(
+            &paths,
+            &Settings {
+                selected_profile_id: Some("removed-profile".into()),
+                ..Settings::default()
+            },
+        )
+        .expect("save stale selection");
+        let before = fs::read(&paths.settings_file).expect("settings before snapshot");
+        let snapshot = DesktopRuntime::new(paths.clone(), None)
+            .snapshot()
+            .expect("snapshot with stale selection");
+        assert_eq!(
+            snapshot.selected_profile_id.as_deref(),
+            Some("profile-test")
+        );
+        assert_eq!(
+            fs::read(&paths.settings_file).expect("settings after snapshot"),
+            before
+        );
+        fs::remove_dir_all(dir).expect("remove profile directory");
+    }
+
+    #[test]
+    fn profile_changes_are_rejected_during_connection_startup() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-startup-guard-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp profile directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        save_profiles(&paths, &[test_profile(false)]).expect("save profile");
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        runtime.connect_in_progress.store(true, Ordering::Release);
+
+        assert!(runtime
+            .import_config("Other".into(), "{}".into(), 18080, 18081, false)
+            .is_err());
+        assert!(runtime.delete_profile("profile-test").is_err());
+        assert!(runtime
+            .update_profile_route("profile-test", "direct")
+            .is_err());
+        assert!(runtime.select_profile(None).is_err());
+        assert!(runtime.set_connection_mode(ConnectionMode::Proxy).is_err());
+        assert_eq!(load_profiles(&paths).expect("unchanged profiles").len(), 1);
+        fs::remove_dir_all(dir).expect("remove profile directory");
+    }
+
+    #[test]
+    fn replacing_oauth_config_keeps_tunnel_identity_and_profile_settings() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-replace-profile-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp profile directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        let config_path = dir.join("client.json");
+        let original = json!({
+            "secret": "same-tunnel-secret",
+            "session_id": "same-session",
+            "auth": {"client_id": "same-oauth-client", "refresh_token": "old-grant"},
+            "drive": {"space": "drive", "folder_id": "mailbox-one"},
+            "route": {"google_ip": "216.239.38.120"}
+        });
+        fs::write(&config_path, original.to_string()).expect("old config");
+        let mut profile = test_profile(false);
+        profile.config_path = config_path.display().to_string();
+        profile.socks_port = 21000;
+        profile.http_port = 21001;
+        profile.route_mode = "direct".into();
+        profile.performance = performance_for_preset(PerformancePreset::Responsive);
+        profile.drive_space = "drive".into();
+        profile.drive_folder_id = "mailbox-one".into();
+        save_profiles(&paths, &[profile]).expect("save profile");
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        let renewed = json!({
+            "secret": "same-tunnel-secret",
+            "session_id": "same-session",
+            "auth": {"client_id": "same-oauth-client", "refresh_token": "new-grant"},
+            "drive": {"space": "drive", "folder_id": "mailbox-one"},
+            "route": {"google_ip": "8.8.8.8"}
+        });
+        let mut wrong = renewed.clone();
+        *wrong.pointer_mut("/drive/folder_id").expect("folder field") = json!("other-mailbox");
+        assert!(runtime
+            .replace_profile_config("profile-test", wrong.to_string())
+            .is_err());
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("unchanged config"),
+            original.to_string()
+        );
+
+        for field in ["/session_id", "/secret", "/auth/client_id"] {
+            let mut wrong = renewed.clone();
+            *wrong.pointer_mut(field).expect("identity field") = json!("different");
+            assert!(runtime
+                .replace_profile_config("profile-test", wrong.to_string())
+                .is_err());
+            assert_eq!(
+                fs::read_to_string(&config_path).expect("unchanged after identity mismatch"),
+                original.to_string()
+            );
+        }
+
+        runtime
+            .replace_profile_config("profile-test", renewed.to_string())
+            .expect("replace OAuth config");
+        let saved = load_profiles(&paths).expect("load replaced profile");
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].id, "profile-test");
+        assert_eq!(saved[0].socks_port, 21000);
+        assert_eq!(saved[0].http_port, 21001);
+        assert_eq!(saved[0].route_mode, "direct");
+        assert_eq!(saved[0].performance.preset, PerformancePreset::Responsive);
+        assert_eq!(saved[0].google_ip, "8.8.8.8");
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("renewed config"),
+            renewed.to_string()
+        );
+        fs::remove_dir_all(dir).expect("remove profile directory");
+    }
+
+    #[test]
+    fn new_profile_selection_clears_previous_google_grant_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-profile-error-reset-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("temp profile directory");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        let mut other = test_profile(false);
+        other.id = "profile-other".into();
+        save_profiles(&paths, &[test_profile(false), other]).expect("save profiles");
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        {
+            let mut state = runtime.inner.lock().expect("runtime lock");
+            state.phase = ConnectionPhase::Error;
+            state.message = "Google token refresh failed: invalid_grant".into();
+        }
+        runtime
+            .select_profile(Some("profile-other".into()))
+            .expect("select different profile");
+        let snapshot = runtime.snapshot().expect("snapshot after selection");
+        assert!(matches!(
+            snapshot.connection.phase,
+            ConnectionPhase::Disconnected
+        ));
+        assert!(!snapshot.connection.message.contains("invalid_grant"));
+
+        {
+            let mut state = runtime.inner.lock().expect("runtime lock");
+            state.phase = ConnectionPhase::Error;
+            state.message = "Google token refresh failed: invalid_grant".into();
+        }
+        let config = json!({
+            "secret": "new-test-secret",
+            "session_id": "new-test-session",
+            "auth": {"client_id": "new-test-client"},
+            "drive": {"space": "appDataFolder"},
+            "route": {"mode": "direct", "google_ip": "216.239.38.120"}
+        });
+        runtime
+            .import_config(
+                "New profile".into(),
+                config.to_string(),
+                18100,
+                18101,
+                false,
+            )
+            .expect("import new profile");
+        let snapshot = runtime.snapshot().expect("snapshot after import");
+        assert!(matches!(
+            snapshot.connection.phase,
+            ConnectionPhase::Disconnected
+        ));
+        assert!(!snapshot.connection.message.contains("invalid_grant"));
+        assert_eq!(snapshot.profiles.len(), 3);
+        fs::remove_dir_all(dir).expect("remove profile directory");
+    }
+
+    #[test]
+    fn terminal_oauth_exit_shows_profile_recovery() {
+        let message = client_exit_message(Some(78), "exit status: 78");
+        assert!(message.contains("invalid_grant"));
+        assert!(message.contains("replace this profile"));
+        assert_eq!(
+            client_exit_message(Some(1), "exit status: 1"),
+            "Skirk exited: exit status: 1"
+        );
+    }
+
+    #[test]
+    fn snapshot_refresh_keeps_startup_phase_without_client_handle() {
+        let paths = AppPaths {
+            config_dir: PathBuf::new(),
+            runtime_dir: PathBuf::new(),
+            logs_dir: PathBuf::new(),
+            profiles_file: PathBuf::new(),
+            settings_file: PathBuf::new(),
+        };
+        let mut state = RuntimeState {
+            phase: ConnectionPhase::Connecting,
+            message: "Starting Skirk sidecar".into(),
+            ..RuntimeState::default()
+        };
+        refresh_state(&mut state, &paths);
+        assert!(matches!(state.phase, ConnectionPhase::Connecting));
     }
 
     fn test_profile(share_lan: bool) -> ClientProfile {

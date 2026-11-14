@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestMemoryStorePutObjectWithIDIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry != info {
+	if !reflect.DeepEqual(retry, info) {
 		t.Fatalf("retry info = %+v, want %+v", retry, info)
 	}
 	got, err := store.GetByID(ctx, "id-1")

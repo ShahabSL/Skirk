@@ -26,10 +26,22 @@ class ProfileStore(context: Context) {
         return profiles.firstOrNull { it.id == selected } ?: profiles.firstOrNull()
     }
 
-    fun saveProfile(profile: ClientProfile) {
-        val next = listProfiles().filterNot { it.id == profile.id } + profile
-        writeProfiles(next)
-        prefs.edit().putString(KEY_SELECTED, profile.id).apply()
+    fun saveProfile(profile: ClientProfile, makeSelected: Boolean = false) {
+        val current = listProfiles()
+        val next = if (current.any { it.id == profile.id }) {
+            current.map { if (it.id == profile.id) profile else it }
+        } else {
+            current + profile
+        }
+        val selected = if (makeSelected) profile.id else {
+            selectedProfileId()?.takeIf { id -> next.any { it.id == id } } ?: next.firstOrNull()?.id
+        }
+        val array = JSONArray()
+        next.forEach { array.put(it.toJson()) }
+        prefs.edit()
+            .putString(KEY_PROFILES, array.toString())
+            .putString(KEY_SELECTED, selected)
+            .apply()
     }
 
     fun selectProfile(profileId: String?) {
@@ -38,19 +50,17 @@ class ProfileStore(context: Context) {
 
     fun deleteProfile(profileId: String) {
         val next = listProfiles().filterNot { it.id == profileId }
-        writeProfiles(next)
         val nextSelected = if (selectedProfileId() == profileId) next.firstOrNull()?.id else selectedProfileId()
-        prefs.edit().putString(KEY_SELECTED, nextSelected).apply()
+        val array = JSONArray()
+        next.forEach { array.put(it.toJson()) }
+        prefs.edit()
+            .putString(KEY_PROFILES, array.toString())
+            .putString(KEY_SELECTED, nextSelected)
+            .apply()
     }
 
     fun deleteAll() {
         prefs.edit().clear().apply()
-    }
-
-    private fun writeProfiles(profiles: List<ClientProfile>) {
-        val array = JSONArray()
-        profiles.forEach { array.put(it.toJson()) }
-        prefs.edit().putString(KEY_PROFILES, array.toString()).apply()
     }
 
     private companion object {

@@ -17,7 +17,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 class SkirkProxyService : Service() {
-    private val engine by lazy { AndroidSkirkEngine(this, "skirk-client.log") }
+    private val engine by lazy {
+        AndroidSkirkEngine(this, "skirk-client.log") { code ->
+            thread(name = "skirk-proxy-engine-exit", start = true) {
+                synchronized(this) {
+                    stopRequested = true
+                    if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
+                        connectionState.failed(skirkEngineExitMessage(code))
+                    }
+                }
+                stopProxy()
+                runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+                stopSelf()
+            }
+        }
+    }
     private val connectionState by lazy { ConnectionStateStore(this) }
     private val startInProgress = AtomicBoolean(false)
     @Volatile
@@ -132,7 +146,12 @@ class SkirkProxyService : Service() {
 			stopProxy()
 			return
 		}
-		connectionState.connected(profile, "Proxy connected on ${displayProxySummary(profile)}")
+		synchronized(this) {
+			if (stopRequested) {
+				return
+			}
+			connectionState.connected(profile, "Proxy connected on ${displayProxySummary(profile)}")
+		}
         Log.i(TAG, "Proxy ready on ${displayProxySummary(profile)}")
     }
 

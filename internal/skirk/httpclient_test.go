@@ -4,11 +4,74 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"testing"
 )
+
+func TestHTTPDiagnosticTimingOmitsCredentialsAndRequestDetails(t *testing.T) {
+	t.Setenv("SKIRK_HTTP_TRACE", "1")
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		trace := httptrace.ContextClientTrace(req.Context())
+		if trace == nil {
+			t.Fatal("diagnostic trace not installed")
+		}
+		trace.GotConn(httptrace.GotConnInfo{Reused: true})
+		trace.WroteRequest(httptrace.WroteRequestInfo{})
+		return nil, errors.New("transport-error-private-marker")
+	})}}
+	_, _ = client.requestOnce(context.Background(), http.MethodPost, "private-host-marker", "/upload/drive/v3/files?private-query-marker",
+		map[string]string{"Authorization": "Bearer private-token-marker"}, []byte("private-payload-marker"))
+	text := output.String()
+	if !strings.Contains(text, "http timing op=upload") || !strings.Contains(text, "reused=true") {
+		t.Fatalf("missing bounded diagnostic fields: %s", text)
+	}
+	for _, marker := range []string{"private-host-marker", "private-query-marker", "private-token-marker", "private-payload-marker", "transport-error-private-marker"} {
+		if strings.Contains(text, marker) {
+			t.Fatalf("diagnostic exposed %s", marker)
+		}
+	}
+}
+
+func TestHTTPRetryReturnsLatestResponseAfterNetworkFailure(t *testing.T) {
+	requests := 0
+	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return nil, errors.New("temporary network failure")
+		}
+		return stringResponse(http.StatusBadRequest, `{"error":"bad request"}`), nil
+	})}}
+	result, err := client.Request(context.Background(), http.MethodGet, "www.googleapis.com", "/drive/v3/files", nil, nil)
+	if err != nil || result == nil || result.Status != http.StatusBadRequest || result.Attempts != 2 {
+		t.Fatalf("latest response = %+v, error=%v, requests=%d; want HTTP 400 after two attempts", result, err, requests)
+	}
+}
+
+func TestHTTPFailedAttemptsSurviveCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requests := 0
+	client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 2 {
+			cancel()
+		}
+		return nil, errors.New("temporary network failure")
+	})}}
+	result, err := client.Request(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/files", nil, nil)
+	if !errors.Is(err, context.Canceled) || httpAttemptCount(result, err) != 2 || requests != 2 {
+		t.Fatalf("request error=%v attempts=%d requests=%d, want cancellation after two attempts", err, httpAttemptCount(result, err), requests)
+	}
+}
 
 func TestIsGoogleFrontRoute(t *testing.T) {
 	for _, mode := range []string{"google_front", "google_front_pinned"} {

@@ -4,6 +4,22 @@ set -eu
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+# The installer targets Linux. Simulate its platform on macOS CI too, while
+# keeping the release/download behavior under test identical.
+platformbin="$tmp/platformbin"
+mkdir -p "$platformbin"
+cat >"$platformbin/uname" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 0755 "$platformbin/uname"
+PATH="$platformbin:$PATH"
+export PATH
+
 make_asset() {
   version="$1"
   dir="$2"

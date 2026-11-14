@@ -87,9 +87,20 @@ hev_socks5_addr_from_lwip (HevSocks5Addr *addr, const ip_addr_t *ip, u16_t port)
             hev_socks5_addr_from_ipv4 (addr, ip, htons (port));
         return 0;
     }
-    case IPADDR_TYPE_V6:
+    case IPADDR_TYPE_V6: {
+        HevMappedDNS *dns = hev_mapped_dns_get ();
+        const ip6_addr_t *ip6 = ip_2_ip6 (ip);
+        if (dns && dns->ipv6_enabled &&
+            !memcmp (ip6->addr, dns->ipv6_prefix, 12)) {
+            const char *name = hev_mapped_dns_lookup (dns, ntohl (ip6->addr[3]));
+            if (name) {
+                hev_socks5_addr_from_name (addr, name, htons (port));
+                return 0;
+            }
+        }
         hev_socks5_addr_from_ipv6 (addr, ip, htons (port));
         return 0;
+    }
     default:
         return -1;
     }

@@ -3,6 +3,7 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,85 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDriveInlinePriorityPreservesMediaAndReadsDiscovery(t *testing.T) {
+	payload := []byte("sealed-test-object")
+	name := "muxv4/test/p0/object"
+	description := ""
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodPost {
+			_, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := multipart.NewReader(req.Body, params["boundary"])
+			part, err := reader.NextPart()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var metadata map[string]any
+			if err = json.NewDecoder(part).Decode(&metadata); err != nil {
+				t.Fatal(err)
+			}
+			description, _ = metadata["description"].(string)
+			part, err = reader.NextPart()
+			if err != nil {
+				t.Fatal(err)
+			}
+			media, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(media, payload) {
+				t.Fatal("inline prototype changed backwards-compatible media body")
+			}
+			return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":"test-file","name":%q,"size":%q}`, name, strconv.Itoa(len(payload)))), nil
+		}
+		if !strings.Contains(req.URL.Query().Get("fields"), "description") {
+			t.Fatal("inline reader omitted description fields")
+		}
+		body, _ := json.Marshal(map[string]any{"files": []map[string]any{{"id": "test-file", "name": name, "size": strconv.Itoa(len(payload)), "description": description}}})
+		return stringResponse(http.StatusOK, string(body)), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, RouteConfig{Mode: "direct"}), DriveConfig{InlineSmallObjects: true})
+	if _, err := store.PutObject(context.Background(), name, payload); err != nil {
+		t.Fatal(err)
+	}
+	if description != driveInlineMarker+base64.StdEncoding.EncodeToString(payload) {
+		t.Fatal("missing sealed metadata copy")
+	}
+	listed, err := store.ListFreshContainsPageStatus(context.Background(), []string{"muxv4/", "/p0/"}, time.Time{}, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Objects) != 1 || !bytes.Equal(listed.Objects[0].InlineData, payload) {
+		t.Fatalf("inline discovery = %+v", listed)
+	}
+}
+
+func TestDriveInlineDataBoundsAndOptIn(t *testing.T) {
+	store := NewDriveStore(nil, "test-token", DriveConfig{InlineSmallObjects: true})
+	valid := driveInlineMarker + base64.StdEncoding.EncodeToString([]byte("abc"))
+	for _, sample := range []struct {
+		name, description string
+		size              int64
+	}{
+		{"muxv4/test/p1/object", valid, 3},
+		{"unrelated/p0/object", valid, 3},
+		{"muxv4/test/p0/object", valid, 4},
+		{"muxv4/test/p0/object", driveInlineMarker + "bad!", 3},
+		{"muxv4/test/p0/object", driveInlineMarker + strings.Repeat("A", 20000), 3},
+		{"muxv4/test/p0/object", valid, driveInlineMaxBytes + 1},
+	} {
+		if got := store.decodeInlineData(sample.name, sample.description, sample.size); got != nil {
+			t.Fatal("accepted invalid inline metadata")
+		}
+	}
+	store.inlineSmallObjects = false
+	if got := store.decodeInlineData("muxv4/test/p0/object", valid, 3); got != nil {
+		t.Fatal("inline metadata enabled by default")
+	}
+}
 
 func TestDriveStoreAppDataQuery(t *testing.T) {
 	store := NewDriveStore(nil, "token", DriveConfig{Space: "appDataFolder"})
@@ -78,6 +158,69 @@ func TestDriveStoreRefreshesTokenAfterUnauthorized(t *testing.T) {
 	}
 	if authHeaders[0] != "Bearer token-1" || authHeaders[1] != "Bearer token-2" {
 		t.Fatalf("auth headers = %#v, want refreshed token on retry", authHeaders)
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Calls != 2 || snapshot.Units != 100 || snapshot.Errors != 1 {
+		t.Fatalf("quota after 401 refresh = %+v, want both upload attempts and one failed attempt", snapshot)
+	}
+}
+
+func TestDriveQuotaCountsRecoveredRetries(t *testing.T) {
+	stats := newDriveQuotaStats(time.Minute)
+	stats.Record("list", http.StatusOK, 10, time.Second, nil, "", 3)
+	got := stats.Snapshot()
+	if got.Calls != 3 || got.Units != 300 || got.Errors != 2 || got.LastErrorReason != "retry_recovered" {
+		t.Fatalf("recovered retry accounting = %+v", got)
+	}
+}
+
+func TestDriveQuotaProjectHeaderStaysOnDriveRequests(t *testing.T) {
+	tokenHeader := make(chan string, 1)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenHeader <- r.Header.Get("X-Goog-User-Project")
+		_, _ = w.Write([]byte(`{"access_token":"access-token","expires_in":3600,"token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	var driveHeader string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		driveHeader = req.Header.Get("X-Goog-User-Project")
+		return stringResponse(http.StatusOK, `{}`), nil
+	})}}
+	tokenSource := NewAccessTokenSource(AuthConfig{
+		ClientID: "client-id", RefreshToken: "refresh-token", TokenURL: tokenServer.URL,
+	}, RouteConfig{Mode: "direct"})
+	store := NewDriveStoreWithTokenSource(httpClient, tokenSource, DriveConfig{QuotaProject: "flowing-precept-514715-p1"})
+	if _, err := store.request(context.Background(), http.MethodGet, "/drive/v3/files", map[string]string{"x-goog-user-project": "different-project"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-tokenHeader; got != "" {
+		t.Fatalf("OAuth token request unexpectedly carried quota project %q", got)
+	}
+	if driveHeader != "flowing-precept-514715-p1" {
+		t.Fatalf("Drive quota project header = %q", driveHeader)
+	}
+
+	defaultStore := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "access-token"}, RouteConfig{Mode: "direct"}), DriveConfig{})
+	if _, err := defaultStore.request(context.Background(), http.MethodGet, "/drive/v3/files", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if driveHeader != "" {
+		t.Fatalf("default Drive request unexpectedly carried quota project %q", driveHeader)
+	}
+}
+
+func TestDriveRejectsInvalidQuotaProjectWithoutFallback(t *testing.T) {
+	var requests int
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		return stringResponse(http.StatusOK, `{}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "access-token"}, RouteConfig{Mode: "direct"}), DriveConfig{QuotaProject: "invalid_project"})
+	if _, err := store.request(context.Background(), http.MethodGet, "/drive/v3/files", nil, nil); err == nil {
+		t.Fatal("expected invalid quota project error")
+	}
+	if requests != 0 {
+		t.Fatalf("Drive requests = %d; invalid quota project must not fall back", requests)
 	}
 }
 
@@ -315,6 +458,485 @@ func TestDriveStorePutObjectWithIDTreatsConflictAsIdempotent(t *testing.T) {
 	if len(requests) != 2 || !strings.Contains(requests[1], "fields=id,name,size,modifiedTime") {
 		t.Fatalf("requests = %#v, want conflict metadata lookup", requests)
 	}
+}
+
+func TestDriveUploadHedgeOnlyEligibleNormalGeneratedID(t *testing.T) {
+	for _, tc := range []struct {
+		name, fileID string
+		size         int
+		delayMS      int
+		fast         bool
+	}{
+		{"muxv4/session/p1/normal", "generated-id", driveUploadHedgeMinBytes, 3000, true},
+		{"muxv4/session/p1/normal", "generated-id", driveUploadHedgeMinBytes, 0, false},
+		{"muxv4/session/p0/urgent", "generated-id", driveUploadHedgeMinBytes, 3000, false},
+		{"muxv4/session/p1/small", "generated-id", driveUploadHedgeMinBytes - 1, 3000, false},
+		{"muxv4/session/p1/idless", "", driveUploadHedgeMinBytes, 3000, false},
+	} {
+		t.Run(tc.name+"/delay="+strconv.Itoa(tc.delayMS), func(t *testing.T) {
+			var hedgeCalls atomic.Int32
+			primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if !tc.fast {
+					select {
+					case <-time.After(30 * time.Millisecond):
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					}
+				}
+				return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":"generated-id","name":%q,"size":%q}`, tc.name, strconv.Itoa(tc.size))), nil
+			})}}
+			store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: tc.delayMS})
+			store.uploadHedgeDelay = 5 * time.Millisecond
+			if tc.delayMS == 0 {
+				store.uploadHedgeDelay = 0
+			}
+			store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+				hedgeCalls.Add(1)
+				return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":"generated-id","name":%q,"size":%q}`, tc.name, strconv.Itoa(tc.size))), nil
+				})}}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var err error
+			if tc.fileID == "" {
+				_, err = store.PutObject(ctx, tc.name, make([]byte, tc.size))
+			} else {
+				_, err = store.PutObjectWithID(ctx, tc.fileID, tc.name, make([]byte, tc.size))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hedgeCalls.Load(); got != 0 {
+				t.Fatalf("extra hedge calls = %d, want zero", got)
+			}
+			if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 1 {
+				t.Fatalf("quota calls = %+v, want one upload", snapshot.Ops["upload"])
+			}
+		})
+	}
+}
+
+func TestDriveSeparateUploadPoolRoutesOnlyLargeNormalGeneratedID(t *testing.T) {
+	var ordinaryUploads, bulkUploads, controlCalls atomic.Int32
+	var capturedMu sync.Mutex
+	var captured []capturedDriveUpload
+	respond := func(req *http.Request, counter *atomic.Int32) (*http.Response, error) {
+		if req.Method == http.MethodGet {
+			controlCalls.Add(1)
+			return stringResponse(http.StatusOK, `{"files":[]}`), nil
+		}
+		upload, err := captureDriveUpload(req)
+		if err != nil {
+			return nil, err
+		}
+		counter.Add(1)
+		capturedMu.Lock()
+		captured = append(captured, upload)
+		capturedMu.Unlock()
+		id := upload.id
+		if id == "" {
+			id = "created-id"
+		}
+		return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":%q,"name":%q,"size":%q}`, id, upload.name, strconv.Itoa(len(upload.data)))), nil
+	}
+	route := RouteConfig{Mode: "direct", TimeoutSeconds: 240}
+	ordinary := &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return respond(req, &ordinaryUploads)
+	})}}
+	store := NewDriveStoreWithTokenSource(ordinary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, route), DriveConfig{QuotaProject: "flowing-precept-514715-p1", SeparateUploadPool: true})
+	if store.normalUploadHTTP == nil || store.normalUploadHTTP.route != route {
+		t.Fatal("separate normal upload pool omitted or changed the configured route")
+	}
+	store.normalUploadHTTP = &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return respond(req, &bulkUploads)
+	})}}
+	ctx := context.Background()
+	if _, err := store.PutObjectWithID(ctx, "normal-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutObjectWithID(ctx, "priority-id", "muxv4/session/p0/priority", make([]byte, driveUploadHedgeMinBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutObjectWithID(ctx, "small-id", "muxv4/session/p1/small", make([]byte, driveUploadHedgeMinBytes-1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutObject(ctx, "muxv4/session/p1/idless", make([]byte, driveUploadHedgeMinBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(ctx, "muxv4/session/"); err != nil {
+		t.Fatal(err)
+	}
+	if ordinaryUploads.Load() != 3 || bulkUploads.Load() != 1 || controlCalls.Load() != 1 {
+		t.Fatalf("pool routing ordinary=%d bulk=%d control=%d", ordinaryUploads.Load(), bulkUploads.Load(), controlCalls.Load())
+	}
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+	for _, upload := range captured {
+		if upload.authorization != "Bearer token" || upload.quotaProject != "flowing-precept-514715-p1" {
+			t.Fatalf("separate pool lost auth or quota project: auth=%q quota=%q", upload.authorization, upload.quotaProject)
+		}
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 4 || snapshot.Ops["upload"].Units != 200 || snapshot.Ops["list"].Calls != 1 {
+		t.Fatalf("shared quota accounting = %+v", snapshot.Ops)
+	}
+}
+
+func TestDriveUploadHedgeSkipsDuringSharedQuotaBackoff(t *testing.T) {
+	var hedgeCalls atomic.Int32
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		hedgeCalls.Add(1)
+		return nil
+	}
+	store.backoff.mu.Lock()
+	store.backoff.until = time.Now().Add(250 * time.Millisecond)
+	store.backoff.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if hedgeCalls.Load() != 0 {
+		t.Fatalf("launched %d hedges during quota backoff", hedgeCalls.Load())
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 1 {
+		t.Fatalf("quota calls = %+v, want one upload after backoff", snapshot.Ops["upload"])
+	}
+}
+
+func TestDriveUploadHedgeUsesSeparatePrimaryPool(t *testing.T) {
+	var ordinaryUploads, bulkUploads, hedgeUploads atomic.Int32
+	bulkCanceled := make(chan struct{})
+	route := RouteConfig{Mode: "direct", TimeoutSeconds: 240}
+	ordinary := &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		ordinaryUploads.Add(1)
+		return nil, fmt.Errorf("ordinary pool received normal upload")
+	})}}
+	store := NewDriveStoreWithTokenSource(ordinary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, route), DriveConfig{SeparateUploadPool: true, UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.normalUploadHTTP = &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		bulkUploads.Add(1)
+		<-req.Context().Done()
+		close(bulkCanceled)
+		return nil, req.Context().Err()
+	})}}
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		return &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			hedgeUploads.Add(1)
+			if req.Header.Get("Authorization") != "Bearer token" {
+				return nil, fmt.Errorf("hedge lost bearer token")
+			}
+			return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+		})}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-bulkCanceled:
+	default:
+		t.Fatal("returned before canceling separate-pool primary")
+	}
+	if ordinaryUploads.Load() != 0 || bulkUploads.Load() != 1 || hedgeUploads.Load() != 1 {
+		t.Fatalf("pool calls ordinary=%d bulk=%d hedge=%d", ordinaryUploads.Load(), bulkUploads.Load(), hedgeUploads.Load())
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 {
+		t.Fatalf("shared quota calls = %+v, want both pools", snapshot.Ops["upload"])
+	}
+}
+
+func TestDriveUploadHedgeSecondaryWinsSameObjectAndSharesQuota(t *testing.T) {
+	const name = "muxv4/session/p1/normal"
+	const id = "generated-id"
+	data := bytes.Repeat([]byte("z"), driveUploadHedgeMinBytes)
+	primaryCanceled := make(chan struct{})
+	var capturedMu sync.Mutex
+	var captured []capturedDriveUpload
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		upload, err := captureDriveUpload(req)
+		if err != nil {
+			return nil, err
+		}
+		capturedMu.Lock()
+		captured = append(captured, upload)
+		capturedMu.Unlock()
+		<-req.Context().Done()
+		close(primaryCanceled)
+		return nil, req.Context().Err()
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{QuotaProject: "flowing-precept-514715-p1", UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			upload, err := captureDriveUpload(req)
+			if err != nil {
+				return nil, err
+			}
+			capturedMu.Lock()
+			captured = append(captured, upload)
+			capturedMu.Unlock()
+			return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":%q,"name":%q,"size":%q}`, id, name, strconv.Itoa(len(data)))), nil
+		})}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	info, err := store.PutObjectWithID(ctx, id, name, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ID != id || info.Name != name || info.Size != int64(len(data)) {
+		t.Fatalf("upload info = %+v", info)
+	}
+	select {
+	case <-primaryCanceled:
+	default:
+		t.Fatal("returned before canceled primary finished")
+	}
+	if len(store.uploadHedgeSlots) != 0 {
+		t.Fatal("hedge slot not released")
+	}
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+	if len(captured) != 2 {
+		t.Fatalf("captured %d uploads, want two", len(captured))
+	}
+	for _, upload := range captured {
+		if upload.id != id || upload.name != name || !bytes.Equal(upload.data, data) || upload.authorization != "Bearer token" || upload.quotaProject != "flowing-precept-514715-p1" {
+			t.Fatalf("hedge changed ID, name, media, or auth: id=%q name=%q bytes=%d auth=%q quota=%q", upload.id, upload.name, len(upload.data), upload.authorization, upload.quotaProject)
+		}
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 || snapshot.Ops["upload"].Units != 100 {
+		t.Fatalf("shared quota = %+v, want two uploads/100 units", snapshot.Ops["upload"])
+	}
+}
+
+func TestDriveUploadHedgeWaitsAfterPrimaryFailure(t *testing.T) {
+	for _, secondaryStatus := range []int{http.StatusOK, http.StatusBadRequest} {
+		t.Run(strconv.Itoa(secondaryStatus), func(t *testing.T) {
+			hedgeStarted := make(chan struct{})
+			primaryFailed := make(chan struct{})
+			primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				<-hedgeStarted
+				close(primaryFailed)
+				return stringResponse(http.StatusBadRequest, `{"error":"primary failure"}`), nil
+			})}}
+			store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+			store.uploadHedgeDelay = 5 * time.Millisecond
+			store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+				return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					close(hedgeStarted)
+					<-primaryFailed
+					if secondaryStatus == http.StatusOK {
+						return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+					}
+					return stringResponse(http.StatusBadRequest, `{"error":"secondary failure"}`), nil
+				})}}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			info, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes))
+			if secondaryStatus == http.StatusOK {
+				if err != nil || info.ID != "generated-id" {
+					t.Fatalf("secondary success = %+v, %v", info, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "primary failure") {
+				t.Fatalf("both failed, got info=%+v err=%v; want primary failure", info, err)
+			}
+			if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 {
+				t.Fatalf("quota calls = %+v, want both legs", snapshot.Ops["upload"])
+			}
+		})
+	}
+}
+
+func TestDriveUploadHedgeWaitsAfterSecondaryFailure(t *testing.T) {
+	secondaryReturned := make(chan struct{})
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		<-secondaryReturned
+		// Keep the primary pending after the secondary has returned its error.
+		time.Sleep(20 * time.Millisecond)
+		return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			close(secondaryReturned)
+			return stringResponse(http.StatusBadRequest, `{"error":"secondary failure"}`), nil
+		})}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	info, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes))
+	if err != nil || info.ID != "generated-id" {
+		t.Fatalf("primary success after secondary failure = %+v, %v", info, err)
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 {
+		t.Fatalf("quota calls = %+v, want both legs", snapshot.Ops["upload"])
+	}
+}
+
+func TestDriveUploadHedgeConflictLookup404WaitsForOtherLeg(t *testing.T) {
+	hedgeStarted := make(chan struct{})
+	lookupFailed := make(chan struct{})
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodGet {
+			close(lookupFailed)
+			return stringResponse(http.StatusNotFound, `{}`), nil
+		}
+		<-hedgeStarted
+		return stringResponse(http.StatusConflict, `{"error":"already exists"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			close(hedgeStarted)
+			<-lookupFailed
+			return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+		})}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	info, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes))
+	if err != nil || info.ID != "generated-id" {
+		t.Fatalf("409/404 race masked secondary success: info=%+v err=%v", info, err)
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 || snapshot.Ops["metadata"].Calls != 1 {
+		t.Fatalf("quota calls = %+v, want two uploads and conflict lookup", snapshot.Ops)
+	}
+}
+
+func TestDriveUploadHedgeCallerCancellationJoinsBothLegs(t *testing.T) {
+	primaryDone := make(chan struct{})
+	secondaryStarted := make(chan struct{})
+	secondaryDone := make(chan struct{})
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		<-req.Context().Done()
+		close(primaryDone)
+		return nil, req.Context().Err()
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		return &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			close(secondaryStarted)
+			<-req.Context().Done()
+			close(secondaryDone)
+			return nil, req.Context().Err()
+		})}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := store.PutObjectWithID(ctx, "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes))
+		finished <- err
+	}()
+	select {
+	case <-secondaryStarted:
+	case <-ctx.Done():
+		t.Fatal("secondary did not start")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Fatal("canceled upload succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled upload did not finish")
+	}
+	select {
+	case <-primaryDone:
+	default:
+		t.Fatal("returned before primary finished")
+	}
+	select {
+	case <-secondaryDone:
+	default:
+		t.Fatal("returned before secondary finished")
+	}
+	if len(store.uploadHedgeSlots) != 0 {
+		t.Fatal("hedge slot leaked after cancellation")
+	}
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 {
+		t.Fatalf("quota calls = %+v, want two canceled HTTP attempts", snapshot.Ops["upload"])
+	}
+}
+
+func TestDriveUploadHedgeSkipsWhenAllExtraSlotsBusy(t *testing.T) {
+	primaryStarted := make(chan struct{})
+	releasePrimary := make(chan struct{})
+	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		close(primaryStarted)
+		<-releasePrimary
+		return stringResponse(http.StatusOK, `{"id":"generated-id","name":"muxv4/session/p1/normal","size":"131072"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{UploadHedgeDelayMS: 1000})
+	store.uploadHedgeDelay = 5 * time.Millisecond
+	for i := 0; i < driveUploadHedgeMaxConcurrent; i++ {
+		store.uploadHedgeSlots <- struct{}{}
+	}
+	var hedgeCalls atomic.Int32
+	store.newHedgeHTTPClient = func() *GoogleHTTPClient {
+		hedgeCalls.Add(1)
+		return nil
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := store.PutObjectWithID(context.Background(), "generated-id", "muxv4/session/p1/normal", make([]byte, driveUploadHedgeMinBytes))
+		finished <- err
+	}()
+	<-primaryStarted
+	time.Sleep(30 * time.Millisecond)
+	close(releasePrimary)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if hedgeCalls.Load() != 0 || len(store.uploadHedgeSlots) != driveUploadHedgeMaxConcurrent {
+		t.Fatalf("busy hedge slots were not respected: calls=%d slots=%d", hedgeCalls.Load(), len(store.uploadHedgeSlots))
+	}
+}
+
+type capturedDriveUpload struct {
+	id, name, authorization, quotaProject string
+	data                                  []byte
+}
+
+func captureDriveUpload(req *http.Request) (capturedDriveUpload, error) {
+	mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/related" {
+		return capturedDriveUpload{}, fmt.Errorf("upload media type %q: %v", mediaType, err)
+	}
+	reader := multipart.NewReader(req.Body, params["boundary"])
+	part, err := reader.NextPart()
+	if err != nil {
+		return capturedDriveUpload{}, err
+	}
+	var metadata struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(part).Decode(&metadata); err != nil {
+		return capturedDriveUpload{}, err
+	}
+	part, err = reader.NextPart()
+	if err != nil {
+		return capturedDriveUpload{}, err
+	}
+	media, err := io.ReadAll(part)
+	if err != nil {
+		return capturedDriveUpload{}, err
+	}
+	return capturedDriveUpload{id: metadata.ID, name: metadata.Name, data: media, authorization: req.Header.Get("Authorization"), quotaProject: req.Header.Get("X-Goog-User-Project")}, nil
 }
 
 func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
@@ -889,8 +1511,8 @@ func TestDriveStoreSuppressesCanceledRequestObservabilityNoise(t *testing.T) {
 	if logs.Len() != 0 {
 		t.Fatalf("canceled request log = %q, want no log noise", logs.String())
 	}
-	if snapshot := store.quota.Snapshot(); snapshot.Calls != 0 || snapshot.Errors != 0 {
-		t.Fatalf("quota snapshot = %+v, want canceled hedge attempt omitted", snapshot)
+	if snapshot := store.quota.Snapshot(); snapshot.Calls != 1 || snapshot.Units != 200 || snapshot.Errors != 0 {
+		t.Fatalf("quota snapshot = %+v, want attempted units recorded without cancellation error noise", snapshot)
 	}
 }
 

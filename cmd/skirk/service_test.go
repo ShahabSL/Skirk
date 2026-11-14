@@ -39,9 +39,10 @@ func TestSystemdUnitText(t *testing.T) {
 		"Description=Skirk exit",
 		"# Managed by Skirk",
 		"User=root",
-		"WorkingDirectory=/opt/skirk-kit",
+		"WorkingDirectory=/",
 		"ExecStart=\"/usr/local/bin/skirk\" serve-exit --config \"/opt/skirk-kit/exit.json\"",
 		"Restart=always",
+		"RestartPreventExitStatus=78",
 		"NoNewPrivileges=true",
 	} {
 		if !strings.Contains(unit, want) {
@@ -71,7 +72,7 @@ ExecStart="/usr/local/bin/skirk" serve-exit --config "/opt/skirk-kit/exit.json"
 func TestSystemdUnitTextEscapesWorkingDirectorySpaces(t *testing.T) {
 	unit := systemdUnitText("/opt/skirk bin/skirk", "/opt/skirk kit/exit.json", "root")
 	for _, want := range []string{
-		"WorkingDirectory=/opt/skirk\\skit",
+		"WorkingDirectory=/",
 		"ExecStart=\"/opt/skirk bin/skirk\" serve-exit --config \"/opt/skirk kit/exit.json\"",
 	} {
 		if !strings.Contains(unit, want) {

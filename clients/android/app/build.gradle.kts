@@ -7,8 +7,11 @@ plugins {
 val repoRoot = layout.projectDirectory.dir("../../..")
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
+val hevObjectDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/obj")
+val hevLibraryDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/libs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
 val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.55").get()
+val skirkNdkVersion = providers.environmentVariable("SKIRK_ANDROID_NDK_VERSION").orElse("27.0.12077973").get()
 val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
 val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("SKIRK_ANDROID_KEY_ALIAS").orNull
@@ -93,6 +96,8 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
     group = "build"
     description = "Build the Android TUN-to-SOCKS bridge used by VPN mode."
     inputs.dir(hevSourceDir)
+    outputs.dir(hevObjectDir)
+    outputs.dir(hevLibraryDir)
     outputs.dir(generatedHevJniLibs)
 
     doLast {
@@ -121,6 +126,8 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
                 "NDK_PROJECT_PATH=.",
                 "NDK_APPLICATION_MK=${appMk.absolutePath}",
                 "APP_BUILD_SCRIPT=${hevSourceDir.file("Android.mk").asFile.absolutePath}",
+                "NDK_OUT=${hevObjectDir.get().asFile.absolutePath}",
+                "NDK_LIBS_OUT=${hevLibraryDir.get().asFile.absolutePath}",
                 "V=0",
             )
         }
@@ -128,7 +135,7 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
         androidNativeAbis.forEach { abi ->
             val outputDir = generatedHevJniLibs.get().dir(abi).asFile
             outputDir.mkdirs()
-            hevSourceDir.file("libs/$abi/libhev-socks5-tunnel.so").asFile
+            hevLibraryDir.get().file("$abi/libhev-socks5-tunnel.so").asFile
                 .copyTo(outputDir.resolve("libhev-socks5-tunnel.so"), overwrite = true)
         }
     }
@@ -137,7 +144,7 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
 android {
     namespace = "app.skirk.client"
     compileSdk = 35
-    ndkVersion = "27.0.12077973"
+    ndkVersion = skirkNdkVersion
 
     defaultConfig {
         applicationId = "app.skirk.client"

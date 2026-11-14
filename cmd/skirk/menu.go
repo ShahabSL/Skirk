@@ -778,7 +778,12 @@ func deleteKitDirectory(configPath string) error {
 }
 
 func sameCleanPath(a, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	left, leftErr := os.Stat(a)
+	right, rightErr := os.Stat(b)
+	return leftErr == nil && rightErr == nil && os.SameFile(left, right)
 }
 
 const skirkBanner = `             ##################

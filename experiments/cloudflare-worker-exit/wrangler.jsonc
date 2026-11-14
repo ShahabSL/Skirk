@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "skirk-worker-exit",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-24",
+  "vars": {
+    "SKIRK_SESSION_ID": "mitm-driveonly-20260526",
+    "SKIRK_PREFIX": "",
+    "SKIRK_EXIT_REQUEST_PREFIX": "cfexit/v1/req/",
+    "SKIRK_EXIT_RESPONSE_PREFIX": "cfexit/v1/res/",
+    "SKIRK_EXIT_MAX_RESPONSE_BYTES": "33554432",
+    "SKIRK_EXIT_FETCH_CONCURRENCY": "4",
+    "SKIRK_STREAM_UP_PREFIX": "cfstream/v1/up/",
+    "SKIRK_STREAM_DOWN_PREFIX": "cfstream/v1/down/",
+    "SKIRK_STREAM_IDLE_TIMEOUT_MS": "120000",
+    "SKIRK_STREAM_READ_WAIT_MS": "1000",
+    "SKIRK_STREAM_UP_POLL_MS": "1000",
+    "SKIRK_STREAM_SCAN_DURING_STREAM": "false",
+    "SKIRK_STREAM_WRITE_TIMEOUT_MS": "20000",
+    "SKIRK_MAX_PAGES_PER_PUMP": "8",
+    "SKIRK_MAX_CHANGES_PER_PUMP": "1000",
+    "SKIRK_FALLBACK_IDLE_POLL_MS": "5000",
+    "SKIRK_FALLBACK_ACTIVE_POLL_MS": "1000",
+    "SKIRK_FALLBACK_ACTIVE_WINDOW_MS": "30000"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSIONS",
+        "class_name": "SkirkSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SkirkSession"]
+    }
+  ],
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  }
+}

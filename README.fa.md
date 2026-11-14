@@ -110,8 +110,11 @@ LAN بتواند SOCKS5 را مستقیم تنظیم کند.
 ## تست در شبکه محدود
 
 پروفایل‌های کلاینت به صورت پیش‌فرض از `google_front_pinned` استفاده می‌کنند؛
-یعنی ترافیک Google API را از مسیری با ظاهر Google و متصل به IP ثابت Google عبور
-می‌دهند. exit معمولا `direct` است، چون خودش اینترنت عادی دارد.
+یعنی برای ترافیک Google API از نام TLS/SNI برابر `www.google.com` و IP ثابت Google
+استفاده می‌کنند. مسیر پیش‌فرض exit نیز Google front است؛ برای انتخاب آگاهانهٔ
+اتصال مستقیم در زمان راه‌اندازی از `--exit-route direct` استفاده کنید.
+در برنامه‌های Android و دسکتاپ، کاربر می‌تواند برای هر پروفایل بین مسیر Google
+front و اتصال مستقیم به Google انتخاب کند؛ انتخاب پس از اتصال دوباره حفظ می‌شود.
 
 پروفایل‌های لینوکس که قبل از v0.1.51 ساخته شده‌اند با آپدیت به صورت خودکار
 بازنویسی نمی‌شوند. kit را دوباره بسازید یا هنگام اجرای کلاینت
@@ -166,10 +169,12 @@ Google Cloud Console منبع دقیق‌تر برای quota پروژه است.
 ## قطع کردن و پاکسازی
 
 در حالت عادی، runtime فایل‌های mailbox را بعد از پردازش حذف می‌کند. `serve-exit`
-هم یک janitor خودکار دارد که آبجکت‌های قدیمی مسیرهای transport mux را که
-بیشتر از ۲۴ ساعت مانده‌اند پاک می‌کند.
+هم یک janitor خودکار دارد که آبجکت‌های قدیمی Skirk را بعد از ۲۴ ساعت و با
+concurrency پایین پاک می‌کند. این بازه طولانی‌تر جلوی حذف آبجکت‌های زنده در
+دانلودهای خیلی طولانی یا کند را می‌گیرد.
 
-پاکسازی دستی به صورت dry-run:
+پاکسازی دستی به صورت dry-run. بدون `--prefix`، مسیرهای runtime اسکریک
+(`muxv4/`، `bench-drive/` و `setup/`) بررسی می‌شوند:
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
@@ -179,6 +184,20 @@ skirk cleanup --config skirk-kit/exit.json --older-than 2h
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+```
+
+پاکسازی اضطراری: اول همه clientها و exit را متوقف کنید، بعد همه آبجکت‌های
+mailbox اسکریک را خالی کنید. اجرای این دستور هنگام ترافیک فعال می‌تواند
+آبجکت‌های زنده mux را حذف کند و باعث قطع شدن clientها شود.
+
+```bash
+skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
+```
+
+اگر پوشه mailbox در Drive دستی حذف شده و `drive_not_found` می‌بینید:
+
+```bash
+skirk repair-mailbox --kit skirk-kit --start-exit
 ```
 
 برای revoke کردن OAuth token داخل config:

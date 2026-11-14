@@ -12,6 +12,7 @@ import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
 import android.net.VpnService
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
@@ -25,7 +26,11 @@ class SkirkVpnService : VpnService() {
     private val engine by lazy {
         AndroidSkirkEngine(this, "skirk-vpn-client.log") { code ->
             thread(name = "skirk-vpn-engine-exit", start = true) {
-                stopTunnel("Skirk engine exited with code $code", failed = true)
+                stopTunnel(
+                    skirkEngineExitMessage(code),
+                    failed = true,
+                    allowQueuedRestart = code != 78,
+                )
             }
         }
     }
@@ -43,6 +48,8 @@ class SkirkVpnService : VpnService() {
     private var stopRequested = false
     @Volatile
     private var vpnPhase = VpnPhase.STOPPED
+    @Volatile
+    private var persistentVpnForeground = false
     private var latestStartId = 0
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
@@ -117,7 +124,7 @@ class SkirkVpnService : VpnService() {
         }
         if (generation == null) {
             if (vpnPhase == VpnPhase.RUNNING) {
-                connectionState.connected(profile, "VPN connected")
+                connectionState.connected(profile, connectedStatusMessage())
             } else if (queuedAfterStop) {
                 connectionState.connecting(profile, "VPN reconnecting")
                 Log.i(TAG, "Queued VPN start until current stop completes")
@@ -204,8 +211,23 @@ class SkirkVpnService : VpnService() {
             .setConfigureIntent(configureIntent)
 
         addLocalNetworkExclusions(builder)
-        runCatching { builder.addDisallowedApplication(packageName) }
-            .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
+        if (localProfile.vpnAppMode == ClientProfile.VPN_APPS_SELECTED) {
+            val selectedPackages = localProfile.vpnAllowedApps.distinct().filterNot { it == packageName }
+            require(selectedPackages.isNotEmpty()) { "Choose at least one app for Skirk VPN" }
+            var added = 0
+            selectedPackages.forEach { appPackage ->
+                try {
+                    builder.addAllowedApplication(appPackage)
+                    added++
+                } catch (_: PackageManager.NameNotFoundException) {
+                    Log.w(TAG, "Selected VPN app is no longer installed: $appPackage")
+                }
+            }
+            check(added > 0) { "None of the selected VPN apps are installed; choose apps again" }
+        } else {
+            runCatching { builder.addDisallowedApplication(packageName) }
+                .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             builder.setUnderlyingNetworks(underlyingNetworks)
         }
@@ -297,7 +319,7 @@ class SkirkVpnService : VpnService() {
             return
         }
         startForegroundCompat("Connected")
-        connectionState.connected(localProfile, "VPN connected")
+        connectionState.connected(localProfile, connectedStatusMessage())
         Log.i(TAG, "VPN connected through SOCKS 127.0.0.1:${localProfile.socksPort}")
         monitorNativeTunnel(generation)
     }
@@ -359,6 +381,7 @@ class SkirkVpnService : VpnService() {
             engine.stop()
             val restartProfile = synchronized(lifecycleLock) {
                 vpnPhase = VpnPhase.STOPPED
+                persistentVpnForeground = false
                 stopRequested = false
                 if (stopFailure == null && stopService) {
                     pendingStartProfile.also { pendingStartProfile = null }
@@ -512,7 +535,25 @@ class SkirkVpnService : VpnService() {
 
     private fun startForegroundCompat(status: String) {
         ensureNotificationChannel()
-        val notification = buildNotification(status)
+        var notification = buildNotification(status)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && vpnPhase == VpnPhase.RUNNING) {
+            // Android 15 limits dataSync foreground services to six hours per day.
+            // The VPN-only type is eligible once VpnService.Builder.establish() succeeds.
+            try {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                )
+                persistentVpnForeground = true
+                return
+            } catch (error: SecurityException) {
+                // Some devices may not yet recognize this app as the active VPN.
+                Log.w(TAG, "Android rejected the active VPN foreground type; using dataSync", error)
+                notification = buildNotification("Connected (time limited)")
+            }
+        }
+        persistentVpnForeground = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -523,6 +564,13 @@ class SkirkVpnService : VpnService() {
             startForeground(NOTIFICATION_ID, notification)
         }
     }
+
+    private fun connectedStatusMessage(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && !persistentVpnForeground) {
+            "VPN connected; Android may stop it when data sync time runs out"
+        } else {
+            "VPN connected"
+        }
 
     private fun buildNotification(status: String): Notification {
         val contentIntent = PendingIntent.getActivity(

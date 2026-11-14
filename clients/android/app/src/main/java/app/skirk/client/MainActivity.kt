@@ -3,9 +3,12 @@ package app.skirk.client
 import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
+import android.content.pm.PackageManager
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.VpnService
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -32,6 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -92,11 +96,14 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import java.io.ByteArrayOutputStream
 import java.io.File
 import org.json.JSONObject
 
@@ -178,8 +185,15 @@ fun ConfigScreen() {
     var driveMetrics by remember { mutableStateOf(readDriveMetrics(context, connectionState.mode)) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
     var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
+    var pendingNotificationStart by remember { mutableStateOf<Triple<ClientProfile, String, Boolean>?>(null) }
+    var notificationPermissionResolved by remember { mutableStateOf(false) }
     var importExpanded by remember { mutableStateOf(profiles.isEmpty()) }
+    var replacingProfileId by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteProfile by remember { mutableStateOf<ClientProfile?>(null) }
+    var replacementConfig by remember { mutableStateOf("") }
+    var replacementError by remember { mutableStateOf("") }
     var advancedSettingsOpen by remember { mutableStateOf(false) }
+    var vpnAppsDialogOpen by remember { mutableStateOf(false) }
 
     fun refreshConnectionState() {
         val raw = connectionStore.read()
@@ -204,7 +218,7 @@ fun ConfigScreen() {
 
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {}
+    ) { notificationPermissionResolved = true }
     val vpnPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -224,13 +238,40 @@ fun ConfigScreen() {
             message = "VPN permission was not granted"
         }
     }
+    val replacementFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null && replacingProfileId != null) {
+            runCatching { readProfileFile(context, uri) }
+                .onSuccess {
+                    replacementConfig = it
+                    replacementError = ""
+                }
+                .onFailure { replacementError = it.message ?: "Could not read the selected file" }
+        }
+    }
 
     fun refresh() {
         profiles = store.listProfiles()
         selectedId = store.selectedProfileId()
     }
 
+    fun updateSelectedProfile(change: (ClientProfile) -> ClientProfile) {
+        store.selectedProfile()?.let { current ->
+            store.saveProfile(change(current))
+            refresh()
+        }
+    }
+
     fun startProfile(profile: ClientProfile, mode: String, shareLan: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !notificationPermissionResolved &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingNotificationStart = Triple(profile, mode, shareLan)
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
         val normalizedMode = ClientProfile.normalizeConnectionMode(mode)
         val runtimeProfile = profile.copy(
             connectionMode = normalizedMode,
@@ -277,9 +318,11 @@ fun ConfigScreen() {
         message = reason
     }
 
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    LaunchedEffect(notificationPermissionResolved) {
+        if (notificationPermissionResolved) {
+            val pending = pendingNotificationStart
+            pendingNotificationStart = null
+            pending?.let { (profile, mode, shareLan) -> startProfile(profile, mode, shareLan) }
         }
     }
 
@@ -304,7 +347,6 @@ fun ConfigScreen() {
             importExpanded = true
         }
     }
-
     fun pasteProfileFromClipboard() {
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
@@ -312,6 +354,10 @@ fun ConfigScreen() {
     }
 
     fun importProfile() {
+        if (running) {
+            importError = "Disconnect before importing another profile."
+            return
+        }
         try {
             val port = socksPort.toIntOrNull()
                 ?.let { ClientProfile.validateSocksPort(it) }
@@ -326,8 +372,10 @@ fun ConfigScreen() {
                 httpPort = httpProxyPort,
                 shareLan = false,
                 connectionMode = ClientProfile.CONNECTION_MODE_VPN,
-            )
-            store.saveProfile(profile)
+            ).copy(routeMode = ClientProfile.ROUTE_GOOGLE_FRONT)
+            store.saveProfile(profile, makeSelected = true)
+            connectionStore.stopped("Ready to connect")
+            refreshConnectionState()
             rawConfig = ""
             importError = ""
             selectedMode = profile.connectionMode
@@ -341,6 +389,68 @@ fun ConfigScreen() {
             message = nextError
             Toast.makeText(context, nextError, Toast.LENGTH_LONG).show()
         }
+    }
+
+    fun replaceProfile() {
+        try {
+            val original = profiles.firstOrNull { it.id == replacingProfileId }
+                ?: error("Profile no longer exists. Select it again to replace it.")
+            val replacement = original.withRenewedConfig(replacementConfig)
+            if (running) disconnectActive()
+            store.saveProfile(replacement)
+            connectionStore.stopped("Ready to connect")
+            refreshConnectionState()
+            refresh()
+            selectedMode = replacement.connectionMode
+            proxyShareLan = replacement.shareLan
+            replacementConfig = ""
+            replacementError = ""
+            replacingProfileId = null
+            message = "Updated ${replacement.name}. Ready to connect."
+        } catch (error: Exception) {
+            replacementError = error.message ?: "Could not replace profile"
+        }
+    }
+
+    fun openReplacement(profile: ClientProfile) {
+        replacingProfileId = profile.id
+        replacementConfig = ""
+        replacementError = ""
+    }
+
+    val connectionPanelContent: @Composable () -> Unit = {
+        ConnectionPanel(
+            selected = selected,
+            selectedMode = selectedMode,
+            proxyShareLan = proxyShareLan,
+            running = running,
+            phase = connectionState.phase,
+            message = if (connectionState.phase == ConnectionPhase.FAILED) connectionState.message else message,
+            metrics = driveMetrics,
+            onModeChange = { mode ->
+                selectedMode = mode
+                updateSelectedProfile { it.copy(connectionMode = mode) }
+            },
+            onRouteModeChange = { routeMode ->
+                updateSelectedProfile { it.copy(routeMode = routeMode) }
+            },
+            onProxyShareLanChange = { shareLan ->
+                proxyShareLan = shareLan
+                updateSelectedProfile { it.copy(shareLan = shareLan) }
+            },
+            onOpenAdvanced = { advancedSettingsOpen = true },
+            onChooseVpnApps = { vpnAppsDialogOpen = true },
+            onReplaceProfile = { selected?.let(::openReplacement) },
+            onCopyRenewalCommand = {
+                clipboard.setText(AnnotatedString("skirk setup renew-oauth --kit skirk-kit"))
+                Toast.makeText(context, "Renewal command copied", Toast.LENGTH_SHORT).show()
+            },
+            onOpenOAuthSettings = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://console.cloud.google.com/auth/audience")))
+            },
+            onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
+            onDisconnect = { disconnectActive() },
+        )
     }
 
     Scaffold(
@@ -390,9 +500,13 @@ fun ConfigScreen() {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (profiles.isNotEmpty()) {
+                item { connectionPanelContent() }
+            }
             if (profiles.isEmpty()) {
                 item {
                     ImportPanel(
+                        enabled = !running,
                         profileName = profileName,
                         socksPort = socksPort,
                         httpPort = httpPort,
@@ -422,17 +536,15 @@ fun ConfigScreen() {
                             refresh()
                         },
                         onDelete = { profile ->
-                            if (running && selected?.id == profile.id) {
-                                disconnectActive()
-                            }
-                            store.deleteProfile(profile.id)
-                            refresh()
+                            pendingDeleteProfile = profile
                         },
+                        onReplace = ::openReplacement,
                     )
                 }
                 item {
                     if (importExpanded) {
                         ImportPanel(
+                            enabled = !running,
                             profileName = profileName,
                             socksPort = socksPort,
                             httpPort = httpPort,
@@ -454,20 +566,8 @@ fun ConfigScreen() {
                 }
             }
 
-            item {
-                ConnectionPanel(
-                    selected = selected,
-                    selectedMode = selectedMode,
-                    proxyShareLan = proxyShareLan,
-                    running = running,
-                    message = message,
-                    metrics = driveMetrics,
-                    onModeChange = { selectedMode = it },
-                    onProxyShareLanChange = { proxyShareLan = it },
-                    onOpenAdvanced = { advancedSettingsOpen = true },
-                    onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
-                    onDisconnect = { disconnectActive() },
-                )
+            if (profiles.isEmpty()) {
+                item { connectionPanelContent() }
             }
 
             item {
@@ -490,14 +590,82 @@ fun ConfigScreen() {
                 enabled = selected != null && !running,
                 onDismiss = { advancedSettingsOpen = false },
                 onPerformanceChange = { performance ->
-                    selected?.let { profile ->
-                        store.saveProfile(profile.copy(performance = performance))
-                        refresh()
-                    }
+                    updateSelectedProfile { it.copy(performance = performance) }
+                },
+            )
+        }
+        if (vpnAppsDialogOpen && selected != null) {
+            VpnAppsDialog(
+                profile = selected,
+                onDismiss = { vpnAppsDialogOpen = false },
+                onSave = { mode, packages ->
+                    updateSelectedProfile { it.copy(vpnAppMode = mode, vpnAllowedApps = packages) }
+                    vpnAppsDialogOpen = false
+                },
+            )
+        }
+        if (replacingProfileId != null) {
+            ReplaceProfileDialog(
+                profileName = profiles.firstOrNull { it.id == replacingProfileId }?.name.orEmpty(),
+                rawConfig = replacementConfig,
+                error = replacementError,
+                onRawConfigChange = {
+                    replacementConfig = it
+                    replacementError = ""
+                },
+                onPaste = {
+                    val clipboardService = context.getSystemService(ClipboardManager::class.java)
+                    replacementConfig = clipboardService.primaryClip?.getItemAt(0)
+                        ?.coerceToText(context)?.toString().orEmpty()
+                    replacementError = ""
+                },
+                onChooseFile = { replacementFilePicker.launch("*/*") },
+                onReplace = ::replaceProfile,
+                onDismiss = {
+                    replacingProfileId = null
+                    replacementConfig = ""
+                    replacementError = ""
+                },
+            )
+        }
+        pendingDeleteProfile?.let { profile ->
+            AlertDialog(
+                onDismissRequest = { pendingDeleteProfile = null },
+                title = { Text("Remove ${profile.name}?") },
+                text = { Text("This removes the saved profile from this phone. You will need client.skirk to import it again.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (!running) {
+                            store.deleteProfile(profile.id)
+                            refresh()
+                        }
+                        pendingDeleteProfile = null
+                    }) { Text("Remove") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteProfile = null }) { Text("Cancel") }
                 },
             )
         }
     }
+}
+
+private fun readProfileFile(context: Context, uri: Uri): String {
+    val content = context.contentResolver.openInputStream(uri)?.use { input ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(4096)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            require(output.size() + count <= MAX_PROFILE_FILE_BYTES) {
+                "Profile file is too large (maximum 256 KiB)."
+            }
+            output.write(buffer, 0, count)
+        }
+        String(output.toByteArray(), Charsets.UTF_8)
+    } ?: error("Could not open the selected file")
+    require(content.isNotBlank()) { "The selected profile file is empty." }
+    return content
 }
 
 @Composable
@@ -506,15 +674,23 @@ private fun ConnectionPanel(
     selectedMode: String,
     proxyShareLan: Boolean,
     running: Boolean,
+    phase: ConnectionPhase,
     message: String,
     metrics: DriveMetrics?,
     onModeChange: (String) -> Unit,
+    onRouteModeChange: (String) -> Unit,
     onProxyShareLanChange: (Boolean) -> Unit,
     onOpenAdvanced: () -> Unit,
+    onChooseVpnApps: () -> Unit,
+    onReplaceProfile: () -> Unit,
+    onCopyRenewalCommand: () -> Unit,
+    onOpenOAuthSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    val uiState = connectionUiState(running, selected, message)
+    val uiState = connectionUiState(phase, selected)
+    val googleGrantExpired = isGoogleGrantExpired(message) ||
+        (phase != ConnectionPhase.IDLE && isGoogleGrantExpired(metrics?.lastErrorReason.orEmpty()))
     Panel {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -529,20 +705,28 @@ private fun ConnectionPanel(
                 )
                 Text(
                     text = connectionDetail(
-                        state = uiState,
                         selected = selected,
                         selectedMode = selectedMode,
                         proxyShareLan = proxyShareLan,
-                        message = message,
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (uiState == ConnectionUiState.Error) {
+                    connectionActionableMessage(message)?.let { detail ->
+                        Text(
+                            text = detail,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
             }
         }
         Button(
             onClick = if (running) onDisconnect else onConnect,
-            enabled = running || selected != null,
+            enabled = running || (selected != null && (selectedMode != ClientProfile.CONNECTION_MODE_VPN ||
+                selected.vpnAppMode != ClientProfile.VPN_APPS_SELECTED || selected.vpnAllowedApps.isNotEmpty())),
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -555,15 +739,55 @@ private fun ConnectionPanel(
             )
             Text(if (running) "Disconnect" else "Connect")
         }
+        if (googleGrantExpired) {
+            OAuthRecoveryCard(
+                onReplaceProfile = onReplaceProfile,
+                onCopyRenewalCommand = onCopyRenewalCommand,
+                onOpenOAuthSettings = onOpenOAuthSettings,
+                enabled = selected != null && !running,
+            )
+        }
         DriveUsageSummary(
             metrics = metrics,
             performance = selected?.performance ?: PerformanceSettings.recommended(),
             onOpenAdvanced = onOpenAdvanced,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        SectionHeader(Icons.Rounded.CloudQueue, "Google access route", googleRouteLabel(selected?.routeMode))
+        Row(
+            modifier = Modifier.selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ModeCard(
+                icon = Icons.Rounded.CloudQueue,
+                title = "Google front",
+                subtitle = "www.google.com SNI",
+                selected = selected?.routeMode == ClientProfile.ROUTE_GOOGLE_FRONT,
+                enabled = selected != null && !running,
+                modifier = Modifier.weight(1f),
+                onClick = { onRouteModeChange(ClientProfile.ROUTE_GOOGLE_FRONT) },
+            )
+            ModeCard(
+                icon = Icons.Rounded.DataUsage,
+                title = "Direct Google",
+                subtitle = "Drive API hosts",
+                selected = selected?.routeMode == ClientProfile.ROUTE_DIRECT,
+                enabled = selected != null && !running,
+                modifier = Modifier.weight(1f),
+                onClick = { onRouteModeChange(ClientProfile.ROUTE_DIRECT) },
+            )
+        }
+        Text(
+            "Choose Google front where direct Google access is unavailable. Reconnect to change routes.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.PowerSettingsNew, "Connection mode", modeLabel(selectedMode))
         ModeSelector(
             selectedMode = selectedMode,
+            vpnAppSubtitle = if (selected?.vpnAppMode == ClientProfile.VPN_APPS_SELECTED)
+                "${selected?.vpnAllowedApps?.size ?: 0} selected" else "All apps",
             enabled = selected != null && !running,
             onModeChange = onModeChange,
         )
@@ -576,9 +800,127 @@ private fun ConnectionPanel(
                 onCheckedChange = onProxyShareLanChange,
             )
         } else {
-            InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
+            val selectedApps = selected?.vpnAppMode == ClientProfile.VPN_APPS_SELECTED
+            InfoRow(
+                Icons.Rounded.VpnKey,
+                "VPN mode",
+                if (selectedApps) "Routes selected apps through Skirk."
+                else "Routes Android app traffic through Skirk.",
+            )
+            OutlinedButton(
+                onClick = onChooseVpnApps,
+                enabled = selected != null && !running,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (selectedApps) "Choose apps · ${selected?.vpnAllowedApps?.size ?: 0} selected" else "Choose apps · All apps")
+            }
+            Text(
+                if (selectedApps) "Only selected apps use Skirk. Other apps use their normal network. Reconnect to change this."
+                else "All apps use Skirk except Skirk itself. Select apps to reduce Drive traffic.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
+}
+
+@Composable
+private fun OAuthRecoveryCard(
+    onReplaceProfile: () -> Unit,
+    onCopyRenewalCommand: () -> Unit,
+    onOpenOAuthSettings: () -> Unit,
+    enabled: Boolean,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text("Google authorization needs renewal", fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                "The exit owner can renew Google access and share an updated client.skirk. " +
+                    "On the exit, run: skirk setup renew-oauth --kit skirk-kit, then restart the exit service.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "If the OAuth app is in Testing, its refresh tokens expire after seven days. " +
+                    "The project owner can publish it in Google Cloud → Google Auth Platform → Audience. " +
+                    "Production removes that automatic weekly expiry, but tokens can still become invalid. " +
+                    "Publishing does not revive an expired token; renew it and import the updated client.skirk.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(onClick = onCopyRenewalCommand) { Text("Copy exit command") }
+                TextButton(onClick = onOpenOAuthSettings) { Text("Open OAuth settings") }
+            }
+            OutlinedButton(onClick = onReplaceProfile, enabled = enabled) {
+                Text("Replace profile with renewed config")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplaceProfileDialog(
+    profileName: String,
+    rawConfig: String,
+    error: String,
+    onRawConfigChange: (String) -> Unit,
+    onPaste: () -> Unit,
+    onChooseFile: () -> Unit,
+    onReplace: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text("Replace $profileName") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Paste or choose the renewed client.skirk. This keeps your Google route, local ports, " +
+                        "connection mode, app selection, and speed settings.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = rawConfig,
+                    onValueChange = onRawConfigChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 6,
+                    label = { Text("Renewed client.skirk") },
+                    isError = error.isNotBlank(),
+                    supportingText = if (error.isNotBlank()) ({ Text(error) }) else null,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onPaste) {
+                        Icon(Icons.Rounded.ContentPaste, contentDescription = null)
+                        Text("Paste")
+                    }
+                    OutlinedButton(onClick = onChooseFile) {
+                        Icon(Icons.Rounded.Storage, contentDescription = null)
+                        Text("Choose file")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onReplace, enabled = rawConfig.isNotBlank()) {
+                Text("Replace")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -606,7 +948,7 @@ private fun AdvancedSettingsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                DriveUsageDetails(metrics = metrics, performance = performance)
+                DriveUsageDetails(metrics = metrics)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 PerformanceSettingsPanel(
                     performance = performance,
@@ -615,6 +957,113 @@ private fun AdvancedSettingsDialog(
                 )
             }
         },
+    )
+}
+
+private data class VpnAppChoice(val packageName: String, val label: String)
+
+@Suppress("DEPRECATION")
+private fun installedVpnApps(context: Context): List<VpnAppChoice> {
+    val manager = context.packageManager
+    val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    return manager.queryIntentActivities(launcher, 0)
+        .mapNotNull { activity ->
+            val appPackage = activity.activityInfo?.packageName ?: return@mapNotNull null
+            if (appPackage == context.packageName) return@mapNotNull null
+            VpnAppChoice(appPackage, activity.loadLabel(manager).toString().ifBlank { appPackage })
+        }
+        .distinctBy { it.packageName }
+        .sortedWith(compareBy<VpnAppChoice> { it.label.lowercase() }.thenBy { it.packageName })
+}
+
+@Composable
+private fun VpnAppsDialog(
+    profile: ClientProfile,
+    onDismiss: () -> Unit,
+    onSave: (String, List<String>) -> Unit,
+) {
+    val context = LocalContext.current
+    val installed = remember(context) { installedVpnApps(context) }
+    var selectedOnly by remember(profile.id) { mutableStateOf(profile.vpnAppMode == ClientProfile.VPN_APPS_SELECTED) }
+    var selectedPackages by remember(profile.id) { mutableStateOf(profile.vpnAllowedApps.toSet()) }
+    var search by remember { mutableStateOf("") }
+    val installedNames = installed.map { it.packageName }.toSet()
+    val unavailable = selectedPackages.filterNot { it in installedNames || it == context.packageName }
+        .map { VpnAppChoice(it, it) }
+    val visible = (installed + unavailable).filter {
+        search.isBlank() || it.label.contains(search, ignoreCase = true) ||
+            it.packageName.contains(search, ignoreCase = true)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose VPN apps") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SwitchRow(
+                    title = "Only selected apps",
+                    detail = "Off routes all apps through Skirk (except Skirk itself).",
+                    checked = selectedOnly,
+                    enabled = true,
+                    onCheckedChange = { selectedOnly = it },
+                )
+                if (selectedOnly) {
+                    Text(
+                        "Unselected apps use their normal network. Android may block them if ‘Block connections without VPN’ is enabled. Changes apply after reconnecting.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        label = { Text("Search apps") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(visible.size, key = { visible[it].packageName }) { index ->
+                            val app = visible[index]
+                            SwitchRow(
+                                title = app.label,
+                                detail = if (app.packageName in installedNames) app.packageName
+                                    else "Unavailable · ${app.packageName}",
+                                checked = app.packageName in selectedPackages,
+                                enabled = true,
+                                onCheckedChange = { checked ->
+                                    selectedPackages = if (checked) selectedPackages + app.packageName
+                                        else selectedPackages - app.packageName
+                                },
+                            )
+                        }
+                    }
+                    if (installed.isEmpty()) {
+                        Text("No launchable apps were found on this device.")
+                    }
+                    Text(
+                        "${selectedPackages.size} selected",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !selectedOnly || selectedPackages.any { it in installedNames },
+                onClick = {
+                    onSave(
+                        if (selectedOnly) ClientProfile.VPN_APPS_SELECTED else ClientProfile.VPN_APPS_ALL,
+                        selectedPackages.filterNot { it == context.packageName }.sorted(),
+                    )
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -754,10 +1203,11 @@ private fun DriveUsageSummary(
     performance: PerformanceSettings,
     onOpenAdvanced: () -> Unit,
 ) {
-    val displayUnits = metrics?.unitsPerMinute ?: estimatedIdleUnits(performance)
+    val displayUnits = metrics?.unitsPerMinute ?: 0.0
     val errors = metrics?.errorsPerMinute ?: 0.0
     val label = drivePressureLabel(displayUnits, errors, metrics?.lastErrorReason.orEmpty())
     val percent = drivePressurePercent(displayUnits)
+    val percentLabel = if (displayUnits > 0.0 && percent == 0) "<1%" else "$percent%"
     Surface(
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -772,12 +1222,16 @@ private fun DriveUsageSummary(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(Icons.Rounded.DataUsage, contentDescription = null, modifier = Modifier.size(18.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Drive API pressure", fontWeight = FontWeight.Medium)
+                        Text("Client Drive activity", fontWeight = FontWeight.Medium)
                         Text(
-                            if (metrics == null) "Idle estimate from this phone." else "Measured from this phone.",
+                            if (metrics == null) "No live measurements yet." else "Measured on this phone only.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -785,21 +1239,33 @@ private fun DriveUsageSummary(
                 }
                 TextButton(onClick = onOpenAdvanced) {
                     Icon(Icons.Rounded.Settings, contentDescription = null)
-                    Text("Advanced")
+                    Text("Advanced", maxLines = 1)
                 }
             }
-            QuotaBar(unitsPerMinute = displayUnits, errorsPerMinute = errors)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("$label · $percent%", fontWeight = FontWeight.SemiBold)
+            if (metrics != null) {
+                QuotaBar(unitsPerMinute = displayUnits, errorsPerMinute = errors)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("$label · $percentLabel", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "~${displayUnits.toInt()} units/min",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            } else {
                 Text(
-                    "~${displayUnits.toInt()} units/min",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
+                    "Idle client list estimate · 0 units/min with no active streams",
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
+            Text(
+                "Exit and shared project usage are excluded.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
             Text(
                 "Performance: ${performancePresetLabel(performance.preset)} · ${performancePresetDetail(performance)}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -817,16 +1283,17 @@ private fun DriveUsageSummary(
 }
 
 @Composable
-private fun DriveUsageDetails(metrics: DriveMetrics?, performance: PerformanceSettings) {
-    val idleEstimate = estimatedIdleUnits(performance)
+private fun DriveUsageDetails(metrics: DriveMetrics?) {
     val measuredUnits = metrics?.unitsPerMinute
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader(
             Icons.Rounded.CloudQueue,
             "Drive API usage",
-            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute, metrics.lastErrorReason) } ?: "Estimate",
+            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute, metrics.lastErrorReason) } ?: "Client estimate",
         )
-        QuotaBar(unitsPerMinute = measuredUnits ?: idleEstimate, errorsPerMinute = metrics?.errorsPerMinute ?: 0.0)
+        if (measuredUnits != null) {
+            QuotaBar(unitsPerMinute = measuredUnits, errorsPerMinute = metrics.errorsPerMinute)
+        }
         InfoRow(
             Icons.Rounded.DataUsage,
             "Current phone",
@@ -835,8 +1302,9 @@ private fun DriveUsageDetails(metrics: DriveMetrics?, performance: PerformanceSe
         )
         InfoRow(
             Icons.Rounded.Speed,
-            "Idle estimate",
-            "~${idleEstimate.toInt()} units/min from the selected check interval.",
+            "Idle client list estimate",
+            "0 units/min with no active streams. A local request wakes Drive polling immediately. " +
+                "The exit and shared project are not included.",
         )
         InfoRow(
             Icons.Rounded.CloudQueue,
@@ -977,6 +1445,7 @@ private fun AddProfilePanel(onExpand: () -> Unit) {
 
 @Composable
 private fun ImportPanel(
+    enabled: Boolean,
     profileName: String,
     socksPort: String,
     httpPort: String,
@@ -1002,14 +1471,15 @@ private fun ImportPanel(
                 if (importError.isNotBlank()) {
                     Text(importError)
                 } else {
-                    Text("Paste the one-line skirk: profile or generated client.json.")
+                    Text(if (enabled) "Paste the one-line skirk: profile or generated client.json."
+                        else "Disconnect before importing another profile.")
                 }
             },
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onImport,
-                enabled = rawConfig.isNotBlank(),
+                enabled = enabled && rawConfig.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -1056,6 +1526,7 @@ private fun ProfilesPanel(
     running: Boolean,
     onSelect: (ClientProfile) -> Unit,
     onDelete: (ClientProfile) -> Unit,
+    onReplace: (ClientProfile) -> Unit,
 ) {
     Panel {
         SectionHeader(Icons.Rounded.AccountCircle, "Profiles", "${profiles.size} saved")
@@ -1069,6 +1540,21 @@ private fun ProfilesPanel(
                     enabled = !running,
                     onSelect = { onSelect(profile) },
                     onDelete = { onDelete(profile) },
+                )
+            }
+            profiles.firstOrNull { it.id == selectedId }?.let { selected ->
+                OutlinedButton(
+                    onClick = { onReplace(selected) },
+                    enabled = !running,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = null)
+                    Text("Replace selected config")
+                }
+                Text(
+                    "Use after renewing Google access. Your route, ports, and VPN app choices stay saved.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }
@@ -1097,10 +1583,14 @@ private fun Panel(content: @Composable ColumnScope.() -> Unit) {
 private fun SectionHeader(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(title, fontWeight = FontWeight.SemiBold)
         }
@@ -1111,14 +1601,18 @@ private fun SectionHeader(icon: ImageVector, title: String, detail: String, modi
 @Composable
 private fun ModeSelector(
     selectedMode: String,
+    vpnAppSubtitle: String,
     enabled: Boolean,
     onModeChange: (String) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         ModeCard(
             icon = Icons.Rounded.VpnKey,
             title = "VPN",
-            subtitle = "All apps",
+            subtitle = vpnAppSubtitle,
             selected = selectedMode == ClientProfile.CONNECTION_MODE_VPN,
             enabled = enabled,
             modifier = Modifier.weight(1f),
@@ -1159,14 +1653,28 @@ private fun ModeCard(
             if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
         ),
         color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                if (selected) {
+                    Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+            }
             Text(title, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -1230,12 +1738,16 @@ private fun ProfileRow(
     onDelete: () -> Unit,
 ) {
     Surface(
+        modifier = Modifier.semantics {
+            stateDescription = if (selected) "Selected profile" else "Not selected"
+        },
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(
             1.dp,
             if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
         ),
         color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Row(
             modifier = Modifier
@@ -1254,7 +1766,7 @@ private fun ProfileRow(
                     Text(profile.name, fontWeight = FontWeight.SemiBold)
                 }
                 Text(
-                    "${profile.routeMode} / SOCKS ${profile.socksAddress} / HTTP ${profile.httpAddress}",
+                    "${googleRouteLabel(profile.routeMode)} / SOCKS ${profile.socksAddress} / HTTP ${profile.httpAddress}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -1297,35 +1809,29 @@ private enum class ConnectionUiState(val title: String) {
     Error("Needs attention"),
 }
 
-private fun connectionUiState(running: Boolean, selected: ClientProfile?, message: String): ConnectionUiState = when {
+private fun connectionUiState(phase: ConnectionPhase, selected: ClientProfile?): ConnectionUiState = when {
     selected == null -> ConnectionUiState.Setup
-    running && message.contains("connecting", ignoreCase = true) -> ConnectionUiState.Connecting
-    running -> ConnectionUiState.Connected
-    isConnectionErrorMessage(message) -> ConnectionUiState.Error
+    phase == ConnectionPhase.CONNECTING -> ConnectionUiState.Connecting
+    phase == ConnectionPhase.CONNECTED -> ConnectionUiState.Connected
+    phase == ConnectionPhase.FAILED -> ConnectionUiState.Error
     else -> ConnectionUiState.Ready
 }
 
-private fun connectionDetail(
-    state: ConnectionUiState,
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-    message: String,
-): String {
+private fun connectionDetail(selected: ClientProfile?, selectedMode: String, proxyShareLan: Boolean): String {
     if (selected == null) {
         return "Import a profile below to enable connection."
     }
-    val actionableMessage = connectionActionableMessage(message)
-    if (state == ConnectionUiState.Error && actionableMessage != null) {
-        return actionableMessage
-    }
-    return "${selected.name} · ${connectionRouteDetail(selected, selectedMode, proxyShareLan)}"
+    return "${selected.name} · ${googleRouteLabel(selected.routeMode)} · " +
+        connectionRouteDetail(selected, selectedMode, proxyShareLan)
 }
 
 private fun connectionActionableMessage(message: String): String? {
     val normalized = message.trim()
     if (normalized.isBlank()) {
         return null
+    }
+    if (isGoogleGrantExpired(normalized)) {
+        return "Google authorization expired. Use the recovery steps below."
     }
     val lower = normalized.lowercase()
     if (
@@ -1341,26 +1847,21 @@ private fun connectionActionableMessage(message: String): String? {
     return normalized
 }
 
-private fun isConnectionErrorMessage(message: String): Boolean {
-    val lower = message.trim().lowercase()
-    return lower.contains("failed") ||
-        lower.contains("error") ||
-        lower.contains("not granted") ||
-        lower.contains("revoked")
+private fun isGoogleGrantExpired(message: String): Boolean {
+    val compact = message.lowercase().filter(Char::isLetterOrDigit)
+    return "invalidgrant" in compact ||
+        "googleauthorizationexpired" in compact ||
+        "refreshtokenexpired" in compact
 }
 
 private fun modeLabel(mode: String): String =
     if (mode == ClientProfile.CONNECTION_MODE_PROXY) "Proxy" else "VPN"
 
-private fun routeSummary(
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-): String = when {
-    selected == null -> "Not configured"
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan -> "LAN enabled"
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY -> "Local proxy"
-    else -> "Device VPN"
+private fun googleRouteLabel(mode: String?): String = when (mode) {
+    ClientProfile.ROUTE_GOOGLE_FRONT -> "Google front"
+    ClientProfile.ROUTE_DIRECT -> "Direct Google"
+    null -> "Not configured"
+    else -> "Custom route ($mode)"
 }
 
 private fun connectionRouteDetail(
@@ -1372,7 +1873,11 @@ private fun connectionRouteDetail(
         "LAN proxy · ${proxyEndpoints(selected, true)}"
     selectedMode == ClientProfile.CONNECTION_MODE_PROXY ->
         "Local proxy · ${proxyEndpoints(selected, false)}"
-    else -> "Device VPN · no manual proxy setup"
+    selected.vpnAppMode == ClientProfile.VPN_APPS_SELECTED -> {
+        val count = selected.vpnAllowedApps.size
+        "VPN for $count selected ${if (count == 1) "app" else "apps"}"
+    }
+    else -> "VPN for all apps"
 }
 
 private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
@@ -1475,16 +1980,11 @@ private fun readDriveMetrics(context: Context, activeMode: String): DriveMetrics
     }.getOrNull()
 }
 
-private fun estimatedIdleUnits(performance: PerformanceSettings): Double =
-    (60_000.0 / performance.pollMs.coerceAtLeast(PerformanceSettings.CUSTOM_MIN_POLL_MS)) *
-        DRIVE_LIST_UNITS *
-        if (performance.burstPoll) 2.0 else 1.0
-
 private fun drivePressureFraction(unitsPerMinute: Double): Float =
     (unitsPerMinute / DRIVE_USER_UNITS_PER_MINUTE).coerceIn(0.0, 1.0).toFloat()
 
 private fun drivePressurePercent(unitsPerMinute: Double): Int =
-    (drivePressureFraction(unitsPerMinute) * 100).toInt().coerceAtLeast(if (unitsPerMinute > 0.0) 1 else 0)
+    (drivePressureFraction(unitsPerMinute) * 100).toInt()
 
 private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double): String = when {
     errorsPerMinute > 0.0 -> driveErrorReasonLabel("")
@@ -1506,7 +2006,7 @@ private fun driveErrorReasonLabel(reason: String): String {
     return when {
         "storagequotaexceeded" in compact -> "Drive storage full"
         "ratelimit" in compact || "toomany" in compact || compact == "status429" -> "Drive rate limited"
-        "unauthorized" in compact || compact == "status401" -> "Google login expired"
+        "invalidgrant" in compact || "unauthorized" in compact || compact == "status401" -> "Google login expired"
         "notfound" in compact -> "Drive mailbox missing"
         "timeout" in compact || "deadline" in compact -> "Drive timeout"
         else -> "Drive errors"
@@ -1526,7 +2026,7 @@ private fun performancePresetDetail(performance: PerformanceSettings): String =
         if (performance.burstPoll) " · burst" else ""
 
 private const val SERVICE_STATE_GRACE_MS = 3_000L
-private const val DRIVE_LIST_UNITS = 100.0
+private const val MAX_PROFILE_FILE_BYTES = 256 * 1024
 private const val DRIVE_USER_UNITS_PER_MINUTE = 325_000.0
 
 private fun File.readTail(maxBytes: Int, maxLines: Int): String {

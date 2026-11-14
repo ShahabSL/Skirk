@@ -83,6 +83,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+:root[data-theme="dark"] body {
+  background: var(--bg);
+}
+
 button,
 input,
 textarea,
@@ -285,7 +289,6 @@ h2 {
 .status-card {
   --phase-color: var(--muted);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--phase-color);
   border-radius: var(--radius);
   padding: 13px 14px;
   background: var(--surface-soft);
@@ -315,6 +318,7 @@ h2 {
 }
 
 .status-card strong {
+  color: var(--phase-color);
   font-size: 20px;
   line-height: 1.1;
   font-weight: 650;
@@ -424,6 +428,47 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.recovery-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  padding: 16px 18px;
+}
+
+.recovery-card h2 {
+  margin: 2px 0 4px;
+  font-size: 17px;
+}
+
+.recovery-card p,
+.recovery-card ol {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.recovery-card ol {
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.recovery-card code {
+  overflow-wrap: anywhere;
+}
+
+.recovery-label {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recovery-card .button-row {
+  justify-content: flex-start;
+}
+
 .control-surface {
   --phase-color: var(--muted);
   --phase-bg: var(--surface-soft);
@@ -530,6 +575,7 @@ h2 {
 
 .command-row,
 .mode-selector,
+.route-choice,
 .settings-strip,
 .metric-grid {
   grid-column: 1 / -1;
@@ -538,6 +584,32 @@ h2 {
 .mode-selector {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.route-choice {
+  display: grid;
+  gap: 8px;
+}
+
+.route-choice-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 12px;
+}
+
+.route-choice-copy strong {
+  font-size: 13px;
+}
+
+.route-choice-copy small {
+  color: var(--muted);
+}
+
+.route-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -684,6 +756,51 @@ h2 {
 
 .import-panel {
   grid-area: import;
+}
+
+.import-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-target legend {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.import-target label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.import-target input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.replacement-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .logs-panel {
@@ -1071,6 +1188,39 @@ details[open] > .disclosure-summary::after {
   padding: 24px;
 }
 
+.delete-dialog {
+  width: min(440px, calc(100% - 32px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.delete-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.44);
+}
+
+.delete-dialog h2 {
+  margin: 0 0 8px;
+}
+
+.delete-dialog p {
+  margin: 0 0 20px;
+  color: var(--muted);
+}
+
+.delete-dialog .button-row {
+  justify-content: flex-end;
+}
+
+.delete-dialog .danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .advanced-dialog {
   width: min(760px, 100%);
   max-height: min(82vh, 820px);
@@ -1250,6 +1400,7 @@ pre {
 
   .metric-grid,
   .mode-selector,
+  .route-selector,
   .form-grid,
   .preset-grid,
   .custom-grid {

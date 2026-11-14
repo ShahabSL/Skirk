@@ -29,6 +29,9 @@ oauth-client.json
 
 # Probe/build artifacts
 .skirk-runs/
+.wrangler/
+.playwright-cli/
+/output/playwright/
 probe_results/
 cloud_resources/
 
@@ -46,10 +49,16 @@ clients/desktop/dist/
 clients/desktop/src-tauri/target/
 clients/desktop/src-tauri/resources/sidecars/
 clients/desktop/src-tauri/gen/
+experiments/cloudflare-worker-exit/node_modules/
+experiments/cloudflare-worker-exit/dist-worker/
+experiments/cloudflare-worker-exit/.wrangler/
 clients/android/local.properties
 clients/android/.gradle/
 clients/android/.kotlin/
 clients/android/app/build/
+clients/ios/Frameworks/
+clients/ios/Skirk.xcodeproj/
+clients/ios/.build/
 third_party/hev-socks5-tunnel/libs/
 third_party/hev-socks5-tunnel/obj/
 coverage.out

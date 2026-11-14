@@ -93,6 +93,8 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 		writeProxyError(client, http.StatusBadGateway, "proxy handler unavailable")
 		return
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	tunnelSide, proxySide := net.Pipe()
 	defer proxySide.Close()
 	done := make(chan struct{})
@@ -104,6 +106,13 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 
 	req.RequestURI = ""
 	req.Close = true
+	// Proxy credentials and connection-local headers must never reach the origin.
+	for _, value := range req.Header.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			req.Header.Del(strings.TrimSpace(name))
+		}
+	}
+	req.Header.Del("Proxy-Authorization")
 	req.Header.Del("Proxy-Connection")
 	req.Header.Set("Connection", "close")
 	if err := req.Write(proxySide); err != nil {
@@ -120,11 +129,13 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 	resp.Close = true
 	_ = resp.Write(client)
 	_ = proxySide.Close()
+	// A complete HTTP response ends this stream even if the origin delays FIN.
+	cancel()
 	<-done
 }
 
 func (t *Tunnel) ServeHTTPProxyClient(ctx context.Context, listen string) error {
-	t.role = "client"
+	t.setRole("client")
 	mux, err := t.getClientMux(ctx)
 	if err != nil {
 		return err
@@ -138,7 +149,7 @@ func (t *Tunnel) ServeHTTPProxyClient(ctx context.Context, listen string) error 
 			}
 		},
 	}
-	return server.Serve(ctx)
+	return t.serveClientListener(ctx, mux, server.Serve)
 }
 
 func hostWithDefaultPort(host, defaultPort string) (string, error) {

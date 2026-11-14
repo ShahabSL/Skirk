@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,11 +43,13 @@ var (
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("setup needs init")
+		return fmt.Errorf("setup needs init or renew-oauth")
 	}
 	switch args[0] {
 	case "init":
 		return setupInit(ctx, args[1:])
+	case "renew-oauth":
+		return setupRenewOAuth(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown setup command %q", args[0])
 	}
@@ -64,9 +67,10 @@ func setupInit(ctx context.Context, args []string) error {
 	oauthMode := fs.String("oauth-mode", "auto", "Google OAuth mode: auto, easy, or personal")
 	oauthFlow := fs.String("oauth-flow", "auto", "Google OAuth flow: auto, device, or desktop")
 	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON")
+	quotaProject := fs.String("quota-project", "", "optional user-owned Google Cloud project for Drive API quota; requires enabled Drive API and serviceusage.services.use")
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used for Google OAuth login")
 	clientRoute := fs.String("client-route", "google_front_pinned", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
-	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
+	exitRoute := fs.String("exit-route", "google_front_pinned", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
@@ -90,6 +94,11 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	if *adcPath != "" && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
+	}
+	if value := strings.TrimSpace(*quotaProject); value != "" {
+		if err := skirk.ValidateGoogleProjectID(value); err != nil {
+			return fmt.Errorf("--quota-project: %w", err)
+		}
 	}
 
 	selectedOAuthMode, err := normalizeOAuthMode(*oauthMode)
@@ -171,7 +180,8 @@ func setupInit(ctx context.Context, args []string) error {
 		return err
 	}
 	sessionID := skirk.SessionString(session)
-	baseDrive, folderID, err := setupDriveMailbox(ctx, auth, *googleIP, sessionID)
+	exitGoogleRoute := skirk.RouteConfig{Mode: *exitRoute, GoogleIP: *googleIP, TimeoutSeconds: 240}
+	baseDrive, folderID, err := setupDriveMailbox(ctx, auth, exitGoogleRoute, sessionID, strings.TrimSpace(*quotaProject))
 	if err != nil {
 		return err
 	}
@@ -189,7 +199,7 @@ func setupInit(ctx context.Context, args []string) error {
 		Secret:    secret,
 		SessionID: sessionID,
 		Auth:      auth,
-		Route:     skirk.RouteConfig{Mode: *exitRoute, GoogleIP: *googleIP, TimeoutSeconds: 240},
+		Route:     exitGoogleRoute,
 		Drive:     baseDrive,
 		Tunnel:    exitTunnel,
 	}
@@ -333,7 +343,7 @@ func repairMailbox(ctx context.Context, args []string) error {
 		return err
 	}
 
-	validationErr := validateDriveMailbox(ctx, exitCfg.Auth, exitCfg.Drive, exitCfg.Route.GoogleIP, exitCfg.SessionID)
+	validationErr := validateDriveMailbox(ctx, exitCfg.Auth, exitCfg.Drive, exitCfg.Route, exitCfg.SessionID)
 	if validationErr == nil && !*force {
 		result := map[string]any{
 			"result":  "ok",
@@ -349,7 +359,7 @@ func repairMailbox(ctx context.Context, args []string) error {
 	}
 
 	folderName := "skirk-mailbox-" + exitCfg.SessionID
-	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route.GoogleIP, folderName, exitCfg.SessionID)
+	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route, folderName, exitCfg.SessionID, exitCfg.Drive.QuotaProject)
 	if err != nil {
 		return fmt.Errorf("repair mailbox failed after validation error (%v): %w", validationErr, err)
 	}
@@ -433,15 +443,15 @@ func repairMailbox(ctx context.Context, args []string) error {
 	return nil
 }
 
-func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
-	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
-	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
+func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, route skirk.RouteConfig, sessionID, quotaProject string) (skirk.DriveConfig, string, error) {
+	appDataDrive := skirk.DriveConfig{Space: "appDataFolder", QuotaProject: quotaProject}
+	if err := validateDriveMailbox(ctx, auth, appDataDrive, route, sessionID); err != nil {
 		if !isAppDataScopeError(err) {
 			return skirk.DriveConfig{}, "", err
 		}
 		fmt.Printf("Google OAuth cannot access Drive appDataFolder with the current scope; creating a Skirk-owned Drive mailbox folder instead.\n\n")
 		folderName := "skirk-mailbox-" + sessionID
-		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, googleIP, folderName, sessionID)
+		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, route, folderName, sessionID, quotaProject)
 		if fallbackErr != nil {
 			return skirk.DriveConfig{}, "", fmt.Errorf("drive appDataFolder unavailable (%v); Drive folder mailbox setup failed: %w", err, fallbackErr)
 		}
@@ -466,11 +476,12 @@ func isAppDataScopeError(err error) bool {
 		(strings.Contains(text, "application data folder") || strings.Contains(text, "appdatafolder"))
 }
 
-func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, folderName, sessionID string) (skirk.DriveConfig, string, error) {
+func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, route skirk.RouteConfig, folderName, sessionID, quotaProject string) (skirk.DriveConfig, string, error) {
 	cfg := skirk.Config{
 		Secret: "setup-only",
 		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Route:  route,
+		Drive:  skirk.DriveConfig{QuotaProject: quotaProject},
 		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
 	cfg.ApplyDefaults()
@@ -486,18 +497,18 @@ func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googl
 	if folderID == "" {
 		return skirk.DriveConfig{}, "", errors.New("drive mailbox folder create returned empty id")
 	}
-	driveCfg := skirk.DriveConfig{FolderID: folderID}
-	if err := validateDriveMailbox(ctx, auth, driveCfg, googleIP, sessionID); err != nil {
+	driveCfg := skirk.DriveConfig{FolderID: folderID, QuotaProject: quotaProject}
+	if err := validateDriveMailbox(ctx, auth, driveCfg, route, sessionID); err != nil {
 		return skirk.DriveConfig{}, "", err
 	}
 	return driveCfg, folderID, nil
 }
 
-func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
+func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, route skirk.RouteConfig, sessionID string) error {
 	cfg := skirk.Config{
 		Secret: "setup-only",
 		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Route:  route,
 		Drive:  driveCfg,
 		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
@@ -507,11 +518,24 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 		return err
 	}
 	name := "setup/" + sessionID + "/marker.json"
-	if err := drive.Put(ctx, name, []byte(`{"ok":true}`)); err != nil {
+	marker := []byte(`{"ok":true}`)
+	info, err := drive.PutObject(ctx, name, marker)
+	if err != nil {
 		return fmt.Errorf("drive mailbox validation upload failed: %w", err)
 	}
-	if err := drive.Delete(ctx, name); err != nil {
-		return fmt.Errorf("drive mailbox validation cleanup failed: %w", err)
+	if strings.TrimSpace(info.ID) == "" {
+		return errors.New("drive mailbox validation upload returned no file id")
+	}
+	got, readErr := drive.GetByID(ctx, info.ID)
+	cleanupErr := drive.DeleteID(ctx, info.ID)
+	if readErr != nil {
+		return fmt.Errorf("drive mailbox validation download failed: %w", errors.Join(readErr, cleanupErr))
+	}
+	if !bytes.Equal(got, marker) {
+		return errors.Join(errors.New("drive mailbox validation downloaded different content"), cleanupErr)
+	}
+	if cleanupErr != nil {
+		return fmt.Errorf("drive mailbox validation cleanup failed: %w", cleanupErr)
 	}
 	return nil
 }
@@ -1041,7 +1065,7 @@ All generated client and exit configs contain Google refresh credentials and the
 
 ## Cleanup / Disconnect
 
-Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. To inspect old mux objects manually:
+Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. Without `+"`--prefix`"+`, manual cleanup scans Skirk runtime object prefixes (`+"`muxv4/`"+`, `+"`bench-drive/`"+`, and `+"`setup/`"+`):
 
 `+"```bash"+`
 skirk cleanup --config %s --older-than 2h
