@@ -1,6 +1,24 @@
 import NetworkExtension
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
+
+private enum ProfileFileError: LocalizedError {
+    case accessDenied
+    case tooLarge
+    case invalidUTF8
+    case empty
+    case unreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .accessDenied, .unreadable: "Could not read this file. Choose client.skirk or client.json again."
+        case .tooLarge: "Profile file is too large (maximum 256 KiB)."
+        case .invalidUTF8: "Profile file must be valid UTF-8."
+        case .empty: "The selected profile file is empty."
+        }
+    }
+}
 
 struct ContentView: View {
     private static let renewalCommand = "skirk setup renew-oauth --kit skirk-kit"
@@ -10,6 +28,7 @@ struct ContentView: View {
     @State private var replacingProfile = false
     @State private var copiedRenewalCommand = false
     @State private var showingRemoveConfirmation = false
+    @State private var showingProfileFilePicker = false
 
     var body: some View {
         NavigationStack {
@@ -63,7 +82,7 @@ struct ContentView: View {
                     if tunnel.hasProfile && !replacingProfile {
                         Label("Profile stored on this iPhone", systemImage: "key.fill")
                             .foregroundStyle(.secondary)
-                        Label("Google grant status: Unknown", systemImage: "questionmark.circle")
+                        Label("Google authorization is checked when traffic starts", systemImage: "questionmark.circle")
                             .foregroundStyle(.secondary)
                         Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
                             UIPasteboard.general.string = Self.renewalCommand
@@ -79,16 +98,15 @@ struct ContentView: View {
                         }
                             .disabled(!tunnel.canConnect)
                     } else {
+                        Button("Choose client.skirk file", systemImage: "doc") {
+                            showingProfileFilePicker = true
+                        }
                         SecureField("Paste skirk: client profile", text: $profileInput)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .privacySensitive()
                         Button(replacingProfile ? "Import updated profile" : "Import profile") {
-                            tunnel.importProfile(profileInput, replacing: replacingProfile)
-                            if tunnel.message == nil {
-                                profileInput = ""
-                                replacingProfile = false
-                            }
+                            importProfile(profileInput)
                         }
                         .disabled(profileInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if replacingProfile {
@@ -136,6 +154,53 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
                 tunnel.refreshStatus()
             }
+            .fileImporter(isPresented: $showingProfileFilePicker, allowedContentTypes: [.item]) { result in
+                switch result {
+                case .success(let url):
+                    do {
+                        importProfile(try readProfileFile(at: url))
+                    } catch let error as ProfileFileError {
+                        tunnel.message = error.localizedDescription
+                    } catch {
+                        tunnel.message = ProfileFileError.unreadable.localizedDescription
+                    }
+                case .failure(let error):
+                    let fileError = error as NSError
+                    if fileError.domain != NSCocoaErrorDomain || fileError.code != NSUserCancelledError {
+                        tunnel.message = ProfileFileError.unreadable.localizedDescription
+                    }
+                }
+            }
         }
+    }
+
+    private func importProfile(_ value: String) {
+        tunnel.importProfile(value, replacing: replacingProfile)
+        if tunnel.message == nil {
+            profileInput = ""
+            replacingProfile = false
+        }
+    }
+
+    private func readProfileFile(at url: URL) throws -> String {
+        guard url.startAccessingSecurityScopedResource() else { throw ProfileFileError.accessDenied }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        var coordinationError: NSError?
+        var imported: Result<String, Error>?
+        NSFileCoordinator().coordinate(readingItemAt: url, error: &coordinationError) { readableURL in
+            imported = Result { () throws -> String in
+                let file = try FileHandle(forReadingFrom: readableURL)
+                defer { try? file.close() }
+                let data = try file.read(upToCount: 256 * 1024 + 1) ?? Data()
+                guard data.count <= 256 * 1024 else { throw ProfileFileError.tooLarge }
+                guard !data.isEmpty else { throw ProfileFileError.empty }
+                guard let value = String(data: data, encoding: .utf8) else { throw ProfileFileError.invalidUTF8 }
+                return value
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let imported else { throw ProfileFileError.unreadable }
+        return try imported.get()
     }
 }

@@ -49,6 +49,7 @@ const CUSTOM_MAX_DOWNLOAD_WORKERS = 64;
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
   const [rawConfig, setRawConfig] = useState("");
+  const [profileFileError, setProfileFileError] = useState("");
   const [profileName, setProfileName] = useState("Skirk profile");
   const [socksPort, setSocksPort] = useState("18080");
   const [httpPort, setHttpPort] = useState("18081");
@@ -66,6 +67,7 @@ function App() {
   const [replaceProfileId, setReplaceProfileId] = useState<string | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<ClientProfile | null>(null);
   const importPanelRef = useRef<HTMLDetailsElement>(null);
+  const profileFileRef = useRef<HTMLInputElement>(null);
   const profileNameId = useId();
   const socksPortId = useId();
   const httpPortId = useId();
@@ -222,9 +224,35 @@ function App() {
     try {
       const text = await navigator.clipboard.readText();
       setRawConfig(text);
+      setProfileFileError("");
       setError("");
     } catch (nextError) {
       setError(normalizeError(nextError));
+    }
+  }
+
+  async function readProfileFile(file: File) {
+    try {
+      if (file.size > 256 * 1024) {
+        throw new Error("Profile file is too large (maximum 256 KiB).");
+      }
+      const data = await file.arrayBuffer();
+      if (data.byteLength > 256 * 1024) {
+        throw new Error("Profile file is too large (maximum 256 KiB).");
+      }
+      const value = new TextDecoder("utf-8", { fatal: true }).decode(data);
+      if (!value.trim()) {
+        throw new Error("The selected profile file is empty.");
+      }
+      setRawConfig(value);
+      setProfileFileError("");
+      setError("");
+    } catch (cause) {
+      setRawConfig("");
+      setProfileFileError(cause instanceof Error &&
+        (cause.message === "Profile file is too large (maximum 256 KiB)." || cause.message === "The selected profile file is empty.")
+          ? cause.message
+          : "Could not read this file. Choose a UTF-8 client.skirk or client.json.");
     }
   }
 
@@ -596,6 +624,26 @@ function App() {
                 </label>
               </fieldset>
 
+              <div className="button-row">
+                <input
+                  ref={profileFileRef}
+                  type="file"
+                  hidden
+                  accept=".skirk,.json,text/plain,application/json"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (file) void readProfileFile(file);
+                  }}
+                />
+                <button type="button" disabled={runtimeBusy || connected} onClick={() => profileFileRef.current?.click()}>
+                  <FileText /> Choose client.skirk file
+                </button>
+                <button type="button" disabled={busy} onClick={() => void pasteConfig()}>
+                  <ClipboardPaste /> Paste text
+                </button>
+              </div>
+
               {replacingProfile ? (
                 <p className="replacement-note">
                   Replacing <strong>{replacingProfile.name}</strong> keeps SOCKS {replacingProfile.socksPort}, HTTP {replacingProfile.httpPort}, {googleRouteLabel(replacingProfile.routeMode)}, and {performancePresetLabel(replacingProfile.performance.preset)} settings.
@@ -649,10 +697,15 @@ function App() {
                 <textarea
                   id={rawConfigId}
                   value={rawConfig}
-                  onChange={(event) => setRawConfig(event.target.value)}
+                  onChange={(event) => {
+                    setRawConfig(event.target.value);
+                    setProfileFileError("");
+                  }}
                   spellCheck={false}
                 />
               </label>
+
+              {profileFileError ? <small className="field-error" role="alert">{profileFileError}</small> : null}
 
               {!replaceProfileId ? <label className="switch-row">
                 <input
@@ -676,6 +729,7 @@ function App() {
                       ? await desktopApi.replaceProfileConfig(replaceProfileId, rawConfig)
                       : await desktopApi.importConfig(profileName, rawConfig, portNumber, httpPortNumber, shareLan);
                     setRawConfig("");
+                    setProfileFileError("");
                     setReplaceProfileId(null);
                     setImportOpen(false);
                     return next;
@@ -683,10 +737,6 @@ function App() {
                 >
                   {busyAction === "import" ? <Loader2 className="spin" /> : <Upload />}
                   {replaceProfileId ? "Replace profile" : "Import profile"}
-                </button>
-                <button type="button" disabled={busy} onClick={() => void pasteConfig()}>
-                  <ClipboardPaste />
-                  Paste
                 </button>
               </div>
             </div>

@@ -105,6 +105,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import org.json.JSONObject
 
 private val LightColors = lightColorScheme(
@@ -248,6 +251,21 @@ fun ConfigScreen() {
                     replacementError = ""
                 }
                 .onFailure { replacementError = it.message ?: "Could not read the selected file" }
+        }
+    }
+    val newProfileFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null && !connectionStore.read().running) {
+            runCatching { readProfileFile(context, uri) }
+                .onSuccess {
+                    rawConfig = it
+                    importError = ""
+                }
+                .onFailure {
+                    rawConfig = ""
+                    importError = it.message ?: "Could not read the selected file"
+                }
         }
     }
 
@@ -520,6 +538,7 @@ fun ConfigScreen() {
                             importError = ""
                         },
                         onPaste = ::pasteProfileFromClipboard,
+                        onChooseFile = { newProfileFilePicker.launch("*/*") },
                         onImport = ::importProfile,
                     )
                 }
@@ -558,6 +577,7 @@ fun ConfigScreen() {
                                 importError = ""
                             },
                             onPaste = ::pasteProfileFromClipboard,
+                            onChooseFile = { newProfileFilePicker.launch("*/*") },
                             onImport = ::importProfile,
                         )
                     } else {
@@ -662,7 +682,14 @@ private fun readProfileFile(context: Context, uri: Uri): String {
             }
             output.write(buffer, 0, count)
         }
-        String(output.toByteArray(), Charsets.UTF_8)
+        try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(output.toByteArray())).toString()
+        } catch (_: CharacterCodingException) {
+            throw IllegalArgumentException("Profile file must be valid UTF-8.")
+        }
     } ?: error("Could not open the selected file")
     require(content.isNotBlank()) { "The selected profile file is empty." }
     return content
@@ -1456,22 +1483,26 @@ private fun ImportPanel(
     onHttpPortChange: (String) -> Unit,
     onRawConfigChange: (String) -> Unit,
     onPaste: () -> Unit,
+    onChooseFile: () -> Unit,
     onImport: () -> Unit,
 ) {
     Panel {
-        SectionHeader(Icons.Rounded.Add, "Import profile", "One-line config")
+        SectionHeader(Icons.Rounded.Add, "Import profile", "File or one-line config")
+        OutlinedButton(onClick = onChooseFile, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+            Text("Choose client.skirk file")
+        }
         OutlinedTextField(
             value = rawConfig,
             onValueChange = onRawConfigChange,
             modifier = Modifier.fillMaxWidth(),
-            minLines = 5,
+            minLines = 3,
             label = { Text("Skirk profile or client.json") },
             isError = importError.isNotBlank(),
             supportingText = {
                 if (importError.isNotBlank()) {
                     Text(importError)
                 } else {
-                    Text(if (enabled) "Paste the one-line skirk: profile or generated client.json."
+                    Text(if (enabled) "Or paste a one-line profile or client.json."
                         else "Disconnect before importing another profile.")
                 }
             },

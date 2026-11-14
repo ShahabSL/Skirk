@@ -12,7 +12,8 @@ Stack:
 
 What it does:
 
-- imports a one-line `skirk:` config or generated `client.json`;
+- imports a `client.skirk` or `client.json` file (up to 256 KiB of valid UTF-8),
+  or accepts a pasted one-line `skirk:` config;
 - stores profiles in app-local or portable data;
 - gives each imported profile a stable local client identity, so the same
   copied profile can run on multiple devices at the same time;

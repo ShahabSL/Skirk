@@ -3,6 +3,8 @@ package skirk
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -59,6 +61,103 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 }
 
+func tokenSOCKSProxyFixture(t *testing.T) (string, <-chan string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	targets := make(chan string, 4)
+	proxy := &SOCKSServer{Handler: func(_ context.Context, target string, client net.Conn) {
+		targets <- target
+		upstream, err := net.Dial("tcp", target)
+		if err != nil {
+			t.Errorf("SOCKS upstream dial: %v", err)
+			return
+		}
+		defer upstream.Close()
+		go io.Copy(upstream, client)
+		_, _ = io.Copy(client, upstream)
+	}}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go proxy.handle(context.Background(), conn)
+		}
+	}()
+	return "socks5h://" + listener.Addr().String(), targets
+}
+
+func TestCustomTokenURLHonorsSOCKSProxyInDirectAndFrontModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/custom-token" {
+			t.Errorf("custom token request method=%q path=%q", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil || r.PostForm.Get("refresh_token") != "test-refresh-token" {
+			t.Errorf("custom token POST body: %v", err)
+		}
+		_, _ = io.WriteString(w, `{"access_token":"custom-access-token","expires_in":3600}`)
+	}))
+	defer server.Close()
+	proxyURL, targets := tokenSOCKSProxyFixture(t)
+	for _, mode := range []string{"direct", "google_front_h3_pinned"} {
+		t.Run(mode, func(t *testing.T) {
+			auth := AuthConfig{ClientID: "test-client", RefreshToken: "test-refresh-token", TokenURL: server.URL + "/custom-token"}
+			token, err := auth.refreshAccessToken(context.Background(), RouteConfig{Mode: mode, Proxy: proxyURL})
+			if err != nil || token.Token != "custom-access-token" {
+				t.Fatalf("custom token=%+v err=%v", token, err)
+			}
+			select {
+			case target := <-targets:
+				if target != strings.TrimPrefix(server.URL, "http://") {
+					t.Fatalf("SOCKS target=%q, want token endpoint", target)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("custom token request bypassed configured SOCKS proxy")
+			}
+		})
+	}
+}
+
+func TestCustomTokenURLDoesNotFollowCredentialRedirect(t *testing.T) {
+	var redirected atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", other.URL+"/receive-credentials")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	proxyURL, targets := tokenSOCKSProxyFixture(t)
+	auth := AuthConfig{ClientID: "test-client", RefreshToken: "test-refresh-token", TokenURL: server.URL}
+	if _, err := auth.refreshAccessToken(context.Background(), RouteConfig{Mode: "google_front", Proxy: proxyURL}); err == nil {
+		t.Fatal("redirect response was accepted as a token")
+	}
+	select {
+	case target := <-targets:
+		if target != strings.TrimPrefix(server.URL, "http://") {
+			t.Fatalf("SOCKS target=%q, want original endpoint", target)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("custom token request bypassed configured SOCKS proxy")
+	}
+	if redirected.Load() != 0 {
+		t.Fatal("OAuth refresh credentials were resent to redirect target")
+	}
+	select {
+	case target := <-targets:
+		t.Fatalf("SOCKS followed token redirect to %q", target)
+	default:
+	}
+}
+
 func TestConfigDefaultsToGoogleFrontButKeepsExplicitDirect(t *testing.T) {
 	cfg := &Config{}
 	cfg.ApplyDefaults()
@@ -69,6 +168,20 @@ func TestConfigDefaultsToGoogleFrontButKeepsExplicitDirect(t *testing.T) {
 	cfg.ApplyDefaults()
 	if cfg.Route.Mode != "direct" {
 		t.Fatalf("explicit route = %q, want direct", cfg.Route.Mode)
+	}
+}
+
+func TestConfigAcceptsExplicitGoogleFrontH3Pinned(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64), Route: RouteConfig{Mode: "google_front_h3_pinned"}}
+	cfg.ApplyDefaults()
+	if cfg.Route.GoogleIP == "" {
+		t.Fatal("H3 pinned route requires the default pinned Google IP")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("explicit H3 route rejected: %v", err)
+	}
+	if cfg.Route.Mode != "google_front_h3_pinned" {
+		t.Fatalf("route mode=%q", cfg.Route.Mode)
 	}
 }
 
@@ -110,7 +223,7 @@ func TestConfigValidatesClientNamespace(t *testing.T) {
 }
 
 func TestValidateGoogleProjectID(t *testing.T) {
-	for _, id := range []string{"abcdef", "a-1234", "flowing-precept-514715-p1"} {
+	for _, id := range []string{"abcdef", "a-1234", "test-project-123456"} {
 		if err := ValidateGoogleProjectID(id); err != nil {
 			t.Errorf("valid project ID %q: %v", id, err)
 		}
@@ -121,7 +234,7 @@ func TestValidateGoogleProjectID(t *testing.T) {
 		}
 	}
 
-	cfg := &Config{Secret: strings.Repeat("a", 64), Drive: DriveConfig{QuotaProject: "flowing-precept-514715-p1"}}
+	cfg := &Config{Secret: strings.Repeat("a", 64), Drive: DriveConfig{QuotaProject: "test-project-123456"}}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid quota project rejected: %v", err)
@@ -167,6 +280,12 @@ func TestConfigUploadHedgeDelayIsOptInAndBounded(t *testing.T) {
 	}
 	if !decoded.Drive.SeparateUploadPool {
 		t.Fatal("separate upload pool JSON option was ignored")
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"separate_bulk_media_pool":true}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Drive.SeparateBulkMediaPool {
+		t.Fatal("separate bulk media pool JSON option was ignored")
 	}
 }
 
@@ -280,7 +399,7 @@ func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
 		ClientID:     "client-id",
 		RefreshToken: "refresh-token",
 		TokenURL:     server.URL,
-	}, RouteConfig{Mode: "google_front", Proxy: "socks5h://127.0.0.1:11093"})
+	}, RouteConfig{Mode: "google_front"})
 
 	first, err := source.Token(context.Background())
 	if err != nil {
@@ -357,28 +476,48 @@ func TestAccessTokenSourceOldBackgroundRefreshCannotOverwriteNewGrant(t *testing
 	}
 }
 
-func TestOAuthTokenAttemptsIncludeHostileRoutes(t *testing.T) {
+func TestOAuthTokenAttemptsStayWithinUserSelectedRoute(t *testing.T) {
 	route := RouteConfig{
 		Mode:           "google_front",
 		Proxy:          "socks5h://127.0.0.1:11093",
 		GoogleIP:       "216.239.38.120",
 		TimeoutSeconds: 240,
 	}
-	attempts := oauthTokenAttempts(route)
-	if len(attempts) != 4 {
-		t.Fatalf("attempt count = %d, want 4", len(attempts))
+	for _, mode := range []string{"google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned"} {
+		withMode := route
+		withMode.Mode = mode
+		attempts := oauthTokenAttempts(withMode)
+		wantCount := 2
+		if mode == "google_front_h3_pinned" {
+			wantCount = 3
+		}
+		if len(attempts) != wantCount {
+			t.Fatalf("route=%s attempt count=%d, want %d", mode, len(attempts), wantCount)
+		}
+		if attempts[0].host != "oauth2.googleapis.com" || attempts[len(attempts)-1].host != "accounts.google.com" {
+			t.Fatalf("route=%s endpoints=%+v", mode, attempts)
+		}
+		for _, attempt := range attempts {
+			if !isGoogleFrontRoute(attempt.route.Mode) || attempt.route.Proxy != route.Proxy {
+				t.Fatalf("route=%s silently changed route/proxy: %+v", mode, attempt)
+			}
+		}
+		if mode == "google_front_h3_pinned" && attempts[1].route.Mode != "google_front_pinned" {
+			t.Fatalf("H3 route missing fronted H2 endpoint fallback: %+v", attempts)
+		}
 	}
-	if attempts[0].host != "oauth2.googleapis.com" || attempts[0].route.Mode != "google_front" {
-		t.Fatalf("primary attempt = %+v", attempts[0])
-	}
-	if attempts[1].host != "accounts.google.com" || attempts[1].path != "/o/oauth2/token" || attempts[1].route.Mode != "google_front" || attempts[1].route.Proxy == "" {
-		t.Fatalf("fronted accounts attempt = %+v", attempts[1])
-	}
-	if attempts[2].host != "accounts.google.com" || attempts[2].path != "/o/oauth2/token" || attempts[2].route.Mode != "direct" || attempts[2].route.Proxy == "" {
-		t.Fatalf("direct accounts attempt = %+v", attempts[2])
-	}
-	if attempts[3].host != "oauth2.googleapis.com" || attempts[3].route.Mode != "direct" || attempts[3].route.Proxy == "" {
-		t.Fatalf("direct oauth2 attempt = %+v", attempts[3])
+	for _, mode := range []string{"direct", "real_pinned"} {
+		withMode := route
+		withMode.Mode = mode
+		attempts := oauthTokenAttempts(withMode)
+		if len(attempts) != 2 || attempts[1].host != "accounts.google.com" {
+			t.Fatalf("direct route=%s attempts=%+v", mode, attempts)
+		}
+		for _, attempt := range attempts {
+			if attempt.route.Mode != mode || attempt.route.Proxy != route.Proxy {
+				t.Fatalf("direct route=%s silently changed route/proxy: %+v", mode, attempt)
+			}
+		}
 	}
 }
 

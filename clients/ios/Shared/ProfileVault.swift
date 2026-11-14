@@ -275,7 +275,7 @@ enum VaultError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidProfile: "Paste a complete, valid skirk: profile or JSON client config."
+        case .invalidProfile: "Import a complete, valid skirk: profile or JSON client config."
         case .missingProfile: "The saved profile is missing. Import the client.skirk again."
         case .profileAlreadyStored: "A profile is already saved. Use Replace profile to update it."
         case .differentProfile: "This config belongs to a different Skirk tunnel. Add it on another device or remove this profile first."

@@ -9,6 +9,7 @@ final class ProfileImportUITests: XCTestCase {
 
         let field = app.secureTextFields["Paste skirk: client profile"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Choose client.skirk file"].exists)
         field.tap()
         field.typeText(syntheticProfile(refreshToken: "initial"))
         app.buttons["Import profile"].tap()
@@ -107,7 +108,7 @@ final class ProfileImportUITests: XCTestCase {
         app.terminate()
         app.launch()
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Google grant status: Unknown"].exists)
+        XCTAssertTrue(app.staticTexts["Google authorization is checked when traffic starts"].exists)
 
         app.buttons["Copy exit renewal command"].tap()
         XCTAssertTrue(app.buttons["Renewal command copied"].exists)

@@ -21,9 +21,62 @@ from pathlib import Path
 from skirk_live_capacity_bench import require_metrics
 
 
+MAIN_COMPARE_ORDERS = (("main", "current", "current", "main"),
+                       ("current", "main", "main", "current"))
+
+
+def validate_arm_order(order: list[str], main_binary: Path | None) -> bool:
+    """Return whether this is a matched main/current comparison."""
+    if not 2 <= len(order) <= 8:
+        raise ValueError("--order requires 2..8 arms")
+    if any(mode in ("main", "current") for mode in order):
+        if tuple(order) not in MAIN_COMPARE_ORDERS or main_binary is None:
+            raise ValueError("main comparison requires --main-binary and a balanced ABBA order")
+        return True
+    if main_binary is not None or any(mode not in ("baseline", "inline", "hedge", "isolated", "isolated_hedge", "h3", "metadata", "bulk_pool", "bulk_pool_hedge") for mode in order):
+        raise ValueError("experimental order requires only baseline/inline/hedge/isolated/isolated_hedge/h3/metadata/bulk_pool/bulk_pool_hedge")
+    return False
+
+
+def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, main_compare: bool) -> dict:
+    """Give each arm a fresh mailbox identity without modifying the saved kit."""
+    config = json.loads(json.dumps(original))
+    config["session_id"] = session_id
+    drive = config.setdefault("drive", {})
+    if main_compare:
+        # main does not know this field. Both arms must use OAuth project quota.
+        drive.pop("quota_project", None)
+        for key in ("inline_small_objects", "upload_hedge_delay_ms", "separate_upload_pool", "metadata_only_priority", "separate_bulk_media_pool"):
+            drive.pop(key, None)
+    else:
+        drive["inline_small_objects"] = mode == "inline"
+        drive["upload_hedge_delay_ms"] = 3000 if mode in ("hedge", "isolated_hedge", "bulk_pool_hedge") else 0
+        drive["separate_upload_pool"] = mode in ("isolated", "isolated_hedge")
+        drive["metadata_only_priority"] = mode == "metadata"
+        drive["separate_bulk_media_pool"] = mode in ("bulk_pool", "bulk_pool_hedge")
+        if mode == "h3":
+            config.setdefault("route", {})["mode"] = "google_front_h3_pinned"
+    if chunk_size:
+        config.setdefault("tunnel", {})["chunk_size"] = chunk_size
+    return config
+
+
+def workload_completed(result: dict, expected_small: int, returncode: int) -> bool:
+    if result["small"]["scheduled"] != expected_small or result["bulk"]["scheduled"] != 1:
+        raise RuntimeError("malformed mixed workload result")
+    return (returncode == 0 and result["small"]["successes"] == expected_small
+            and result["bulk"]["successes"] == 1)
+
+
+def binary_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--main-binary", type=Path, help="clean Git main binary; use with --order main,current,current,main")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -40,8 +93,12 @@ def main():
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")
-    if not 2 <= len(order) <= 8 or any(mode not in ("baseline", "inline", "hedge", "isolated", "isolated_hedge") for mode in order):
-        parser.error("--order requires 2..8 comma-separated baseline/inline/hedge/isolated/isolated_hedge arms")
+    try:
+        main_compare = validate_arm_order(order, args.main_binary)
+    except ValueError as error:
+        parser.error(str(error))
+    if not args.binary.is_file() or (args.main_binary is not None and not args.main_binary.is_file()):
+        parser.error("binary path does not exist")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
     if not 1 <= args.small_interval_ms <= 5000 or not 1 <= args.small_workers <= 8 or not 8 <= args.tail_seconds <= 60:
@@ -79,19 +136,20 @@ def main():
             candidate = mode == "inline"
             run_dir = args.out / f"{index}-{mode}"
             run_dir.mkdir()
-            cfg = json.loads(json.dumps(config))
-            cfg["session_id"] = uuid.uuid4().hex
-            cfg.setdefault("drive", {})["inline_small_objects"] = candidate
-            cfg["drive"]["upload_hedge_delay_ms"] = 3000 if mode in ("hedge", "isolated_hedge") else 0
-            cfg["drive"]["separate_upload_pool"] = mode in ("isolated", "isolated_hedge")
-            if args.chunk_size:
-                cfg.setdefault("tunnel", {})["chunk_size"] = args.chunk_size
+            cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, main_compare)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
+            path.chmod(0o600)
             procs, logs = [], []
             bench = None
-            row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"]["upload_hedge_delay_ms"], "ok": False, "session_id": cfg["session_id"],
-                   "chunk_size_override": args.chunk_size, "separate_upload_pool": cfg["drive"]["separate_upload_pool"]}
+            binary = args.main_binary if mode == "main" else args.binary
+            row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"].get("upload_hedge_delay_ms", 0),
+                   "ok": False, "session_id": cfg["session_id"], "chunk_size_override": args.chunk_size,
+                   "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
+                   "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
+                   "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
+                   "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
+                   "quota_project_header": bool(cfg["drive"].get("quota_project"))}
 
             def guarded_metrics():
                 if any(proc.poll() is not None for proc in procs):
@@ -117,7 +175,7 @@ def main():
                 for role in ("exit", "client"):
                     stream = (run_dir / f"{role}.log").open("w")
                     logs.append(stream)
-                    command = [str(args.binary.resolve()), f"serve-{role}", "--config", str(path),
+                    command = [str(binary.resolve()), f"serve-{role}", "--config", str(path),
                                "--metrics-path", str(run_dir / f"{role}-metrics.json")]
                     if role == "client":
                         command += ["--listen", f"127.0.0.1:{port}"]
@@ -159,19 +217,18 @@ def main():
                     while bench.poll() is None:
                         time.sleep(1)
                         guarded_metrics()
-                    if bench.returncode:
-                        raise RuntimeError("mixed workload failed")
                 for _ in range(args.tail_seconds):
                     time.sleep(1)
                     guarded_metrics()
                 result = json.loads(report_path.read_text())
-                if result["small"]["successes"] != args.small_count or result["bulk"]["successes"] != 1:
-                    raise RuntimeError("incomplete workload")
                 quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics().items()}
-                row.update({"ok": True, "bulk_mbps": result["bulk"]["aggregate_goodput_mbps"],
+                completed = workload_completed(result, args.small_count, bench.returncode)
+                row.update({"ok": completed, "bulk_mbps": result["bulk"]["aggregate_goodput_mbps"],
                        "small_successes": result["small"]["successes"], "small_failures": result["small"]["failures"],
-                       "all_small_scheduled_p95_ms": result["small"]["metrics"]["scheduled_ttfb_ms"]["p95"],
-                       "all_small_request_p95_ms": result["small"]["metrics"]["ttfb_ms"]["p95"],
+                       "bulk_successes": result["bulk"]["successes"],
+                       "small_stalls": result["small"]["stalls"], "bulk_stalls": result["bulk"]["stalls"],
+                       "all_small_scheduled_p95_ms": result["small"]["metrics"]["scheduled_ttfb_ms"]["p95"] if completed else None,
+                       "all_small_request_p95_ms": result["small"]["metrics"]["ttfb_ms"]["p95"] if completed else None,
                        "small_overlap_count": result["small_during_bulk"]["successes"],
                        "small_overlap_p95_ms": result["small_during_bulk"]["metrics"]["ttfb_ms"]["p95"],
                        "small_overlap_scheduled_p95_ms": result["small_during_bulk"]["metrics"]["scheduled_ttfb_ms"]["p95"],
@@ -179,6 +236,8 @@ def main():
                        "errors": sum(q["errors"] for q in quotas.values()),
                        "downloads": sum(q["ops"].get("download", {}).get("calls", 0) for q in quotas.values())})
                 completed_units += row["combined_units_including_warmup_and_tail"]
+                if not completed:
+                    row["failure"] = "incomplete_verified_workload"
                 print(json.dumps(row), flush=True)
             except Exception as error:
                 row["failure"] = type(error).__name__

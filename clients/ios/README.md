@@ -35,8 +35,10 @@ validated in that runtime.
 The same signed test must verify Keychain group sharing, OS restart recovery,
 and whether the provider's own Google egress avoids VPN routing recursion.
 
-To use it, generate a profile with `skirk setup init`, import its `client.skirk`
-text, review the Google access route, and tap Connect. A new iOS import defaults
+To use it, generate a profile with `skirk setup init`, tap **Choose client.skirk
+file** in the iOS app (or paste the profile text), review the Google access route,
+and tap Connect. File reads are limited to 256 KiB and valid UTF-8; the selected
+file is not retained after the profile is saved in Keychain. A new import defaults
 to Google front, which sends TLS SNI to `www.google.com` even if an older
 profile contains a Direct route. "Use profile route" deliberately follows the
 imported config. The explicit Direct Google choice connects to Drive API hosts
@@ -51,6 +53,7 @@ OAuth app avoids the seven-day Testing grant limit but cannot guarantee an
 indefinite grant.
 The Profile section reports the Google grant as unknown because this screen
 cannot independently verify it. Its Copy exit renewal command button copies
-only the nonsecret CLI command; Replace profile imports the renewed
-`client.skirk` into Keychain. Restart the exit after renewing its kit. Neither
+only the nonsecret CLI command; Replace profile accepts the renewed
+`client.skirk` from Files or pasted text into Keychain. Restart the exit after
+renewing its kit. Neither
 the profile nor its refresh token is placed on the clipboard by the copy button.

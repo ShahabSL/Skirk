@@ -13,6 +13,13 @@ type ObjectInfo struct {
 	InlineData []byte // Optional encrypted object bytes from discovery metadata.
 }
 
+// MetadataOnlyPriorityStore can place a small sealed priority object entirely
+// in Drive metadata. The caller must negotiate reader support before use.
+type MetadataOnlyPriorityStore interface {
+	MetadataOnlyPriorityEnabled() bool
+	PutMetadataOnlyObject(ctx context.Context, name string, sealed []byte) (ObjectInfo, error)
+}
+
 type ObjectListInfo struct {
 	Objects       []ObjectInfo
 	Truncated     bool
@@ -64,6 +71,12 @@ type ObjectIDReserveStore interface {
 type ObjectIDStore interface {
 	GetByID(ctx context.Context, fileID string) ([]byte, error)
 	DeleteID(ctx context.Context, fileID string) error
+}
+
+// NormalObjectIDStore lets the mux isolate large normal media reads from its
+// control HTTP pool without changing the path for priority or small objects.
+type NormalObjectIDStore interface {
+	GetNormalByID(ctx context.Context, fileID string) ([]byte, error)
 }
 
 type RangeObjectStore interface {

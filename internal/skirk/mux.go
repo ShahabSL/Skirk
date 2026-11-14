@@ -26,6 +26,7 @@ const (
 	muxFrameData                 = byte(2)
 	muxFrameFIN                  = byte(3)
 	muxFrameRST                  = byte(4)
+	muxFrameMetadataCapability   = byte(5)
 	muxLaneCount                 = 4
 	muxMaxFrames                 = 512
 	muxMinBatch                  = 64 * 1024
@@ -138,6 +139,7 @@ type muxObjectMeta struct {
 	Name            string
 	ID              string
 	InlineData      []byte
+	MetadataOnly    bool
 	ClientID        string
 	RunID           string
 	Epoch           string
@@ -233,6 +235,8 @@ type driveMux struct {
 
 	streamsMu          sync.Mutex
 	streams            map[muxStreamKey]*muxStream
+	metadataCapsMu     sync.Mutex
+	metadataCaps       map[muxStreamKey]muxMetadataCapability
 	opening            map[muxStreamKey]struct{}
 	closed             map[muxStreamKey]time.Time
 	pendingMu          sync.Mutex
@@ -318,15 +322,16 @@ type driveQuotaWaitStore interface {
 }
 
 type muxPreparedUpload struct {
-	frames   []muxFrame
-	priority bool
-	seq      uint64
-	name     string
-	raw      []byte
-	sealed   []byte
-	minSeq   uint64
-	maxSeq   uint64
-	driveID  string
+	frames       []muxFrame
+	priority     bool
+	seq          uint64
+	name         string
+	raw          []byte
+	sealed       []byte
+	minSeq       uint64
+	maxSeq       uint64
+	driveID      string
+	metadataOnly bool
 }
 
 type muxStream struct {
@@ -578,6 +583,10 @@ func (m *driveMux) openClientStream(ctx context.Context, target string, local ne
 		return err
 	}
 	stream := m.registerStream(streamID, m.t.ClientID, m.t.RunID, local)
+	if err := m.startMetadataCapability(stream.key()); err != nil {
+		stream.close()
+		return err
+	}
 	stream.notePriorityPayload(len(initial))
 	stream.setObservedTarget(started, target)
 	stream.observeOpen(len(initial), 0, nil)
@@ -765,6 +774,7 @@ func (m *driveMux) terminalCloseStreamKey(ctx context.Context, key muxStreamKey,
 		m.t.Logger.Printf("mux terminal close role=%s stream=%016x reason=%s", m.role, key.StreamID, reason)
 	}
 	m.rememberClosedStream(key)
+	m.dropMetadataCapability(key)
 	m.dropPendingFrames(key)
 	m.dropQueuedNormalMuxObjects(key)
 	if stream := m.streamByKey(key); stream != nil {
@@ -835,6 +845,7 @@ func (m *driveMux) unregisterStream(stream *muxStream) {
 		m.rememberClosedStreamLocked(key, time.Now())
 	}
 	m.streamsMu.Unlock()
+	m.dropMetadataCapability(key)
 	m.dropPendingFrames(key)
 	m.dropQueuedNormalMuxObjects(key)
 	remaining := m.active.Add(-1)
@@ -1923,7 +1934,7 @@ func muxFlushDelay(frame muxFrame) time.Duration {
 func muxPriorityFrame(frame muxFrame) bool {
 	if frame.Priority {
 		switch frame.Kind {
-		case muxFrameOpen, muxFrameData, muxFrameFIN, muxFrameRST:
+		case muxFrameOpen, muxFrameData, muxFrameFIN, muxFrameRST, muxFrameMetadataCapability:
 			return true
 		}
 	}
@@ -1965,6 +1976,8 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 		return muxPreparedUpload{}, errors.New("mux upload batch missing client namespace")
 	}
 	priority := muxPriorityBatch(frames)
+	frames, echoes := l.mux.injectMetadataCapabilities(frames)
+	priority = muxPriorityBatch(frames)
 	for _, frame := range frames[1:] {
 		if frame.ClientID != clientID || frame.RunID != runID {
 			return muxPreparedUpload{}, errors.New("mux upload batch mixed client namespace")
@@ -1992,6 +2005,10 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 		minSeq, maxSeq = 0, 0
 	}
 	name := muxObjectNameWithStreamIDs(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, streamIDs, l.idx, seq, len(frames), minSeq, maxSeq, len(raw), priority)
+	metadataOnly := priority && len(sealed) <= muxInlineSealedMaxBytes && l.mux.metadataCanSendFrames(frames)
+	if metadataOnly {
+		name += driveMetadataOnlyNameSuffix
+	}
 	var driveID string
 	if !priority {
 		driveID, err = l.mux.reserveUploadObjectID(ctx)
@@ -1999,16 +2016,18 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 			return muxPreparedUpload{}, err
 		}
 	}
+	l.mux.markMetadataEchoes(echoes)
 	return muxPreparedUpload{
-		frames:   frames,
-		priority: priority,
-		seq:      seq,
-		name:     name,
-		raw:      raw,
-		sealed:   sealed,
-		minSeq:   minSeq,
-		maxSeq:   maxSeq,
-		driveID:  driveID,
+		frames:       frames,
+		priority:     priority,
+		seq:          seq,
+		name:         name,
+		raw:          raw,
+		sealed:       sealed,
+		minSeq:       minSeq,
+		maxSeq:       maxSeq,
+		driveID:      driveID,
+		metadataOnly: metadataOnly,
 	}, nil
 }
 
@@ -2029,7 +2048,14 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	slotWait := time.Since(pickedAt)
 	started := time.Now()
 	opCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(len(batch.sealed), batch.priority, l.mux.t.RouteProxy != ""))
-	if store, ok := l.mux.t.Data.(ObjectPutIDStore); ok && batch.driveID != "" {
+	if batch.metadataOnly {
+		store, ok := l.mux.t.Data.(MetadataOnlyPriorityStore)
+		if !ok || !store.MetadataOnlyPriorityEnabled() {
+			err = errors.New("metadata-only priority store became unavailable")
+		} else {
+			_, err = store.PutMetadataOnlyObject(opCtx, batch.name, batch.sealed)
+		}
+	} else if store, ok := l.mux.t.Data.(ObjectPutIDStore); ok && batch.driveID != "" {
 		_, err = store.PutObjectWithID(opCtx, batch.driveID, batch.name, batch.sealed)
 	} else if store, ok := l.mux.t.Data.(ObjectPutStore); ok {
 		_, err = store.PutObject(opCtx, batch.name, batch.sealed)
@@ -3859,7 +3885,7 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 		return err
 	}
 	frames, err := decodeFrames(sealed)
-	if err != nil && len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
+	if err != nil && !meta.MetadataOnly && len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
 		// The media copy remains authoritative if a description was damaged or
 		// replaced. No frame has been delivered before authentication completes.
 		meta.InlineData = nil
@@ -3872,13 +3898,42 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 	if err != nil {
 		return err
 	}
+	// Claim OPENs before accepting any capability request. A duplicate OPEN
+	// must not turn an existing legacy stream into a metadata-only sender.
+	acceptedOpen := make(map[muxStreamKey]bool)
+	if m.role == "exit" {
+		for _, frame := range frames {
+			if frame.Kind == muxFrameOpen {
+				frame.ClientID, frame.RunID = meta.ClientID, meta.RunID
+				if m.claimExitOpenFrame(frame) {
+					acceptedOpen[frame.key()] = true
+				}
+			}
+		}
+	}
+	// Capability frames are authenticated by the same AEAD as the OPEN and
+	// reply data. Process them before starting the exit dial, so the first
+	// response can use the new object type without an extra Drive file.
 	for _, frame := range frames {
+		if frame.Kind == muxFrameMetadataCapability {
+			frame.ClientID, frame.RunID = meta.ClientID, meta.RunID
+			if m.role == "exit" && !acceptedOpen[frame.key()] {
+				continue
+			}
+			m.handleMetadataCapability(frame)
+		}
+	}
+	for _, frame := range frames {
+		if frame.Kind == muxFrameMetadataCapability {
+			continue
+		}
 		frame.ClientID = meta.ClientID
 		frame.RunID = meta.RunID
 		if frame.Kind == muxFrameOpen && m.role == "exit" {
-			if !m.claimExitOpenFrame(frame) {
+			if !acceptedOpen[frame.key()] {
 				continue
 			}
+			delete(acceptedOpen, frame.key())
 			go func(frame muxFrame) {
 				m.openClaimedExitStream(ctx, frame)
 			}(frame)
@@ -3891,6 +3946,12 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 }
 
 func (m *driveMux) downloadMuxObject(ctx context.Context, meta muxObjectMeta) ([]byte, error) {
+	if meta.MetadataOnly {
+		if len(meta.InlineData) == 0 || len(meta.InlineData) > muxInlineSealedMaxBytes {
+			return nil, errors.New("metadata-only mux object has missing or invalid sealed description")
+		}
+		return bytes.Clone(meta.InlineData), nil
+	}
 	if len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
 		return bytes.Clone(meta.InlineData), nil
 	}
@@ -3972,7 +4033,9 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 	opCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(meta.normalReceiveBytes(), meta.Priority, m.t.RouteProxy != ""))
 	var sealed []byte
 	if meta.ID != "" {
-		if store, ok := m.t.Data.(ObjectIDStore); ok {
+		if store, ok := m.t.Data.(NormalObjectIDStore); ok && !meta.Priority && meta.PlainBytes >= driveUploadHedgeMinBytes {
+			sealed, err = store.GetNormalByID(opCtx, meta.ID)
+		} else if store, ok := m.t.Data.(ObjectIDStore); ok {
 			sealed, err = store.GetByID(opCtx, meta.ID)
 		} else {
 			sealed, err = m.t.Data.Get(opCtx, meta.Name)
@@ -4913,8 +4976,11 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	var frameMinSeq uint64
 	var frameMaxSeq uint64
 	frameRangeKnown := false
+	metadataOnly := false
 	for _, segment := range strings.Split(base[dot+1:], ".") {
 		switch {
+		case segment == "mo1":
+			metadataOnly = true
 		case strings.HasPrefix(segment, "b"):
 			parsed, err := strconv.Atoi(strings.TrimPrefix(segment, "b"))
 			if err == nil && parsed > 0 {
@@ -4945,7 +5011,10 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	if len(info.InlineData) > 0 && len(info.InlineData) <= muxInlineSealedMaxBytes {
 		inlineData = bytes.Clone(info.InlineData)
 	}
-	return muxObjectMeta{Name: name, ID: info.ID, InlineData: inlineData, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
+	if metadataOnly && class != "p0" {
+		return muxObjectMeta{}, false
+	}
+	return muxObjectMeta{Name: name, ID: info.ID, InlineData: inlineData, MetadataOnly: metadataOnly, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
 }
 
 func muxShortName(name string) string {

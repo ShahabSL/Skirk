@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	stdtls "crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 )
@@ -28,6 +31,7 @@ type HTTPResult struct {
 	Status   int
 	Body     []byte
 	Header   http.Header
+	Proto    string
 	Attempts int
 }
 
@@ -83,9 +87,118 @@ type GoogleHTTPClient struct {
 	route  RouteConfig
 }
 
+func keepGoogleHTTPRedirectResponse(*http.Request, []*http.Request) error {
+	// Redirects can change the dial target and SNI without reapplying the
+	// selected route. Let the caller handle the original 3xx response.
+	return http.ErrUseLastResponse
+}
+
+const googleH3DialTimeout = 2500 * time.Millisecond
+const googleH3RetryCooldown = time.Minute
+
+// This only marks a failure while establishing the QUIC connection, before an
+// HTTP request can be sent. It is safe to replay the request over HTTP/2 then.
+type googleH3DialError struct{ cause error }
+
+func (e *googleH3DialError) Error() string { return e.cause.Error() }
+func (e *googleH3DialError) Unwrap() error { return e.cause }
+
+type googleH3FallbackTransport struct {
+	h3               http.RoundTripper
+	h2               http.RoundTripper
+	unavailableUntil atomic.Int64
+}
+
+func (t *googleH3FallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if time.Now().UnixNano() < t.unavailableUntil.Load() {
+		return t.h2.RoundTrip(req)
+	}
+	response, err := t.h3.RoundTrip(req)
+	if err == nil {
+		return response, nil
+	}
+	var dialError *googleH3DialError
+	if !errors.As(err, &dialError) || req.Context().Err() != nil || isGoogleH3CertificateError(err) {
+		return response, err
+	}
+	// The QUIC handshake failed before HTTP headers or body were sent. Recreate
+	// the body because RoundTrip implementations may close the original reader.
+	fallbackRequest := req.Clone(req.Context())
+	if req.Body != nil && req.Body != http.NoBody {
+		if req.GetBody == nil {
+			return response, err
+		}
+		fallbackRequest.Body, err = req.GetBody()
+		if err != nil {
+			return response, err
+		}
+	}
+	now := time.Now().UnixNano()
+	previous := t.unavailableUntil.Swap(now + int64(googleH3RetryCooldown))
+	if previous <= now {
+		log.Print("google front HTTP/3 handshake unavailable; using HTTP/2 temporarily")
+	}
+	return t.h2.RoundTrip(fallbackRequest)
+}
+
+func isGoogleH3CertificateError(err error) bool {
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	var roots x509.SystemRootsError
+	var verification *stdtls.CertificateVerificationError
+	return errors.As(err, &unknown) || errors.As(err, &hostname) ||
+		errors.As(err, &invalid) || errors.As(err, &roots) || errors.As(err, &verification)
+}
+
+func googleH3DialTarget(route RouteConfig, addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err == nil && port == "443" && route.GoogleIP != "" && shouldPinGoogleIP(route.Mode) {
+		return net.JoinHostPort(route.GoogleIP, port)
+	}
+	return addr
+}
+
+func newGoogleH3Transport(route RouteConfig, dial func(context.Context, string, *stdtls.Config, *quic.Config) (*quic.Conn, error)) *http3.Transport {
+	return &http3.Transport{
+		TLSClientConfig: &stdtls.Config{
+			ServerName: "www.google.com", MinVersion: stdtls.VersionTLS13,
+			NextProtos: []string{http3.NextProtoH3},
+		},
+		QUICConfig: &quic.Config{HandshakeIdleTimeout: googleH3DialTimeout, Allow0RTT: false},
+		Dial: func(ctx context.Context, addr string, tlsConfig *stdtls.Config, quicConfig *quic.Config) (*quic.Conn, error) {
+			dialCtx, cancel := context.WithTimeout(ctx, googleH3DialTimeout)
+			defer cancel()
+			verifiedTLS := tlsConfig.Clone()
+			verifiedTLS.ServerName = "www.google.com"
+			verifiedTLS.InsecureSkipVerify = false
+			connection, err := dial(dialCtx, googleH3DialTarget(route, addr), verifiedTLS, quicConfig)
+			if err != nil {
+				return nil, &googleH3DialError{cause: err}
+			}
+			return connection, nil
+		},
+	}
+}
+
 func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 	if route.TimeoutSeconds == 0 {
 		route.TimeoutSeconds = 240
+	}
+	if route.Mode == "google_front_h3_pinned" {
+		h2Route := route
+		h2Route.Mode = "google_front_pinned"
+		h2Client := NewGoogleHTTPClient(h2Route)
+		if route.Proxy != "" {
+			// SOCKS-only routes must not leak traffic via direct UDP.
+			return &GoogleHTTPClient{client: h2Client.client, route: route}
+		}
+		h3Transport := newGoogleH3Transport(route, quic.DialAddr)
+		transport := &googleH3FallbackTransport{h3: h3Transport, h2: h2Client.client.Transport}
+		return &GoogleHTTPClient{
+			client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second, CheckRedirect: keepGoogleHTTPRedirectResponse},
+			route:  route,
+		}
 	}
 	baseDialer := &net.Dialer{Timeout: 25 * time.Second, KeepAlive: 30 * time.Second}
 	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -131,7 +244,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 			PingTimeout:     15 * time.Second,
 		}
 		return &GoogleHTTPClient{
-			client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
+			client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second, CheckRedirect: keepGoogleHTTPRedirectResponse},
 			route:  route,
 		}
 	}
@@ -176,7 +289,7 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 		transport.DialTLSContext = tlsDialContext
 	}
 	return &GoogleHTTPClient{
-		client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second},
+		client: &http.Client{Transport: transport, Timeout: time.Duration(route.TimeoutSeconds) * time.Second, CheckRedirect: keepGoogleHTTPRedirectResponse},
 		route:  route,
 	}
 }
@@ -266,10 +379,12 @@ func googleHTTPRouteAttempts(route RouteConfig) []RouteConfig {
 }
 
 func needsGoogleFrontFallback(route RouteConfig) bool {
-	if route.GoogleIP != "" && shouldPinGoogleIP(route.Mode) {
+	// Route selection is user-owned. A Direct request, including one sent
+	// through SOCKS, must never silently switch to the Google front.
+	if !isGoogleFrontRoute(route.Mode) {
 		return false
 	}
-	if route.Proxy == "" && !isGoogleFrontRoute(route.Mode) {
+	if route.GoogleIP != "" && shouldPinGoogleIP(route.Mode) {
 		return false
 	}
 	if route.Mode == "google_front" && route.GoogleIP == "" {
@@ -376,11 +491,11 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 	if err != nil {
 		return nil, err
 	}
-	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header}, nil
+	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header, Proto: resp.Proto}, nil
 }
 
 func isGoogleFrontRoute(mode string) bool {
-	return isGoogleFrontHTTP2Route(mode) || isGoogleFrontHTTP1Route(mode)
+	return isGoogleFrontHTTP2Route(mode) || isGoogleFrontHTTP1Route(mode) || mode == "google_front_h3_pinned"
 }
 
 func isGoogleFrontHTTP2Route(mode string) bool {
@@ -393,7 +508,7 @@ func isGoogleFrontHTTP1Route(mode string) bool {
 
 func shouldPinGoogleIP(mode string) bool {
 	switch mode {
-	case "real_pinned", "google_front_pinned", "google_front_h1_pinned":
+	case "real_pinned", "google_front_pinned", "google_front_h1_pinned", "google_front_h3_pinned":
 		return true
 	default:
 		return false

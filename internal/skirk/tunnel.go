@@ -86,6 +86,7 @@ type Tunnel struct {
 	BurstPollInterval    time.Duration
 	BurstPollWindow      time.Duration
 	Observe              bool
+	MetadataOnlyPriority bool
 	role                 string
 	activeStreams        atomic.Int64
 	limiterMu            sync.Mutex
@@ -113,27 +114,28 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		return nil, err
 	}
 	t := &Tunnel{
-		Data:                data,
-		Secret:              cfg.Secret,
-		SessionID:           sid,
-		ClientID:            strings.TrimSpace(cfg.Client.ID),
-		RunID:               strings.TrimSpace(cfg.Client.RunID),
-		ChunkSize:           cfg.Tunnel.ChunkSize,
-		Transport:           strings.TrimSpace(cfg.Tunnel.Transport),
-		Concurrency:         cfg.Tunnel.Concurrency,
-		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,
-		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
-		Profile:             cfg.Tunnel.Profile,
-		RouteProxy:          cfg.Route.Proxy,
-		ExitProxy:           strings.TrimSpace(cfg.Tunnel.ExitProxy),
-		ExitIPFamily:        strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
-		BurstPoll:           cfg.Tunnel.BurstPoll,
-		BurstPollInterval:   time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
-		BurstPollWindow:     time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
-		Observe:             cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
-		PollInterval:        cfg.PollInterval(),
-		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
-		Logger:              log.Default(),
+		Data:                 data,
+		Secret:               cfg.Secret,
+		SessionID:            sid,
+		ClientID:             strings.TrimSpace(cfg.Client.ID),
+		RunID:                strings.TrimSpace(cfg.Client.RunID),
+		ChunkSize:            cfg.Tunnel.ChunkSize,
+		Transport:            strings.TrimSpace(cfg.Tunnel.Transport),
+		Concurrency:          cfg.Tunnel.Concurrency,
+		UploadConcurrency:    cfg.Tunnel.UploadConcurrency,
+		DownloadConcurrency:  cfg.Tunnel.DownloadConcurrency,
+		Profile:              cfg.Tunnel.Profile,
+		RouteProxy:           cfg.Route.Proxy,
+		ExitProxy:            strings.TrimSpace(cfg.Tunnel.ExitProxy),
+		ExitIPFamily:         strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
+		BurstPoll:            cfg.Tunnel.BurstPoll,
+		BurstPollInterval:    time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
+		BurstPollWindow:      time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
+		Observe:              cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
+		MetadataOnlyPriority: cfg.Drive.MetadataOnlyPriority,
+		PollInterval:         cfg.PollInterval(),
+		CleanupProcessed:     cfg.Tunnel.CleanupProcessed,
+		Logger:               log.Default(),
 	}
 	t.markActivity()
 	return t, nil

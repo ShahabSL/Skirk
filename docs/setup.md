@@ -471,6 +471,11 @@ The CLI follows the route saved in the profile. Users who can reach direct
 Google can select it when creating a kit with `skirk setup init --client-route
 direct`, or override one run with `skirk serve-client --route-mode direct`.
 
+A hand-written `auth.token_url` overrides Google-front routing for token
+refreshes and sends the refresh request to that custom endpoint. An explicit
+`route.proxy` still carries it through SOCKS5. Skirk does not follow token
+endpoint redirects, so a redirect cannot resend OAuth credentials elsewhere.
+
 Existing Linux profiles generated before v0.1.51 are not rewritten by an
 update. Regenerate the kit or pass
 `--route-mode google_front_pinned --google-ip 216.239.38.120` when starting the

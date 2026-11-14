@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -104,12 +105,14 @@ type RouteConfig struct {
 }
 
 type DriveConfig struct {
-	FolderID           string `json:"folder_id,omitempty"`
-	Space              string `json:"space,omitempty"`
-	QuotaProject       string `json:"quota_project,omitempty"`
-	InlineSmallObjects bool   `json:"inline_small_objects,omitempty"`
-	UploadHedgeDelayMS int    `json:"upload_hedge_delay_ms,omitempty"`
-	SeparateUploadPool bool   `json:"separate_upload_pool,omitempty"`
+	FolderID              string `json:"folder_id,omitempty"`
+	Space                 string `json:"space,omitempty"`
+	QuotaProject          string `json:"quota_project,omitempty"`
+	InlineSmallObjects    bool   `json:"inline_small_objects,omitempty"`
+	MetadataOnlyPriority  bool   `json:"metadata_only_priority,omitempty"`
+	UploadHedgeDelayMS    int    `json:"upload_hedge_delay_ms,omitempty"`
+	SeparateUploadPool    bool   `json:"separate_upload_pool,omitempty"`
+	SeparateBulkMediaPool bool   `json:"separate_bulk_media_pool,omitempty"`
 }
 
 // ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
@@ -368,9 +371,9 @@ func (c *Config) Validate() error {
 		return errors.New("config.drive.upload_hedge_delay_ms must be 0 or between 1000 and 10000")
 	}
 	switch strings.TrimSpace(c.Route.Mode) {
-	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned":
+	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned":
 	default:
-		return fmt.Errorf("config.route.mode must be direct, real_pinned, google_front, google_front_pinned, google_front_h1, or google_front_h1_pinned")
+		return fmt.Errorf("config.route.mode must be direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned, or google_front_h3_pinned")
 	}
 	if strings.TrimSpace(c.Client.ID) != "" && !isSafeObjectSegment(c.Client.ID) {
 		return fmt.Errorf("config.client.id may contain only letters, digits, underscore, hyphen, and dot")
@@ -646,12 +649,28 @@ func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (
 	if tokenURL == "https://oauth2.googleapis.com/token" {
 		return refreshAccessTokenViaGoogleEndpoints(ctx, route, values)
 	}
+	// A custom token URL intentionally overrides the Google front: arbitrary
+	// hosts cannot be routed through it. Keep any explicit SOCKS proxy.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return OAuthAccessToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{CheckRedirect: keepGoogleHTTPRedirectResponse}
+	if route.Proxy != "" {
+		transport := &http.Transport{ForceAttemptHTTP2: true}
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport = base.Clone()
+		}
+		transport.Proxy = nil
+		transport.DialTLSContext = nil
+		transport.DialContext = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dialViaSOCKS5(ctx, route.Proxy, addr)
+		}
+		client.Transport = transport
+		defer transport.CloseIdleConnections()
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return OAuthAccessToken{}, err
 	}
@@ -731,37 +750,30 @@ func oauthTokenAttempts(route RouteConfig) []oauthTokenAttempt {
 			timeout: baseTimeout,
 		},
 	}
-	if route.Proxy != "" || isGoogleFrontRoute(route.Mode) {
+	if isGoogleFrontRoute(route.Mode) {
 		frontRoute := route
-		if !isGoogleFrontRoute(frontRoute.Mode) {
-			frontRoute.Mode = "google_front"
+		if route.Mode == "google_front_h3_pinned" {
+			// A failed H3 handshake already falls back to H2 within the HTTP
+			// client. Also allow a distinct fronted H2 attempt if an H3 HTTP
+			// response is unusable. Neither attempt changes the user's route
+			// selection to Direct.
+			frontRoute.Mode = "google_front_pinned"
+			attempts = append(attempts, oauthTokenAttempt{
+				source: "refresh_token:oauth2_front_h2", route: frontRoute,
+				host: "oauth2.googleapis.com", path: "/token", timeout: 12 * time.Second,
+			})
 		}
-		directRoute := route
-		directRoute.Mode = "direct"
-		directRoute.GoogleIP = ""
-		attempts = append(attempts,
-			oauthTokenAttempt{
-				source:  "refresh_token:accounts_fronted",
-				route:   frontRoute,
-				host:    "accounts.google.com",
-				path:    "/o/oauth2/token",
-				timeout: 12 * time.Second,
-			},
-			oauthTokenAttempt{
-				source:  "refresh_token:accounts_direct",
-				route:   directRoute,
-				host:    "accounts.google.com",
-				path:    "/o/oauth2/token",
-				timeout: 20 * time.Second,
-			},
-			oauthTokenAttempt{
-				source:  "refresh_token:oauth2_direct",
-				route:   directRoute,
-				host:    "oauth2.googleapis.com",
-				path:    "/token",
-				timeout: 12 * time.Second,
-			},
-		)
+		attempts = append(attempts, oauthTokenAttempt{
+			source: "refresh_token:accounts_fronted", route: frontRoute,
+			host: "accounts.google.com", path: "/o/oauth2/token", timeout: 12 * time.Second,
+		})
+	} else {
+		// Direct and real-pinned routes may try another token endpoint, but
+		// never silently change to the Google front. Preserve any proxy.
+		attempts = append(attempts, oauthTokenAttempt{
+			source: "refresh_token:accounts_direct", route: route,
+			host: "accounts.google.com", path: "/o/oauth2/token", timeout: 20 * time.Second,
+		})
 	}
 	return attempts
 }

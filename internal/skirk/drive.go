@@ -22,19 +22,21 @@ import (
 )
 
 type DriveStore struct {
-	http               *GoogleHTTPClient
-	normalUploadHTTP   *GoogleHTTPClient
-	tokenSource        *AccessTokenSource
-	folderID           string
-	space              string
-	quotaProject       string
-	inlineSmallObjects bool
-	uploadHedgeDelay   time.Duration
-	uploadHedgeSlots   chan struct{}
-	newHedgeHTTPClient func() *GoogleHTTPClient
-	quota              *driveQuotaStats
-	backoff            *driveQuotaBackoff
-	Logger             *log.Logger
+	http                 *GoogleHTTPClient
+	normalUploadHTTP     *GoogleHTTPClient
+	normalDownloadHTTP   *GoogleHTTPClient
+	tokenSource          *AccessTokenSource
+	folderID             string
+	space                string
+	quotaProject         string
+	inlineSmallObjects   bool
+	metadataOnlyPriority bool
+	uploadHedgeDelay     time.Duration
+	uploadHedgeSlots     chan struct{}
+	newHedgeHTTPClient   func() *GoogleHTTPClient
+	quota                *driveQuotaStats
+	backoff              *driveQuotaBackoff
+	Logger               *log.Logger
 }
 
 const driveListPageSize = "100"
@@ -51,6 +53,8 @@ const driveQuotaBackoffJitter = time.Second
 const driveQuotaBackoffLogInterval = 5 * time.Second
 const driveInlineMaxBytes = 8192
 const driveInlineMarker = "skirk-sealed-v1:"
+const driveMetadataOnlyMarker = "skirk-sealed-v2:"
+const driveMetadataOnlyNameSuffix = ".mo1"
 const driveUploadHedgeMinBytes = 128 * 1024
 const driveUploadHedgeMaxConcurrent = 4
 
@@ -91,11 +95,68 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 		space = "appDataFolder"
 		folderID = ""
 	}
-	var normalUploadHTTP *GoogleHTTPClient
-	if cfg.SeparateUploadPool && httpClient != nil {
+	var normalUploadHTTP, normalDownloadHTTP *GoogleHTTPClient
+	if httpClient != nil && (cfg.SeparateUploadPool || cfg.SeparateBulkMediaPool) {
+		// Keep bulk media on one independent same-route pool. Metadata, list,
+		// priority traffic and cleanup retain the original connection pool.
 		normalUploadHTTP = NewGoogleHTTPClient(httpClient.route)
+		if cfg.SeparateBulkMediaPool {
+			normalDownloadHTTP = normalUploadHTTP
+		}
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+}
+
+func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
+	return d != nil && d.metadataOnlyPriority
+}
+
+// PutMetadataOnlyObject uses files.create metadata rather than an upload URL.
+// The sealed bytes are still authenticated by the mux AEAD on the reader.
+func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sealed []byte) (ObjectInfo, error) {
+	if !d.MetadataOnlyPriorityEnabled() || !isMetadataOnlyPriorityName(name) {
+		return ObjectInfo{}, errors.New("metadata-only priority upload is disabled or name is invalid")
+	}
+	if len(sealed) == 0 || len(sealed) > driveInlineMaxBytes {
+		return ObjectInfo{}, fmt.Errorf("metadata-only sealed size must be 1-%d bytes", driveInlineMaxBytes)
+	}
+	metadata := map[string]any{
+		"name":        name,
+		"mimeType":    "application/octet-stream",
+		"description": driveMetadataOnlyMarker + base64.StdEncoding.EncodeToString(sealed),
+	}
+	if d.isAppData() {
+		metadata["parents"] = []string{"appDataFolder"}
+	} else if d.folderID != "" {
+		metadata["parents"] = []string{d.folderID}
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	result, err := d.request(ctx, http.MethodPost, "/drive/v3/files?fields=id,name,size", map[string]string{"Content-Type": "application/json; charset=UTF-8"}, body)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := require2xx(result, "drive metadata-only create"); err != nil {
+		return ObjectInfo{}, err
+	}
+	var payload struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Size string `json:"size"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ObjectInfo{}, err
+	}
+	if payload.ID == "" || payload.Name != name || (payload.Size != "" && payload.Size != "0") {
+		return ObjectInfo{}, errors.New("drive metadata-only create returned unexpected file metadata")
+	}
+	return ObjectInfo{Name: name, ID: payload.ID, Size: 0}, nil
+}
+
+func isMetadataOnlyPriorityName(name string) bool {
+	return strings.HasPrefix(name, "muxv4/") && strings.Contains(name, "/p0/") && strings.HasSuffix(name, driveMetadataOnlyNameSuffix)
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -483,11 +544,25 @@ func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
 }
 
 func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error) {
+	return d.getByIDWithHTTP(ctx, d.http, fileID)
+}
+
+// GetNormalByID uses the optional bulk pool. The mux calls this only for
+// normal data objects; priority reads and control calls stay on d.http.
+func (d *DriveStore) GetNormalByID(ctx context.Context, fileID string) ([]byte, error) {
+	client := d.normalDownloadHTTP
+	if client == nil {
+		client = d.http
+	}
+	return d.getByIDWithHTTP(ctx, client, fileID)
+}
+
+func (d *DriveStore) getByIDWithHTTP(ctx context.Context, client *GoogleHTTPClient, fileID string) ([]byte, error) {
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
 	headers := driveMediaDownloadHeaders()
 	var last *HTTPResult
 	for attempt := 0; attempt < 5; attempt++ {
-		result, err := d.mediaRequest(ctx, http.MethodGet, path, headers, nil)
+		result, err := d.requestWithHTTP(ctx, client, http.MethodGet, path, headers, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -688,7 +763,7 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
-	if d.inlineSmallObjects {
+	if d.inlineSmallObjects || d.metadataOnlyPriority {
 		values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime,description)")
 	}
 	values.Set("pageSize", driveListPageSize)
@@ -732,7 +807,7 @@ func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains [
 	}
 	values.Set("q", query)
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
-	if d.inlineSmallObjects {
+	if d.inlineSmallObjects || d.metadataOnlyPriority {
 		values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime,description)")
 	}
 	values.Set("pageSize", driveListPageSize)
@@ -1027,6 +1102,20 @@ type driveListPayload struct {
 }
 
 func (d *DriveStore) decodeInlineData(name, description string, size int64) []byte {
+	if isMetadataOnlyPriorityName(name) {
+		if !d.metadataOnlyPriority || size != 0 || !strings.HasPrefix(description, driveMetadataOnlyMarker) {
+			return nil
+		}
+		encoded := strings.TrimPrefix(description, driveMetadataOnlyMarker)
+		if len(encoded) > base64.StdEncoding.EncodedLen(driveInlineMaxBytes) {
+			return nil
+		}
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || len(data) == 0 || len(data) > driveInlineMaxBytes {
+			return nil
+		}
+		return data
+	}
 	if !d.inlineSmallObjects || size <= 0 || size > driveInlineMaxBytes || !strings.HasPrefix(name, "muxv4/") || !strings.Contains(name, "/p0/") || !strings.HasPrefix(description, driveInlineMarker) {
 		return nil
 	}
