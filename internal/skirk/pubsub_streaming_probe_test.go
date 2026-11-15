@@ -270,6 +270,10 @@ func TestStreamingProbeDuplexACKAndCancellation(t *testing.T) {
 	handlerDone := make(chan struct{})
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(handlerDone)
+		if r.ProtoMajor != 2 || r.Host != "pubsub.googleapis.com" || r.Method != http.MethodPost || r.URL.Path != "/google.pubsub.v1.Subscriber/StreamingPull" || r.Header.Get("Content-Type") != "application/grpc+proto" {
+			http.Error(w, "wrong routing or protocol", 400)
+			return
+		}
 		header := [5]byte{}
 		if _, e := io.ReadFull(r.Body, header[:]); e != nil {
 			return
@@ -327,6 +331,31 @@ func TestStreamingProbeDuplexACKAndCancellation(t *testing.T) {
 	case <-handlerDone:
 	case <-time.After(time.Second):
 		t.Fatal("server stream leaked after cancellation")
+	}
+}
+
+func TestStreamingProbeRejectsEarlyHTTPErrorAndStopsWriter(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":"fictional"}`)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer func() { server.CloseClientConnections(); server.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s := startStreamingProbe(ctx, server.Client(), server.URL+"/google.pubsub.v1.Subscriber/StreamingPull", "pubsub.googleapis.com", "fictional", "projects/test/subscriptions/test")
+	select {
+	case <-s.done:
+		if s.error() == nil {
+			t.Fatal("HTTP403 was hidden")
+		}
+	case <-ctx.Done():
+		t.Fatal("initial writer did not stop after HTTP rejection")
+	}
+	if s.stop() == nil {
+		t.Fatal("rejected session reported success")
 	}
 }
 
