@@ -22,6 +22,7 @@ const (
 	rrStatusBounds   byte = 1
 	rrStatusConflict byte = 2
 	rrStatusClosed   byte = 3
+	rrStatusBusy     byte = 4
 	rrMaxObject           = 8 * 1024 * 1024
 )
 
@@ -30,6 +31,7 @@ var (
 	errRelayResearchConflict = errors.New("relay immutable identity conflict")
 	errRelayResearchSequence = errors.New("relay request sequence not current")
 	errRelayResearchClosed   = errors.New("relay session closed")
+	errRelayResearchBusy     = errors.New("relay payload admission busy")
 )
 
 type relayResearchExchange func(context.Context, []byte) ([]byte, error)
@@ -140,7 +142,7 @@ func rrReadString(r *bytes.Reader, max int) (string, error) {
 	return string(b), nil
 }
 func (c *relayResearchCodec) encode(p relayResearchPacket) ([]byte, error) {
-	if p.Seq == 0 || (p.Kind != rrUp && p.Kind != rrPull && p.Kind != rrUp|rrResponse && p.Kind != rrPull|rrResponse) || p.Status > rrStatusClosed || len(p.Pieces) > 16 {
+	if p.Seq == 0 || (p.Kind != rrUp && p.Kind != rrPull && p.Kind != rrUp|rrResponse && p.Kind != rrPull|rrResponse) || p.Status > rrStatusBusy || len(p.Pieces) > 16 {
 		return nil, errRelayResearchBounds
 	}
 	b := new(bytes.Buffer)

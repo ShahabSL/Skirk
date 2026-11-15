@@ -31,9 +31,9 @@ type relayResearchChannel struct {
 	replies                  map[uint64]*relayResearchReply
 }
 type relayResearchStats struct {
-	UpBytes, DownBytes                                                   int64
-	UpObjects, DownObjects, Assembling, CachedReplies, LiveWorkers       int
-	AcceptedUp, AcceptedDown, DeletedUp, DeletedDown, Requests, Replayed uint64
+	UpBytes, DownBytes                                                                  int64
+	UpObjects, DownObjects, Assembling, CachedReplies, LiveWorkers                      int
+	AcceptedUp, AcceptedDown, DeletedUp, DeletedDown, Requests, Replayed, BusyResponses uint64
 }
 type relayResearchBroker struct {
 	mu                        sync.Mutex
@@ -128,7 +128,7 @@ func (b *relayResearchBroker) exchange(ctx context.Context, wire []byte) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	if p.Kind != rrUp && p.Kind != rrPull || p.Status != 0 || len(p.Committed) > 0 || len(p.Deleted) > 0 || p.Receipt >= p.Seq || p.Kind == rrPull && (len(p.Pieces) > 0 || len(p.Deletes) > 0) {
+	if p.Kind != rrUp && p.Kind != rrPull || p.Status != 0 || len(p.Committed) > 0 || len(p.Deleted) > 0 || p.Receipt >= p.Seq || p.Kind == rrPull && (len(p.Pieces) > 0 || len(p.Deletes) > 0) || p.Kind == rrUp && len(p.Pieces) > 1 {
 		return nil, errRelayResearchBounds
 	}
 	hash := sha256.Sum256(wire)
@@ -188,11 +188,14 @@ func (b *relayResearchBroker) compute(p relayResearchPacket, r *relayResearchRep
 	reply := relayResearchPacket{Kind: p.Kind | rrResponse, Seq: p.Seq}
 	var err error
 	if p.Kind == rrUp {
-		for _, id := range p.Deletes {
-			if err = b.deleteDown(id); err != nil {
-				break
+		err = b.preflightUp(p.Pieces)
+		if err == nil {
+			for _, id := range p.Deletes {
+				if err = b.deleteDown(id); err != nil {
+					break
+				}
+				reply.Deleted = append(reply.Deleted, id)
 			}
-			reply.Deleted = append(reply.Deleted, id)
 		}
 		if err == nil {
 			for _, piece := range p.Pieces {
@@ -213,6 +216,8 @@ func (b *relayResearchBroker) compute(p relayResearchPacket, r *relayResearchRep
 		switch {
 		case errors.Is(err, errRelayResearchBounds):
 			reply.Status = rrStatusBounds
+		case errors.Is(err, errRelayResearchBusy):
+			reply.Status = rrStatusBusy
 		case errors.Is(err, errRelayResearchClosed) || errors.Is(err, context.Canceled):
 			reply.Status = rrStatusClosed
 		default:
@@ -229,8 +234,39 @@ func (b *relayResearchBroker) compute(p relayResearchPacket, r *relayResearchRep
 	ch.active = false
 	ch.completed = p.Seq
 	b.stats.LiveWorkers--
+	if reply.Status == rrStatusBusy {
+		b.stats.BusyResponses++
+	}
 	close(r.done)
 	b.mu.Unlock()
+}
+
+// Busy is a completed no-mutation response, so the sole UP pump can advance
+// to deletion/control work instead of waiting behind retained payloads.
+func (b *relayResearchBroker) preflightUp(pieces []relayResearchPiece) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.ctx.Err() != nil {
+		return errRelayResearchClosed
+	}
+	for _, p := range pieces {
+		if o := b.up[p.ID]; o != nil {
+			if !rrRecordMatches(o, p) {
+				return errRelayResearchConflict
+			}
+			continue
+		}
+		if b.upNames[p.Name] != "" {
+			return errRelayResearchConflict
+		}
+		if len(b.up) >= b.cfg.MaxObjects || int64(p.Total) > b.cfg.MaxBytes {
+			return errRelayResearchBounds
+		}
+		if b.stats.UpBytes+int64(p.Total) > b.cfg.MaxBytes {
+			return errRelayResearchBusy
+		}
+	}
+	return nil
 }
 func rrRecordMatches(o *relayResearchRecord, p relayResearchPiece) bool {
 	return o.info.Name == p.Name && o.total == p.Total && o.hash == p.Hash
@@ -257,14 +293,8 @@ func (b *relayResearchBroker) acceptUp(p relayResearchPiece) (bool, error) {
 				return false, errRelayResearchBounds
 			}
 			if b.stats.UpBytes+int64(p.Total) > b.cfg.MaxBytes {
-				wake := b.changed
 				b.mu.Unlock()
-				select {
-				case <-wake:
-					continue
-				case <-b.ctx.Done():
-					return false, errRelayResearchClosed
-				}
+				return false, errRelayResearchBusy
 			}
 			o = &relayResearchRecord{info: ObjectInfo{ID: p.ID, Name: p.Name, Size: int64(p.Total)}, hash: p.Hash, total: p.Total, data: make([]byte, 0, p.Total)}
 			b.up[p.ID] = o
@@ -358,6 +388,9 @@ func (b *relayResearchBroker) deleteDown(id string) error {
 	o := b.down[id]
 	if o == nil {
 		return nil
+	}
+	if o.sent < o.total {
+		return errRelayResearchConflict
 	}
 	if !o.deleted {
 		_ = b.downStore.DeleteID(b.ctx, id)
