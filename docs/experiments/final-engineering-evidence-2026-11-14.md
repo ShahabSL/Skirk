@@ -137,6 +137,26 @@ reinforces the measured concern without isolating which code or Google timing
 caused it. Raw data are under
 `.skirk-runs/main-vs-current-upload-16m-20261114-01/`.
 
+A later [exact final-code recheck](default-final-vs-main-2026-11-15.md)
+compared clean `main` with the integrated default muxv4 code in
+main/current/current/main order. All 48 scheduled messages and four
+SHA-verified 16 MiB downloads completed with zero Drive API errors. Exact
+cleanup deleted 16 residual objects and found all eight session prefixes
+empty immediately and after 30 seconds. Two-arm medians were:
+
+| 16 MiB download, final-code recheck | Scheduled message p95 | Request p95 | File goodput | Estimated units |
+| --- | ---: | ---: | ---: | ---: |
+| Clean `main` | 13.597 s | 6.015 s | 14.220 Mb/s | 21,405 |
+| Current default | 16.247 s | 5.690 s | 12.418 Mb/s | 22,255 |
+
+This reverses the two earlier completed download pairs' request-p95 ranking,
+while scheduled delay and file rate still favored `main` in this recheck.
+The first `main` arm alone measured 7.204 s request p95, showing substantial
+run-to-run variation. A source and trace audit found no default media GET or
+HTTP/2 path change that causally explains the earlier gap: several slow
+HTTP 200 first bytes occurred after request write, with connection setup
+near zero. No consistent default-path speed win or regression is established.
+
 The corrected interaction-epoch plus metadata-only candidate did beat the
 default in two short 16 MiB pairs: download scheduled text p95 was 2.608
 versus 6.603 s and file goodput 16.600 versus 10.671 Mb/s; upload text was
@@ -453,6 +473,13 @@ limits, or 200,000-user capacity. Each advanced operator would still need a
 project, Drive API activation, and `serviceusage.services.use` access. See
 [the quota-project record](../research-2026.md#candidate-separate-quota-project-with-the-same-oauth-client)
 and private `.skirk-runs/quota-attribution-header-burst-20261115.json`.
+Two further [bounded write/read/delete runs](quota-project-write-read-live-2026-11-15.md)
+using that header each passed multipart create, metadata GET, exact-SHA media
+GET, list, delete, and immediate/delayed empty-list checks. This establishes
+API compatibility across those methods; it does not independently show which
+project was charged quota units for the writes or media read. The 100-call
+Console chart remains the only direct selected-project request-count
+attribution observation.
 The shared app's non-sensitive `drive.file` grant and verified branding do
 not themselves impose the unverified-sensitive-scope 100-new-user cap;
 OAuth grant rates, user policy, and sustained Drive use remain separate scale
@@ -496,7 +523,15 @@ unverified; the available iPhone was not connected for this test. Private UI
 result: `.skirk-runs/ios-ui-integrated-final-20261114.xcresult`. The exact
 final code at `0942237` also rebuilt and repeated the Simulator UI suite
 with **2 passed, 1 skipped, 0 failed**; the private result is under the
-isolated `ios-final-ui-wt/.skirk-runs/` worktree. The macOS
+isolated `ios-final-ui-wt/.skirk-runs/` worktree. On a second iPhone 18 Pro
+Max iOS 27.0 Simulator, the UI suite again passed **2/1 skipped/0 failed**.
+Connect with a synthetic profile did not reach `VPN active`; the Simulator
+logged `NEConfigurationErrorDomain Code=11 (IPC failed)` before extension
+traffic. A focused UI test found the helper below the Profile form and out
+of view. Commit `962b755` moves connection errors beside Connect; the same
+test then saw the helper without scrolling and passed. The
+[iOS Simulator record](ios-simulator-connect-2026-11-15.md) does not replace
+a physical packet-tunnel test. The macOS
 ARM64 Tauri app bundle built locally and its 23 Rust command tests passed.
 An isolated synthetic native GUI smoke at `dc6db7f` verified Google front as
 the default, explicit Direct choice across restart, and renewal-style profile
@@ -544,7 +579,14 @@ front and Drive. Both peers had zero API errors, exact session cleanup deleted
 network-service test covered restart recovery and external changes. The
 [macOS system-proxy report](macos-system-proxy-live-2026-11-15.md) records
 methods and limits. Safari and Chrome were not individually checked, and
-signed/notarized distribution remains unresolved.
+signed/notarized distribution remains unresolved. An independent review
+found that failed proxy restoration could be hidden when Disconnect stopped
+the client. Commit `361fd30` now retains the recovery backup, reports the
+error, exposes **Retry proxy restore**, and blocks a new connection until
+restoration succeeds. A focused missing-service test covered the error and
+retry state; the integrated Rust suite passed 27 tests, and frontend and
+native Mac builds passed. The full Drive session preceded this final
+restore-error UI change, so its exact-code live behavior is not claimed.
 
 Native Windows x64 full Go tests and CLI smoke, plus Windows ARM64 Go/CLI
 smoke, passed at commit `9704579` in
@@ -594,8 +636,22 @@ TUN. This proves one targeted native TUN data path, not whole-device default
 route capture, the GUI Connect flow, a separate exit host, or sustained mixed
 traffic.
 
+A further [native Windows GUI-backend default-route TCP run](windows-native-live-2026-11-15.md#gui-backend-default-route-tcp-check)
+called the same Rust Connect backend as the desktop UI. Its authenticated
+exit proof took **2.570 s**. Windows selected `Skirk Tunnel` for the pinned
+`1.1.1.1` destination; unproxied HTTPS returned HTTP 200 and 206 bytes in
+**11.408 s**, with eleven additional client Drive uploads. Disconnect
+restored the previous default and selected routes and removed the adapter.
+Exact cleanup deleted three mux objects, with mux and slot prefixes empty
+immediately and after 30 seconds. The test-only secret and harness were
+removed after the run. This covers one full-route TCP request through the
+native backend, not visual GUI interaction, arbitrary destinations, sustained
+traffic, or UDP applications; the current tunnel configuration rejects
+non-DNS UDP.
+
 The client checks cover route choice, profile recovery, exit reachability,
-native Windows SOCKS, and scoped TUN traffic;
+Mac system-proxy traffic, native Windows SOCKS, scoped TUN traffic, and one
+Windows GUI-backend default-route TCP request;
 there is no comparative usability study behind a “best UI” claim.
 
 The largest archived short live transfers were **74.928 Mb/s** for one
