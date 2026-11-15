@@ -195,6 +195,11 @@ def main():
     parser.add_argument("--probe-exit", action="store_true",
                         help="verify one authenticated on-demand exit round trip in each arm")
     parser.add_argument("--stall-seconds", type=int, default=15)
+    parser.add_argument("--persistent-overall-timeout", type=float, default=180,
+                        help="total persistent workload deadline, including prelude and text schedule")
+    parser.add_argument("--persistent-bulk-timeout", type=float, default=100)
+    parser.add_argument("--max-units-per-minute", type=int, default=100000,
+                        help="strict local estimated rolling60s ceiling; not a Google quota counter")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -214,6 +219,10 @@ def main():
     parser.add_argument("--tail-seconds", type=int, default=8)
     parser.add_argument("--chunk-size", type=int, default=0, help="Experimental shared peer chunk bound; 0 preserves config")
     args = parser.parse_args()
+    if not 1 <= args.persistent_overall_timeout <= 900 or not 1 <= args.persistent_bulk_timeout <= 600:
+        parser.error("persistent deadlines exceed supported bounds")
+    if not 1000 <= args.max_units_per_minute <= 100000:
+        parser.error("estimated rolling quota ceiling must be1000..100000")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")
@@ -400,6 +409,9 @@ def main():
                    "small_response_bytes": len(small_payload),
                    "persistent_pipeline": args.persistent_pipeline,
                    "persistent_bulk_lead_ms": args.persistent_bulk_lead_ms,
+                   "persistent_overall_timeout_seconds": args.persistent_overall_timeout,
+                   "persistent_bulk_timeout_seconds": args.persistent_bulk_timeout,
+                   "quota_guard_estimated_units_per_60s": args.max_units_per_minute,
                    "sparse_priority": cfg.get("tunnel", {}).get("sparse_priority", False),
                    "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
@@ -429,7 +441,7 @@ def main():
                     unit_history.pop(0)
                 before = unit_history[0][1] if unit_history and unit_history[0][0] <= now - 60 else 0
                 unit_history.append((now, cumulative))
-                if units > 100_000 or cumulative > 350_000 or cumulative - before > 100_000:
+                if units > 100_000 or cumulative > 350_000 or cumulative - before > args.max_units_per_minute:
                     raise RuntimeError("local quota guard")
                 if any(value["quota"]["errors"] or value.get("drive_backoff", {}).get("active") for value in snapshots.values()):
                     raise RuntimeError("local API error/backoff guard")
@@ -490,8 +502,8 @@ def main():
                                "--bulk-lead-ms", str(args.persistent_bulk_lead_ms),
                                "--bulk-expected-bytes", str(len(bulk_response)),
                                "--bulk-sha256", hashlib.sha256(bulk_response).hexdigest(),
-                               "--overall-timeout", "180", "--request-timeout", "60" if args.persistent_pipeline else "30",
-                               "--bulk-timeout", "100", "--stall-seconds", str(args.stall_seconds),
+                               "--overall-timeout", str(args.persistent_overall_timeout), "--request-timeout", "60" if args.persistent_pipeline else "30",
+                               "--bulk-timeout", str(args.persistent_bulk_timeout), "--stall-seconds", str(args.stall_seconds),
                                "--out", str(report_path)]
                     if args.bulk_direction == "upload":
                         command.extend(("--bulk-request-file", str(upload_file)))
