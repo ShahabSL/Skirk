@@ -53,7 +53,9 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
                candidate_separate_metadata_slot_pools: bool = False,
                candidate_normal_list_page_size_100: bool = False,
                candidate_combined_mux_discovery: bool = False,
-               candidate_adaptive_mux_discovery: bool = False) -> dict:
+               candidate_adaptive_mux_discovery: bool = False,
+               candidate_metadata_slot_async_v1: bool = False,
+               shared_interaction_epoch: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -62,16 +64,19 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
     # saved test kit's setting from silently changing the control workload.
     drive.pop("metadata_slot_v1", None)
     drive.pop("metadata_slot_delivery_v1", None)
+    drive.pop("metadata_slot_async_v1", None)
     drive.pop("separate_metadata_slot_pools", None)
     drive.pop("combined_mux_discovery", None)
     drive.pop("adaptive_mux_discovery", None)
-    if candidate_separate_metadata_slot_pools or (mode == "candidate" and
+    if candidate_metadata_slot_async_v1 or candidate_separate_metadata_slot_pools or (mode == "candidate" and
             (candidate_metadata_slot_v1 or candidate_metadata_slot_delivery_v1)):
         drive["metadata_slot_v1"] = True
-        if candidate_metadata_slot_delivery_v1 or candidate_separate_metadata_slot_pools:
+        if candidate_metadata_slot_async_v1 or candidate_metadata_slot_delivery_v1 or candidate_separate_metadata_slot_pools:
             drive["metadata_slot_delivery_v1"] = True
     if candidate_separate_metadata_slot_pools and mode == "candidate":
         drive["separate_metadata_slot_pools"] = True
+    if candidate_metadata_slot_async_v1 and mode == "candidate":
+        drive["metadata_slot_async_v1"] = True
     if candidate_normal_list_page_size_100:
         # Override any saved setting in both arms. Only the normal p1 page
         # size differs; both arms use the same binary and unchanged route.
@@ -106,6 +111,8 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
     if not binary_compare:
         config.setdefault("tunnel", {})["sparse_priority"] = mode in ("sparse", "sparse_inline")
         config["tunnel"]["interaction_epoch"] = mode in ("epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge")
+    if shared_interaction_epoch:
+        config.setdefault("tunnel", {})["interaction_epoch"] = True
     return config
 
 
@@ -130,6 +137,8 @@ def main():
                         help="enable bounded metadata slot shadow probe only in candidate arms")
     parser.add_argument("--candidate-metadata-slot-delivery-v1", action="store_true",
                         help="enable bounded authenticated slot delivery only in candidate arms")
+    parser.add_argument("--candidate-metadata-slot-async-v1", action="store_true",
+                        help="enable slot delivery in both arms; only candidates hand off uploads without waiting in the lane")
     parser.add_argument("--candidate-separate-metadata-slot-pools", action="store_true",
                         help="enable slot delivery in both arms, split slot GET/PATCH pools only in candidates")
     parser.add_argument("--candidate-normal-list-page-size-100", action="store_true",
@@ -155,6 +164,10 @@ def main():
                         help="GET, new-stream POST+ack, or one long-lived demoted text stream")
     parser.add_argument("--persistent-pipeline", action="store_true",
                         help="send persistent text frames on schedule without waiting for replies")
+    parser.add_argument("--shared-interaction-epoch", action="store_true",
+                        help="enable the identical interaction epoch scheduler in both comparison arms")
+    parser.add_argument("--persistent-bulk-lead-ms", type=int, default=250,
+                        help="delay persistent text after starting bulk; use 1000 to clear the epoch quiet threshold")
     parser.add_argument("--tail-seconds", type=int, default=8)
     parser.add_argument("--chunk-size", type=int, default=0, help="Experimental shared peer chunk bound; 0 preserves config")
     args = parser.parse_args()
@@ -167,9 +180,14 @@ def main():
         parser.error(str(error))
     if args.main_binary is not None and args.probe_exit:
         parser.error("--probe-exit cannot be used with --main-binary: main may lack the exit probe command")
+    if args.shared_interaction_epoch and (args.main_binary is not None or args.small_traffic != "persistent"):
+        parser.error("--shared-interaction-epoch requires persistent text and compatible control/candidate binaries")
+    if not 0 <= args.persistent_bulk_lead_ms <= 60000:
+        parser.error("--persistent-bulk-lead-ms must be 0..60000")
     candidate_modes = (args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
                        args.candidate_separate_metadata_slot_pools, args.candidate_normal_list_page_size_100,
-                       args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery)
+                       args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery,
+                       args.candidate_metadata_slot_async_v1)
     if sum(candidate_modes) > 1:
         parser.error("choose only one candidate mode")
     if any(candidate_modes):
@@ -305,7 +323,9 @@ def main():
                              args.candidate_separate_metadata_slot_pools,
                              args.candidate_normal_list_page_size_100,
                              args.candidate_combined_mux_discovery,
-                             args.candidate_adaptive_mux_discovery)
+                             args.candidate_adaptive_mux_discovery,
+                             args.candidate_metadata_slot_async_v1,
+                             args.shared_interaction_epoch)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -316,12 +336,14 @@ def main():
                    "ok": False, "session_id": cfg["session_id"], "chunk_size_override": args.chunk_size,
                    "small_traffic": args.small_traffic, "bulk_direction": args.bulk_direction,
                    "persistent_pipeline": args.persistent_pipeline,
+                   "persistent_bulk_lead_ms": args.persistent_bulk_lead_ms,
                    "sparse_priority": cfg.get("tunnel", {}).get("sparse_priority", False),
                    "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
                    "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
                    "metadata_slot_v1": cfg["drive"].get("metadata_slot_v1", False),
                    "metadata_slot_delivery_v1": cfg["drive"].get("metadata_slot_delivery_v1", False),
+                   "metadata_slot_async_v1": cfg["drive"].get("metadata_slot_async_v1", False),
                    "separate_metadata_slot_pools": cfg["drive"].get("separate_metadata_slot_pools", False),
                    "normal_list_page_size": cfg["drive"].get("normal_list_page_size"),
                    "combined_mux_discovery": cfg["drive"].get("combined_mux_discovery", False),
@@ -400,6 +422,7 @@ def main():
                                "--bulk-url", bulk_url, "--bulk-direction", args.bulk_direction,
                                "--bulk-max-mib", str(args.bulk_mib), "--small-count", str(args.small_count),
                                "--small-interval-ms", str(args.small_interval_ms),
+                               "--bulk-lead-ms", str(args.persistent_bulk_lead_ms),
                                "--bulk-expected-bytes", str(len(bulk_response)),
                                "--bulk-sha256", hashlib.sha256(bulk_response).hexdigest(),
                                "--overall-timeout", "180", "--request-timeout", "60" if args.persistent_pipeline else "30",
@@ -445,7 +468,7 @@ def main():
                     if row["shadow_active_count"] < 2 or row["shadow_observed_count"] < 1:
                         completed = False
                         row["failure"] = "shadow_handshake_or_observation_missing"
-                if (args.candidate_metadata_slot_delivery_v1 and mode == "candidate") or args.candidate_separate_metadata_slot_pools:
+                if (args.candidate_metadata_slot_delivery_v1 and mode == "candidate") or args.candidate_separate_metadata_slot_pools or args.candidate_metadata_slot_async_v1:
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
                                           for role in ("client", "exit"))
                     row["slot_active_count"] = logs_text.count("mux slot delivery active")
@@ -455,6 +478,12 @@ def main():
                             or row["slot_sender_ack_count"] < 1):
                         completed = False
                         row["failure"] = "slot_delivery_or_handshake_missing"
+                    if args.candidate_metadata_slot_async_v1 and mode == "candidate":
+                        row["slot_async_handoff_count"] = logs_text.count("mux slot async handoff")
+                        row["slot_async_storage_ack_count"] = logs_text.count("mux slot async storage_ack")
+                        if row["slot_async_handoff_count"] < 1 or row["slot_async_storage_ack_count"] < 1:
+                            completed = False
+                            row["failure"] = "async_slot_handoff_or_publication_missing"
                 row.update({"ok": completed, "bulk_mbps": result["bulk"]["aggregate_goodput_mbps"],
                        "small_successes": result["small"]["successes"], "small_failures": result["small"]["failures"],
                        "bulk_successes": result["bulk"]["successes"],

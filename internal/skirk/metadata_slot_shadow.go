@@ -11,9 +11,10 @@ import (
 // authenticates it. The ordinary immutable object remains authoritative for
 // application delivery. This bounded probe is never an alternate transport.
 type slotShadowRecord struct {
-	name         string
-	sealed       []byte
-	deliveryDone chan error
+	name            string
+	sealed          []byte
+	deliveryDone    chan error
+	publicationDone chan error
 }
 
 func (m *driveMux) queueSlotShadow(batch muxPreparedUpload) {
@@ -115,35 +116,49 @@ func (m *driveMux) runSlotShadow(ctx context.Context, link *muxSlotLink) {
 	m.closeSlotLink(link)
 }
 
+func (m *driveMux) enqueueSlotWriterRecord(link *muxSlotLink, record slotShadowRecord) bool {
+	fail := func(err error) {
+		if record.deliveryDone != nil {
+			record.deliveryDone <- err
+		}
+		if record.publicationDone != nil {
+			record.publicationDone <- err
+		}
+	}
+	if !link.canSend() {
+		fail(errMetadataSlotClosed)
+		return false
+	}
+	enqueued, err := link.peer.enqueue(record.name, record.sealed)
+	if err != nil {
+		fail(err)
+		return false
+	}
+	link.mu.Lock()
+	if record.deliveryDone != nil {
+		if link.deliveryWaiters == nil {
+			link.deliveryWaiters = make(map[uint64]chan error)
+		}
+		link.deliveryWaiters[enqueued.SlotSeq] = record.deliveryDone
+	}
+	if record.publicationDone != nil {
+		if link.publicationWaiters == nil {
+			link.publicationWaiters = make(map[uint64]chan error)
+		}
+		link.publicationWaiters[enqueued.SlotSeq] = record.publicationDone
+	}
+	link.mu.Unlock()
+	return true
+}
+
 func (m *driveMux) runSlotShadowWriter(ctx context.Context, link *muxSlotLink) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case record := <-link.shadowQ:
-			if !link.canSend() {
-				if record.deliveryDone != nil {
-					record.deliveryDone <- errMetadataSlotClosed
-				}
-				return
-			}
-			enqueued, err := link.peer.enqueue(record.name, record.sealed)
-			if err != nil {
-				if record.deliveryDone != nil {
-					record.deliveryDone <- err
-				}
-				if m.t.Logger != nil {
-					m.t.Logger.Printf("mux slot shadow dropped role=%s reason=queue_or_size record=%s authoritative=immutable", m.role, targetFingerprint(record.name))
-				}
+			if !m.enqueueSlotWriterRecord(link, record) {
 				continue
-			}
-			if record.deliveryDone != nil {
-				link.mu.Lock()
-				if link.deliveryWaiters == nil {
-					link.deliveryWaiters = make(map[uint64]chan error)
-				}
-				link.deliveryWaiters[enqueued.SlotSeq] = record.deliveryDone
-				link.mu.Unlock()
 			}
 			if err := m.patchSlotShadow(ctx, link); err != nil {
 				m.logSlotShadowError(err)
@@ -192,6 +207,18 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 		case <-timer.C:
 		}
 	}
+	// While the writer was rate-limited, more records may have arrived. Add
+	// the bounded queue suffix to one cumulative snapshot before preparing it.
+	if m.t.MetadataSlotAsyncV1 {
+		for i := 0; i < muxSlotShadowQueue; i++ {
+			select {
+			case record := <-link.shadowQ:
+				m.enqueueSlotWriterRecord(link, record)
+			default:
+				i = muxSlotShadowQueue
+			}
+		}
+	}
 	ackAtPrepare := link.peer.acked()
 	patch, err := link.peer.prepare()
 	if err != nil {
@@ -212,6 +239,7 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 		link.mu.Lock()
 		link.lastAck = ackAtPrepare
 		link.mu.Unlock()
+		link.completePublicationWaiters(patch.highestSeq)
 		if m.t.Observe && m.t.Logger != nil {
 			m.t.Logger.Printf("mux slot shadow patch role=%s revision=%d bytes=%d authoritative=immutable", m.role, patch.revision, len(patch.description))
 		}
@@ -227,6 +255,7 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 			link.mu.Lock()
 			link.lastAck = ackAtPrepare
 			link.mu.Unlock()
+			link.completePublicationWaiters(patch.highestSeq)
 			return nil
 		}
 	}

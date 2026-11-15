@@ -39,30 +39,31 @@ type muxSlotRunKey struct {
 type muxSlotCleanupTarget struct{ id, name string }
 
 type muxSlotLink struct {
-	key             muxSlotRunKey
-	generation      [16]byte
-	upID            string
-	downID          string
-	upName          string
-	downName        string
-	peer            *metadataSlotPeer
-	delivery        bool
-	created         bool // Only the client that created the files deletes them at stop.
-	mu              sync.Mutex
-	active          bool
-	closed          bool
-	sendClosed      bool
-	lastPatch       time.Time
-	lastAck         uint64
-	patches         int
-	gets            int
-	mirrored        map[string]struct{}
-	shadowQ         chan slotShadowRecord
-	ackWake         chan struct{}
-	deliveryWaiters map[uint64]chan error
-	pollOnce        sync.Once
-	closeOnce       sync.Once
-	sendMu          sync.Mutex
+	key                muxSlotRunKey
+	generation         [16]byte
+	upID               string
+	downID             string
+	upName             string
+	downName           string
+	peer               *metadataSlotPeer
+	delivery           bool
+	created            bool // Only the client that created the files deletes them at stop.
+	mu                 sync.Mutex
+	active             bool
+	closed             bool
+	sendClosed         bool
+	lastPatch          time.Time
+	lastAck            uint64
+	patches            int
+	gets               int
+	mirrored           map[string]struct{}
+	shadowQ            chan slotShadowRecord
+	ackWake            chan struct{}
+	deliveryWaiters    map[uint64]chan error
+	publicationWaiters map[uint64]chan error
+	pollOnce           sync.Once
+	closeOnce          sync.Once
+	sendMu             sync.Mutex
 }
 
 func (s *muxSlotLink) setActive() bool {
@@ -110,6 +111,21 @@ func (s *muxSlotLink) failDeliveryWaiters(err error) {
 	for seq, done := range s.deliveryWaiters {
 		delete(s.deliveryWaiters, seq)
 		done <- err
+	}
+	for seq, done := range s.publicationWaiters {
+		delete(s.publicationWaiters, seq)
+		done <- err
+	}
+	s.mu.Unlock()
+}
+
+func (s *muxSlotLink) completePublicationWaiters(highest uint64) {
+	s.mu.Lock()
+	for seq, done := range s.publicationWaiters {
+		if seq <= highest {
+			delete(s.publicationWaiters, seq)
+			done <- nil
+		}
 	}
 	s.mu.Unlock()
 }

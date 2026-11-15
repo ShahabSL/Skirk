@@ -305,6 +305,9 @@ type driveMux struct {
 	slots              map[muxSlotRunKey]*muxSlotLink
 	slotPending        map[muxSlotRunKey]struct{}
 	slotStopped        bool
+	slotAsyncMu        sync.Mutex
+	slotAsyncPending   map[muxStreamKey]int
+	slotAsyncCount     int
 	slotSetupDone      chan struct{}
 	opening            map[muxStreamKey]struct{}
 	closed             map[muxStreamKey]time.Time
@@ -2300,7 +2303,11 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	if len(batch.frames) == 0 {
 		return nil
 	}
-	if l.mux.trySlotDelivery(ctx, batch) {
+	if l.mux.t.MetadataSlotAsyncV1 {
+		if l.handoffSlotDelivery(ctx, batch) {
+			return nil // Ownership transferred; only publication or processing completes ACKs.
+		}
+	} else if l.mux.trySlotDelivery(ctx, batch) {
 		completeMuxFrameAcks(batch.frames, nil)
 		l.mux.t.markUpload()
 		if l.mux.t.Observe && l.mux.t.Logger != nil {
@@ -2308,6 +2315,10 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 		}
 		return nil
 	}
+	return l.uploadPreparedImmutableBatchV4(ctx, batch)
+}
+
+func (l *muxLane) uploadPreparedImmutableBatchV4(ctx context.Context, batch muxPreparedUpload) error {
 	// Shadow mode remains a separate experiment with immutable delivery.
 	l.mux.queueSlotShadow(batch)
 	if store, ok := l.mux.t.Data.(driveQuotaWaitStore); ok {

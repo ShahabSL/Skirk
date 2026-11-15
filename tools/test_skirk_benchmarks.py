@@ -272,6 +272,25 @@ class MainComparisonSafetyTests(unittest.TestCase):
         self.assertTrue(candidate["drive"]["separate_metadata_slot_pools"])
         self.assertTrue(original["drive"]["separate_metadata_slot_pools"])
 
+    def test_async_slot_comparison_isolates_handoff_with_shared_epoch(self):
+        original = {"route": {"mode": "google_front_pinned"},
+                    "drive": {"metadata_slot_async_v1": True, "separate_metadata_slot_pools": True},
+                    "tunnel": {"interaction_epoch": False}}
+        arms = [arm_config(original, mode, mode, 0, True,
+                           candidate_metadata_slot_async_v1=True, shared_interaction_epoch=True)
+                for mode in ("control", "candidate")]
+        for arm in arms:
+            self.assertTrue(arm["drive"]["metadata_slot_v1"])
+            self.assertTrue(arm["drive"]["metadata_slot_delivery_v1"])
+            self.assertTrue(arm["tunnel"]["interaction_epoch"])
+            self.assertNotIn("separate_metadata_slot_pools", arm["drive"])
+            self.assertEqual(arm["route"], original["route"])
+        self.assertNotIn("metadata_slot_async_v1", arms[0]["drive"])
+        self.assertTrue(arms[1]["drive"]["metadata_slot_async_v1"])
+        self.assertFalse(original["tunnel"]["interaction_epoch"])
+        self.assertTrue(original["drive"]["metadata_slot_async_v1"])
+        self.assertNotIn("metadata_slot_async_v1", arm_config(original, "baseline", "fresh", 0, False)["drive"])
+
     def test_normal_page_comparison_changes_only_page_size_and_session(self):
         original = {"secret": "fictional", "session_id": "old",
                     "route": {"mode": "google_front_pinned"},
