@@ -278,7 +278,13 @@ repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v4-latest-100mb.json,4008,so
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-100mb.json,4504,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-coalesce-100mb.json,4514,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp-indexed-class-20261114,.skirk-runs/indexed-class-pilot/summary.json,2023,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/final-async-vs-default-download16m-20261115/arms/summary.json,7111,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/final-async-vs-default-upload16m-20261115/arms/summary.json,6419,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/final-async-vs-main-download16m-20261115/arms/summary.json,6958,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/final-async-vs-main-upload16m-20261115/arms/summary.json,6951,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/slot-async-download-16m-20261115-01/arms/summary.json,6161,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/slot-async-upload-16m-20261115-01/arms/summary.json,6153,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/slot-primary-download16m-20261115-01/arms/summary.json,2646,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-mux-integration,.skirk-runs/slot-shadow-download-20261114-01/summary.json,4114,source-index-only; inspect cited catalog entry or raw file for exact values
+state-aware-hedge-wt,.skirk-runs/stall-hedge-live-20261115/download/arms/summary.json,7919,source-index-only; inspect cited catalog entry or raw file for exact values
+state-aware-hedge-wt,.skirk-runs/stall-hedge-live-20261115/upload/arms/summary.json,3166,source-index-only; inspect cited catalog entry or raw file for exact values

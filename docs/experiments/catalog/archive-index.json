@@ -1675,6 +1675,30 @@
   },
   {
     "worktree": "slot-async-wt",
+    "path": ".skirk-runs/final-async-vs-default-download16m-20261115/arms/summary.json",
+    "bytes": 7111,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/final-async-vs-default-upload16m-20261115/arms/summary.json",
+    "bytes": 6419,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/final-async-vs-main-download16m-20261115/arms/summary.json",
+    "bytes": 6958,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/final-async-vs-main-upload16m-20261115/arms/summary.json",
+    "bytes": 6951,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
     "path": ".skirk-runs/slot-async-download-16m-20261115-01/arms/summary.json",
     "bytes": 6161,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
@@ -1695,6 +1719,18 @@
     "worktree": "slot-mux-integration",
     "path": ".skirk-runs/slot-shadow-download-20261114-01/summary.json",
     "bytes": 4114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "state-aware-hedge-wt",
+    "path": ".skirk-runs/stall-hedge-live-20261115/download/arms/summary.json",
+    "bytes": 7919,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "state-aware-hedge-wt",
+    "path": ".skirk-runs/stall-hedge-live-20261115/upload/arms/summary.json",
+    "bytes": 3166,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   }
 ]

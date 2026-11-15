@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **147 interpreted experiment records**, **283 recognized raw result files** indexed across local worktrees, and **226 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **154 interpreted experiment records**, **289 recognized raw result files** indexed across local worktrees, and **248 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -207,3 +207,17 @@ The [state-aware upload recovery](experiments/state-aware-upload-hedge-2026-11-1
 R3-006 retains the [full18-message REST Pub/Sub worker-count trial](experiments/pubsub-drive-hybrid-2026-11-15.md): all18 authenticated, but every receiver restart produced a roughly30.9-second first-sample tail. Warm one-way delivery reached about170ms. The pool medians do not establish a clean worker-count ranking; the canceled-pull/ACK-lease explanation is an inference pending isolation. There was no Drive bulk or full app traffic in this trial.
 
 R3-007 retains the first [full Pub/Sub-priority/Drive-bulk hybrid](experiments/pubsub-drive-hybrid-2026-11-15.md): all21texts passed, with mixed text medians443/705ms, and the reverse16MiB upload passed exact length/hash in23.469s. The download failed at10,485,358B after180s and the exit recorded17normal-upload timeouts. This incomplete tuple is not a working full transport or a winner. The older guard and counters counted visible dispatches, excluding opaque HTTP2 internal retries; exact wire/billing counts and a causal reason for the stalls remain unknown. Both stores were cleaned exactly.
+
+## Final actual-default/main matrix and after-write recovery
+
+The [final16-arm matrix](experiments/final-async-default-main-2026-11-15.md) completed15exact files and180echoes. Async reduced completed-run full-echo tails versus main, but file medians fell1.6–8.4% and estimated units rose about9%. One async upload timed out and remains incomplete. No universal winner or architecture wall is claimed. All32exact prefixes were finally empty; one required a second delayed sweep after a late object. The separate after-write recovery comparison never triggered recovery and retained its interrupted upload control.
+
+| ID | Candidate | Evidence | Decision |
+| --- | --- | --- | --- |
+| R3-008 | After-write stall recovery versus actual default, completed download with no recovery trigger | live_full_transport | No-trigger observation cannot demonstrate recovery benefit; different retry policy in enabled mode, variation retained; remains opt-in |
+| R3-009 | After-write recovery reverse upload, interrupted ordinary small-object control | live_full_transport_incomplete | Post-write response tail observed, not connection-local cause; failed736B object below128KiB recovery eligibility, so no claim this feature would repair it |
+| R3-010 | Dependency-only x/net0.54 diagnostic against frozen0.61 runtime | compiled_not_yet_live | Prepared isolated hypothesis test: HTTP2 flow-control code changed0.54→0.61; not a production downgrade or security/performance claim |
+| R3-011 | Final async package versus actualdefault,16MiBdownload | live_full_transport | Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled |
+| R3-012 | Final async package versus actualdefault,16MiBupload | live_full_transport_incomplete | Incomplete comparison retained; no candidate median/win. Failure in unchanged bulk operation does not establish causal slot regression |
+| R3-013 | Final async package versus actualmain,16MiBdownload | live_full_transport | Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main |
+| R3-014 | Final async package versus actualmain,16MiBupload | live_full_transport | Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main |

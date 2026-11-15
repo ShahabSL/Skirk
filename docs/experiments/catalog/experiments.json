@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "cc4e231 (round3 catalog source; live binaries and later evidence recorded per entry)",
+  "research_tip": "42e6742 frozen runtime; round3 final matrix plus cddf409 hedge reports; later evidence revisions listed per entry",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -11,7 +11,7 @@
     "The 2026-05 archives include external-origin, shared-server and non-hash-verified notes; do not rank them against November local exact-body runs.",
     "Live Google test account credentials and runtime profiles are excluded. Only aggregate fields explicitly whitelisted in the generator are imported.",
     "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet.",
-    "Round3 adds retained standard-gRPC route failure, incomplete primary comparison,16KiB reverse upload, and full-mux hybrid offline proof. Final CPU-quiet default/main comparisons and live hybrid results are not yet measured at this snapshot."
+    "Final CPU-quiet matrix attempted16arms and completed15; one real async bulk upload timeout remains. Normal desktop background uncontrolled. Completed main comparisons show latency/file/quota tradeoffs, not universal victory. New dependency-only CLI is compiled but not live measured."
   ],
   "records": [
     {
@@ -2974,6 +2974,152 @@
       ],
       "revision_or_binary": "75bab64;5ba77dfe0866c93246b0da512babb6b6e0ca74c4bddb00e5246ceec7fed0f29d",
       "live_comparable": false
+    },
+    {
+      "id": "R3-008",
+      "candidate": "After-write stall recovery versus actual default, completed download with no recovery trigger",
+      "evidence_level": "live_full_transport",
+      "workload": "4-arm ABBA,16MiB exact file+12persistent64B pipelined echoes/250ms after1s lead; shared default scheduler",
+      "latency": "Full-echo request p95 control6.667→candidate8.162s; scheduled6.671→8.166s",
+      "throughput_mbps": "13.018→12.499",
+      "estimated_quota_units": "20310→23410 per arm including warmup/tail",
+      "correctness_and_errors": "All4SHA files/48echoes exact,0APIerrors; no commit probes/spares/duplicate reservations/denials in any completed candidate",
+      "cleanup": "16residual objects removed;8exact prefixes0 immediately+31s,configs gone",
+      "decision": "No-trigger observation cannot demonstrate recovery benefit; different retry policy in enabled mode, variation retained; remains opt-in",
+      "source_documents": [
+        "docs/experiments/state-aware-upload-hedge-live-2026-11-15.md",
+        "docs/experiments/state-aware-upload-hedge-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "state-aware-hedge-wt/.skirk-runs/stall-hedge-live-20261115/download/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-009",
+      "candidate": "After-write recovery reverse upload, interrupted ordinary small-object control",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Planned candidate/control/control/candidate; only candidate then first control attempted;16MiB+12persistent64B echoes",
+      "latency": "No paired p95; failed736B POST acquired reused connection0.023ms,wrote0.087ms,then no response byte before10.001s deadline",
+      "throughput_mbps": "Candidate12.463; control incomplete",
+      "estimated_quota_units": "Retained per-arm counters in source JSON",
+      "correctness_and_errors": "First candidate exact file/12echoes,0errors/no recovery trigger; control one upload timeout and no completed mixed report; remaining2arms not run",
+      "cleanup": "13residual objects across4exact prefixes0 immediately+31s;configs gone",
+      "decision": "Post-write response tail observed, not connection-local cause; failed736B object below128KiB recovery eligibility, so no claim this feature would repair it",
+      "source_documents": [
+        "docs/experiments/state-aware-upload-hedge-live-2026-11-15.md",
+        "docs/experiments/state-aware-upload-hedge-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "state-aware-hedge-wt/.skirk-runs/stall-hedge-live-20261115/upload/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-010",
+      "candidate": "Dependency-only x/net0.54 diagnostic against frozen0.61 runtime",
+      "evidence_level": "compiled_not_yet_live",
+      "workload": "Exact frozen42 source plus explicit x/net=>v0.54 replacement; only2existing clean-main checksum additions",
+      "latency": "No live latency measurement",
+      "throughput_mbps": null,
+      "estimated_quota_units": null,
+      "correctness_and_errors": "Offline GOPROXY=off -mod=readonly CLI build passed; no tests/live calls; clean tree; no other runtime/dependency changes",
+      "cleanup": "No live objects created",
+      "decision": "Prepared isolated hypothesis test: HTTP2 flow-control code changed0.54→0.61; not a production downgrade or security/performance claim",
+      "source_documents": [
+        "go.mod"
+      ],
+      "raw_archive_paths": [
+        "xnet-v054-diagnostic-wt/.skirk-runs/xnet-v054-diagnostic-provenance.json"
+      ],
+      "revision_or_binary": "c56451f59ec5b13dc0cd3c9418a4f0ff387a38e6;eb49ef7350ca91c3e1b8a7a7893f69a520d88c3e05875f757aaa29ecc86ddbdc",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-011",
+      "candidate": "Final async package versus actualdefault,16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "Matched4-arm ABBA;16MiB+128KiB prelude+12persistent64B echoes/250ms,1s lead; candidate slots+async+interaction epoch; primary/other experiments off",
+      "latency": "Full-echo request p9510.103→4.623s; scheduled10.105→4.628s",
+      "throughput_mbps": "11.175→15.748",
+      "estimated_quota_units": "23135→23370",
+      "correctness_and_errors": "4exact16MiB SHA files+48echoes+4preludes,0APIerrors; actual slot handoff/publication/receiver/senderACK proven in both candidates",
+      "cleanup": "46residual objects deleted incl0slots;8exact prefixes final0,configs gone;immediate+31s0",
+      "decision": "Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled",
+      "source_documents": [
+        "docs/experiments/final-async-default-main-2026-11-15.md",
+        "docs/experiments/final-async-default-main-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/final-async-vs-default-download16m-20261115/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;same binary actual default",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-012",
+      "candidate": "Final async package versus actualdefault,16MiBupload",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Matched4-arm ABBA;16MiB+128KiB prelude+12persistent64B echoes/250ms,1s lead; candidate slots+async+interaction epoch; primary/other experiments off",
+      "latency": "Full-echo request p95incomplete: only1candidate completeds; scheduledincomplete: only1candidate completeds",
+      "throughput_mbps": "incomplete: only1candidate completed",
+      "estimated_quota_units": "incomplete: only1candidate completed",
+      "correctness_and_errors": "3exact files/36echoes; last async candidate no completed mixed report,one immutable1048631B upload28.002s timeout,slot_wait0;client11855units/1error,exit13035/0;no quota backoff",
+      "cleanup": "9residual objects deleted incl1slots;8exact prefixes final0,configs gone;first31s sweep found1late mux object,deleted then second31s all0",
+      "decision": "Incomplete comparison retained; no candidate median/win. Failure in unchanged bulk operation does not establish causal slot regression",
+      "source_documents": [
+        "docs/experiments/final-async-default-main-2026-11-15.md",
+        "docs/experiments/final-async-default-main-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/final-async-vs-default-upload16m-20261115/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;same binary actual default",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-013",
+      "candidate": "Final async package versus actualmain,16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "Matched4-arm ABBA;16MiB+128KiB prelude+12persistent64B echoes/250ms,1s lead; candidate slots+async+interaction epoch; primary/other experiments off",
+      "latency": "Full-echo request p956.695→5.509s; scheduled6.701→5.512s",
+      "throughput_mbps": "14.415→13.203",
+      "estimated_quota_units": "18810→20495",
+      "correctness_and_errors": "4exact16MiB SHA files+48echoes+4preludes,0APIerrors; actual slot handoff/publication/receiver/senderACK proven in both candidates",
+      "cleanup": "35residual objects deleted incl0slots;8exact prefixes final0,configs gone;immediate+31s0",
+      "decision": "Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main",
+      "source_documents": [
+        "docs/experiments/final-async-default-main-2026-11-15.md",
+        "docs/experiments/final-async-default-main-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/final-async-vs-main-download16m-20261115/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-014",
+      "candidate": "Final async package versus actualmain,16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "Matched4-arm ABBA;16MiB+128KiB prelude+12persistent64B echoes/250ms,1s lead; candidate slots+async+interaction epoch; primary/other experiments off",
+      "latency": "Full-echo request p957.952→4.634s; scheduled7.955→4.635s",
+      "throughput_mbps": "12.653→12.448",
+      "estimated_quota_units": "18485→20120",
+      "correctness_and_errors": "4exact16MiB SHA files+48echoes+4preludes,0APIerrors; actual slot handoff/publication/receiver/senderACK proven in both candidates",
+      "cleanup": "27residual objects deleted incl0slots;8exact prefixes final0,configs gone;immediate+31s0",
+      "decision": "Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main",
+      "source_documents": [
+        "docs/experiments/final-async-default-main-2026-11-15.md",
+        "docs/experiments/final-async-default-main-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/final-async-vs-main-upload16m-20261115/"
+      ],
+      "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+      "live_comparable": true
     }
   ]
 }
