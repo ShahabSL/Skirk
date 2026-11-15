@@ -87,11 +87,13 @@ type fsHybridCarrierStats struct {
 	Calls, AttemptUpper, RequestUpper, ResponseBytes, HTTP2Responses                            int64
 	RESTReads, RESTWrites, ListenCalls, CleanupCalls, CanceledCalls, TransportErrors, APIErrors int64
 	Events, Documents, RejectedLocal, BudgetRejections                                          int64
+	WatchFailures, WatchCancellations                                                           int64
 }
 
 type fsHybridGoogleCarrier struct {
 	cfg                                     fsHybridGoogleCarrierConfig
 	parent                                  context.Context
+	deadline                                time.Time
 	ctx                                     context.Context
 	cancel                                  context.CancelFunc
 	client                                  *GoogleHTTPClient
@@ -102,12 +104,17 @@ type fsHybridGoogleCarrier struct {
 	requestSlots, cleanupSlots              chan struct{}
 	stats                                   fsHybridCarrierStats
 	closed, closing, watchStarted, finished bool
+	watchStopping                           bool
+	watchAttempts                           int
+	watchProofClean, watchUnjoined          bool
+	watchOwnerCanceled                      bool
+	watchDir                                string
 	watchDone                               chan struct{}
 	watchErr                                error
 	watchState                              map[string]any
 	bridge                                  *fsHybridWatchBridge
 	closeOnce                               sync.Once
-	stopOnce                                sync.Once
+	stopOnce                                *sync.Once
 	watchStop                               chan struct{}
 	closeErr                                error
 }
@@ -138,8 +145,9 @@ func newFSHybridGoogleCarrier(ctx context.Context, cfg fsHybridGoogleCarrierConf
 		}
 	}
 	// A separate instance owns its own HTTP/2 pool. It never reuses Drive's pool.
-	controlCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	return &fsHybridGoogleCarrier{cfg: cfg, parent: ctx, ctx: controlCtx, cancel: cancel, client: NewGoogleHTTPClient(cfg.Route), watchDone: make(chan struct{}), watchStop: make(chan struct{}), requestSlots: make(chan struct{}, 8), cleanupSlots: make(chan struct{}, 2)}, nil
+	deadline := time.Now().Add(cfg.WatchDuration)
+	controlCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline.Add(10*time.Second))
+	return &fsHybridGoogleCarrier{cfg: cfg, parent: ctx, deadline: deadline, ctx: controlCtx, cancel: cancel, client: NewGoogleHTTPClient(cfg.Route), requestSlots: make(chan struct{}, 8), cleanupSlots: make(chan struct{}, 2)}, nil
 }
 
 func (c *fsHybridGoogleCarrier) Snapshot() map[string]int64 {
@@ -182,7 +190,7 @@ func (c *fsHybridGoogleCarrier) call(ctx context.Context, operation, method, pat
 		bytesLimit = c.cfg.MaxEncodedBytesUpper
 		listenLimit = c.cfg.MaxWatchRequests
 	}
-	if c.finished || c.closed && !cleanup || c.closing && !cleanup || !cleanup && c.parent.Err() != nil {
+	if c.finished || c.closed && !cleanup || c.closing && !cleanup || !cleanup && (c.watchUnjoined || c.parent.Err() != nil || !time.Now().Before(c.deadline)) {
 		c.mu.Unlock()
 		return nil, errFSHybridClosed
 	}
@@ -210,6 +218,11 @@ func (c *fsHybridGoogleCarrier) call(ctx context.Context, operation, method, pat
 	defer c.requestWG.Done()
 	requestCtx, cancel := context.WithTimeout(withGoogleResponseLimit(ctx, int64(c.cfg.MaxResponseBytes)), 15*time.Second)
 	defer cancel()
+	if !cleanup {
+		limited, stop := context.WithDeadline(requestCtx, c.deadline)
+		defer stop()
+		requestCtx = limited
+	}
 	stop := context.AfterFunc(c.ctx, cancel)
 	defer stop()
 	selected := map[string]string{"Authorization": "Bearer " + c.cfg.OwnerToken, "Accept-Encoding": "identity"}
@@ -253,7 +266,15 @@ func fsHybridResponseError(result *HTTPResult) error {
 		status = result.Status
 	}
 	// Never retain an arbitrary server body/message in an error that may be logged.
-	return &GoogleAPIError{Op: "firestore_hybrid", Status: status, Reason: http.StatusText(status)}
+	reason := http.StatusText(status)
+	if result != nil {
+		candidate, _ := googleAPIErrorDetails(result.Body)
+		switch candidate {
+		case "FAILED_PRECONDITION", "ABORTED", "ALREADY_EXISTS", "NOT_FOUND", "PERMISSION_DENIED", "UNAUTHENTICATED", "RESOURCE_EXHAUSTED", "INVALID_ARGUMENT", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED", "OUT_OF_RANGE", "UNIMPLEMENTED", "DATA_LOSS", "CANCELLED", "UNKNOWN":
+			reason = candidate
+		}
+	}
+	return &GoogleAPIError{Op: "firestore_hybrid", Status: status, Reason: reason}
 }
 
 func fsHybridDecodeDocument(raw []byte, expected string) (fsPriorityDocument, error) {
@@ -271,7 +292,10 @@ func fsHybridDecodeDocument(raw []byte, expected string) (fsPriorityDocument, er
 		return fsPriorityDocument{}, errFSHybridIntegrity
 	}
 	field, ok := result.Fields["sealed"]
-	if !ok || field.Bytes == nil || len(*field.Bytes) > base64.StdEncoding.EncodedLen(fsHybridWireMax) {
+	if !ok || field.Bytes == nil {
+		return fsPriorityDocument{}, errFSHybridIntegrity
+	}
+	if len(*field.Bytes) > base64.StdEncoding.EncodedLen(fsHybridWireMax) {
 		return fsPriorityDocument{}, errFSHybridBounds
 	}
 	wire, err := base64.StdEncoding.Strict().DecodeString(*field.Bytes)
@@ -300,7 +324,7 @@ func (c *fsHybridGoogleCarrier) beginOperation(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.closing || c.finished {
+	if c.closed || c.closing || c.finished || c.watchUnjoined || !time.Now().Before(c.deadline) {
 		return errFSHybridClosed
 	}
 	c.operationWG.Add(1)

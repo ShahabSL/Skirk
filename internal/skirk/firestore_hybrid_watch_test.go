@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -157,7 +158,7 @@ func (c *fsHybridGoogleCarrier) watchPayload(method string, raw []byte) bool {
 				return false
 			}
 			c.mu.Lock()
-			closing := c.closing
+			closing := c.closing || c.watchStopping
 			c.mu.Unlock()
 			if packet.Add != nil {
 				if closing || packet.Remove != 0 || packet.Add.TargetID != 2 || len(packet.Add.Documents.Documents) != 1 || packet.Add.Documents.Documents[0] != c.cfg.PeerDocument {
@@ -301,7 +302,7 @@ func (b *fsHybridWatchBridge) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.carrier.mu.Lock()
-	cleanup := b.carrier.closing
+	cleanup := b.carrier.closing || b.carrier.watchStopping
 	b.carrier.mu.Unlock()
 	result, err := b.carrier.call(r.Context(), "listen", request.Method, request.Path, request.Headers, body, cleanup)
 	if err != nil || result == nil {
@@ -320,15 +321,40 @@ func (b *fsHybridWatchBridge) serve(w http.ResponseWriter, r *http.Request) {
 
 func (c *fsHybridGoogleCarrier) stopWatch() {
 	c.mu.Lock()
-	c.closing = true
+	active, once, stop, dir := c.watchStarted, c.stopOnce, c.watchStop, c.watchDir
+	if active {
+		c.watchStopping = true
+	}
 	c.mu.Unlock()
-	c.stopOnce.Do(func() { close(c.watchStop) })
-	_ = firestoreListenWrite(c.cfg.PrivateDir, "stop-hybrid-watch.json", map[string]bool{"stop": true})
+	if active && once != nil {
+		once.Do(func() { close(stop) })
+		_ = firestoreListenWrite(dir, "stop-hybrid-watch.json", map[string]bool{"stop": true})
+	}
 }
 
 func fsHybridBlobDigest(blob []byte) string {
 	hash := sha256.Sum256(blob)
 	return hex.EncodeToString(hash[:])
+}
+
+func fsHybridWatchRPCError(code string) error {
+	status, reason := 0, ""
+	switch code {
+	case "UNAUTHENTICATED", "RPC_16":
+		status, reason = 401, "UNAUTHENTICATED"
+	case "PERMISSION_DENIED", "RPC_7":
+		status, reason = 403, "PERMISSION_DENIED"
+	case "RESOURCE_EXHAUSTED", "RPC_8":
+		status, reason = 429, "RESOURCE_EXHAUSTED"
+	case "FAILED_PRECONDITION", "RPC_9":
+		status, reason = 400, "FAILED_PRECONDITION"
+	case "ABORTED", "RPC_10":
+		status, reason = 409, "ABORTED"
+	}
+	if status != 0 {
+		return &GoogleAPIError{Op: "firestore_hybrid_watch", Status: status, Reason: reason}
+	}
+	return nil
 }
 
 func (c *fsHybridGoogleCarrier) WatchSnapshot() map[string]any {
@@ -338,6 +364,9 @@ func (c *fsHybridGoogleCarrier) WatchSnapshot() map[string]any {
 	for k, v := range c.watchState {
 		copy[k] = v
 	}
+	copy["attempts"] = c.watchAttempts
+	copy["attempt_failures"] = c.stats.WatchFailures
+	copy["canceled_attempts"] = c.stats.WatchCancellations
 	return copy
 }
 
@@ -346,13 +375,51 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 		return errFSHybridBounds
 	}
 	c.mu.Lock()
-	if c.closed || c.closing || c.watchStarted || callback == nil {
+	if c.closed || c.closing || c.watchUnjoined || callback == nil || c.parent.Err() != nil || ctx.Err() != nil {
 		c.mu.Unlock()
 		return errFSHybridClosed
 	}
+	if c.watchStarted {
+		c.mu.Unlock()
+		return errFSHybridBusy
+	}
+	remainingTime := time.Until(c.deadline)
+	requestsLeft := c.cfg.MaxWatchRequests - int(c.stats.ListenCalls)
+	eventsLeft := c.cfg.MaxWatchEvents - int(c.stats.Events)
+	if c.watchAttempts >= 3 || remainingTime < time.Second || requestsLeft <= 8 || eventsLeft < 1 {
+		c.mu.Unlock()
+		return errFSHybridBounds
+	}
+	c.watchAttempts++
+	dir := filepath.Join(c.cfg.PrivateDir, fmt.Sprintf("watch-%02d", c.watchAttempts))
+	c.watchDir = dir
+	c.watchStopping = false
+	c.watchProofClean = false
+	c.watchState = nil
+	c.watchDone = make(chan struct{})
+	c.watchStop = make(chan struct{})
+	c.stopOnce = &sync.Once{}
+	ownerDone, stopRequested := c.watchDone, c.watchStop
+	ownerCanceled := false
 	c.watchStarted = true
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); c.watchErr = runErr; c.mu.Unlock(); close(c.watchDone) }()
+	defer func() {
+		c.mu.Lock()
+		c.watchErr = runErr
+		c.watchOwnerCanceled = ownerCanceled
+		if ownerCanceled && runErr == context.Canceled && c.watchProofClean {
+			c.stats.WatchCancellations++
+		} else if runErr != nil {
+			c.stats.WatchFailures++
+		}
+		c.watchStarted = false
+		c.bridge = nil
+		close(ownerDone)
+		c.mu.Unlock()
+	}()
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return errFSHybridBounds
+	}
 	blob, err := firestoreListenPrivate(c.cfg.PrivateDir, "webchannel_blob_es2018.js")
 	if err != nil {
 		return errFSHybridBounds
@@ -370,12 +437,12 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 	c.bridge = bridge
 	c.mu.Unlock()
 	defer bridge.close()
-	configPath := filepath.Join(c.cfg.PrivateDir, "hybrid-watch-config.json")
-	config := map[string]any{"hybrid_research": true, "bridge_url": bridge.server.URL, "bridge_auth": bridge.auth, "database": c.cfg.Database, "document": c.cfg.PeerDocument, "access_token": c.cfg.OwnerToken, "webchannel_blob": filepath.Join(c.cfg.PrivateDir, "webchannel_blob_es2018.js"), "duration_ms": c.cfg.WatchDuration.Milliseconds(), "request_limit": c.cfg.MaxWatchRequests, "event_limit": c.cfg.MaxWatchEvents}
-	if err = firestoreListenWrite(c.cfg.PrivateDir, "hybrid-watch-config.json", config); err != nil {
+	configPath := filepath.Join(dir, "hybrid-watch-config.json")
+	defer os.Remove(configPath)
+	config := map[string]any{"hybrid_research": true, "bridge_url": bridge.server.URL, "bridge_auth": bridge.auth, "database": c.cfg.Database, "document": c.cfg.PeerDocument, "access_token": c.cfg.OwnerToken, "webchannel_blob": filepath.Join(c.cfg.PrivateDir, "webchannel_blob_es2018.js"), "duration_ms": remainingTime.Milliseconds(), "request_limit": requestsLeft, "event_limit": eventsLeft}
+	if err = firestoreListenWrite(dir, "hybrid-watch-config.json", config); err != nil {
 		return errFSHybridBounds
 	}
-	defer os.Remove(configPath)
 	_, source, _, _ := runtime.Caller(0)
 	script := filepath.Clean(filepath.Join(filepath.Dir(source), "../../experiments/firestore-hybrid/watch.mjs"))
 	command := exec.Command("node", script, configPath)
@@ -389,7 +456,7 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 		command.Env = append(command.Env, env)
 	}
 	command.Env = append(command.Env, "SKIRK_FIRESTORE_HYBRID_WATCH=1", "NO_PROXY=127.0.0.1,localhost,::1")
-	output, err := os.OpenFile(filepath.Join(c.cfg.PrivateDir, "hybrid-watch.log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	output, err := os.OpenFile(filepath.Join(dir, "hybrid-watch.log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return errFSHybridBounds
 	}
@@ -408,52 +475,73 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	joined := false
+	exitClean := false
 	defer func() {
 		c.stopWatch()
 		if !joined {
 			select {
 			case err := <-done:
 				joined = true
-				if runErr == nil {
-					runErr = err
+				exitClean = err == nil
+				if err != nil {
+					runErr = errors.Join(runErr, err)
 				}
 			case <-time.After(6 * time.Second):
 				_ = command.Process.Signal(syscall.SIGTERM)
 				select {
-				case <-done:
+				case err := <-done:
 					joined = true
+					if err != nil {
+						runErr = errors.Join(runErr, err)
+					}
 				case <-time.After(time.Second):
 					_ = command.Process.Kill()
 					select {
-					case <-done:
+					case err := <-done:
 						joined = true
+						if err != nil {
+							runErr = errors.Join(runErr, err)
+						}
 					case <-time.After(2 * time.Second):
 					}
 				}
 			}
 		}
 		if !joined {
+			c.mu.Lock()
+			c.watchUnjoined = true
+			c.mu.Unlock()
 			runErr = errors.Join(runErr, errors.New("owned Node observer did not join"))
 		}
-		raw, readErr := firestoreListenPrivate(c.cfg.PrivateDir, "hybrid-watch-result.json")
+		raw, readErr := firestoreListenPrivate(dir, "hybrid-watch-result.json")
 		var state map[string]any
 		if readErr != nil || json.Unmarshal(raw, &state) != nil {
 			runErr = errors.Join(runErr, errors.New("owned observer result missing"))
 			return
 		}
+		clean := joined && exitClean && state["stopped"] == true && state["target_remove_acknowledged"] == true && state["channel_closed"] == true && state["error"] == "" && state["pending_requests"] == float64(0) && state["pending_events"] == float64(0) && state["pending_sdk_timers"] == float64(0)
 		c.mu.Lock()
 		c.watchState = state
+		c.watchProofClean = clean
 		c.mu.Unlock()
-		if state["stopped"] != true || state["target_remove_acknowledged"] != true || state["channel_closed"] != true || state["error"] != "" || state["pending_requests"] != float64(0) || state["pending_events"] != float64(0) || state["pending_sdk_timers"] != float64(0) {
+		if code, ok := state["error"].(string); ok {
+			if classified := fsHybridWatchRPCError(code); classified != nil {
+				runErr = errors.Join(runErr, classified)
+			}
+		}
+		if !clean {
 			runErr = errors.Join(runErr, errors.New("owned observer shutdown proof incomplete"))
 		}
 	}()
-	timer := time.NewTimer(c.cfg.WatchDuration + 5*time.Second)
+	timer := time.NewTimer(remainingTime + 5*time.Second)
 	defer timer.Stop()
 	for {
 		select {
 		case event := <-bridge.events:
 			if event.Kind == "error" {
+				if classified := fsHybridWatchRPCError(event.Code); classified != nil {
+					return classified
+				}
 				return errors.New("owned Firestore listener reported failure")
 			}
 			if event.Kind == "document" {
@@ -466,16 +554,24 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 			return err
 		case err = <-done:
 			joined = true
+			exitClean = err == nil
+			select {
+			case <-stopRequested:
+				return err
+			default:
+			}
 			return errors.Join(err, errors.New("owned observer exited before Close"))
 		case <-ctx.Done():
+			ownerCanceled = ctx.Err() == context.Canceled
 			return ctx.Err()
 		case <-c.parent.Done():
+			ownerCanceled = c.parent.Err() == context.Canceled
 			return c.parent.Err()
 		case <-c.ctx.Done():
 			return errFSHybridClosed
 		case <-timer.C:
 			return errFSHybridBounds
-		case <-c.watchStop:
+		case <-stopRequested:
 			return nil
 		}
 	}
@@ -485,12 +581,14 @@ func (c *fsHybridGoogleCarrier) Close() error {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
+		c.closing = true
 		started := c.watchStarted
+		done := c.watchDone
 		c.mu.Unlock()
 		c.stopWatch()
 		if started {
 			select {
-			case <-c.watchDone:
+			case <-done:
 			case <-time.After(11 * time.Second):
 				c.closeErr = errors.New("owned watch owner did not join")
 			}
@@ -512,7 +610,9 @@ func (c *fsHybridGoogleCarrier) Close() error {
 			c.closeErr = errors.Join(c.closeErr, errors.New("owned control requests did not join"))
 		}
 		c.mu.Lock()
-		c.closeErr = errors.Join(c.closeErr, c.watchErr)
+		if c.watchErr != context.Canceled || !c.watchProofClean || !c.watchOwnerCanceled {
+			c.closeErr = errors.Join(c.closeErr, c.watchErr)
+		}
 		c.mu.Unlock()
 	})
 	return c.closeErr
