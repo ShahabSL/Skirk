@@ -1,0 +1,70 @@
+{
+  "runtime_source": "577f67a",
+  "binary_sha256": "411e40dcc0e67f96a40a28afeef10aca429f2c9c63e6f9148757d3eedc785c2d",
+  "scope": "Six serial owned-document AEAD states through pinned www.google.com; API callback latency, not TCP RTT. No concurrent-update or messenger reliability claim.",
+  "overall_passed": false,
+  "samples": [
+    {
+      "sequence": 0,
+      "WriteAckMS": 663.411,
+      "ListenMS": 969.60791015625,
+      "Verified": true
+    },
+    {
+      "sequence": 1,
+      "WriteAckMS": 317.195,
+      "ListenMS": 326.31103515625,
+      "Verified": true
+    },
+    {
+      "sequence": 2,
+      "WriteAckMS": 353.831,
+      "ListenMS": 371.636962890625,
+      "Verified": true
+    },
+    {
+      "sequence": 3,
+      "WriteAckMS": 159.281,
+      "ListenMS": 233.384521484375,
+      "Verified": true
+    },
+    {
+      "sequence": 4,
+      "WriteAckMS": 233.179,
+      "ListenMS": 230.7861328125,
+      "Verified": true
+    },
+    {
+      "sequence": 5,
+      "WriteAckMS": 204.258,
+      "ListenMS": 214.227783203125,
+      "Verified": true
+    }
+  ],
+  "observer": {
+    "request_count": 15,
+    "document_events": 6,
+    "target_events": 8,
+    "target_remove_acknowledged": false,
+    "error": "EVENT_DELIVERY",
+    "stopped": true
+  },
+  "journaled_document_events": 6,
+  "journaled_target_events": 7,
+  "dispatch": {
+    "active_call_limit": 36,
+    "encoded_request_bytes_upper": 140592,
+    "http_attempts_upper": 168,
+    "response_limit_bytes": 1048576,
+    "total_call_limit_including_cleanup": 40,
+    "visible_calls": 21
+  },
+  "document_cleanup": {
+    "delete_ok": true,
+    "immediate_404": true,
+    "delayed_404": true
+  },
+  "external_cleanup": "Root separately verified whole database 404 twice, restored Firestore API to DISABLED, and removed copied owner token and observer config.",
+  "teardown": "Failed: EVENT_DELIVERY, no target-remove acknowledgement; Go forced observer termination after its five-second wait despite reported stopped=true. Original raw artifacts unchanged.",
+  "uncertainty": "Old run did not record local HTTP response statuses. Reproduced timer/event-abort defects do not exclude a separate local admission rejection in that run."
+}
