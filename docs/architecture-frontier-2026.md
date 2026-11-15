@@ -221,7 +221,9 @@ The result is private at `.skirk-runs/ack-slot-live-20261114.json`, and the
 probe and version-skip tests are under `tools/ack_slot_probe/`. HMACs on
 synthetic frames establish this probe's integrity; production would use the
 existing AEAD, device ownership and replay defenses. It is a queue
-feasibility result, not a full Skirk, file-mix, or 200,000-user result.
+feasibility result, not a full Skirk, file-mix, or 200,000-user result. The
+proposed [opt-in lane design](fixed-metadata-lane-design-2026.md) specifies
+bootstrap, ACK, fallback, and cleanup gates before any mux integration.
 
 At 4 Hz polling in both directions, the two known-ID GETs alone would cost
 2,400 units per minute per active pair. Four one-way metadata PATCHes per
