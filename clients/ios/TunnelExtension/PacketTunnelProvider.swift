@@ -31,6 +31,18 @@ private final class StopCompletion: @unchecked Sendable {
     }
 }
 
+private final class ProbeCompletion: @unchecked Sendable {
+    private let callback: (@Sendable (Data?) -> Void)?
+
+    init(_ callback: (@Sendable (Data?) -> Void)?) {
+        self.callback = callback
+    }
+
+    func finish(_ response: String) {
+        callback?(Data(response.utf8))
+    }
+}
+
 private enum TunnelStartError: LocalizedError {
     case missingProfile
     case missingClientID
@@ -176,6 +188,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         lifecycleQueue.async { [weak self] in
             self?.stopRuntime()
             completion.finish()
+        }
+    }
+
+    override func handleAppMessage(_ messageData: Data, completionHandler: (@Sendable (Data?) -> Void)?) {
+        let completion = ProbeCompletion(completionHandler)
+        lifecycleQueue.async { [weak self] in
+            guard let self, messageData == Data("probe-exit-v1".utf8), self.active, self.engineStarted else {
+                completion.finish("unavailable")
+                return
+            }
+            self.engineStartQueue.async {
+                let response: String
+                do {
+                    response = "verified:\(try GoTunnelEngine.probeExit())"
+                } catch {
+                    // A missing proof does not identify the cause. In particular,
+                    // an older exit and an expired exit grant look the same here.
+                    response = "unverified"
+                }
+                completion.finish(response)
+            }
         }
     }
 

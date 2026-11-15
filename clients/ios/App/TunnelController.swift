@@ -1,6 +1,23 @@
 import Foundation
 import NetworkExtension
 
+private final class ExitProbeReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Data?, Never>?
+
+    init(_ continuation: CheckedContinuation<Data?, Never>) {
+        self.continuation = continuation
+    }
+
+    func finish(_ data: Data?) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: data)
+    }
+}
+
 @MainActor
 final class TunnelController: ObservableObject {
     // NetworkExtension hands these managers through a completion handler.
@@ -14,6 +31,8 @@ final class TunnelController: ObservableObject {
     @Published private(set) var isConnecting = false
     @Published private(set) var routeMode: GoogleRouteMode = .front
     @Published private(set) var googleAuthorizationNeedsRenewal = false
+    @Published private(set) var exitProbeMessage: String?
+    @Published private(set) var isTestingExit = false
     @Published var message: String?
 
     private let providerBundleID = "app.skirk.ios.PacketTunnel"
@@ -21,6 +40,7 @@ final class TunnelController: ObservableObject {
     private var cancelRequested = false
     private var intentionalDisconnect = false
     private var authorizationCheckGeneration: UInt64 = 0
+    private var exitProbeGeneration: UInt64 = 0
     private var manager: NETunnelProviderManager?
 
     init() {
@@ -68,6 +88,9 @@ final class TunnelController: ObservableObject {
             hasProfile = true
             googleAuthorizationNeedsRenewal = false
             authorizationCheckGeneration &+= 1
+            exitProbeGeneration &+= 1
+            exitProbeMessage = nil
+            isTestingExit = false
             message = nil
         } catch {
             message = error.localizedDescription
@@ -85,6 +108,9 @@ final class TunnelController: ObservableObject {
             routeMode = .front
             googleAuthorizationNeedsRenewal = false
             authorizationCheckGeneration &+= 1
+            exitProbeGeneration &+= 1
+            exitProbeMessage = nil
+            isTestingExit = false
             message = nil
         } catch {
             message = error.localizedDescription
@@ -106,6 +132,9 @@ final class TunnelController: ObservableObject {
         cancelRequested = false
         intentionalDisconnect = false
         authorizationCheckGeneration &+= 1
+        exitProbeGeneration &+= 1
+        exitProbeMessage = nil
+        isTestingExit = false
         message = nil
         defer { isConnecting = false }
         do {
@@ -136,6 +165,9 @@ final class TunnelController: ObservableObject {
         if isConnecting { cancelRequested = true }
         intentionalDisconnect = true
         authorizationCheckGeneration &+= 1
+        exitProbeGeneration &+= 1
+        exitProbeMessage = nil
+        isTestingExit = false
         manager?.connection.stopVPNTunnel()
         refreshStatus()
     }
@@ -144,10 +176,20 @@ final class TunnelController: ObservableObject {
         let previous = status
         status = manager?.connection.status ?? .invalid
         if status == .connected {
+            if previous != .connected {
+                exitProbeGeneration &+= 1
+                exitProbeMessage = nil
+                isTestingExit = false
+            }
             intentionalDisconnect = false
             googleAuthorizationNeedsRenewal = false
             message = nil
             return
+        }
+        if previous == .connected {
+            exitProbeGeneration &+= 1
+            exitProbeMessage = nil
+            isTestingExit = false
         }
         // A cold launch can expose an old provider error after the profile was replaced.
         // Only attribute a disconnect to this session after observing a connection attempt.
@@ -166,6 +208,40 @@ final class TunnelController: ObservableObject {
                 self.googleAuthorizationNeedsRenewal = true
                 self.message = nil
             }
+        }
+    }
+
+    func testExit() async {
+        guard status == .connected, !isTestingExit,
+              let session = manager?.connection as? NETunnelProviderSession else { return }
+        let generation = exitProbeGeneration
+        isTestingExit = true
+        exitProbeMessage = nil
+        defer {
+            if exitProbeGeneration == generation { isTestingExit = false }
+        }
+        let data: Data? = await withCheckedContinuation { continuation in
+            let reply = ExitProbeReply(continuation)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 50) {
+                reply.finish(nil)
+            }
+            do {
+                try session.sendProviderMessage(Data("probe-exit-v1".utf8)) { data in
+                    reply.finish(data)
+                }
+            } catch {
+                reply.finish(nil)
+            }
+        }
+        guard status == .connected, exitProbeGeneration == generation else { return }
+        let response = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if response.hasPrefix("verified:"), let milliseconds = Int64(response.dropFirst("verified:".count)),
+           milliseconds >= 0 {
+            exitProbeMessage = "Exit responded through Google Drive in \(milliseconds) ms. This is one sample; website access is not checked."
+        } else if response == "unverified" {
+            exitProbeMessage = "Exit could not be verified. It may be offline, older, or need Google authorization renewed. Ask the exit owner to check its status."
+        } else {
+            exitProbeMessage = "The exit test could not run. Check that the local client is still connected."
         }
     }
 

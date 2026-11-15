@@ -83,7 +83,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +105,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -197,6 +202,16 @@ fun ConfigScreen() {
     var replacementError by remember { mutableStateOf("") }
     var advancedSettingsOpen by remember { mutableStateOf(false) }
     var vpnAppsDialogOpen by remember { mutableStateOf(false) }
+    var exitProbeStatus by remember { mutableStateOf("") }
+    var exitProbeRunning by remember { mutableStateOf(false) }
+    var exitProbeGeneration by remember { mutableIntStateOf(0) }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(connectionState.running, connectionState.profileId) {
+        exitProbeGeneration += 1
+        exitProbeStatus = ""
+        exitProbeRunning = false
+    }
 
     fun refreshConnectionState() {
         val raw = connectionStore.read()
@@ -356,6 +371,7 @@ fun ConfigScreen() {
     }
 
     val selected = profiles.firstOrNull { it.id == selectedId } ?: profiles.firstOrNull()
+    val activeProbeProfile = profiles.firstOrNull { it.id == connectionState.profileId }
     LaunchedEffect(selected?.id) {
         selectedMode = selected?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
         proxyShareLan = selected?.shareLan ?: false
@@ -468,6 +484,32 @@ fun ConfigScreen() {
             },
             onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
             onDisconnect = { disconnectActive() },
+            exitProbeStatus = exitProbeStatus,
+            exitProbeRunning = exitProbeRunning,
+            canTestExit = activeProbeProfile != null,
+            onTestExit = {
+                val profile = activeProbeProfile
+                if (profile != null && !exitProbeRunning) {
+                    val generation = exitProbeGeneration
+                    exitProbeRunning = true
+                    exitProbeStatus = ""
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { probeExit(context.applicationContext, profile) }
+                        }
+                        if (exitProbeGeneration == generation && connectionStore.read().running) {
+                            exitProbeStatus = result.fold(
+                                onSuccess = { check -> if (check.verified)
+                                    "Exit responded through Google Drive in ${check.roundTripMs} ms. This is one sample; website access is not checked."
+                                else
+                                    "Exit could not be verified. It may be offline, older, or need Google authorization renewed. Ask the exit owner to check its status." },
+                                onFailure = { "The exit test could not run. Check that the local client is still connected." },
+                            )
+                        }
+                        if (exitProbeGeneration == generation) exitProbeRunning = false
+                    }
+                }
+            },
         )
     }
 
@@ -714,6 +756,10 @@ private fun ConnectionPanel(
     onOpenOAuthSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    exitProbeStatus: String,
+    exitProbeRunning: Boolean,
+    canTestExit: Boolean,
+    onTestExit: () -> Unit,
 ) {
     val uiState = connectionUiState(phase, selected)
     val googleGrantExpired = isGoogleGrantExpired(message) ||
@@ -765,6 +811,21 @@ private fun ConnectionPanel(
                 contentDescription = null,
             )
             Text(if (running) "Disconnect" else "Connect")
+        }
+        if (phase == ConnectionPhase.CONNECTED) {
+            OutlinedButton(
+                onClick = onTestExit,
+                enabled = !exitProbeRunning && canTestExit,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null)
+                Text(if (exitProbeRunning) " Testing exit…" else " Test exit")
+            }
+            Text(
+                exitProbeStatus.ifEmpty { "Local connection is ready. Test the exit on demand to verify a round trip." },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (googleGrantExpired) {
             OAuthRecoveryCard(

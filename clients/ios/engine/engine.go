@@ -18,11 +18,13 @@ import (
 const startupTimeout = 30 * time.Second
 
 type session struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
-	err    error
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{}
+	mu           sync.Mutex
+	err          error
+	secret       string
+	socksAddress string
 }
 
 var bridge struct {
@@ -191,6 +193,8 @@ func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	s.secret = cfg.Secret
+	s.socksAddress = cfg.Tunnel.Listen
 	for _, port := range []int{socksPort, httpPort} {
 		if port == 0 {
 			continue
@@ -241,6 +245,22 @@ func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int
 		}
 	}
 	return nil
+}
+
+// ProbeExit verifies one on-demand authenticated round trip to the running
+// exit. It returns the sample duration in milliseconds, not a persistent state.
+func ProbeExit() (int64, error) {
+	bridge.Lock()
+	s := bridge.active
+	bridge.Unlock()
+	if s == nil {
+		return 0, errors.New("Skirk client is not running")
+	}
+	duration, err := skirk.ProbeExit(s.ctx, s.socksAddress, s.secret)
+	if err != nil {
+		return 0, err
+	}
+	return duration.Milliseconds(), nil
 }
 
 func watchListeners(s *session, errCh <-chan error, count int) {

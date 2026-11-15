@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type ConnectionPhase = "disconnected" | "connecting" | "connected" | "disconnecting" | "error";
 export type ConnectionMode = "proxy" | "system" | "vpn";
 export type UserRouteMode = "google_front_pinned" | "direct";
+export type ExitProbeResult = { status: "verified" | "unverified"; roundTripMs: number; reason: string };
 export type PerformancePreset = "lower_usage" | "recommended" | "responsive" | "bulk_transfer" | "custom";
 
 export type ClientPerformanceSettings = {
@@ -210,6 +211,7 @@ const tauriApi = {
     invoke<DesktopSnapshot>("update_profile_route", { profileId, routeMode }),
   connect: () => invoke<DesktopSnapshot>("connect"),
   disconnect: () => invoke<DesktopSnapshot>("disconnect"),
+  probeExit: () => invoke<ExitProbeResult>("probe_exit"),
 };
 
 const browserPreviewApi = {
@@ -279,6 +281,10 @@ const browserPreviewApi = {
     mockConnected = false;
     return mockSnapshot();
   },
+  probeExit: async (): Promise<ExitProbeResult> =>
+    new URLSearchParams(window.location.search).get("exit") === "unverified"
+      ? { status: "unverified", roundTripMs: 0, reason: "timeout" }
+      : { status: "verified", roundTripMs: 825, reason: "" },
 };
 
 export const desktopApi = useBrowserPreview ? browserPreviewApi : tauriApi;

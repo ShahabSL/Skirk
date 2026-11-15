@@ -4,11 +4,13 @@ import Foundation
 private enum GoTunnelEngineError: LocalizedError {
     case startFailed
     case stopFailed
+    case probeFailed
 
     var errorDescription: String? {
         switch self {
         case .startFailed: return "The Skirk client engine could not start."
         case .stopFailed: return "The Skirk client engine could not stop cleanly."
+        case .probeFailed: return "The Skirk exit test could not finish."
         }
     }
 }
@@ -42,5 +44,14 @@ enum GoTunnelEngine {
 
     static var lastError: String {
         EngineLastError()
+    }
+
+    static func probeExit() throws -> Int64 {
+        var error: NSError?
+        var milliseconds: Int64 = 0
+        guard EngineProbeExit(&milliseconds, &error) else {
+            throw error ?? GoTunnelEngineError.probeFailed
+        }
+        return milliseconds
     }
 }

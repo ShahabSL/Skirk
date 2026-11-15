@@ -346,6 +346,16 @@ struct DesktopRuntime {
     connect_in_progress: AtomicBool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExitProbeResult {
+    status: String,
+    #[serde(default, alias = "round_trip_ms")]
+    round_trip_ms: u64,
+    #[serde(default)]
+    reason: String,
+}
+
 struct ConnectAttempt<'a>(&'a AtomicBool);
 
 impl Drop for ConnectAttempt<'_> {
@@ -373,6 +383,23 @@ impl DesktopRuntime {
             connect_epoch: AtomicU64::new(0),
             connect_in_progress: AtomicBool::new(false),
         }
+    }
+
+    fn exit_probe_command(&self) -> Result<(PathBuf, String, String), String> {
+        let (profile_id, socks_address) = {
+            let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
+            refresh_state(&mut state, &self.paths);
+            if !matches!(state.phase, ConnectionPhase::Connected) {
+                return Err("Connect before testing the exit".into());
+            }
+            let client = state.client.as_ref().ok_or("Skirk client is not running")?;
+            (client.profile_id.clone(), loopback_probe_address(&client.socks_address))
+        };
+        let profile = load_profiles(&self.paths)?
+            .into_iter()
+            .find(|item| item.id == profile_id)
+            .ok_or("Active profile is unavailable")?;
+        Ok((self.resolve_sidecar()?, profile.config_path, socks_address))
     }
 
     fn snapshot(&self) -> Result<DesktopSnapshot, String> {
@@ -2040,6 +2067,37 @@ async fn disconnect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapsho
     runtime.snapshot()
 }
 
+fn run_exit_probe_sidecar(skirk: PathBuf, config: String, socks: String) -> Result<ExitProbeResult, String> {
+    let mut command = Command::new(skirk);
+    command
+        .arg("probe-exit")
+        .arg("--config")
+        .arg(config)
+        .arg("--socks")
+        .arg(socks);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .output()
+        .map_err(|_| "Could not start the exit test".to_string())?;
+    let result: ExitProbeResult = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "The exit test did not return a valid result".to_string())?;
+    if !matches!(result.status.as_str(), "verified" | "unverified")
+        || (!output.status.success() && result.status != "unverified")
+    {
+        return Err("The exit test did not finish correctly".into());
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn probe_exit(runtime: State<'_, DesktopRuntime>) -> Result<ExitProbeResult, String> {
+    let (skirk, config, socks) = runtime.exit_probe_command()?;
+    tauri::async_runtime::spawn_blocking(move || run_exit_probe_sidecar(skirk, config, socks))
+        .await
+        .map_err(|_| "The exit test stopped unexpectedly".to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -2059,7 +2117,8 @@ pub fn run() {
             update_profile_performance,
             update_profile_route,
             connect,
-            disconnect
+            disconnect,
+            probe_exit
         ])
         .build(tauri::generate_context!())
         .expect("error while building Skirk desktop")

@@ -32,6 +32,7 @@ import {
   type ClientProfile,
   type ConnectionMode,
   type DesktopSnapshot,
+  type ExitProbeResult,
   type PerformancePreset,
   type UserRouteMode,
 } from "./lib/api";
@@ -61,6 +62,10 @@ function App() {
   });
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const [exitProbe, setExitProbe] = useState<ExitProbeResult | null>(null);
+  const [exitProbeError, setExitProbeError] = useState("");
+  const [exitProbeRunning, setExitProbeRunning] = useState(false);
+  const exitProbeGeneration = useRef(0);
   const [copyStatus, setCopyStatus] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -198,6 +203,13 @@ function App() {
   const performanceDisabled = runtimeBusy || connected || !selectedProfile;
 
   useEffect(() => {
+    exitProbeGeneration.current += 1;
+    setExitProbe(null);
+    setExitProbeError("");
+    setExitProbeRunning(false);
+  }, [snapshot?.connection.activeProfileId, connected]);
+
+  useEffect(() => {
     if (!initialLoading && (googleGrantExpired || !snapshot?.profiles.length)) {
       setImportOpen(true);
     }
@@ -307,6 +319,24 @@ function App() {
       setCopyStatus("Renew command copied.");
     } catch (nextError) {
       setError(normalizeError(nextError));
+    }
+  }
+
+  async function testExit() {
+    if (!connected || exitProbeRunning) return;
+    const generation = exitProbeGeneration.current;
+    setExitProbeRunning(true);
+    setExitProbe(null);
+    setExitProbeError("");
+    try {
+      const result = await desktopApi.probeExit();
+      if (exitProbeGeneration.current === generation) setExitProbe(result);
+    } catch {
+      if (exitProbeGeneration.current === generation) {
+        setExitProbeError("The exit test could not run. Check that the local client is still connected.");
+      }
+    } finally {
+      if (exitProbeGeneration.current === generation) setExitProbeRunning(false);
     }
   }
 
@@ -515,6 +545,14 @@ function App() {
             </button>
             <button
               type="button"
+              disabled={!connected || exitProbeRunning}
+              onClick={() => void testExit()}
+            >
+              {exitProbeRunning ? <Loader2 className="spin" /> : <RefreshCw />}
+              {exitProbeRunning ? "Testing exit…" : "Test exit"}
+            </button>
+            <button
+              type="button"
               disabled={copyLocalHttpDisabled}
               onClick={() => void copyEndpoint("Local HTTP", httpAddress)}
             >
@@ -538,6 +576,16 @@ function App() {
               {copyStatus.startsWith("LAN HTTP") ? "Copied LAN HTTP" : "Copy LAN HTTP"}
             </button>
           </div>
+
+          {connected ? (
+            <div className="warning-note" style={{ gridColumn: "1 / -1" }} role="status">
+              {exitProbe?.status === "verified"
+                ? `Exit responded through Google Drive in ${exitProbe.roundTripMs} ms. This is one sample; website access is not checked.`
+                : exitProbe?.status === "unverified"
+                  ? "Exit could not be verified. It may be offline, running an older Skirk, or need Google authorization renewed. Ask the exit owner to check its status."
+                  : exitProbeError || "Local connection is ready. Use Test exit to verify a round trip to the exit on demand."}
+            </div>
+          ) : null}
 
           {snapshot?.platform === "macos" && selectedMode === "proxy" && runtimeProfile ? (
             <div className="warning-note" style={{ gridColumn: "1 / -1" }} role="note">

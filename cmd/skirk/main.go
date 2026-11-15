@@ -105,6 +105,8 @@ func run(args []string) error {
 		return benchLive(ctx, args[2:])
 	case "bench-drive":
 		return benchDrive(ctx, args[2:])
+	case "probe-exit":
+		return probeExit(ctx, args[2:])
 	case "serve-client":
 		return serveClient(ctx, args[2:])
 	case "client":
@@ -150,10 +152,46 @@ func usage() {
   --config skirk.json --listen 127.0.0.1:18080  (compatibility alias for serve-client)
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
+  probe-exit --config skirk-kit/client.skirk --socks 127.0.0.1:18080
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
   serve-client --config skirk.json [--listen 127.0.0.1:18080] [--client-id my-device]
   client-ui --config skirk.json [--socks 127.0.0.1:18080] [--ui 127.0.0.1:18280]`)
+}
+
+type exitProbeOutput struct {
+	Status      string `json:"status"`
+	RoundTripMS int64  `json:"round_trip_ms,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+func probeExit(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("probe-exit", flag.ContinueOnError)
+	configPath := fs.String("config", "", "client config path or inline config text")
+	socksAddress := fs.String("socks", "", "running local SOCKS5 listener")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*configPath) == "" || strings.TrimSpace(*socksAddress) == "" {
+		return errors.New("probe-exit needs --config and --socks")
+	}
+	cfg, err := skirk.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	duration, err := skirk.ProbeExit(ctx, *socksAddress, cfg.Secret)
+	if err != nil {
+		reason := "unverified"
+		var networkError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+			reason = "timeout"
+		}
+		if printErr := printJSON(exitProbeOutput{Status: "unverified", Reason: reason}); printErr != nil {
+			return printErr
+		}
+		return skirk.ErrExitNotVerified
+	}
+	return printJSON(exitProbeOutput{Status: "verified", RoundTripMS: duration.Milliseconds()})
 }
 
 func configCommand(args []string) error {

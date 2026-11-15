@@ -11,7 +11,11 @@ addresses and sends the original hostname to the exit through SOCKS. Android's
 IPv4-only mapped DNS configuration is separate.
 The app reports **VPN active** only when iOS reports the local packet tunnel
 connected. It does not treat that state as proof that the remote exit is
-reachable.
+reachable. While connected, **Test exit** sends one authenticated challenge
+through the existing Drive mailbox and reports one round-trip sample. It does
+not run in the background or test arbitrary websites. An older or unreachable
+exit cannot return the proof; the app then reports that reachability is
+unverified rather than diagnosing an expired OAuth grant.
 
 ## Build
 

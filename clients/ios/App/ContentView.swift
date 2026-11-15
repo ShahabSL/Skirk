@@ -41,7 +41,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(tunnel.statusText).font(.headline)
                             Text(tunnel.status == .connected
-                                 ? "Exit reachability is not verified here"
+                                 ? tunnel.exitProbeMessage ?? "Exit reachability has not been tested"
                                  : "Google Drive transport")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -57,6 +57,12 @@ struct ContentView: View {
                         Button("Cancel connection", role: .cancel) { tunnel.disconnect() }
                     } else if tunnel.status == .connected || tunnel.status == .connecting || tunnel.status == .reasserting {
                         Button("Disconnect", role: .destructive) { tunnel.disconnect() }
+                        if tunnel.status == .connected {
+                            Button(tunnel.isTestingExit ? "Testing exit…" : "Test exit") {
+                                Task { await tunnel.testExit() }
+                            }
+                            .disabled(tunnel.isTestingExit)
+                        }
                     } else {
                         Button("Connect") {
                             Task { await tunnel.connect() }

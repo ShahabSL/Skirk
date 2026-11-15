@@ -705,7 +705,9 @@ func (m *driveMux) openClaimedExitStream(ctx context.Context, frame muxFrame) {
 	defer releaseDialSlot()
 	started := time.Now()
 	var remote net.Conn
-	if m.dialExit != nil {
+	if target == exitProbeTarget {
+		remote, err = newExitProbeConnection(m.t.Secret)
+	} else if m.dialExit != nil {
 		remote, err = m.dialExit(ctx, target)
 	} else {
 		remote, err = m.t.dialExitTarget(ctx, target)

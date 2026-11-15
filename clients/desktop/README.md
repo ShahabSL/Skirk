@@ -21,6 +21,9 @@ What it does:
 - supports proxy mode on Windows, Linux, and macOS, plus Windows system proxy,
   Windows VPN, and Linux VPN modes;
 - shows proxy addresses, process status, and logs;
+- offers an on-demand **Test exit** challenge through the running proxy and
+  Drive mailbox; the result is one authenticated round-trip sample, not a
+  continuous health signal or a test of arbitrary websites;
 - lets each profile choose **Google front** (`www.google.com` TLS SNI) or
   **Direct Google** for reaching the Drive API;
 - can bind local proxy listeners to `0.0.0.0` for LAN proxy sharing;
