@@ -89,6 +89,7 @@ type Tunnel struct {
 	InteractionEpoch     bool
 	Observe              bool
 	MetadataOnlyPriority bool
+	MetadataSlotV1       bool
 	role                 string
 	activeStreams        atomic.Int64
 	limiterMu            sync.Mutex
@@ -137,6 +138,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		InteractionEpoch:     cfg.Tunnel.InteractionEpoch,
 		Observe:              cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
 		MetadataOnlyPriority: cfg.Drive.MetadataOnlyPriority,
+		MetadataSlotV1:       cfg.Drive.MetadataSlotV1,
 		PollInterval:         cfg.PollInterval(),
 		CleanupProcessed:     cfg.Tunnel.CleanupProcessed,
 		Logger:               log.Default(),
