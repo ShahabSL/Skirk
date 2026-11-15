@@ -561,8 +561,6 @@ function App() {
               >
                 {googleGrantExpired ? (
                   <Upload />
-                ) : busyAction === "connect" || connecting ? (
-                  <Loader2 className="spin" />
                 ) : vpnNeedsAdmin ? (
                   <ShieldCheck />
                 ) : (

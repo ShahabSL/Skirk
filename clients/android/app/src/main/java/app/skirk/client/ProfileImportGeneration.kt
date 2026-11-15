@@ -3,7 +3,7 @@ package app.skirk.client
 // Accessed only by the UI owner. Background readers return data; they never
 // decide whether the selected import target still owns the result.
 class ProfileImportGeneration {
-    data class Request internal constructor(val generation: Long, val target: String)
+    class Request internal constructor(val generation: Long, val target: String)
     private var generation = 0L
     private var picker: Request? = null
     fun begin(target: String): Request = Request(++generation, target)

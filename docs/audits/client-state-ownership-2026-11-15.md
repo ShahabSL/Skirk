@@ -28,7 +28,7 @@ mutation acknowledgement. Action-returned snapshots are not rendered. A stale
 connect result cannot clear the busy flag or error of a newer cancel operation.
 Reset invalidates pending work when the component unmounts.
 
-## Focused validation (pending quiet-window execution)
+## Focused validation cases
 
 `clients/android/tests/ConnectionStateTest.kt` compiles with the production pure
 Kotlin model and checks A auth failure → select B → return A, mode/owner retention,
@@ -44,7 +44,7 @@ The desktop Node regression suite (`npm run test:snapshot`, Node 22.6+ with type
 stripping) controls late promises and asserts a delayed pre-action profile/route
 poll cannot overwrite the post-action snapshot. It also covers slow-poll
 coalescing, connect/cancel ordering, mutation serialization and unmount/reset.
-No platform build or test has been claimed before it is actually run.
+Executed results are recorded at the end of this report.
 
 Native follow-up: run A until terminal grant rejection, select a valid B, assert
 Connect remains available and no B-renewal prompt appears, then select A and
@@ -110,7 +110,35 @@ the UI caller. Android provider cancellation/descriptor close now dispatch to a
 separate noncancelled executor with at most two active and two queued cleanups;
 there is no caller-runs fallback. Saturation leaves final ownership with the IO
 reader's `finally` block. A host regression holds both cleanup workers, fills the
-two queue slots, rejects another100 submissions and proves no cleanup runs inline
+two queue slots, rejects another 100 submissions and proves no cleanup runs inline
 on the caller. External document pickers also have launch-time ownership and one
 outstanding OS request; a late wrong-launcher result cannot consume a newer
 picker or be assigned to another replacement profile.
+
+## Executed validation
+
+The five desktop promise-order tests passed on Node 26.5.0, including controlled
+late pre-action responses and Connect/Cancel ownership. TypeScript plus the Vite
+production build passed. The three host-JVM regressions passed using the cached
+Kotlin 2.0.21 compiler and Android Studio JDK: failure ownership, late import/picker
+generations, and bounded off-caller cancellation cleanup. The final request-token
+class avoids exposing a generated data-class copy constructor; its generation
+regression was repeated successfully after that change.
+
+Android debug APK assembly passed (31 seconds initially, then 5 seconds incremental)
+with the current Kotlin sources and reused already-built native libraries; no Go
+transport binary or default changed. On the dedicated Pixel 7 API 36 emulator,
+synthetic app-private state rendered A's terminal auth failure, switched the
+selected profile to unrelated B, then returned to A. A showed "Import renewed
+profile" twice; B showed "Connect" and an explicit notice that A's connection
+failed, with no B-renewal action. Three UIAutomator dumps and screenshots are in
+`.skirk-runs/ui-owner-audit-20261115/` in the isolated UI worktree. Original app
+preferences were backed up privately and restored; the temporary device dump was
+removed and the emulator shut down. The fixture contains no OAuth grant, and no
+Connect or Google request was made. It proves owner-scoped UI presentation, not
+that synthetic B had working Internet authorization.
+
+Slow-provider IO lifecycle/device cancellation still has the explicit provider
+reproplan above; the actual reader compiled, while its request/target/caller-thread
+state regressions ran on the host. No live packet-tunnel or OAuth expiry test is
+invented from these offline UI checks.
