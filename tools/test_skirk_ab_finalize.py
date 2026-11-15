@@ -176,6 +176,35 @@ class FinalizeTests(unittest.TestCase):
         kill.assert_not_called()
         self.assertFalse(result["all_stopped"])
 
+    def test_unique_concurrent_spawn_intent_also_blocks_continuation(self):
+        parent = self.register("bench")
+        journal = self.directory / "curl.jsonl"
+        journal.with_name(journal.name + ".spawn-pending-" + "a" * 32).write_text("public intent")
+        self.finalizer.register_child_journal(journal, parent)
+        result = self.finalizer.finalize({"failure": "original"})
+        self.assertFalse(result["all_stopped"])
+
+    def test_unexpected_finalize_fault_retains_primary_and_stops_writers(self):
+        writers = [self.register(role, writer=True) for role in ("exit", "client")]
+        profile = self.directory / "profile.json"
+        profile.write_text("public fixture")
+        with mock.patch.object(self.finalizer, "_finalize", side_effect=RuntimeError("public injected observer bug")):
+            result = self.finalizer.finalize({"failure": "original_integrity"}, config_paths=[profile])
+        self.assertTrue(all(process.returncode is not None for process in writers))
+        self.assertEqual(json.loads((self.directory / "workload-outcome.json").read_text())["failure"], "original_integrity")
+        self.assertTrue(result["writers_stopped"])
+        self.assertFalse(result["cohort_continuation_allowed"])
+        self.assertFalse(profile.exists())
+
+    def test_run_marks_probe_as_writer_and_retains_timeout_handle(self):
+        process = FakeProcess()
+        process.communicate = mock.Mock(side_effect=subprocess.TimeoutExpired("public probe", 1))
+        with mock.patch.object(module.subprocess, "Popen", return_value=process):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.finalizer.run(process.args, role="probe", timeout=1, writer=True)
+        self.assertTrue(self.finalizer.processes[0]["writer"])
+        self.assertTrue(self.finalizer.finalize({"failure": "original_probe_timeout"})["writers_stopped"])
+
     def test_reused_child_pid_is_not_signaled(self):
         parent = self.register("bench")
         journal = self.directory / "curl.jsonl"

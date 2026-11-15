@@ -30,37 +30,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from skirk_live_mix_bench import latency_summary, run_one, validate_url
+from skirk_process_observer import owned_process_observer
 
 
 FRAME_HEADER = struct.Struct("!I")
 TEXT_BYTES = 64
 MIN_PRELUDE_BYTES = 65537
 MAX_PRELUDE_BYTES = 1024 * 1024
-
-
-def owned_process_observer(journal: Path):
-    # Write intent before spawning. A parent killed between Popen and identity
-    # registration leaves a visible unresolved marker, never kill authority.
-    import skirk_owned_processes
-    pending = journal.with_name(journal.name + ".spawn-pending")
-
-    def observe(event, process, command):
-        if event == "before":
-            descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(descriptor, "w") as stream:
-                json.dump({"role": "curl", "argv": command,
-                           "started_utc": datetime.now(timezone.utc).isoformat()}, stream)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-        elif event == "spawn":
-            record = skirk_owned_processes.append_process_record(journal, process.pid, "curl", command)
-            if record.get("identity_status") != "captured":
-                raise RuntimeError("curl_process_identity_unavailable")
-            pending.unlink()
-        elif event in ("exit", "spawn_failed"):
-            pending.unlink(missing_ok=True)
-    return observe
 
 
 class ProbeError(Exception):

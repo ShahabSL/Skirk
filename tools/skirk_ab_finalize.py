@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import skirk_owned_processes as owned
+from skirk_process_observer import pending_paths
 
 
 def _error(stage: str, error: BaseException) -> dict[str, Any]:
@@ -85,9 +86,9 @@ class ArmFinalizer:
         self.child_journals.append((path, parent))
 
     def run(self, command: list[str], *, role: str, timeout: float,
-            text: bool = False) -> subprocess.CompletedProcess[Any]:
+            text: bool = False, writer: bool = False) -> subprocess.CompletedProcess[Any]:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text)
-        self.register(process, role, command)
+        self.register(process, role, command, writer=writer)
         stdout, stderr = process.communicate(timeout=timeout)
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         result.check_returncode()
@@ -163,6 +164,58 @@ class ArmFinalizer:
                     self.failures.append(_error("original_child_reap", error))
 
     def finalize(self, row: dict[str, Any], *, logs=(), config_paths=()) -> dict[str, Any]:
+        try:
+            return self._finalize(row, logs=logs, config_paths=config_paths)
+        except Exception as error:
+            # A new observer/helper defect must not erase the primary outcome
+            # or skip remaining original children. Unknown children stay unknown.
+            self.failures.append(_error("unexpected_finalize", error))
+            outcome = self.directory / "workload-outcome.json"
+            try:
+                if not outcome.exists():
+                    _atomic_private_json(outcome, row)
+            except Exception as secondary:
+                self.failures.append(_error("emergency_persist_workload", secondary))
+            try:
+                self._fallback_original_handles()
+            except Exception as secondary:
+                self.failures.append(_error("emergency_original_children", secondary))
+            for path, parent in self.child_journals:
+                if not self._reaped(parent):
+                    continue
+                try:
+                    records = owned.load_process_records(path) if path.exists() else []
+                    for record in records:
+                        try:
+                            owned.terminate_records([record], term_timeout=0, kill_timeout=0)
+                        except Exception as secondary:
+                            self.failures.append(_error("emergency_native_child", secondary))
+                except Exception as secondary:
+                    self.failures.append(_error("emergency_child_journal", secondary))
+            for stream in logs:
+                try:
+                    stream.close()
+                except Exception as secondary:
+                    self.failures.append(_error("emergency_close_log", secondary))
+            for value in config_paths:
+                try:
+                    path = Path(value)
+                    if path.resolve().is_relative_to(self.directory.resolve()):
+                        path.unlink(missing_ok=True)
+                except Exception as secondary:
+                    self.failures.append(_error("emergency_remove_config", secondary))
+            stopped = all(self._reaped(item["handle"]) for item in self.processes if item["writer"])
+            self.result = {"writers_stopped": stopped, "drive_cleanup_allowed": stopped,
+                           "all_stopped": False, "cohort_continuation_allowed": False,
+                           "cleanup_failures": self.failures,
+                           "primary_outcome_persisted": outcome.exists(), "emergency_finalization": True}
+            try:
+                _atomic_private_json(self.directory / "teardown-result.json", self.result)
+            except Exception as secondary:
+                self.failures.append(_error("emergency_persist_teardown", secondary))
+            return self.result
+
+    def _finalize(self, row: dict[str, Any], *, logs=(), config_paths=()) -> dict[str, Any]:
         if self.result is not None:
             return self.result
         outcome = self.directory / "workload-outcome.json"
@@ -184,8 +237,7 @@ class ArmFinalizer:
             if not self._reaped(parent):
                 self.failures.append({"stage": "child_journal", "error_type": "ParentStillRunning"})
                 continue  # It may still hold the journal's append lock.
-            pending = path.with_name(path.name + ".spawn-pending")
-            if pending.exists():
+            if pending_paths(path):
                 self.failures.append({"stage": "child_journal", "error_type": "UnresolvedSpawnIntent"})
             try:
                 if path.exists():

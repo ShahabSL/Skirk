@@ -297,6 +297,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bulk-url", required=True, help="Fixed-size bulk endpoint on the exit host")
     parser.add_argument("--label", default="mixed", help="Short non-secret run label")
     parser.add_argument("--out", help="Write JSON under .skirk-runs/ or another private path")
+    parser.add_argument("--owned-process-journal", type=Path,
+                        help="Private native child journal for an owning A/B controller")
     parser.add_argument("--small-count", type=int, default=8)
     parser.add_argument("--small-interval-ms", type=int, default=1000)
     parser.add_argument("--small-workers", type=int, default=2)
@@ -316,6 +318,12 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(f"--{kind}-expected-bytes", type=int)
         parser.add_argument(f"--{kind}-sha256")
     args = parser.parse_args()
+    if args.owned_process_journal is not None:
+        from skirk_process_observer import validate_journal_path
+        try:
+            validate_journal_path(args.owned_process_journal)
+        except (OSError, ValueError):
+            parser.error("--owned-process-journal requires a fresh private .skirk-runs path")
     validate_url(parser, "--small-url", args.small_url)
     validate_url(parser, "--bulk-url", args.bulk_url)
     if not 1 <= args.port <= 65535:
@@ -364,6 +372,10 @@ def main() -> int:
     run_start = time.monotonic()
     deadline = run_start + args.overall_timeout
     results: list[dict[str, Any]] = []
+    process_observer = None
+    if getattr(args, "owned_process_journal", None) is not None:
+        from skirk_process_observer import owned_process_observer
+        process_observer = owned_process_observer(args.owned_process_journal, concurrent=True)
 
     def submit(
         pool: concurrent.futures.ThreadPoolExecutor,
@@ -393,6 +405,7 @@ def main() -> int:
             args.small_request_file if kind == "small" else None,
             args.bulk_request_file if kind == "bulk" else None,
             args.bulk_expected_upload_bytes if kind == "bulk" else None,
+            process_observer,
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.bulk_count + args.small_workers) as pool:
