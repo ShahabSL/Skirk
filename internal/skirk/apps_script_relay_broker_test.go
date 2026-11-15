@@ -124,6 +124,9 @@ func (b *relayResearchBroker) Close() {
 // HTTP caller cancellation does not cancel an already accepted computation.
 // Its exact reply is retained for retry, even when the first response is lost.
 func (b *relayResearchBroker) exchange(ctx context.Context, wire []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p, err := b.codec.open(wire)
 	if err != nil {
 		return nil, err
@@ -403,6 +406,9 @@ func (b *relayResearchBroker) deleteDown(id string) error {
 	return nil
 }
 func (b *relayResearchBroker) putDown(ctx context.Context, id, name string, data []byte) (ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
 	if len(data) == 0 || len(data) > rrMaxObject || len(id) == 0 || len(id) > 128 || len(name) == 0 || len(name) > 512 {
 		return ObjectInfo{}, errRelayResearchBounds
 	}
@@ -541,12 +547,21 @@ func (s *relayResearchExitStore) GenerateObjectIDs(ctx context.Context, n int) (
 	return s.b.downStore.GenerateObjectIDs(ctx, n)
 }
 func (s *relayResearchExitStore) Get(ctx context.Context, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return s.b.upStore.Get(ctx, name)
 }
 func (s *relayResearchExitStore) GetByID(ctx context.Context, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return s.b.upStore.GetByID(ctx, id)
 }
 func (s *relayResearchExitStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return s.b.upStore.List(ctx, prefix)
 }
 func (s *relayResearchExitStore) DeleteID(_ context.Context, id string) error {
