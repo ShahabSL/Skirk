@@ -668,6 +668,19 @@ Linux TUN, scoped Windows TUN, and one Windows GUI-backend default-route TCP
 request;
 there is no comparative usability study behind a “best UI” claim.
 
+A final keyboard-focus audit reproduced desktop focus falling to the page body
+when a 1.2-second mode, route, Connect, or Disconnect action disabled its own
+button. The branch now keeps the active control focused with `aria-disabled`
+and an action guard; the same delayed-action browser checks and frontend build
+passed. Android connection state uses a polite accessibility live region with
+actionable failure text. Its debug APK built and launched on a Pixel 7 API 36
+emulator; the accessibility tree exposed Ready, a generic timeout, and Google
+renewal recovery. iOS announces delayed Connecting and terminal/recovery
+changes with focus-aware suppression; iPhone 17 Pro iOS 26.5 Simulator UI tests
+passed two cases with one live-credential case intentionally skipped. These
+checks inspect accessibility semantics and UI behavior; audible TalkBack or
+VoiceOver speech was not recorded, and no real iOS packet tunnel was exercised.
+
 The largest archived short live transfers were **74.928 Mb/s** for one
 fronted 128 MiB file and **78.244 Mb/s aggregate** for ten 32 MiB clients.
 They were local, short runs, not sustainable maxima. The largest measured
