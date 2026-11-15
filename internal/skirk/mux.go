@@ -503,8 +503,9 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 	return m, nil
 }
 
-func (m *driveMux) reportTerminalOAuthError(ctx context.Context, err error) bool {
-	if m == nil || m.fatalDone == nil || ctx.Err() != nil || !IsTerminalOAuthTokenError(err) {
+func (m *driveMux) reportTerminalTransportError(ctx context.Context, err error) bool {
+	if m == nil || m.fatalDone == nil || ctx.Err() != nil ||
+		(!IsTerminalOAuthTokenError(err) && !errors.Is(err, ErrDriveClockSkew) && !errors.Is(err, ErrDriveClockUnverified)) {
 		return false
 	}
 	m.fatalOnce.Do(func() {
@@ -1932,7 +1933,7 @@ uploadLoop:
 			if ctx.Err() != nil {
 				return
 			}
-			if l.mux.reportTerminalOAuthError(ctx, err) {
+			if l.mux.reportTerminalTransportError(ctx, err) {
 				l.failUploadBatch(ctx, frames, err, attempt)
 				return
 			}
@@ -1964,7 +1965,7 @@ uploadLoop:
 				if ctx.Err() != nil {
 					return
 				}
-				if l.mux.reportTerminalOAuthError(ctx, err) {
+				if l.mux.reportTerminalTransportError(ctx, err) {
 					l.failUploadBatch(ctx, frames, err, attempt)
 					return
 				}
@@ -2566,7 +2567,7 @@ func (m *driveMux) pollMuxObjectsFromPrefix(ctx context.Context, prefix, source 
 	listDuration := time.Since(started)
 	m.t.markSlowList(listDuration)
 	if err != nil {
-		m.reportTerminalOAuthError(ctx, err)
+		m.reportTerminalTransportError(ctx, err)
 		if m.t.Logger != nil && ctx.Err() == nil {
 			m.t.Logger.Printf("mux list direction=%s failed: %v", directionName(m.recvDir), err)
 		}
@@ -3052,7 +3053,7 @@ func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, 
 			if errors.As(err, &googleErr) && googleErr.Status == http.StatusNotFound {
 				m.notePriorityRetryNotFound(key)
 			} else {
-				m.reportTerminalOAuthError(ctx, err)
+				m.reportTerminalTransportError(ctx, err)
 			}
 			continue
 		}
@@ -4730,7 +4731,7 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 		logErr = nil
 	}
 	release(releaseErr, int64(len(sealed)))
-	m.reportTerminalOAuthError(ctx, logErr)
+	m.reportTerminalTransportError(ctx, logErr)
 	if m.t.Observe && m.t.Logger != nil {
 		target, targetID := m.streamObserveTarget(meta.key())
 		m.t.Logger.Printf("mux download role=%s direction=%s lane=%d seq=%d priority=%t stream=%016x target=%s target_id=%s plain_bytes=%d sealed_bytes=%d slot_wait=%s get_duration=%s duration=%s object=%s error=%s", m.role, directionName(m.recvDir), meta.Lane, meta.Seq, meta.Priority, meta.StreamID, target, targetID, meta.PlainBytes, len(sealed), slotWait.Round(time.Millisecond), duration.Round(time.Millisecond), (slotWait + duration).Round(time.Millisecond), muxShortName(meta.Name), errorSummary(logErr))

@@ -65,6 +65,12 @@ const driveInlineMarker = "skirk-sealed-v1:"
 const driveMetadataOnlyMarker = "skirk-sealed-v2:"
 const driveMetadataOnlyNameSuffix = ".mo1"
 const driveIndexedClassProperty = "skirkClass"
+const driveClockTolerance = 3 * time.Second
+const driveClockCheckMaxDuration = time.Minute
+
+var ErrDriveClockSkew = errors.New("device clock differs from Google Drive clock; enable automatic date and time, then reconnect")
+var ErrDriveClockUnverified = errors.New("could not verify Google Drive clock; reconnect when the connection is stable")
+
 const driveUploadHedgeMinBytes = 128 * 1024
 const driveUploadHedgeMaxConcurrent = 4
 
@@ -957,7 +963,7 @@ func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string,
 		values.Set("spaces", "appDataFolder")
 	}
 	var infos []ObjectInfo
-	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
+	status, err := d.eachFilesPageUntilLimitStatusChecked(ctx, values, "drive list", maxPages, true, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
 			if !matches(item.Name) {
 				continue
@@ -1302,6 +1308,10 @@ func (d *DriveStore) eachFilesPageUntilLimit(ctx context.Context, values url.Val
 }
 
 func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values url.Values, op string, maxPages int, fn func(driveListPayload) (bool, error)) (driveListPageStatus, error) {
+	return d.eachFilesPageUntilLimitStatusChecked(ctx, values, op, maxPages, false, fn)
+}
+
+func (d *DriveStore) eachFilesPageUntilLimitStatusChecked(ctx context.Context, values url.Values, op string, maxPages int, checkClock bool, fn func(driveListPayload) (bool, error)) (driveListPageStatus, error) {
 	if maxPages <= 0 {
 		maxPages = driveListMaxPages
 	}
@@ -1314,6 +1324,11 @@ func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values u
 		}
 		if err := require2xx(result, op); err != nil {
 			return driveListPageStatus{}, err
+		}
+		if checkClock {
+			if err := checkDriveServerClock(result.Header, result.RequestStarted, result.ResponseReceived); err != nil {
+				return driveListPageStatus{}, err
+			}
 		}
 		var payload driveListPayload
 		if err := json.Unmarshal(result.Body, &payload); err != nil {
@@ -1337,6 +1352,32 @@ func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values u
 		pageValues.Set("pageToken", payload.NextPageToken)
 	}
 	return driveListPageStatus{}, nil
+}
+
+// A fresh mailbox query uses Drive's modifiedTime as its lower bound. A device
+// clock far ahead misses new traffic; one far behind can replay an old OPEN.
+// The Date header must fall within the request's local time interval, allowing
+// for HTTP second precision and small server clock differences. Never widen
+// the 30-second startup catch-up to compensate for clock skew.
+func checkDriveServerClock(header http.Header, requestStarted, requestEnded time.Time) error {
+	if requestEnded.Before(requestStarted) || requestEnded.Sub(requestStarted) > driveClockCheckMaxDuration {
+		return fmt.Errorf("%w: Drive list took too long for a reliable time comparison", ErrDriveClockUnverified)
+	}
+	date := strings.TrimSpace(header.Get("Date"))
+	if date == "" {
+		return fmt.Errorf("%w: Drive list response did not include a Date header", ErrDriveClockUnverified)
+	}
+	serverTime, err := http.ParseTime(date)
+	if err != nil {
+		return fmt.Errorf("%w: Drive list response had an invalid Date header", ErrDriveClockUnverified)
+	}
+	if serverTime.Before(requestStarted.Add(-driveClockTolerance)) {
+		return fmt.Errorf("%w: this device is ahead of Google Drive", ErrDriveClockSkew)
+	}
+	if serverTime.After(requestEnded.Add(driveClockTolerance)) {
+		return fmt.Errorf("%w: this device is behind Google Drive", ErrDriveClockSkew)
+	}
+	return nil
 }
 
 func cloneValues(values url.Values) url.Values {
@@ -1436,10 +1477,15 @@ func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *Google
 			merged["X-Goog-User-Project"] = d.quotaProject
 		}
 		var result *HTTPResult
+		httpStarted := time.Now()
 		if singleAttempt {
 			result, err = httpClient.RequestSingleAttempt(ctx, method, "www.googleapis.com", path, merged, body)
 		} else {
 			result, err = httpClient.RequestNoRateLimitRetry(ctx, method, "www.googleapis.com", path, merged, body)
+		}
+		if result != nil {
+			result.RequestStarted = httpStarted
+			result.ResponseReceived = time.Now()
 		}
 		if err != nil {
 			d.logDriveRequest(label, httpAttemptCount(result, err), 0, nil, time.Since(started), err)

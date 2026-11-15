@@ -1563,7 +1563,10 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func stringResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(body)),
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"Date":         []string{time.Now().UTC().Format(http.TimeFormat)},
+		},
+		Body: io.NopCloser(strings.NewReader(body)),
 	}
 }

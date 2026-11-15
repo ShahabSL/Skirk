@@ -33,6 +33,9 @@ type HTTPResult struct {
 	Header   http.Header
 	Proto    string
 	Attempts int
+	// Bounds of the HTTP exchange, excluding token refresh and quota backoff.
+	RequestStarted   time.Time
+	ResponseReceived time.Time
 }
 
 // Failed network attempts may have reached Google even without a response.

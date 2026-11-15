@@ -681,6 +681,18 @@ passed two cases with one live-credential case intentionally skipped. These
 checks inspect accessibility semantics and UI behavior; audible TalkBack or
 VoiceOver speech was not recorded, and no real iOS packet tunnel was exercised.
 
+The mux now checks Google Drive's HTTP `Date` before accepting each fresh
+mailbox page. A device clock two minutes ahead would miss new objects; two
+minutes behind could admit an old `OPEN` into the 30-second startup scan. Both
+cases now terminate with a clock-sync error rather than silently continuing.
+Missing/invalid `Date` and an HTTP exchange longer than one minute also fail
+closed. The startup lookback was not widened. Deterministic checks cover both
+skew directions, absence and format errors, and mux termination. Eleven
+read-only fresh-list probes through the pinned Google front and one through
+Direct Google returned usable `Date` headers (0.51–0.71 s each) from the
+isolated test account. This validates the header path, not a physical device
+with a deliberately wrong clock.
+
 The largest archived short live transfers were **74.928 Mb/s** for one
 fronted 128 MiB file and **78.244 Mb/s aggregate** for ten 32 MiB clients.
 They were local, short runs, not sustainable maxima. The largest measured
