@@ -212,9 +212,24 @@ class ReadUploadRecoveryTests(unittest.TestCase):
             for bad in (line.replace("patch_budget_exhausted", "transport_error"), line.replace("patch_budget_exhausted", "timeout"),
                         line.replace("role=exit", "role=client"), line.replace("authoritative=immutable", "authoritative=other"),
                         line + " unexpected=field"):
-                self.rejected("unclassified_slot_shadow_stop", lambda: self.guard._line("exit", bad, 0))
+                code = "terminal_auth_quota_or_backoff_log" if "transport_error" in bad else "unclassified_slot_shadow_stop"
+                self.rejected(code, lambda: self.guard._line("exit", bad, 0))
         self.assertEqual(self.guard.report()["roles"]["exit"]["slot_patch_budget_retirements"], 1)
         self.assertEqual(self.guard.arm_events, 0, "retirement is not an RPC timeout or error discount")
+
+    def test_retirement_and_read_allowances_cannot_hide_fatal_or_unexpected_prefixes(self):
+        self.guard.binary_sha256 = DIAGNOSTIC_SHA
+        marker = "mux slot shadow stopped role=exit reason=patch_budget_exhausted authoritative=immutable"
+        self.guard._line("exit", "2026/11/15 14:11:36 " + marker, 0)
+        for prefix in ("unexpected ", "2026/11/15 14:11:36.123 ", "user-prefix "):
+            self.rejected("unclassified_slot_shadow_stop", lambda: self.guard._line("exit", prefix + marker, 0))
+        for prefix in ("transport_error ", "mux terminal close role=exit ", "drive request unauthorized op=metadata ",
+                       "mux process retry budget exhausted ", "drive auth rejected "):
+            for valid_looking in (marker, failure().strip()):
+                self.rejected("terminal_auth_quota_or_backoff_log", lambda: self.guard._line("exit", prefix + valid_looking, 0))
+        self.assertEqual(self.guard.report()["roles"]["exit"]["slot_patch_budget_retirements"], 1)
+        self.assertEqual(self.guard.arm_events, 0)
+        self.rejected("unclassified_read_or_upload_failure", lambda: self.guard._line("exit", "unexpected " + failure().strip(), 0))
 
     def test_frozen_diagnostic_registry_is_distinct_from_old_generic_executables(self):
         line = "mux slot shadow stopped role=exit reason=patch_budget_exhausted authoritative=immutable"

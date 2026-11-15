@@ -39,6 +39,9 @@ class ReadUploadRecovery(NormalUploadRecovery):
     }
     RETIREMENT_DIAGNOSTICS = frozenset((
         "bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f",))
+    STRICT_FATAL = tuple(marker for marker in NormalUploadRecovery.FATAL
+                         if marker not in ("mux process retry ", "mux process requeue ")) + (
+                             "mux process retry budget exhausted", "mux process stale ", "drive auth rejected ")
 
     def __init__(self, directory, cohort, *, expected_frames, expected_bulk_bytes, expected_upload_bytes=0,
                  binary_sha256=None):
@@ -108,14 +111,17 @@ class ReadUploadRecovery(NormalUploadRecovery):
 
     def _line(self, role, line, now):
         state = self.roles[role]
+        if any(marker in line for marker in self.STRICT_FATAL):
+            raise RecoveryRejected("terminal_auth_quota_or_backoff_log")
         if "mux slot shadow stopped " in line:
-            match = re.search(r"mux slot shadow stopped role=(client|exit) reason=patch_budget_exhausted authoritative=immutable$", line)
+            match = re.fullmatch(r"(?:[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} )?mux slot shadow stopped role=(client|exit) reason=patch_budget_exhausted authoritative=immutable", line)
             if match is None or match.group(1) != role or self.binary_sha256 not in self.RETIREMENT_DIAGNOSTICS:
                 raise RecoveryRejected("unclassified_slot_shadow_stop")
             state["retirements"] += 1
             return
         if "drive request failed " in line:
-            match = self.FAILED.search(line)
+            message = re.sub(r"^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} ", "", line, count=1)
+            match = self.FAILED.fullmatch(message)
             if match is None or not self._eligible_failure(*match.groups()):
                 raise RecoveryRejected("unclassified_read_or_upload_failure")
             operation = match.group(1)
@@ -127,8 +133,6 @@ class ReadUploadRecovery(NormalUploadRecovery):
             state["op_times"][operation].append(now)
             self.cohort.reserve(now, self.arm_events)
             return
-        if "mux process retry budget exhausted" in line or "mux process stale " in line or "drive auth rejected " in line:
-            raise RecoveryRejected("terminal_auth_quota_or_backoff_log")
         if "mux download role=" in line:
             fields = self._fields(line)
             if fields.get("error") == "none":

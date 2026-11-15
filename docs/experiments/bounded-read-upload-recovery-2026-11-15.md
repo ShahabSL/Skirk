@@ -159,6 +159,19 @@ diff and build-stamp provenance are recorded in the separate
 does not rebuild or change that already frozen CLI. No live recovery or pool
 result is implied by these offline checks.
 
+Final independent parser review required an additional prefix check before
+freeze. The retirement marker now full-matches only the exact message, with
+an optional standard Go `YYYY/MM/DD HH:MM:SS` prefix. Drive failures likewise
+full-match after that known prefix. Unequivocal terminal/auth/quota/transport
+markers are checked before any allowance; a line containing one cannot hide
+behind an appended eligible-looking message. Unexpected/microsecond/custom
+prefixes, extra fields and fatal prefixes are regression cases. The initial
+hardening run exposed a stale expected rejection code in one test (terminal
+rejection replaced generic unclassified rejection); the assertion was corrected.
+The final **87-case** suite passed in **3.762 seconds** with raw log
+`.skirk-runs/read-upload-tests-anchored-final.log`. Earlier source-only parsers
+are not eligible for a live cohort; no diagnostic binary rebuild was needed.
+
 Independent source review and a root-coordinated live lease are required before
 using this mode for any actual account measurement. Historical failed arms stay
 failed; a later bounded recovery cohort must be reported separately.
