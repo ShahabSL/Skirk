@@ -395,6 +395,10 @@ def main():
                 if not completed and "failure" not in row:
                     row["failure"] = "incomplete_verified_workload"
                 print(json.dumps(row), flush=True)
+                if not completed:
+                    # Preserve the failed arm's summary, then run the
+                    # finally cleanup before starting any further live arm.
+                    break
             except Exception as error:
                 row["failure"] = type(error).__name__
                 raise

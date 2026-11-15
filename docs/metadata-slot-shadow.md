@@ -97,3 +97,32 @@ session `muxv4/` objects after the cleanup window. These live runs measure
 shadow overhead and compatibility, not slot-delivery latency. Real delivery
 still needs the claim, deduplication, ACK, fallback, and exact cleanup gates
 in the parent design document.
+
+## First bounded integrated run (14 November 2026)
+
+One pinned-front, same-binary download ABBA attempt used the isolated test
+mailbox and 16 MiB file plus twelve small messages per arm. The harness was
+stopped at the first failed arm; its previous version briefly started the
+fourth control arm before the operator interrupted it. The harness now stops
+automatically after an incomplete verified workload.
+
+| Arm | Small messages | SHA-verified 16 MiB file | Authenticated shadow arrivals | File goodput | Both-peer Drive units | API errors |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Control 1 | 12/12 | Complete | — | 11.125 Mb/s | 23,855 | 0 |
+| Shadow 1 | 12/12 | Complete | 21; both peers active | 14.953 Mb/s | 26,445 | 0 |
+| Shadow 2 | 12/12 | **Stalled before first byte at 15.1 s** | 17; both peers active | Not valid | 25,025 | 0 |
+
+The incomplete second shadow arm fails the promotion gate. The first pair
+does not establish any speed benefit because slot traffic did not deliver
+application bytes, and the reverse-order pair was incomplete. The failed
+arm's client logged two receive gap repair events; whether Drive tail delay,
+shared control-pool contention, or another factor caused the file stall is
+unresolved. This is an interference finding, not a measured slot-delivery RTT.
+
+All four fresh test sessions (including the interrupted control) were checked
+by exact session prefix. No `slotv1/` files remained. There were 5, 0, 7,
+and 15 residual `muxv4/` objects respectively after process termination;
+the operator deleted only those four generated session prefixes, then
+rechecked all `slotv1/` and `muxv4/` prefixes at zero matched objects.
+Raw logs and metrics remain ignored under
+`.skirk-runs/slot-shadow-download-20261114-01/`.
