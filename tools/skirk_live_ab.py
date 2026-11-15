@@ -221,8 +221,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.persistent_overall_timeout <= 900 or not 1 <= args.persistent_bulk_timeout <= 600:
         parser.error("persistent deadlines exceed supported bounds")
-    if not 1000 <= args.max_units_per_minute <= 100000:
-        parser.error("estimated rolling quota ceiling must be1000..100000")
+    if not 1000 <= args.max_units_per_minute <= 125000:
+        parser.error("estimated rolling quota ceiling must be1000..125000")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")

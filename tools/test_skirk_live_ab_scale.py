@@ -26,14 +26,14 @@ class ScaleBudgetValidationTests(unittest.TestCase):
                 self.assertIn('deadlines exceed', self.validation_error([flag, value]))
 
     def test_rejects_larger_or_invalid_quota_allowance(self):
-        for value in ['0', '999', '100001']:
+        for value in ['0', '999', '125001']:
             with self.subTest(value=value):
                 self.assertIn('quota ceiling', self.validation_error(['--max-units-per-minute', value]))
 
     def test_sustained_schedule_settings_still_require_explicit_live(self):
         error = self.validation_error(['--persistent-overall-timeout', '300',
                                        '--persistent-bulk-timeout', '180',
-                                       '--max-units-per-minute', '50000',
+                                       '--max-units-per-minute', '125000',
                                        '--small-count', '100', '--small-interval-ms', '1250'])
         self.assertIn('requires --live', error)
         self.assertNotIn('deadlines exceed', error)
