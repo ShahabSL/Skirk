@@ -113,10 +113,10 @@ func rrWritePrivateJSON(dir, name string, v any) error {
 }
 
 type relayResearchOwnedBudget struct {
-	mu                    sync.Mutex
-	maxCalls, maxBytes    int64
-	calls, bytes, blocked int64
-	cancel                context.CancelFunc
+	mu                          sync.Mutex
+	maxCalls, maxBytes          int64
+	calls, seen, bytes, blocked int64
+	cancel                      context.CancelFunc
 }
 
 func (b *relayResearchOwnedBudget) claim(n int) int {
@@ -139,11 +139,12 @@ func (b *relayResearchOwnedBudget) refund(n int) {
 func (b *relayResearchOwnedBudget) snapshot() map[string]int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]int64{"http_calls": b.calls, "encoded_body_bytes": b.bytes, "budget_rejections": b.blocked}
+	return map[string]int64{"http_calls": b.seen, "admitted_http_calls": b.calls, "encoded_body_bytes": b.bytes, "budget_rejections": b.blocked}
 }
 func (b *relayResearchOwnedBudget) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
+		b.seen++
 		if b.calls >= b.maxCalls {
 			b.blocked++
 			b.mu.Unlock()
@@ -156,6 +157,45 @@ func (b *relayResearchOwnedBudget) wrap(next http.Handler) http.Handler {
 		r.Body = &relayResearchCountedBody{ReadCloser: r.Body, budget: b}
 		next.ServeHTTP(&relayResearchCountedWriter{ResponseWriter: w, budget: b}, r)
 	})
+}
+
+func TestRelayOwnedExitBudgetBoundsReadsWritesAndAdmittedCalls(t *testing.T) {
+	for _, mode := range []string{"read", "write"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			budget := &relayResearchOwnedBudget{maxCalls: 1, maxBytes: 6, cancel: cancel}
+			if mode == "read" {
+				body := &relayResearchCountedBody{ReadCloser: io.NopCloser(strings.NewReader("12345678")), budget: budget}
+				raw, err := io.ReadAll(body)
+				if len(raw) != 6 || !errors.Is(err, errRelayResearchBounds) {
+					t.Fatal("read crossed encoded-body bound", len(raw), err)
+				}
+			} else {
+				recorder := httptest.NewRecorder()
+				writer := &relayResearchCountedWriter{ResponseWriter: recorder, budget: budget}
+				n, err := writer.Write([]byte("12345678"))
+				if n != 6 || recorder.Body.Len() != 6 || !errors.Is(err, errRelayResearchBounds) {
+					t.Fatal("write crossed encoded-body bound", n, err)
+				}
+			}
+			if ctx.Err() == nil || budget.snapshot()["encoded_body_bytes"] != 6 {
+				t.Fatal("exhausted body budget did not cancel or account", budget.snapshot())
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	budget := &relayResearchOwnedBudget{maxCalls: 2, maxBytes: 64, cancel: cancel}
+	var executed int
+	handler := budget.wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { executed++; _, _ = w.Write([]byte{1}) }))
+	for i := 0; i < 3; i++ {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/exchange", nil))
+	}
+	s := budget.snapshot()
+	if executed != 2 || s["http_calls"] != 3 || s["admitted_http_calls"] != 2 || s["budget_rejections"] != 1 || ctx.Err() == nil {
+		t.Fatal("admitted-call budget or observed-call accounting incorrect", executed, s)
+	}
 }
 
 type relayResearchCountedBody struct {
