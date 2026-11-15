@@ -27,6 +27,7 @@ from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, Rec
 from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
 from skirk_end_to_end_recovery import EndToEndRecoveryCohort, EndToEndRecoveryStress
 from skirk_end_to_end_recovery_v2 import EndToEndRecoveryStressV2
+from skirk_end_to_end_burst_recovery import EndToEndBurstRecoveryCohort, EndToEndBurstRecoveryStress
 from skirk_stress_origin_proof import OriginSideEffects
 from skirk_ab_finalize import ArmFinalizer
 
@@ -284,6 +285,8 @@ def main():
                         help="separate stress: source-bound PATCH recovery, API-idempotent normal and logically deduped non-idempotent p0 creates; complete byte/echo/origin proof; shared8/arm4/60s16/cohort")
     recovery_flags.add_argument("--bounded-end-to-end-recovery-stress-v2", action="store_true",
                         help="separately labelled v2 stress: additionally observe exact bare upload deadlines from two reviewed frozen sources; all proof/caps remain")
+    recovery_flags.add_argument("--bounded-end-to-end-burst-recovery", action="store_true",
+                        help="separate fixed burst experiment: V2 classifications/proofs with32timeouts/arm,16/60s,64/cohort; all quota/deadline/terminal guards unchanged")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -303,8 +306,9 @@ def main():
     parser.add_argument("--tail-seconds", type=int, default=8)
     parser.add_argument("--chunk-size", type=int, default=0, help="Experimental shared peer chunk bound; 0 preserves config")
     args = parser.parse_args()
-    stress_active = args.bounded_end_to_end_recovery_stress or args.bounded_end_to_end_recovery_stress_v2
-    stress_class = EndToEndRecoveryStressV2 if args.bounded_end_to_end_recovery_stress_v2 else EndToEndRecoveryStress
+    stress_active = args.bounded_end_to_end_recovery_stress or args.bounded_end_to_end_recovery_stress_v2 or args.bounded_end_to_end_burst_recovery
+    stress_class = (EndToEndBurstRecoveryStress if args.bounded_end_to_end_burst_recovery else
+                    EndToEndRecoveryStressV2 if args.bounded_end_to_end_recovery_stress_v2 else EndToEndRecoveryStress)
     if not 1 <= args.persistent_overall_timeout <= 900 or not 1 <= args.persistent_bulk_timeout <= 600:
         parser.error("persistent deadlines exceed supported bounds")
     if not 1000 <= args.max_units_per_minute <= 125000:
@@ -510,7 +514,7 @@ def main():
     summaries = []
     unit_history = []
     completed_units = 0
-    recovery_cohort = (EndToEndRecoveryCohort() if stress_active else ReadUploadCohort() if args.bounded_read_upload_timeouts
+    recovery_cohort = (EndToEndBurstRecoveryCohort() if args.bounded_end_to_end_burst_recovery else EndToEndRecoveryCohort() if stress_active else ReadUploadCohort() if args.bounded_read_upload_timeouts
                        else RecoveryCohort() if args.bounded_normal_upload_timeouts else None)
     try:
         for index, mode in enumerate(order):
@@ -569,6 +573,7 @@ def main():
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
             if stress_active:
                 row["recovery_policy_version"] = 2 if args.bounded_end_to_end_recovery_stress_v2 else 1
+                row["recovery_policy_family"] = "bounded_end_to_end_burst_recovery" if args.bounded_end_to_end_burst_recovery else "bounded_end_to_end_recovery_stress"
 
             origin_baseline = origin_effects.snapshot() if origin_effects else None
             recovery = None
