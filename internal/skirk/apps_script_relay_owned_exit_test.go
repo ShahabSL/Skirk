@@ -4,9 +4,11 @@ package skirk
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -50,6 +52,22 @@ type relayResearchPrivateSettings struct {
 	MaxHTTPEncodedUpper    int64       `json:"max_http_encoded_upper"`
 	BulkBytes              int         `json:"bulk_bytes"`
 	ScriptURL              string      `json:"script_url,omitempty"`
+	PayloadSeedHex         string      `json:"payload_seed_hex"`
+}
+
+// A public test-corpus seed, not a key used by either authentication layer.
+func rrCampaignPayload(s relayResearchPrivateSettings) ([]byte, error) {
+	seed, err := hex.DecodeString(s.PayloadSeedHex)
+	if err != nil || len(seed) != 32 || s.BulkBytes < 1 || s.BulkBytes > 16<<20 {
+		return nil, errRelayResearchBounds
+	}
+	block, err := aes.NewCipher(seed)
+	if err != nil {
+		return nil, err
+	}
+	payload := make([]byte, s.BulkBytes)
+	cipher.NewCTR(block, make([]byte, aes.BlockSize)).XORKeyStream(payload, payload)
+	return payload, nil
 }
 
 func (s relayResearchPrivateSettings) relayConfig() (relayResearchConfig, error) {
@@ -100,6 +118,10 @@ func rrReadPrivateSettings(dir string) (relayResearchPrivateSettings, []byte, [1
 		return s, nil, epoch, err
 	}
 	if s.MaxScriptPosts < 1 || s.MaxScriptPosts > 256 || s.MaxHTTPAttemptsUpper < 1 || s.MaxHTTPAttemptsUpper > 4096 || s.MaxHTTPEncodedUpper < 1 || s.MaxHTTPEncodedUpper > 1<<30 {
+		return s, nil, epoch, errRelayResearchBounds
+	}
+	seed, seedErr := hex.DecodeString(s.PayloadSeedHex)
+	if seedErr != nil || len(seed) != 32 {
 		return s, nil, epoch, errRelayResearchBounds
 	}
 	return s, key, epoch, nil
@@ -282,14 +304,29 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 		return err
 	}
 	defer b.Close()
-	payload := make([]byte, s.BulkBytes)
-	if _, err = rand.Read(payload); err != nil {
+	payload, err := rrCampaignPayload(s)
+	if err != nil {
 		return err
 	}
 	hash := sha256.Sum256(payload)
 	var gets, posts, echoes, postedBytes atomic.Int64
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	events, err := os.OpenFile(filepath.Join(dir, "origin-events.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	defer events.Close()
+	var eventsMu sync.Mutex
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/bulk" {
+			eventsMu.Lock()
+			eventErr := json.NewEncoder(events).Encode(map[string]any{"event": "bulk_started", "phase": r.Header.Get("X-Skirk-Research-Phase"), "method": r.Method, "unix_nano": time.Now().UnixNano()})
+			eventsMu.Unlock()
+			if eventErr != nil {
+				cancel()
+				return
+			}
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/bulk":
 			gets.Add(1)
@@ -351,7 +388,7 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 	rpc := httptest.NewServer(budget.wrap(protected))
 	// Defer cancellation before listener shutdown to release long PULL handlers.
 	defer func() { cancel(); mux.closeAll(); b.Close(); rpc.Close() }()
-	if err = rrWritePrivateJSON(dir, "runtime.json", map[string]any{"broker_local_url": rpc.URL + "/exchange", "origin_url": origin.URL, "origin_target": originAddr, "download_sha256": hex.EncodeToString(hash[:]), "bulk_bytes": s.BulkBytes, "pid": os.Getpid(), "started_utc": time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err = rrWritePrivateJSON(dir, "runtime.json", map[string]any{"broker_local_url": rpc.URL + "/exchange", "origin_url": origin.URL, "origin_target": originAddr, "origin_certificate_base64": base64.StdEncoding.EncodeToString(origin.Certificate().Raw), "download_sha256": hex.EncodeToString(hash[:]), "bulk_bytes": s.BulkBytes, "pid": os.Getpid(), "started_utc": time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		return err
 	}
 	<-ctx.Done()
@@ -369,7 +406,7 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s := relayResearchPrivateSettings{OuterKeyHex: strings.Repeat("11", 32), EpochHex: strings.Repeat("22", 16), MuxSecretHex: strings.Repeat("33", 32), SessionID: strings.Repeat("44", 16), HTTPAuth: strings.Repeat("55", 32), ScriptAuth: strings.Repeat("66", 32), ClientID: "research-client", RunID: "research-run", Route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, FrameBytes: 128 << 10, ChunkBytes: 4 << 20, DurationSeconds: 5, MaxCalls: 8, MaxEncodedBytes: 4 << 20, MaxScriptPosts: 256, MaxHTTPAttemptsUpper: 4096, MaxHTTPEncodedUpper: 1 << 30, BulkBytes: 4096}
+	s := relayResearchPrivateSettings{OuterKeyHex: strings.Repeat("11", 32), EpochHex: strings.Repeat("22", 16), MuxSecretHex: strings.Repeat("33", 32), SessionID: strings.Repeat("44", 16), HTTPAuth: strings.Repeat("55", 32), ScriptAuth: strings.Repeat("66", 32), ClientID: "research-client", RunID: "research-run", Route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, FrameBytes: 128 << 10, ChunkBytes: 4 << 20, DurationSeconds: 5, MaxCalls: 8, MaxEncodedBytes: 4 << 20, MaxScriptPosts: 256, MaxHTTPAttemptsUpper: 4096, MaxHTTPEncodedUpper: 1 << 30, BulkBytes: 4096, PayloadSeedHex: strings.Repeat("77", 32)}
 	if err := rrWritePrivateJSON(dir, "settings.json", s); err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +465,7 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if !strings.HasPrefix(runtime.Broker, "http://127.0.0.1:") || !strings.HasPrefix(runtime.Origin, "http://127.0.0.1:") {
+	if !strings.HasPrefix(runtime.Broker, "http://127.0.0.1:") || !strings.HasPrefix(runtime.Origin, "https://127.0.0.1:") {
 		cancel()
 		<-done
 		t.Fatal("owned fixtures did not bind only loopback")
