@@ -249,7 +249,6 @@ fun ConfigScreen() {
         }
     }
 
-
     LaunchedEffect(connectionState.running, connectionState.profileId) {
         exitProbeGeneration += 1
         exitProbeStatus = ""
@@ -681,11 +680,11 @@ fun ConfigScreen() {
                             },
                             onPaste = ::pasteProfileFromClipboard,
                             onChooseFile = {
-                            cancelProfileRead()
-                            profileImports.beginPicker("new")?.let { newProfileFilePicker.launch("*/*") }
-                        },
-                        readingFile = profileReadTarget == "new",
-                        onCancelFile = ::cancelProfileRead,
+                                cancelProfileRead()
+                                profileImports.beginPicker("new")?.let { newProfileFilePicker.launch("*/*") }
+                            },
+                            readingFile = profileReadTarget == "new",
+                            onCancelFile = ::cancelProfileRead,
                             onImport = ::importProfile,
                         )
                     } else {

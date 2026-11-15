@@ -104,3 +104,13 @@ late field update, close the canceled descriptor, and retain at most two provide
 reads. A cloud-provider cancellation is cooperative; an unresponsive provider
 cannot create an unbounded number of IO operations. These device checks are
 listed honestly as pending until executed; no live Google account is involved.
+
+Independent cross-review caught that coroutine cancellation handlers can run on
+the UI caller. Android provider cancellation/descriptor close now dispatch to a
+separate noncancelled executor with at most two active and two queued cleanups;
+there is no caller-runs fallback. Saturation leaves final ownership with the IO
+reader's `finally` block. A host regression holds both cleanup workers, fills the
+two queue slots, rejects another100 submissions and proves no cleanup runs inline
+on the caller. External document pickers also have launch-time ownership and one
+outstanding OS request; a late wrong-launcher result cannot consume a newer
+picker or be assigned to another replacement profile.

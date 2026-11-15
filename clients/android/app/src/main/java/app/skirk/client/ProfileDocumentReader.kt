@@ -35,8 +35,10 @@ suspend fun readProfileDocument(context: Context, uri: Uri): String = profileDoc
                 runCatching { descriptor.getAndSet(null)?.close() }
             }
             result.invokeOnCancellation {
-                runCatching { signal.cancel() }
-                closeOwned()
+                ProfileReadCleanup.dispatch {
+                    runCatching { signal.cancel() }
+                    closeOwned()
+                }
             }
             try {
                 val opened = context.contentResolver.openAssetFileDescriptor(uri, "r", signal)
