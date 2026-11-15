@@ -134,6 +134,16 @@ many people the service supports. Delayed exact-session sweeps found zero
 objects from all four arms. Private details are under
 `.skirk-runs/architecture-five-client-longstall{,-reverse}-20261114/`.
 
+A separate five-client MemoryStore upload sensitivity model varied the normal
+batch cap from 4 MiB to 2 MiB with six shared large-PUT slots and an imposed
+one-second-per-MiB PUT delay. In two epoch runs each, 2 MiB batches raised
+modeled file goodput from 37.9–41.2 to 43.4–44.0 Mb/s, while text p95 ranges
+overlapped (1.48–1.83 versus 1.49–1.73 s). All 80 MiB and 30 echoes per run
+verified. The model lacks Drive's variable backend delay and metadata-only
+priority, so it does not justify a production chunk-size change. Its exact
+settings and four-mode results are in
+`tools/persistent_bench/UPLOAD_SIM.md`.
+
 ## Drive class discovery pilot
 
 Google documents `name contains` as **prefix-only** for file names, whereas
