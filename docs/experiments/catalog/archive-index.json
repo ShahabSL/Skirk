@@ -1675,6 +1675,18 @@
   },
   {
     "worktree": "slot-async-wt",
+    "path": ".skirk-runs/async-vs-main-download100m-counterfix-20261115/arms/summary.json",
+    "bytes": 1388,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/async-vs-main-download100m-sustained-20261115-125k/arms/summary.json",
+    "bytes": 3289,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
     "path": ".skirk-runs/async-vs-main-download100m-sustained-20261115/arms/summary.json",
     "bytes": 1290,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Frozen42 runtime; final matrix plus retained H2/50k-scale interruptions; fresh125k cohort pending at snapshot",
+  "research_tip": "Frozen42finalmatrix plus retainedH2/50k/125k/counterfixstrictinterruptions; futureboundedrecoveryseparate",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -11,7 +11,7 @@
     "The 2026-05 archives include external-origin, shared-server and non-hash-verified notes; do not rank them against November local exact-body runs.",
     "Live Google test account credentials and runtime profiles are excluded. Only aggregate fields explicitly whitelisted in the generator are imported.",
     "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet.",
-    "Final CPU-quiet matrix attempted16arms and completed15; one real async bulk upload timeout remains. Normal desktop background uncontrolled. Completed main comparisons show latency/file/quota tradeoffs, not universal victory. New dependency-only CLI is compiled but not live measured."
+    "Final CPU-quiet matrix attempted16arms/completed15; one ordinary async bulk timeout remains. Dependency-onlydiagnostic incomplete; sustained strictcohorts preserve budgets,accountingfalsepositive,andmainRPCtimeouts separately. Normaldesktopbackgrounduncontrolled."
   ],
   "records": [
     {
@@ -3180,6 +3180,67 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "6616946+fd4e828;frozenCLI only, no Go product changes",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-018",
+      "candidate": "Sustained125k cohort before cleanup-accounting fix",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Plannedmain/async/async/main100MiB+100persistent64B frames/1250ms,1slead,128KiBprelude;125krolling/150karm/600kcohort estimates,300s/180s/60s bounds",
+      "latency": "Main100echo scheduledfirstbytep9512.019s;28bulk-overlap/72postbulk;candidatefulltextdistribution unavailable",
+      "throughput_mbps": "Main23.986Mb/s34.972466s;async26.182Mb/s32.039930s exactfilecheckpoints",
+      "estimated_quota_units": "Main116220;candidate103745 lastobserved",
+      "correctness_and_errors": "Main exact100MiB+100echoes0errors;candidate exact100MiB then strictguard4metadata404errors, bothwritersreached64PATCH; remaining2armsnotrun",
+      "cleanup": "8residualmuxdeleted;4exactprefix0immediate31s;configsgone",
+      "decision": "Expected post-delete verification404 accounting reproduced/fixed later, but historicalarm remains interrupted, never subtract4/relabelpass; no balanced ranking",
+      "source_documents": [
+        "docs/experiments/sustained-strict-attempts-2026-11-15.md",
+        "docs/experiments/sustained-strict-attempts-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/async-vs-main-download100m-sustained-20261115-125k/"
+      ],
+      "revision_or_binary": "current42e6742/c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3;harnessc2dec7f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-019",
+      "candidate": "Fresh strict counterfix cohort interrupted in firstcleanmaincontrol",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Plannedmain/async/async/main100MiB+100persistent64B frames/1250ms,1slead,128KiBprelude;125krolling/150karm/600kcohort estimates,300s/180s/60s bounds",
+      "latency": "19verifiedpartialecho receipts retained; no full100-frame percentile",
+      "throughput_mbps": "No completed100MiBcheckpoint",
+      "estimated_quota_units": "15255client+15955exit=31210 lastobserved;0budget/backoffexhaustion",
+      "correctness_and_errors": "4normalidempotent1048631Bexit multiparttimeouts~28s,slot_wait0;candidate andremaining3armsnotrun;acquire/write/headertrace absent in oldmain",
+      "cleanup": "10residualmuxdeletedincl1late;second31sall2exactprefix0;configsgone",
+      "decision": "StrictRPCfailure is not proof mux boundedretry couldnotrecover; futureboundedrecoverymode mustbeseparate, retainallerrors",
+      "source_documents": [
+        "docs/experiments/sustained-strict-attempts-2026-11-15.md",
+        "docs/experiments/sustained-strict-attempts-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/async-vs-main-download100m-counterfix-20261115/"
+      ],
+      "revision_or_binary": "main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3;plannedcurrent63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f;harness782346a",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-020",
+      "candidate": "Exactslot post-delete404 accounting correction",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Plannedmain/async/async/main100MiB+100persistent64B frames/1250ms,1slead,128KiBprelude;125krolling/150karm/600kcohort estimates,300s/180s/60s bounds",
+      "latency": "No wire/latency change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "4verificationGETs retain4calls20units,0expected404errors;full2targetretirement6calls120units",
+      "correctness_and_errors": "Exactid+namemarkeronlyafterdelete;ordinary/mismatch404,401/403/429,timeouts,prior500failuresstillcount;Go/vet/race6.326spass+independentreview",
+      "cleanup": "Cleanupreadback classification only; no broadDelete404exemption",
+      "decision": "Fix falseAPIerror guard, not measuredperformancewin; freshstrictcohortneverreachedcandidate",
+      "source_documents": [
+        "docs/experiments/sustained-strict-attempts-2026-11-15.md",
+        "docs/experiments/sustained-strict-attempts-2026-11-15.json"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "4d91f160fcbac50546d373951cc7b4a3f9ef5a58;combined63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
       "live_comparable": false
     }
   ]
