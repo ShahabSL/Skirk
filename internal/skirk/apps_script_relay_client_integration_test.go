@@ -308,6 +308,91 @@ func TestRelayClientLostDeleteReplyDoesNotOverflowSaturatedDownloadCache(t *test
 	}
 }
 
+func TestRelayClientReservedPriorityProgressWithBothNormalBuffersFull(t *testing.T) {
+	cfg := relayResearchConfig{FrameBytes: 128 << 10, MaxBytes: 256 << 10, MaxObjects: 8, PriorityReserveBytes: 128 << 10, PriorityReserveObjects: 2, PollWait: 5 * time.Millisecond}
+	b, c := relayClientTestBroker(t, cfg, nil)
+	normal := bytes.Repeat([]byte{1}, 128<<10)
+	priority := bytes.Repeat([]byte{2}, 64<<10)
+	up, err := c.PutObject(context.Background(), "up/p1/first", normal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	down, err := b.exitStore().PutObject(context.Background(), "down/p1/first", normal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayClientWait(t, func() bool { _, e := c.GetByID(context.Background(), down.ID); return e == nil }, "first normal DOWN missing")
+	secondUp := make(chan error, 1)
+	go func() { secondUp <- c.Put(context.Background(), "up/p1/second", normal) }()
+	secondDown := make(chan error, 1)
+	go func() {
+		_, e := b.exitStore().PutObject(context.Background(), "down/p1/second", normal)
+		secondDown <- e
+	}()
+	relayClientWait(t, func() bool { return b.snapshot().BusyResponses > 0 }, "normal UP did not reach reserved boundary")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err = c.Put(ctx, "up/p0/interactive", priority); err != nil {
+		t.Fatal("priority UP blocked behind normal reservation", err)
+	}
+	control, err := b.exitStore().PutObject(ctx, "down/p0/interactive", priority)
+	if err != nil {
+		t.Fatal("priority DOWN blocked behind normal reservation", err)
+	}
+	relayClientWait(t, func() bool { got, e := c.GetByID(ctx, control.ID); return e == nil && bytes.Equal(got, priority) }, "priority DOWN did not enter reserved client cache")
+	select {
+	case <-secondUp:
+		t.Fatal("normal UP consumed priority headroom")
+	default:
+	}
+	select {
+	case <-secondDown:
+		t.Fatal("normal DOWN consumed priority headroom")
+	default:
+	}
+	if c.snapshot()["down_bytes"] > cfg.MaxBytes || c.snapshot()["normal_down_bytes"] > cfg.MaxBytes-cfg.PriorityReserveBytes {
+		t.Fatal("receive budget overrun", c.snapshot())
+	}
+	if err = b.exitStore().DeleteID(ctx, up.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.DeleteID(ctx, down.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, done := range []chan error{secondUp, secondDown} {
+		select {
+		case err = <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("normal work did not resume after processing")
+		}
+	}
+}
+
+func TestRelayClientReservedPriorityClaimsSurviveNormalTombstones(t *testing.T) {
+	b, c := relayClientTestBroker(t, relayResearchConfig{FrameBytes: 128 << 10, MaxObjects: 3, PriorityReserveObjects: 1, PollWait: 5 * time.Millisecond}, nil)
+	for i := 0; i < 2; i++ {
+		info, err := c.PutObject(context.Background(), fmt.Sprintf("up/p1/%d", i), []byte{byte(i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = b.exitStore().DeleteID(context.Background(), info.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Put(context.Background(), "up/p1/no-reserved-claim", []byte{3}); !errors.Is(err, errRelayResearchBounds) {
+		t.Fatal("normal tombstone consumed reserved claim", err)
+	}
+	if err := c.Put(context.Background(), "up/p0/control", []byte{4}); err != nil {
+		t.Fatal("priority could not use reserved immutable claim", err)
+	}
+	if b.snapshot().UpObjects != 3 || c.snapshot()["normal_up_objects"] != 2 {
+		t.Fatal("normal tombstones were evicted", b.snapshot(), c.snapshot())
+	}
+}
+
 func TestRelayClientAdmissionCancellationBoundsAndJoinedPumps(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	key, epoch := bytes.Repeat([]byte{2}, 32), [16]byte{8}
@@ -399,11 +484,10 @@ type relayResearchSOCKSFixture struct {
 	close  func()
 }
 
-func relayClientSOCKSFixture(t *testing.T, wrap func(*relayResearchBroker) relayResearchExchange) *relayResearchSOCKSFixture {
+func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, wrap func(*relayResearchBroker) relayResearchExchange) *relayResearchSOCKSFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	key, epoch := bytes.Repeat([]byte{3}, 32), [16]byte{7, 2}
-	rc := relayResearchConfig{FrameBytes: 128 << 10, PollWait: 10 * time.Millisecond}
 	b, err := newRelayResearchBroker(ctx, key, epoch, rc)
 	if err != nil {
 		cancel()
@@ -495,8 +579,21 @@ func relayClientSOCKSFixture(t *testing.T, wrap func(*relayResearchBroker) relay
 }
 
 func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T) {
+	for _, reserved := range []bool{false, true} {
+		name := "baseline"
+		cfg := relayResearchConfig{FrameBytes: 128 << 10, PollWait: 10 * time.Millisecond}
+		if reserved {
+			name = "reserved-priority"
+			cfg.PriorityReserveBytes = 1 << 20
+			cfg.PriorityReserveObjects = 16
+		}
+		t.Run(name, func(t *testing.T) { relayClientSOCKSExercise(t, cfg) })
+	}
+}
+
+func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig) {
 	var upLost, downLost atomic.Bool
-	f := relayClientSOCKSFixture(t, func(b *relayResearchBroker) relayResearchExchange {
+	f := relayClientSOCKSFixture(t, cfg, func(b *relayResearchBroker) relayResearchExchange {
 		httpExchange := relayClientHTTPExchange(t, b)
 		return func(ctx context.Context, wire []byte) ([]byte, error) {
 			response, err := httpExchange(ctx, wire)

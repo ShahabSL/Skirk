@@ -59,9 +59,13 @@ type relayResearchClient struct {
 	upNames                                         map[string]string
 	upQueue                                         []*relayResearchUpload
 	upBytes                                         int64
+	normalUpBytes                                   int64
+	normalUpObjects                                 int
 	down                                            map[string]*relayResearchDownload
 	downNames                                       map[string]string
 	downBytes                                       int64
+	normalDownBytes                                 int64
+	normalDownObjects                               int
 	deletes                                         map[string]*relayResearchDeletion
 	validate                                        func(ObjectInfo, []byte) error
 	notify                                          func(ObjectInfo) bool
@@ -151,7 +155,7 @@ func (s *relayResearchClient) Close() {
 	for _, v := range s.down {
 		v.data = nil
 	}
-	s.upBytes, s.downBytes = 0, 0
+	s.upBytes, s.downBytes, s.normalUpBytes, s.normalDownBytes = 0, 0, 0, 0
 	s.mu.Unlock()
 }
 func (s *relayResearchClient) error() error { s.mu.Lock(); defer s.mu.Unlock(); return s.err }
@@ -161,7 +165,8 @@ func (s *relayResearchClient) snapshot() map[string]int64 {
 	defer s.mu.Unlock()
 	return map[string]int64{"up_objects": int64(len(s.up)), "down_objects": int64(len(s.down)),
 		"up_bytes": s.upBytes, "down_bytes": s.downBytes, "requests": int64(s.requests),
-		"retries": int64(s.retries), "published": int64(s.published), "received": int64(s.received), "deleted": int64(s.deleted), "up_waits": int64(s.upWaits), "down_waits": int64(s.downWaits)}
+		"retries": int64(s.retries), "published": int64(s.published), "received": int64(s.received), "deleted": int64(s.deleted), "up_waits": int64(s.upWaits), "down_waits": int64(s.downWaits),
+		"normal_up_bytes": s.normalUpBytes, "normal_down_bytes": s.normalDownBytes, "normal_up_objects": int64(s.normalUpObjects), "normal_down_objects": int64(s.normalDownObjects)}
 }
 
 func (s *relayResearchClient) Put(ctx context.Context, name string, data []byte) error {
@@ -177,6 +182,10 @@ func (s *relayResearchClient) PutObject(ctx context.Context, name string, data [
 		return ObjectInfo{}, errRelayResearchBounds
 	}
 	id, hash := relayResearchID(name, data), sha256.Sum256(data)
+	priority := strings.Contains(name, "/p0/")
+	if !priority && int64(len(data)) > s.cfg.MaxBytes-s.cfg.PriorityReserveBytes {
+		return ObjectInfo{}, errRelayResearchBounds
+	}
 	var v *relayResearchUpload
 	for {
 		s.mu.Lock()
@@ -203,11 +212,11 @@ func (s *relayResearchClient) PutObject(ctx context.Context, name string, data [
 			break
 		}
 		// Immutable claims remain until Close, including after upload data is freed.
-		if len(s.up) >= s.cfg.MaxObjects {
+		if len(s.up) >= s.cfg.MaxObjects || !priority && s.normalUpObjects >= s.cfg.MaxObjects-s.cfg.PriorityReserveObjects {
 			s.mu.Unlock()
 			return ObjectInfo{}, errRelayResearchBounds
 		}
-		if s.upBytes+int64(len(data)) > s.cfg.MaxBytes {
+		if s.upBytes+int64(len(data)) > s.cfg.MaxBytes || !priority && s.normalUpBytes+int64(len(data)) > s.cfg.MaxBytes-s.cfg.PriorityReserveBytes {
 			s.upWaits++
 			changed := s.changed
 			s.mu.Unlock()
@@ -221,10 +230,14 @@ func (s *relayResearchClient) PutObject(ctx context.Context, name string, data [
 			continue
 		}
 		v = &relayResearchUpload{info: ObjectInfo{Name: name, ID: id, Size: int64(len(data)), Updated: time.Now().UTC().Format(time.RFC3339Nano)},
-			hash: hash, data: bytes.Clone(data), priority: strings.Contains(name, "/p0/"), done: make(chan struct{})}
+			hash: hash, data: bytes.Clone(data), priority: priority, done: make(chan struct{})}
 		s.up[id], s.upNames[name] = v, id
 		s.upQueue = append(s.upQueue, v)
 		s.upBytes += int64(len(data))
+		if !priority {
+			s.normalUpBytes += int64(len(data))
+			s.normalUpObjects++
+		}
 		s.mu.Unlock()
 		break
 	}
@@ -524,6 +537,9 @@ func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayRe
 			d.finished = true
 			down.done = true
 			s.downBytes -= int64(len(down.data))
+			if !down.priority {
+				s.normalDownBytes -= int64(len(down.data))
+			}
 			down.data = nil
 			s.deleted++
 			close(d.done)
@@ -541,6 +557,9 @@ func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayRe
 		if commits[v.info.ID] {
 			v.finished = true
 			s.upBytes -= int64(len(v.data))
+			if !v.priority {
+				s.normalUpBytes -= int64(len(v.data))
+			}
 			v.data = nil
 			s.published++
 			close(v.done)
@@ -589,6 +608,12 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 	if p.ID == "" || p.Name == "" || p.Total <= 0 || p.Total > rrMaxObject || int64(p.Total) > s.cfg.MaxBytes || p.Offset < 0 || len(p.Data) == 0 || p.Offset > p.Total-len(p.Data) {
 		return errRelayResearchBounds
 	}
+	if p.Priority != strings.Contains(p.Name, "/p0/") {
+		return errRelayResearchConflict
+	}
+	if !p.Priority && int64(p.Total) > s.cfg.MaxBytes-s.cfg.PriorityReserveBytes {
+		return errRelayResearchBounds
+	}
 	var v *relayResearchDownload
 	for {
 		s.mu.Lock()
@@ -605,7 +630,7 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 		if v != nil {
 			break
 		}
-		if len(s.down) >= s.cfg.MaxObjects {
+		if len(s.down) >= s.cfg.MaxObjects || !p.Priority && s.normalDownObjects >= s.cfg.MaxObjects-s.cfg.PriorityReserveObjects {
 			s.mu.Unlock()
 			return errRelayResearchBounds
 		}
@@ -613,7 +638,7 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 			s.mu.Unlock()
 			return errRelayResearchConflict
 		}
-		if s.downBytes+int64(p.Total) > s.cfg.MaxBytes {
+		if s.downBytes+int64(p.Total) > s.cfg.MaxBytes || !p.Priority && s.normalDownBytes+int64(p.Total) > s.cfg.MaxBytes-s.cfg.PriorityReserveBytes {
 			// The server may have processed a deletion whose reply was lost.
 			// Keep this PULL unreceipted while UP recovers that exact reply.
 			s.downWaits++
@@ -630,6 +655,10 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 			hash: p.Hash, priority: p.Priority, data: make([]byte, p.Total)}
 		s.down[p.ID], s.downNames[p.Name] = v, p.ID
 		s.downBytes += int64(p.Total)
+		if !p.Priority {
+			s.normalDownBytes += int64(p.Total)
+			s.normalDownObjects++
+		}
 		break
 	}
 	if v.info.Name != p.Name || v.info.Size != int64(p.Total) || v.hash != p.Hash || v.priority != p.Priority {

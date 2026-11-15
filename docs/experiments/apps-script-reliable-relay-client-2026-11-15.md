@@ -58,10 +58,15 @@ full size, so a full UP buffer cannot monopolize the channel needed to delete
 DOWN. The client advances its RPC sequence, rotates the same immutable object,
 and retries with bounded pacing.
 
-This does not reserve memory for priority admission: fully queued normal data
-can still delay a small priority object before scheduling. A priority-headroom
-variant needs consistent admission limits and saturation measurements on both
-sides. Fragment scheduling alone does not prove latency isolation.
+Reserve-zero baseline admission does not protect memory for priority traffic:
+fully queued normal data can delay a small priority object before scheduling.
+An opt-in variant adds explicit `PriorityReserveBytes` and
+`PriorityReserveObjects` on both client and broker, in both directions. Normal
+objects cannot consume those bytes or immutable identity claims. The planned
+full-mux variant uses 1 MiB and 16 claims within the same 64 MiB/4,096 totals;
+these are research settings and do not change product defaults. Fragment
+scheduling alone does not prove latency isolation or prevent a priority queue
+from filling its own reserved capacity.
 
 Caller cancellation does not discard a session-owned ambiguous publication.
 Session cancellation terminates both pumps, wakes admission/processing waiters,
@@ -74,9 +79,18 @@ wire bytes. HTTP 429/5xx retries honor a bounded 1–30 second delay.
 
 ## Offline verification plan and status
 
-Source has been written for the following deterministic tests. It has **not yet
-been compiled or executed** because the parent experiment holds a CPU-quiet
-live measurement window. Replace this status only after actual execution.
+The reserve-zero baseline compiled successfully. Its first run passed 19/20
+tests, including all file/hash, text-overlap, and lost-reply assertions, but
+failed the full test's three-second cleanup wait. The production mux normally
+defers foreground cleanup for 10–15 seconds. The corrected test closes idle
+HTTP and explicitly kicks the existing mux cleanup path **after** measurement
+work finishes. It changes no production timing constant. The next run passed
+20/20 in 2.673 seconds; the real HTTP/SOCKS test passed in 2.11 seconds with
+112 UP and 127 DOWN objects accepted/deleted and zero retained payload bytes.
+These are local test durations, not Google throughput or latency results.
+
+The priority-reserve variant and its saturation tests are source-only pending
+the coordinated offline run. Race and vet results are also pending.
 
 - Lost committed UP reply: exact retry, one publication, deletion followed by a
   fresh-RPC duplicate, and rejection of a receipted old RPC.
@@ -98,6 +112,9 @@ live measurement window. Replace this status only after actual execution.
   correctness tests, not Google speed or regional availability measurements.
 - Carrier route/redirect bounds, foreign redirects, auth reflection, and
   pre-dispatch budget exhaustion rejected without escaping the selected front.
+- Reserved priority admission: fill normal budgets in both directions, then
+  complete priority traffic before freeing normal payload; retain reserved
+  identity claims after normal payloads become tombstones.
 
 No Google grant, deployment, or live request is performed by these offline
 tests. Live evaluation requires a separate exclusive measurement lease, bounded
