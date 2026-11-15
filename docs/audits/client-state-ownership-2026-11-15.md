@@ -35,9 +35,8 @@ Kotlin model and checks A auth failure → select B → return A, mode/owner ret
 unknown legacy ownership and active-service presentation. Example host command:
 
 ```sh
-kotlinc clients/android/app/src/main/java/app/skirk/client/ConnectionState.kt \
-  clients/android/tests/ConnectionStateTest.kt -include-runtime -d /tmp/skirk-state-test.jar
-java -jar /tmp/skirk-state-test.jar
+cd clients/android
+./gradlew :app:testDebugUnitTest
 ```
 
 The desktop Node regression suite (`npm run test:snapshot`, Node 22.6+ with type
@@ -93,8 +92,11 @@ checks disposal/cancellation invalidates pending work. It uses the exact
 production generation model. Host command (after the benchmark quiet window):
 
 ```sh
-kotlinc clients/android/app/src/main/java/app/skirk/client/ProfileImportGeneration.kt   clients/android/tests/ProfileImportGenerationTest.kt -include-runtime -d /tmp/skirk-import-test.jar
-java -jar /tmp/skirk-import-test.jar
+kotlinc clients/android/app/src/main/java/app/skirk/client/ConnectionState.kt \
+  clients/android/app/src/main/java/app/skirk/client/ProfileImportGeneration.kt \
+  clients/android/app/src/main/java/app/skirk/client/ProfileReadCleanup.kt \
+  clients/android/tests/*.kt -include-runtime -d /tmp/skirk-client-state-tests.jar
+java -jar /tmp/skirk-client-state-tests.jar
 ```
 
 Device falsification still required: a test ContentProvider should hold its
