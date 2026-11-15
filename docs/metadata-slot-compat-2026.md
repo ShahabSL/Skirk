@@ -23,8 +23,8 @@ The random test content was not a real Skirk frame or credential.
 | API errors / recovery records remaining | 0 / 0 |
 
 The ignored, private report is
-`.skirk-runs/metadata-slot-compat-20261114.json` in the isolated backend
-worktree. The tool has a 4,000-unit cap and keeps an exact-ID recovery record
+`.skirk-runs/metadata-slot-compat-20261114.json` in this experiment checkout.
+The tool has a 4,000-unit cap and keeps an exact-ID recovery record
 until cleanup completes. It accepts only the isolated `personal-test/kit`
 config path and writes reports under ignored `.skirk-runs`.
 
