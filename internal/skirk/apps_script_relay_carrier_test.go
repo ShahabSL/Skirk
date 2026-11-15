@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,10 +21,30 @@ type relayResearchRetryAfter struct{ delay time.Duration }
 
 func (e *relayResearchRetryAfter) Error() string { return "relay Google HTTP temporarily unavailable" }
 
+type relayResearchStageError struct{ stage string }
+
+func (e *relayResearchStageError) Error() string { return "relay rejected stage=" + e.stage }
+func (e *relayResearchStageError) Unwrap() error { return errRelayResearchConflict }
+
+func relayResearchSafeStage(stage string) bool {
+	switch stage {
+	case "expired", "auth", "request_bound", "request_shape", "fetch_failed", "response_bound":
+		return true
+	}
+	if len(stage) == len("relay_http_")+3 && strings.HasPrefix(stage, "relay_http_") {
+		n, e := strconv.Atoi(strings.TrimPrefix(stage, "relay_http_"))
+		return e == nil && n >= 100 && n <= 599
+	}
+	return false
+}
+
 // Limits count visible HTTP dispatches and reserve the x/net/http2 v0.61
 // internal replay upper bound before dispatch. Body limits exclude TLS/headers;
 // these are not a claim to observe Google's accepted or billed request count.
 type relayResearchCarrierBudget struct {
+	Statuses                                                                                                  map[int]int64
+	Stages                                                                                                    map[string]int64
+	HTTP2Responses, TransportErrors                                                                           int64
 	mu                                                                                                        sync.Mutex
 	MaxAttempts, MaxBodyBytes, MaxPosts                                                                       int64
 	Posts                                                                                                     int64
@@ -55,7 +76,39 @@ func (b *relayResearchCarrierBudget) finish(reserved, received int) {
 func (b *relayResearchCarrierBudget) snapshot() map[string]int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]int64{"dispatches": b.Dispatches, "script_posts": b.Posts, "urlfetch_attempts_upper": b.Posts * 8, "attempts_upper": b.AttemptUpper, "request_body_bytes_upper": b.RequestBodyUpper, "response_body_bytes_upper": b.ResponseBodyUpper, "returned_response_body_bytes": b.ExposedResponseBytes, "pending_response_bytes": b.PendingResponseBytes}
+	snapshot := map[string]int64{"dispatches": b.Dispatches, "script_posts": b.Posts, "urlfetch_attempts_upper": b.Posts * 8, "attempts_upper": b.AttemptUpper, "request_body_bytes_upper": b.RequestBodyUpper, "response_body_bytes_upper": b.ResponseBodyUpper, "returned_response_body_bytes": b.ExposedResponseBytes, "pending_response_bytes": b.PendingResponseBytes, "http2_responses": b.HTTP2Responses, "transport_errors": b.TransportErrors}
+	for code, n := range b.Statuses {
+		snapshot["http_status_"+strconv.Itoa(code)] = n
+	}
+	for stage, n := range b.Stages {
+		snapshot["stage_"+stage] = n
+	}
+	return snapshot
+}
+
+func (b *relayResearchCarrierBudget) observe(result *HTTPResult, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err != nil {
+		b.TransportErrors++
+	}
+	if result != nil {
+		if b.Statuses == nil {
+			b.Statuses = map[int]int64{}
+		}
+		b.Statuses[result.Status]++
+		if result.Proto == "HTTP/2.0" {
+			b.HTTP2Responses++
+		}
+	}
+}
+func (b *relayResearchCarrierBudget) stage(stage string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.Stages == nil {
+		b.Stages = map[string]int64{}
+	}
+	b.Stages[stage]++
 }
 
 // The relay's Google-facing exchange uses only the selected Google route.
@@ -89,6 +142,7 @@ func newRelayResearchGoogleExchange(client *GoogleHTTPClient, endpoint string, a
 				n = len(result.Body)
 			}
 			budget.finish(limit+1, n)
+			budget.observe(result, callErr)
 			if callErr != nil {
 				return nil, errors.New("relay Google HTTP exchange failed")
 			}
@@ -104,6 +158,13 @@ func newRelayResearchGoogleExchange(client *GoogleHTTPClient, endpoint string, a
 			}
 			switch result.Status {
 			case http.StatusOK:
+				var failure struct {
+					Error string `json:"error"`
+				}
+				if json.Unmarshal(result.Body, &failure) == nil && relayResearchSafeStage(failure.Error) {
+					budget.stage(failure.Error)
+					return nil, &relayResearchStageError{stage: failure.Error}
+				}
 				var envelope relayResearchHTTPEnvelope
 				decoder := json.NewDecoder(bytes.NewReader(result.Body))
 				decoder.DisallowUnknownFields()
@@ -199,6 +260,28 @@ func TestRelayClientGoogleCarrierReservesRepostedScriptBeforeDispatch(t *testing
 	}
 	if _, err = exchange(context.Background(), wire); !errors.Is(err, errRelayResearchBounds) || calls != 1 || budget.snapshot()["script_posts"] != 1 || budget.snapshot()["urlfetch_attempts_upper"] != 8 {
 		t.Fatal("script rePOST bypassed campaign slice", err, calls, budget.snapshot())
+	}
+}
+
+func TestRelayClientGoogleCarrierRetainsOnlyBoundedFailureStageAndStatus(t *testing.T) {
+	codec, _ := newRelayResearchCodec(bytes.Repeat([]byte{8}, 32), [16]byte{3}, 128<<10)
+	wire, _ := codec.seal(relayResearchPacket{Kind: rrPull, Seq: 1})
+	budget := &relayResearchCarrierBudget{MaxAttempts: 32, MaxBodyBytes: 16 << 20, MaxPosts: 2}
+	client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		response := stringResponse(200, `{"error":"relay_http_503"}`)
+		response.Proto = "HTTP/2.0"
+		return response, nil
+	}), CheckRedirect: keepGoogleHTTPRedirectResponse}}
+	exchange, _ := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, budget)
+	_, err := exchange(context.Background(), wire)
+	var stage *relayResearchStageError
+	if !errors.As(err, &stage) || !errors.Is(err, errRelayResearchConflict) || stage.stage != "relay_http_503" || budget.snapshot()["stage_relay_http_503"] != 1 || budget.snapshot()["http_status_200"] != 1 || budget.snapshot()["http2_responses"] != 1 {
+		t.Fatal("bounded diagnostics missing", err, budget.snapshot())
+	}
+	for _, unsafe := range []string{"relay_http_503 secret", "https://secret.example/token", "fetch_failed\ncredential", "relay_http_999", "relay_http_1"} {
+		if relayResearchSafeStage(unsafe) {
+			t.Fatal("unsafe failure detail accepted")
+		}
 	}
 }
 
