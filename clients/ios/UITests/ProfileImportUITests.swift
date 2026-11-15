@@ -134,6 +134,10 @@ final class ProfileImportUITests: XCTestCase {
             }
         }
 
+        for _ in 0..<3 {
+            if app.buttons["Remove profile"].exists { break }
+            app.swipeUp()
+        }
         app.buttons["Remove profile"].tap()
         XCTAssertTrue(app.staticTexts["Remove saved profile?"].waitForExistence(timeout: 5))
         app.alerts.buttons["Cancel"].tap()
