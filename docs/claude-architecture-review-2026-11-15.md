@@ -26,8 +26,16 @@ It requested Fable with tools/MCP disabled from an empty temporary directory.
 The CLI returned an account five-hour usage-limit error after 339 ms, with
 zero input/output tokens and empty `modelUsage`; it reported a reset at
 2:20 pm America/Chicago. **No client UI audit ran or recommendations returned.**
-No account switch, quota bypass or retry was attempted. This failed attempt
-does not extend the scope of the three completed transport reviews.
+No account switch or quota bypass was attempted. This failed attempt does not
+extend the scope of the three completed transport reviews.
+
+A current-source retry at 19:20 UTC supplied sixteen public client/state/native
+backend files (427,383 prompt characters), again with tools/MCP disabled and
+an empty working directory. It returned the same quota message after 299 ms,
+with empty model usage and no findings. The reset conversion was wrong:
+2:20 pm Chicago on November 15 is **20:20 UTC**, not 19:20 UTC. This retry is
+retained as a failed attempt, not a fourth completed review. No retry should
+be made before that corrected reset time.
 
 ## Returned model evidence
 
