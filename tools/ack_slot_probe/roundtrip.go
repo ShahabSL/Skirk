@@ -64,39 +64,40 @@ type roundtripProbe struct {
 }
 
 type roundtripReport struct {
-	SchemaVersion        int     `json:"schema_version"`
-	Route                string  `json:"route"`
-	Mode                 string  `json:"mode"`
-	RequestsScheduled    int     `json:"requests_scheduled"`
-	RequestsReceived     int     `json:"requests_received"`
-	RepliesReceived      int     `json:"replies_received"`
-	RequestsAcknowledged int     `json:"requests_acknowledged"`
-	RepliesAcknowledged  int     `json:"replies_acknowledged"`
-	Roundtrips           int     `json:"roundtrips"`
-	RoundtripP50MS       float64 `json:"roundtrip_scheduled_p50_ms,omitempty"`
-	RoundtripP95MS       float64 `json:"roundtrip_scheduled_p95_ms,omitempty"`
-	RoundtripMaxMS       float64 `json:"roundtrip_scheduled_max_ms,omitempty"`
-	UpPatches            int     `json:"up_patches"`
-	DownPatches          int     `json:"down_patches"`
-	Gets                 int     `json:"gets"`
-	UpStaleGets          int     `json:"up_stale_gets"`
-	DownStaleGets        int     `json:"down_stale_gets"`
-	UpSkippedVersions    int64   `json:"up_skipped_versions"`
-	DownSkippedVersions  int64   `json:"down_skipped_versions"`
-	MaxSnapshotFrames    int     `json:"max_snapshot_frames"`
-	MaxUnacknowledged    int     `json:"max_unacknowledged"`
-	ForcedPauseCompleted bool    `json:"forced_pause_completed"`
-	ReaderPauseMS        int     `json:"reader_pause_ms"`
-	PollMS               int     `json:"poll_ms"`
-	BoundaryBytes        int     `json:"metadata_boundary_bytes"`
-	BoundaryVerified     bool    `json:"metadata_boundary_verified"`
-	CleanupVerified      bool    `json:"cleanup_verified"`
-	CleanupDeletes       int     `json:"cleanup_deletes"`
-	CleanupGets          int     `json:"cleanup_gets"`
-	QuotaUnitsUpperBound int     `json:"quota_units_upper_bound"`
-	WorkloadCompletedUTC string  `json:"workload_completed_utc,omitempty"`
-	Failure              string  `json:"failure,omitempty"`
-	OK                   bool    `json:"ok"`
+	SchemaVersion        int       `json:"schema_version"`
+	Route                string    `json:"route"`
+	Mode                 string    `json:"mode"`
+	RequestsScheduled    int       `json:"requests_scheduled"`
+	RequestsReceived     int       `json:"requests_received"`
+	RepliesReceived      int       `json:"replies_received"`
+	RequestsAcknowledged int       `json:"requests_acknowledged"`
+	RepliesAcknowledged  int       `json:"replies_acknowledged"`
+	Roundtrips           int       `json:"roundtrips"`
+	RoundtripP50MS       float64   `json:"roundtrip_scheduled_p50_ms,omitempty"`
+	RoundtripP95MS       float64   `json:"roundtrip_scheduled_p95_ms,omitempty"`
+	RoundtripMaxMS       float64   `json:"roundtrip_scheduled_max_ms,omitempty"`
+	RoundtripSamplesMS   []float64 `json:"roundtrip_scheduled_samples_ms,omitempty"`
+	UpPatches            int       `json:"up_patches"`
+	DownPatches          int       `json:"down_patches"`
+	Gets                 int       `json:"gets"`
+	UpStaleGets          int       `json:"up_stale_gets"`
+	DownStaleGets        int       `json:"down_stale_gets"`
+	UpSkippedVersions    int64     `json:"up_skipped_versions"`
+	DownSkippedVersions  int64     `json:"down_skipped_versions"`
+	MaxSnapshotFrames    int       `json:"max_snapshot_frames"`
+	MaxUnacknowledged    int       `json:"max_unacknowledged"`
+	ForcedPauseCompleted bool      `json:"forced_pause_completed"`
+	ReaderPauseMS        int       `json:"reader_pause_ms"`
+	PollMS               int       `json:"poll_ms"`
+	BoundaryBytes        int       `json:"metadata_boundary_bytes"`
+	BoundaryVerified     bool      `json:"metadata_boundary_verified"`
+	CleanupVerified      bool      `json:"cleanup_verified"`
+	CleanupDeletes       int       `json:"cleanup_deletes"`
+	CleanupGets          int       `json:"cleanup_gets"`
+	QuotaUnitsUpperBound int       `json:"quota_units_upper_bound"`
+	WorkloadCompletedUTC string    `json:"workload_completed_utc,omitempty"`
+	Failure              string    `json:"failure,omitempty"`
+	OK                   bool      `json:"ok"`
 }
 
 func roundtripDirection(up bool) (string, byte) {
@@ -343,6 +344,7 @@ func (p *probe) runRoundtrip() (result roundtripReport) {
 		result.RequestsReceived, result.RepliesReceived = b.state.up.received, b.state.down.received
 		result.RequestsAcknowledged, result.RepliesAcknowledged = b.state.up.acked, b.state.down.acked
 		result.Roundtrips = len(b.state.rtts)
+		result.RoundtripSamplesMS = append([]float64(nil), b.state.rtts...)
 		result.UpStaleGets, result.DownStaleGets = b.state.up.staleGets, b.state.down.staleGets
 		result.UpSkippedVersions, result.DownSkippedVersions = b.state.up.skipped, b.state.down.skipped
 		result.MaxSnapshotFrames, result.MaxUnacknowledged = b.state.maxFrames, b.state.maxUnacked
