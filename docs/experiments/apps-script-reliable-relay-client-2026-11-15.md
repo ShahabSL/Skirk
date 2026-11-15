@@ -89,8 +89,44 @@ work finishes. It changes no production timing constant. The next run passed
 112 UP and 127 DOWN objects accepted/deleted and zero retained payload bytes.
 These are local test durations, not Google throughput or latency results.
 
-The priority-reserve variant and its saturation tests are source-only pending
-the coordinated offline run. Race and vet results are also pending.
+The priority-reserve variant and its saturation tests subsequently passed in
+the unified targeted run (4.711 seconds including both full-mux subcases).
+Race and vet results remain pending below.
+
+The 4 MiB mux configuration first completed its files but failed the requirement
+that a text reply finish before its very fast loopback upload. A separately
+labeled 20 ms simulated RPC case provided a reproducible overlap window and
+passed exact 16 MiB GET/POST, 17 text replies and reply-loss faults. It observed
+an actual 4,194,338-byte sealed normal object and fragmented it within 768 KiB
+RPC frames. Its full local test took 2.97 seconds. This is a correctness
+condition, not a measured Google RTT or throughput result.
+
+## Scalar RPC service-budget experiment
+
+A separate test inserts 300 ms before and after each local HTTP exchange,
+preserving one UP and one PULL channel, 768 KiB RPC frames, the 4 MiB mux limit,
+and 1 MiB/16 priority reserves. It offers twelve ordered 64-byte messages every
+250 ms on one already-open SOCKS connection while an exact 16 MiB GET runs.
+The offered span was 2.750 seconds; all twelve exact echoes finished while the
+file request remained active. The RTT samples in milliseconds were:
+
+`1497.706, 1849.515, 2200.720, 2551.723, 2902.227, 3253.083,
+3604.127, 3956.599, 4913.110, 5264.977, 5617.541, 5969.796`.
+
+Median was 3428.605 ms, maximum 5969.796 ms, and first-to-last growth 4472.090 ms.
+The workload used 26 UP and 43 PULL RPCs after warmup. Its largest observed
+sealed normal object was 2,097,200 bytes, despite the 4 MiB configured maximum.
+An initial run retained as a failed measurement condition required an actual
+3 MiB object and stopped after successful delivery at 28.51 seconds. The
+corrected test distinguishes configured limit from observed object size,
+requires actual fragmentation, prints every sample before its condition
+checks, and passed in 37.85 seconds including separately paced cleanup.
+
+These simulated results show queue growth when one object fragment consumes
+an entire 600 ms RPC at a 4-message/second offered rate. Memory headroom does
+not solve the service-rate limit. A bounded multi-object priority-packing
+variant should be compared against this retained scalar baseline before any
+latency claim. No timing here measures Google's service or a regional route.
 
 - Lost committed UP reply: exact retry, one publication, deletion followed by a
   fresh-RPC duplicate, and rejection of a receipted old RPC.

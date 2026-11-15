@@ -475,18 +475,19 @@ func TestRelayClientRejectsGapsChangedFragmentsAndUnsolicitedCommit(t *testing.T
 }
 
 type relayResearchSOCKSFixture struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	broker *relayResearchBroker
-	client *relayResearchClient
-	cm, em *driveMux
-	http   *http.Client
-	close  func()
+	ctx          context.Context
+	cancel       context.CancelFunc
+	broker       *relayResearchBroker
+	client       *relayResearchClient
+	cm, em       *driveMux
+	http         *http.Client
+	socksAddress string
+	close        func()
 }
 
-func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, wrap func(*relayResearchBroker) relayResearchExchange) *relayResearchSOCKSFixture {
+func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, muxChunk int, wrap func(*relayResearchBroker) relayResearchExchange) *relayResearchSOCKSFixture {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	key, epoch := bytes.Repeat([]byte{3}, 32), [16]byte{7, 2}
 	b, err := newRelayResearchBroker(ctx, key, epoch, rc)
 	if err != nil {
@@ -505,7 +506,7 @@ func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, wrap func(*re
 	}
 	t.Cleanup(func() { cancel(); c.Close(); b.Close() })
 	sid, _ := NewSessionID()
-	cfg := &Config{Secret: "relay-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client-a", RunID: "run-a"}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: 256 << 10, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
+	cfg := &Config{Secret: "relay-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client-a", RunID: "run-a"}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: muxChunk, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	ct, err := NewTunnel(c, cfg)
 	if err != nil {
@@ -561,7 +562,7 @@ func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, wrap func(*re
 	transport := &http.Transport{MaxConnsPerHost: 32, DialContext: func(ctx context.Context, _, target string) (net.Conn, error) {
 		return dialViaSOCKS5(ctx, "socks5h://"+address, target)
 	}}
-	f := &relayResearchSOCKSFixture{ctx: ctx, cancel: cancel, broker: b, client: c, cm: cm, em: em, http: &http.Client{Transport: transport, Timeout: 30 * time.Second}}
+	f := &relayResearchSOCKSFixture{ctx: ctx, cancel: cancel, broker: b, client: c, cm: cm, em: em, socksAddress: address, http: &http.Client{Transport: transport, Timeout: 60 * time.Second}}
 	var once sync.Once
 	f.close = func() {
 		once.Do(func() {
@@ -587,20 +588,73 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 			cfg.PriorityReserveBytes = 1 << 20
 			cfg.PriorityReserveObjects = 16
 		}
-		t.Run(name, func(t *testing.T) { relayClientSOCKSExercise(t, cfg) })
+		t.Run(name, func(t *testing.T) { relayClientSOCKSExercise(t, cfg, 256<<10, 0) })
+	}
+	t.Run("reserved-4m-objects-20ms-simulated-rpc", func(t *testing.T) {
+		relayClientSOCKSExercise(t, relayResearchConfig{FrameBytes: 768 << 10, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16}, 4<<20, 20*time.Millisecond)
+	})
+}
+
+func relayClientDelay(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
-func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig) {
+func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig, muxChunk int, rpcDelay time.Duration) {
 	var upLost, downLost atomic.Bool
-	f := relayClientSOCKSFixture(t, cfg, func(b *relayResearchBroker) relayResearchExchange {
+	var largestNormal atomic.Int64
+	var fragmented atomic.Bool
+	f := relayClientSOCKSFixture(t, cfg, muxChunk, func(b *relayResearchBroker) relayResearchExchange {
 		httpExchange := relayClientHTTPExchange(t, b)
 		return func(ctx context.Context, wire []byte) ([]byte, error) {
+			// A small simulated RTT makes the larger-object case long enough to
+			// observe text interleaving rather than merely local CPU copy speed.
+			delay := rpcDelay / 2
+			if err := relayClientDelay(ctx, delay); err != nil {
+				return nil, err
+			}
+			p, _ := b.codec.open(wire)
+			for _, piece := range p.Pieces {
+				if !piece.Priority {
+					for old := largestNormal.Load(); int64(piece.Total) > old; old = largestNormal.Load() {
+						if largestNormal.CompareAndSwap(old, int64(piece.Total)) {
+							break
+						}
+					}
+					if piece.Offset > 0 {
+						fragmented.Store(true)
+					}
+				}
+			}
 			response, err := httpExchange(ctx, wire)
 			if err != nil {
 				return nil, err
 			}
+			if err = relayClientDelay(ctx, delay); err != nil {
+				return nil, err
+			}
 			r, _ := b.codec.open(response)
+			for _, piece := range r.Pieces {
+				if !piece.Priority {
+					for old := largestNormal.Load(); int64(piece.Total) > old; old = largestNormal.Load() {
+						if largestNormal.CompareAndSwap(old, int64(piece.Total)) {
+							break
+						}
+					}
+					if piece.Offset > 0 {
+						fragmented.Store(true)
+					}
+				}
+			}
 			if len(r.Committed) > 0 && upLost.CompareAndSwap(false, true) {
 				return nil, errors.New("injected committed-UP reply loss")
 			}
@@ -720,6 +774,9 @@ func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig) {
 	if !upLost.Load() || !downLost.Load() || uploadSideEffects.Load() != 1 {
 		t.Fatal("faults/side effects not exercised", upLost.Load(), downLost.Load(), uploadSideEffects.Load())
 	}
+	if muxChunk >= 4<<20 && (largestNormal.Load() < 3<<20 || !fragmented.Load()) {
+		t.Fatal("4MiB-class normal object/fragment condition not exercised", largestNormal.Load(), fragmented.Load())
+	}
 	// Measurement work has finished. Flush already-processed objects through
 	// the mux's existing emergency cleanup path rather than waiting its normal
 	// 10–15 second foreground quiet timer in this loopback correctness test.
@@ -738,7 +795,7 @@ func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig) {
 	if f.broker.snapshot().LiveWorkers != 0 || f.client.snapshot()["up_bytes"] != 0 || f.client.snapshot()["down_bytes"] != 0 {
 		t.Fatal("session leaked after cancellation")
 	}
-	t.Logf("loopback-only exact16MiB GET+POST and17 text replies; no live-speed claim; broker=%+v", before)
+	t.Logf("loopback-only exact16MiB GET+POST and17 text replies; simulated_rpc=%s max_normal_sealed=%d fragmented=%t; no live-speed claim; broker=%+v", rpcDelay, largestNormal.Load(), fragmented.Load(), before)
 }
 
 func TestRelayClientActualOPENRetryAfterMuxClosedTTLDoesNotRepeatSideEffect(t *testing.T) {
