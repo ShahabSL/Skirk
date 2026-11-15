@@ -196,6 +196,10 @@ func rrRunOwnedClient(parent context.Context, dir string, s relayResearchPrivate
 		return nil, err
 	}
 	defer client.Close()
+	// A terminal carrier failure must abort TLS/HTTP waits immediately instead
+	// of leaving application reads alive until their independent deadlines.
+	stopClientFailure := context.AfterFunc(client.ctx, cancel)
+	defer stopClientFailure()
 	cfg := &Config{Secret: s.MuxSecretHex, SessionID: s.SessionID, Client: ClientConfig{ID: s.ClientID, RunID: s.RunID}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: s.ChunkBytes, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	tunnel, err := NewTunnel(client, cfg)
@@ -259,11 +263,9 @@ func rrRunOwnedClient(parent context.Context, dir string, s relayResearchPrivate
 	stopEcho := rrCloseConnOnCancel(ctx, echo)
 	defer stopEcho()
 	_ = echo.SetDeadline(time.Now().Add(180 * time.Second))
-	if err = echo.HandshakeContext(ctx); err != nil {
-		return client.snapshot(), err
-	}
-	if err = rows.put(map[string]any{"kind": "tls_handshake", "phase": "cold", "elapsed_ms": rrMillis(time.Since(coldAt)), "verified": true}); err != nil {
-		return client.snapshot(), err
+	handshakeErr := echo.HandshakeContext(ctx)
+	if err = rows.put(map[string]any{"kind": "tls_handshake", "phase": "cold", "elapsed_ms": rrMillis(time.Since(coldAt)), "verified": handshakeErr == nil, "timing_scope": "local SOCKS connect and end-to-end TLS handshake"}); err != nil || handshakeErr != nil {
+		return client.snapshot(), errors.Join(handshakeErr, err, client.error())
 	}
 	reader := bufio.NewReader(echo)
 	warm := rrOwnedMessage("warm", 0)
