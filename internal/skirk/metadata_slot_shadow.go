@@ -103,7 +103,11 @@ func (m *driveMux) runSlotShadow(ctx context.Context, link *muxSlotLink) {
 		m.runSlotShadowWriter(shadowCtx, link)
 	}()
 	if m.t.Logger != nil {
-		m.t.Logger.Printf("mux slot shadow active role=%s max_duration=%s max_patches=%d max_gets=%d authoritative=immutable", m.role, muxSlotShadowLifetime, muxSlotShadowMaxPatches, muxSlotShadowMaxGets)
+		if link.delivery {
+			m.t.Logger.Printf("mux slot delivery active role=%s max_duration=%s max_patches=%d max_gets=%d fallback=immutable", m.role, muxSlotShadowLifetime, muxSlotShadowMaxPatches, muxSlotShadowMaxGets)
+		} else {
+			m.t.Logger.Printf("mux slot shadow active role=%s max_duration=%s max_patches=%d max_gets=%d authoritative=immutable", m.role, muxSlotShadowLifetime, muxSlotShadowMaxPatches, muxSlotShadowMaxGets)
+		}
 	}
 	m.runSlotShadowReader(shadowCtx, link)
 	cancel()

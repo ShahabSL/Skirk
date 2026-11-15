@@ -403,7 +403,7 @@ def main():
                 if args.candidate_metadata_slot_delivery_v1 and mode == "candidate":
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
                                           for role in ("client", "exit"))
-                    row["slot_active_count"] = logs_text.count("mux slot shadow active")
+                    row["slot_active_count"] = logs_text.count("mux slot delivery active")
                     row["slot_receiver_processed_count"] = logs_text.count("mux slot delivery receiver_processed")
                     row["slot_sender_ack_count"] = logs_text.count("mux slot delivery sender_ack")
                     if (row["slot_active_count"] < 2 or row["slot_receiver_processed_count"] < 1
