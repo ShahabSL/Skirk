@@ -41,7 +41,7 @@ fi
 scripts/test_installer.sh
 go test ./...
 if [ "$(go env GOOS)" = "linux" ]; then
-  GOARCH=386 CGO_ENABLED=0 go test ./internal/skirk -run 'Test(NewTunnelStartsOn32BitAtomicRuntime|TunnelSOCKSToExitWithMemoryStores)' -count=1
+  GOARCH=386 CGO_ENABLED=0 go test ./internal/skirk -run 'Test(NewTunnelStartsOn32BitAtomicRuntime|TunnelSOCKSToExitWithMemoryStores|DecodeMuxBatchBounds)' -count=1
 else
   # macOS cannot execute a Linux/386 test binary, but can still catch build errors.
   GOOS=linux GOARCH=386 CGO_ENABLED=0 go test -c -o /dev/null ./internal/skirk

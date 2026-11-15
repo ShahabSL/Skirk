@@ -5667,10 +5667,15 @@ func decodeMuxBatch(data []byte) ([]muxFrame, error) {
 		return nil, errors.New("bad mux batch header")
 	}
 	count := int(binary.BigEndian.Uint16(data[5:7]))
+	// Every frame needs its fixed header before any payload. Reject impossible
+	// counts before allocating from a peer-controlled uint16.
+	if count > (len(data)-7)/muxFrameHeaderSize {
+		return nil, errors.New("truncated mux frames")
+	}
 	frames := make([]muxFrame, 0, count)
 	off := 7
 	for i := 0; i < count; i++ {
-		if off+muxFrameHeaderSize > len(data) {
+		if muxFrameHeaderSize > len(data)-off {
 			return nil, errors.New("truncated mux frame")
 		}
 		kind := data[off]
@@ -5678,7 +5683,7 @@ func decodeMuxBatch(data []byte) ([]muxFrame, error) {
 		seq := binary.BigEndian.Uint64(data[off+9 : off+17])
 		size := int(binary.BigEndian.Uint32(data[off+17 : off+21]))
 		off += muxFrameHeaderSize
-		if size < 0 || off+size > len(data) {
+		if size < 0 || size > len(data)-off {
 			return nil, errors.New("bad mux frame size")
 		}
 		frames = append(frames, muxFrame{

@@ -70,6 +70,13 @@ jobs:
           go test ./internal/skirk
           go test ./cmd/skirk -run '^$'
 
+      - name: Check mux decoder bounds on 32-bit Linux
+        if: matrix.name == 'linux-x64'
+        env:
+          GOARCH: '386'
+          CGO_ENABLED: '0'
+        run: go test ./internal/skirk -run '^TestDecodeMuxBatchBounds$' -count=1
+
       - name: Build and run CLI
         run: |
           go build -trimpath -o "${{ matrix.binary }}" ./cmd/skirk
