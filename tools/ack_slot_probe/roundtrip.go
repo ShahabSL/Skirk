@@ -87,6 +87,7 @@ type roundtripReport struct {
 	MaxUnacknowledged    int     `json:"max_unacknowledged"`
 	ForcedPauseCompleted bool    `json:"forced_pause_completed"`
 	ReaderPauseMS        int     `json:"reader_pause_ms"`
+	PollMS               int     `json:"poll_ms"`
 	BoundaryBytes        int     `json:"metadata_boundary_bytes"`
 	BoundaryVerified     bool    `json:"metadata_boundary_verified"`
 	CleanupVerified      bool    `json:"cleanup_verified"`
@@ -318,7 +319,7 @@ func (b *roundtripProbe) read(ctx context.Context, fileID string, up bool) error
 		} else if status != http.StatusOK && status != http.StatusNotFound {
 			return errors.New("slot_get_status")
 		}
-		if !sleep(ctx, pollInterval) {
+		if !sleep(ctx, b.pollInterval) {
 			return errors.New("slot_reader_canceled")
 		}
 	}
@@ -326,7 +327,8 @@ func (b *roundtripProbe) read(ctx context.Context, fileID string, up bool) error
 
 func (p *probe) runRoundtrip() (result roundtripReport) {
 	result = roundtripReport{SchemaVersion: 1, Route: "google_front_pinned", Mode: "roundtrip",
-		RequestsScheduled: frameCount, ReaderPauseMS: int(p.readerPause / time.Millisecond), BoundaryBytes: roundtripCap}
+		RequestsScheduled: frameCount, ReaderPauseMS: int(p.readerPause / time.Millisecond),
+		PollMS: int(p.pollInterval / time.Millisecond), BoundaryBytes: roundtripCap}
 	b := &roundtripProbe{probe: p}
 	var ids []string
 	defer func() {

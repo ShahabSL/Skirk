@@ -27,15 +27,15 @@ import (
 )
 
 const (
-	frameCount      = 20
-	frameBytes      = 64
-	maxGets         = 200
-	maxDataPatches  = 40
-	maxAckPatches   = 20
-	interval        = 250 * time.Millisecond
-	pollInterval    = 200 * time.Millisecond
-	pauseAfter      = 10
-	hotQuotaCeiling = 6500 // Reserve <=3300 units for six deletes and twelve verification reads.
+	frameCount          = 20
+	frameBytes          = 64
+	maxGets             = 200
+	maxDataPatches      = 40
+	maxAckPatches       = 20
+	interval            = 250 * time.Millisecond
+	defaultPollInterval = 200 * time.Millisecond
+	pauseAfter          = 10
+	hotQuotaCeiling     = 6500 // Reserve <=3300 units for six deletes and twelve verification reads.
 )
 
 type options struct {
@@ -43,6 +43,7 @@ type options struct {
 	out           string
 	live          bool
 	readerPauseMS int
+	pollMS        int
 	roundtrip     bool
 }
 
@@ -103,6 +104,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&value.out, "out", "", "fresh private JSON under .skirk-runs")
 	flags.BoolVar(&value.live, "live", false, "allow bounded Drive calls")
 	flags.IntVar(&value.readerPauseMS, "reader-pause-ms", 1000, "bounded reader pause after frame ten; 0 disables delay")
+	flags.IntVar(&value.pollMS, "poll-ms", int(defaultPollInterval/time.Millisecond), "known-ID poll interval, 100-500 ms")
 	flags.BoolVar(&value.roundtrip, "roundtrip", false, "run bounded two-way request/reply probe")
 	if err := flags.Parse(args); err != nil {
 		return value, err
@@ -112,6 +114,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if value.readerPauseMS < 0 || value.readerPauseMS > 1000 {
 		return value, errors.New("--reader-pause-ms must be between 0 and 1000")
+	}
+	if value.pollMS < 100 || value.pollMS > 500 {
+		return value, errors.New("--poll-ms must be between 100 and 500")
 	}
 	if err := validateOutputPath(value.out); err != nil {
 		return value, err
@@ -184,6 +189,7 @@ type probe struct {
 	recovery      string
 	recoveryOwned bool
 	readerPause   time.Duration
+	pollInterval  time.Duration
 	roundtrip     bool
 }
 
@@ -191,13 +197,14 @@ func newProbe(config *skirk.Config, outputPath string, readerPause time.Duration
 	tokens := skirk.NewAccessTokenSource(config.Auth, config.Route)
 	return &probe{
 		config: config, tokens: tokens,
-		store:       skirk.NewDriveStoreWithTokenSource(skirk.NewGoogleHTTPClient(config.Route), tokens, config.Drive),
-		dataWriter:  skirk.NewGoogleHTTPClient(config.Route),
-		dataReader:  skirk.NewGoogleHTTPClient(config.Route),
-		ackWriter:   skirk.NewGoogleHTTPClient(config.Route),
-		ackReader:   skirk.NewGoogleHTTPClient(config.Route),
-		recovery:    outputPath + ".recovery-ids",
-		readerPause: readerPause,
+		store:        skirk.NewDriveStoreWithTokenSource(skirk.NewGoogleHTTPClient(config.Route), tokens, config.Drive),
+		dataWriter:   skirk.NewGoogleHTTPClient(config.Route),
+		dataReader:   skirk.NewGoogleHTTPClient(config.Route),
+		ackWriter:    skirk.NewGoogleHTTPClient(config.Route),
+		ackReader:    skirk.NewGoogleHTTPClient(config.Route),
+		recovery:     outputPath + ".recovery-ids",
+		readerPause:  readerPause,
+		pollInterval: defaultPollInterval,
 	}
 }
 
@@ -522,7 +529,7 @@ func (p *probe) readData(ctx context.Context, dataID, ackID string) error {
 		} else if status != http.StatusNotFound && status != http.StatusOK {
 			return errors.New("data_get_status")
 		}
-		if !sleep(ctx, pollInterval) {
+		if !sleep(ctx, p.pollInterval) {
 			return errors.New("reader_canceled")
 		}
 	}
@@ -573,7 +580,7 @@ func (p *probe) readAck(ctx context.Context, ackID string) error {
 		} else if status != http.StatusNotFound && status != http.StatusOK {
 			return errors.New("ack_get_status")
 		}
-		if !sleep(ctx, pollInterval) {
+		if !sleep(ctx, p.pollInterval) {
 			return errors.New("ack_reader_canceled")
 		}
 	}
@@ -756,6 +763,7 @@ func main() {
 		os.Exit(2)
 	}
 	p := newProbe(config, options.out, time.Duration(options.readerPauseMS)*time.Millisecond)
+	p.pollInterval = time.Duration(options.pollMS) * time.Millisecond
 	if options.roundtrip {
 		p.roundtrip = true
 		result := p.runRoundtrip()

@@ -139,7 +139,7 @@ func TestRequiresLiveAndPrivateCreateOnlyFiles(t *testing.T) {
 	}
 	path := ".skirk-runs/result.json"
 	defaultOptions, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path})
-	if err != nil || defaultOptions.readerPauseMS != 1000 {
+	if err != nil || defaultOptions.readerPauseMS != 1000 || defaultOptions.pollMS != 200 {
 		t.Fatal(err)
 	}
 	zeroPause, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path, "--reader-pause-ms", "0"})
@@ -148,6 +148,11 @@ func TestRequiresLiveAndPrivateCreateOnlyFiles(t *testing.T) {
 	}
 	if _, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path, "--reader-pause-ms", "1001"}); err == nil {
 		t.Fatal("accepted pause outside bound")
+	}
+	for _, poll := range []string{"99", "501"} {
+		if _, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path, "--poll-ms", poll}); err == nil {
+			t.Fatalf("accepted poll interval %s outside bound", poll)
+		}
 	}
 	if err := writeRecoveryIDs(path+".recovery-ids", []string{"id-a", "id-b"}); err != nil {
 		t.Fatal(err)
