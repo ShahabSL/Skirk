@@ -119,7 +119,7 @@ type DriveConfig struct {
 	AdaptiveMuxDiscovery bool `json:"adaptive_mux_discovery,omitempty"`
 	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
 	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
-	// NormalListPageSize applies only to the broad mux p1 discovery query.
+	// NormalListPageSize applies to broad p1 and opt-in adaptive mux discovery queries.
 	// Zero uses the measured default of 1000; 500 and 100 remain available.
 	NormalListPageSize    int  `json:"normal_list_page_size,omitempty"`
 	UploadHedgeDelayMS    int  `json:"upload_hedge_delay_ms,omitempty"`

@@ -722,17 +722,23 @@ func (d *DriveStore) ListFreshStatus(ctx context.Context, prefix string, since t
 }
 
 func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
-	info, err := d.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, driveListMaxPages)
+	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, driveListMaxPages, driveListPageSize)
+}
+
+func (d *DriveStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
+	if !strings.HasPrefix(prefix, "muxv4/") {
+		return ObjectListInfo{}, errors.New("adaptive mux list requires a muxv4 prefix")
+	}
+	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, driveMuxFreshListMaxPages, strconv.Itoa(d.normalListPageSize))
+}
+
+func (d *DriveStore) listFreshPrefixPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int, pageSize string) (ObjectListInfo, error) {
+	info, err := d.listFreshQueryPageStatus(ctx, d.containsQuery([]string{prefix}), since, pageToken, maxPages, pageSize, func(name string) bool {
+		return strings.HasPrefix(name, prefix)
+	})
 	if err != nil {
 		return ObjectListInfo{}, err
 	}
-	filtered := info.Objects[:0]
-	for _, object := range info.Objects {
-		if strings.HasPrefix(object.Name, prefix) {
-			filtered = append(filtered, object)
-		}
-	}
-	info.Objects = filtered
 	return info, nil
 }
 

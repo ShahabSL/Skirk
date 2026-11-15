@@ -3,28 +3,76 @@ package skirk
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
+func TestDriveAdaptiveMuxListUsesConfiguredPageSizeWithoutChangingLegacyList(t *testing.T) {
+	prefix := "muxv4/session/down/client/run/"
+	name := prefix + "epoch/p1/object"
+	var pageSizes, pageTokens []string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		query := req.URL.Query()
+		pageSizes = append(pageSizes, query.Get("pageSize"))
+		pageTokens = append(pageTokens, query.Get("pageToken"))
+		if query.Get("pageSize") == "1000" && len(pageSizes) <= 4 {
+			return stringResponse(http.StatusOK, fmt.Sprintf(`{"nextPageToken":"page-%d","files":[{"id":"file-%d","name":%q,"size":"1"}]}`, len(pageSizes), len(pageSizes), name)), nil
+		}
+		return stringResponse(http.StatusOK, fmt.Sprintf(`{"files":[{"id":"file-last","name":%q,"size":"1"}]}`, name)), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, RouteConfig{Mode: "direct"}), DriveConfig{NormalListPageSize: 1000})
+	first, err := store.ListFreshAdaptiveMuxPageStatus(context.Background(), prefix, time.Time{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Truncated || first.NextPageToken != "page-4" || first.Pages != 4 || len(first.Objects) != 4 {
+		t.Fatalf("first adaptive page = %+v", first)
+	}
+	second, err := store.ListFreshAdaptiveMuxPageStatus(context.Background(), prefix, time.Time{}, first.NextPageToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Truncated || len(second.Objects) != 1 || pageTokens[4] != "page-4" {
+		t.Fatalf("adaptive continuation = %+v, tokens=%v", second, pageTokens)
+	}
+	if _, err := store.ListFreshPageStatus(context.Background(), prefix, time.Time{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(pageSizes) != 6 || pageSizes[0] != "1000" || pageSizes[1] != "1000" || pageSizes[2] != "1000" || pageSizes[3] != "1000" || pageSizes[4] != "1000" || pageSizes[5] != "100" {
+		t.Fatalf("page sizes = %v, want adaptive 1000 and legacy 100", pageSizes)
+	}
+}
+
 type adaptiveListCall struct {
 	contains  []string
 	since     time.Time
 	pageToken string
 	maxPages  int
+	pageSize  int
 }
 
 type adaptiveDiscoveryStore struct {
 	*MemoryStore
-	objects    []ObjectInfo // Newest first, as returned by Drive files.list.
-	calls      []adaptiveListCall
-	incomplete bool
+	objects                 []ObjectInfo // Newest first, as returned by Drive files.list.
+	calls                   []adaptiveListCall
+	incomplete              bool
+	incompleteToken         bool
+	priorityIncompleteToken bool
 }
 
 func (s *adaptiveDiscoveryStore) ListFreshContainsPageStatus(_ context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
-	s.calls = append(s.calls, adaptiveListCall{append([]string(nil), contains...), since, pageToken, maxPages})
+	return s.listFreshPageStatus(contains, since, pageToken, maxPages, 100)
+}
+
+func (s *adaptiveDiscoveryStore) ListFreshAdaptiveMuxPageStatus(_ context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
+	return s.listFreshPageStatus([]string{prefix}, since, pageToken, muxAdaptiveCombinedListPages, 1000)
+}
+
+func (s *adaptiveDiscoveryStore) listFreshPageStatus(contains []string, since time.Time, pageToken string, maxPages, pageSize int) (ObjectListInfo, error) {
+	s.calls = append(s.calls, adaptiveListCall{contains: append([]string(nil), contains...), since: since, pageToken: pageToken, maxPages: maxPages, pageSize: pageSize})
 	if maxPages <= 0 {
 		return ObjectListInfo{}, fmt.Errorf("unbounded adaptive list")
 	}
@@ -45,7 +93,14 @@ func (s *adaptiveDiscoveryStore) ListFreshContainsPageStatus(_ context.Context, 
 		}
 	}
 	if s.incomplete && len(contains) == 1 {
-		return ObjectListInfo{Truncated: true, Incomplete: true, Pages: 1}, nil
+		result := ObjectListInfo{Truncated: true, Incomplete: true, Pages: 1}
+		if s.incompleteToken {
+			result.NextPageToken = "incomplete-next"
+		}
+		return result, nil
+	}
+	if s.priorityIncompleteToken && containsString(contains, "/p0/") {
+		return ObjectListInfo{Objects: filtered, Truncated: true, Incomplete: true, NextPageToken: "priority-incomplete-next", Pages: 1}, nil
 	}
 	offset := 0
 	if pageToken != "" {
@@ -58,11 +113,11 @@ func (s *adaptiveDiscoveryStore) ListFreshContainsPageStatus(_ context.Context, 
 	if offset > len(filtered) {
 		return ObjectListInfo{}, fmt.Errorf("page offset %d past %d results", offset, len(filtered))
 	}
-	end := offset + maxPages*100 // Production's broad and priority lists use pageSize=100.
+	end := offset + maxPages*pageSize
 	if end > len(filtered) {
 		end = len(filtered)
 	}
-	result := ObjectListInfo{Objects: filtered[offset:end], Pages: (end - offset + 99) / 100}
+	result := ObjectListInfo{Objects: filtered[offset:end], Pages: (end - offset + pageSize - 1) / pageSize}
 	if end < len(filtered) {
 		result.Truncated = true
 		result.NextPageToken = fmt.Sprintf("offset:%d", end)
@@ -101,7 +156,7 @@ func TestAdaptiveMuxDiscoverySparseUsesOneLegacyList(t *testing.T) {
 	if !mux.pollMuxObjects(context.Background()) || !mux.isKnown(legacy.Name) || len(mux.recvUrgent) != 1 {
 		t.Fatal("adaptive discovery did not receive an untagged old-peer p0 object")
 	}
-	if len(store.calls) != 1 || len(store.calls[0].contains) != 1 || store.calls[0].maxPages != muxAdaptiveCombinedListPages {
+	if len(store.calls) != 1 || len(store.calls[0].contains) != 1 || store.calls[0].maxPages != muxAdaptiveCombinedListPages || store.calls[0].pageSize != 1000 {
 		t.Fatalf("sparse calls = %#v, want one bounded legacy prefix query", store.calls)
 	}
 	if mux.hasListFreshPartial() || mux.hasListFreshPageToken() {
@@ -109,12 +164,12 @@ func TestAdaptiveMuxDiscoverySparseUsesOneLegacyList(t *testing.T) {
 	}
 }
 
-func TestAdaptiveMuxDiscoveryLatePriorityBehindFourThousandNormalObjects(t *testing.T) {
+func TestAdaptiveMuxDiscoveryLatePriorityBehindEightThousandNormalObjects(t *testing.T) {
 	store := &adaptiveDiscoveryStore{MemoryStore: NewMemoryStore()}
 	mux := adaptiveTestMux(t, store)
 	newer := mux.startedAt.Add(2 * time.Minute).Format(time.RFC3339Nano)
 	older := mux.startedAt.Add(time.Minute).Format(time.RFC3339Nano)
-	for i := 0; i < 4001; i++ {
+	for i := 0; i < 8001; i++ {
 		store.objects = append(store.objects, ObjectInfo{
 			ID:      fmt.Sprintf("normal-id-%d", i),
 			Name:    muxObjectNameWithStreamIDs(mux.t.SessionID, DirectionDown, mux.t.ClientID, mux.t.RunID, "normal-epoch", uint64(i+1), []uint64{uint64(i + 1)}, 0, uint64(i+1), 1, 1, 1, 1, false),
@@ -139,7 +194,7 @@ func TestAdaptiveMuxDiscoveryLatePriorityBehindFourThousandNormalObjects(t *test
 	if !mux.pollMuxObjects(context.Background()) || !mux.isKnown(priority.Name) || len(mux.recvUrgent) != 1 {
 		t.Fatal("late p0 was not found by the separate priority query")
 	}
-	if len(store.calls) != 4 || store.calls[2].pageToken != "offset:400" || !containsString(store.calls[3].contains, "/p0/") {
+	if len(store.calls) != 4 || store.calls[2].pageToken != "offset:4000" || !containsString(store.calls[3].contains, "/p0/") {
 		t.Fatalf("second partial scan calls = %#v, want continued broad cursor and p0 fallback", store.calls)
 	}
 	for polls := 2; mux.hasListFreshPageToken() && polls < 20; polls++ {
@@ -181,6 +236,28 @@ func TestAdaptiveMuxDiscoveryIncompleteSearchFallsBackWithoutCursorAdvance(t *te
 	}
 }
 
+func TestAdaptiveMuxDiscoveryIncompleteSearchWithTokenRestartsBothCursors(t *testing.T) {
+	store := &adaptiveDiscoveryStore{MemoryStore: NewMemoryStore(), incomplete: true, incompleteToken: true, priorityIncompleteToken: true}
+	mux := adaptiveTestMux(t, store)
+	store.objects = []ObjectInfo{{
+		ID:      "priority-id",
+		Name:    muxObjectNameWithStreamIDs(mux.t.SessionID, DirectionDown, mux.t.ClientID, mux.t.RunID, "old-epoch", 1, nil, 0, 1, 1, 0, 0, 16, true),
+		Updated: time.Now().UTC().Format(time.RFC3339Nano),
+	}}
+	for i := 0; i < 2; i++ {
+		mux.pollMuxObjects(context.Background())
+	}
+	if len(store.calls) != 4 || store.calls[0].pageToken != "" || store.calls[1].pageToken != "" || store.calls[2].pageToken != "" || store.calls[3].pageToken != "" {
+		t.Fatalf("incomplete lists followed unsafe page tokens: %#v", store.calls)
+	}
+	if mux.hasListFreshPageToken() || mux.hasListFreshPageTokenFor(&mux.priorityListMu, &mux.priorityListPageToken) || !mux.hasListFreshPartial() || !mux.hasPriorityListPartial() {
+		t.Fatal("incomplete list state lost a retry or retained an unsafe token")
+	}
+	if got := mux.listFreshSince(); !got.Equal(mux.startedAt) {
+		t.Fatalf("incomplete broad list advanced cursor: %s", got)
+	}
+}
+
 func TestAdaptiveMuxDiscoveryFinishesPriorityCursorAfterBroadScanCompletes(t *testing.T) {
 	store := &adaptiveDiscoveryStore{MemoryStore: NewMemoryStore()}
 	mux := adaptiveTestMux(t, store)
@@ -198,6 +275,15 @@ func TestAdaptiveMuxDiscoveryFinishesPriorityCursorAfterBroadScanCompletes(t *te
 			Updated: older,
 		})
 	}
+	filler := make([]ObjectInfo, 0, 4000)
+	for i := 0; i < 4000; i++ {
+		filler = append(filler, ObjectInfo{
+			ID:      fmt.Sprintf("filler-normal-id-%d", i),
+			Name:    muxObjectNameWithStreamIDs(mux.t.SessionID, DirectionDown, mux.t.ClientID, mux.t.RunID, "normal-epoch", uint64(i+2), []uint64{uint64(i + 2)}, 0, uint64(i+2), 1, 1, 1, 1, false),
+			Updated: newer,
+		})
+	}
+	store.objects = append(filler, store.objects...)
 	if !mux.pollMuxObjects(context.Background()) || !mux.hasListFreshPageToken() || !mux.hasPriorityListPartial() {
 		t.Fatal("first dense poll did not retain both cursors")
 	}
@@ -207,7 +293,7 @@ func TestAdaptiveMuxDiscoveryFinishesPriorityCursorAfterBroadScanCompletes(t *te
 	if mux.hasListFreshPageToken() || mux.hasPriorityListPartial() || mux.hasListFreshPageTokenFor(&mux.priorityListMu, &mux.priorityListPageToken) {
 		t.Fatal("priority page token was abandoned when broad list became complete")
 	}
-	if len(store.calls) != 4 || store.calls[2].pageToken != "offset:400" || store.calls[3].pageToken != "offset:400" {
+	if len(store.calls) != 4 || store.calls[2].pageToken != "offset:4000" || store.calls[3].pageToken != "offset:400" {
 		t.Fatalf("cursor continuation calls = %#v", store.calls)
 	}
 	if len(mux.recvUrgent) != 401 {

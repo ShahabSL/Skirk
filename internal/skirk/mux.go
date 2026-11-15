@@ -2629,9 +2629,17 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 }
 
 func (m *driveMux) listRecvMuxObjectsAdaptive(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	store := m.t.Data.(FreshListContainsPageStatusStore)
 	return m.listRecvMuxObjectsFresh(ctx, prefix, func(ctx context.Context, since time.Time, pageToken string) (ObjectListInfo, error) {
-		result, err := store.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, muxAdaptiveCombinedListPages)
+		var result ObjectListInfo
+		var err error
+		if store, ok := m.t.Data.(AdaptiveMuxListPageStatusStore); ok {
+			result, err = store.ListFreshAdaptiveMuxPageStatus(ctx, prefix, since, pageToken)
+		} else {
+			// Other stores can still opt in through the existing bounded
+			// prefix query. DriveStore uses its configured normal page size.
+			store := m.t.Data.(FreshListContainsPageStatusStore)
+			result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, muxAdaptiveCombinedListPages)
+		}
 		if err != nil {
 			return result, err
 		}
@@ -2661,7 +2669,7 @@ func (m *driveMux) listRecvMuxObjectsFresh(ctx context.Context, prefix string, l
 	if err == nil {
 		m.setListFreshPartial(result.Truncated || result.Incomplete)
 	}
-	if err == nil && result.Truncated && result.NextPageToken != "" {
+	if err == nil && result.Truncated && !result.Incomplete && result.NextPageToken != "" {
 		m.setListFreshPageToken(result.NextPageToken)
 		if m.t != nil && m.t.Logger != nil {
 			m.t.Logger.Printf("mux list fresh truncated role=%s direction=%s prefix=%s infos=%d since=%s next_page=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.NextPageToken != "")
@@ -2706,7 +2714,7 @@ func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classN
 	}
 	switch {
 	case err != nil:
-	case !sliding && result.Truncated && result.NextPageToken != "":
+	case !sliding && result.Truncated && !result.Incomplete && result.NextPageToken != "":
 		m.setListPageTokenFor(mu, pageToken, result.NextPageToken)
 	case !sliding && (result.Truncated || result.Incomplete):
 		m.clearListPageTokenFor(mu, pageToken)
