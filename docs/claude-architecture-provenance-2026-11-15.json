@@ -1,0 +1,120 @@
+{
+  "date": "2026-11-15",
+  "cli_version": "2.1.325",
+  "base_commit": "f9a2413970f1fbbbbea3c92ae274d30e644c20c8",
+  "purpose": "Read-only architecture research. No implementation or live measurements requested.",
+  "constraint_led_caveat": "Prompt withheld incumbent design/results, but model disclosed repository handbook auto-attached by harness.",
+  "records": [
+    {
+      "label": "model_health",
+      "requested_model_alias": "fable",
+      "effort": "low",
+      "is_error": false,
+      "turns": 1,
+      "duration_ms": 3166,
+      "visible_characters": 14,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "outputTokens": 14,
+          "thinkingTokens": 0
+        }
+      }
+    },
+    {
+      "label": "evidence_aware",
+      "requested_model_alias": "fable",
+      "effort": "max",
+      "is_error": false,
+      "turns": 2,
+      "duration_ms": 739006,
+      "visible_characters": 32878,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "outputTokens": 12180,
+          "thinkingTokens": 12180
+        },
+        "claude-opus-4-8": {
+          "canonicalModel": "claude-opus-4-8",
+          "provider": "firstParty",
+          "outputTokens": 37895,
+          "thinkingTokens": 25144
+        }
+      },
+      "prompt_sha256": "ac7eebaf58ce9bef64b80a483fe7f79942e35e32b061a0b22b0e55571f70df5e"
+    },
+    {
+      "label": "constraint_led",
+      "requested_model_alias": "fable",
+      "effort": "max",
+      "is_error": false,
+      "turns": 1,
+      "duration_ms": 1450875,
+      "visible_characters": 36839,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "outputTokens": 127422,
+          "thinkingTokens": 113359
+        }
+      },
+      "prompt_sha256": "9f983efb4a7370a418b308a7fa894b761ed496d650ebbcbcc90f9ade56c5f48a"
+    },
+    {
+      "label": "slot_code",
+      "requested_model_alias": "fable",
+      "effort": "max",
+      "is_error": false,
+      "turns": 1,
+      "duration_ms": 975359,
+      "visible_characters": 18899,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "outputTokens": 89994,
+          "thinkingTokens": 82859
+        }
+      },
+      "prompt_sha256": "8349e398f92b0a7931a4bbecef7db0860a20d36e5df1c4b8cae27bc08a65632a"
+    },
+    {
+      "label": "short_priorities_rejected",
+      "requested_model_alias": "fable",
+      "effort": "high",
+      "is_error": true,
+      "turns": 2,
+      "duration_ms": 8820,
+      "visible_characters": 390,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "outputTokens": 0,
+          "thinkingTokens": 0
+        },
+        "claude-opus-4-8": {
+          "canonicalModel": "claude-opus-4-8",
+          "provider": "firstParty",
+          "outputTokens": 252,
+          "thinkingTokens": 252
+        }
+      },
+      "outcome": "External service cyber safeguards rejected architecture-priorities request; no recommendations returned."
+    }
+  ]
+}
