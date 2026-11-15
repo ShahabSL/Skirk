@@ -291,6 +291,41 @@ class MainComparisonSafetyTests(unittest.TestCase):
                 live_ab_main()
             self.assertFalse(output.exists())
 
+    def test_combined_discovery_comparison_changes_only_discovery_and_session(self):
+        original = {"secret": "fictional", "session_id": "old",
+                    "route": {"mode": "google_front_pinned"},
+                    "drive": {"folder_id": "test-folder", "combined_mux_discovery": True,
+                              "normal_list_page_size": 100,
+                              "metadata_slot_v1": True},
+                    "tunnel": {"poll_interval_ms": 1000}}
+        control = arm_config(original, "control", "one", 0, True, False, False, False, False, True)
+        candidate = arm_config(original, "candidate", "two", 0, True, False, False, False, False, True)
+        self.assertNotIn("combined_mux_discovery", control["drive"])
+        self.assertTrue(candidate["drive"]["combined_mux_discovery"])
+        self.assertEqual(control["drive"]["normal_list_page_size"], 1000)
+        self.assertEqual(candidate["drive"]["normal_list_page_size"], 1000)
+        self.assertNotIn("metadata_slot_v1", control["drive"])
+        self.assertNotIn("metadata_slot_v1", candidate["drive"])
+        self.assertEqual(control["route"], candidate["route"])
+        candidate["drive"].pop("combined_mux_discovery")
+        self.assertEqual({k: v for k, v in control.items() if k != "session_id"},
+                         {k: v for k, v in candidate.items() if k != "session_id"})
+        self.assertTrue(original["drive"]["combined_mux_discovery"])
+
+    def test_combined_discovery_rejects_different_binaries_before_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / "first", root / "second"
+            first.write_bytes(b"first binary")
+            second.write_bytes(b"second binary")
+            output = root / ".skirk-runs" / "combined-compare"
+            argv = ["skirk_live_ab.py", "--binary", str(first), "--control-binary", str(second),
+                    "--config", str(root / "unused.json"), "--out", str(output), "--live", "--observe",
+                    "--order", "control,candidate,candidate,control", "--candidate-combined-mux-discovery"]
+            with patch("sys.argv", argv), patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+                live_ab_main()
+            self.assertFalse(output.exists())
+
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}
         self.assertFalse(arm_config(original, "baseline", "a", 0, False)["drive"]["separate_bulk_media_pool"])

@@ -2464,7 +2464,7 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 
 func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
-	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok {
+	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && !m.t.CombinedMuxDiscovery {
 		priorityWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 			return m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
 		}, parseMuxObjectInfo, func() bool {

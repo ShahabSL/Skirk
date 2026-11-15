@@ -91,6 +91,7 @@ type Tunnel struct {
 	MetadataOnlyPriority   bool
 	MetadataSlotV1         bool
 	MetadataSlotDeliveryV1 bool
+	CombinedMuxDiscovery   bool
 	slotAttempted          atomic.Bool // One bounded shadow generation per client process/run.
 	role                   string
 	activeStreams          atomic.Int64
@@ -142,6 +143,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		MetadataOnlyPriority:   cfg.Drive.MetadataOnlyPriority,
 		MetadataSlotV1:         cfg.Drive.MetadataSlotV1,
 		MetadataSlotDeliveryV1: cfg.Drive.MetadataSlotDeliveryV1,
+		CombinedMuxDiscovery:   cfg.Drive.CombinedMuxDiscovery,
 		PollInterval:           cfg.PollInterval(),
 		CleanupProcessed:       cfg.Tunnel.CleanupProcessed,
 		Logger:                 log.Default(),
