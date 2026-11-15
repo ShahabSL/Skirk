@@ -1711,6 +1711,12 @@
   },
   {
     "worktree": "slot-async-wt",
+    "path": ".skirk-runs/async-vs-main-download100m-bounded-read-recovery-20261115/arms/summary.json",
+    "bytes": 34011,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
     "path": ".skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/arms/summary.json",
     "bytes": 7068,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

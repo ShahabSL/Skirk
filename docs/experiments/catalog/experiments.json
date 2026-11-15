@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Frozen42matrix and retainedstrict/recovery/C47capacityfailures; realfrontedFirestore/AppsScriptprimitives andlocalrelaystress; noarchitectureoptimumclaim",
+  "research_tip": "All retained Drive strict/recovery cohorts including incomplete bba/main100MiB ABBA, real frontedFirestore/AppsScript primitives and local relay stress; no wall/optimum claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -3482,6 +3482,81 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "helper492c253+5d87324;integration3f78be8;productbinariesunchanged",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-033",
+      "candidate": "Source-bound read and normal-upload recovery observer",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Separate opt-in class; shared tolerated8/arm,4/60s,16/cohort; GETs and normal idempotent uploads only;5.25s bounded metric publication lag",
+      "latency": "No transport change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "All actual errors retained; final per-role/per-op counters must equal eligible logs",
+      "correctness_and_errors": "87 tests passed3.762s; exact binary/source pin for bare read deadlines, strict observed URL shapes, early fatal checks, exact retirement marker, full frame/file proof",
+      "cleanup": "No Google calls from implementation/tests",
+      "decision": "Allows observing existing recovery without issuing retries; mutable PATCH,auth/quota/backoff/terminal/integrity failures still stop",
+      "source_documents": [
+        "docs/experiments/bounded-read-upload-recovery-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "4a115ab+0d9a8bf+9fba589+f9d9b65",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-034",
+      "candidate": "Exact local PATCH-budget log-only diagnostic",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Private sentinel only at actual64-PATCH refusal; no speculative link state",
+      "latency": "No transport change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No error counter discount or extra request",
+      "correctness_and_errors": "Full Go tests/vet and targeted race6.625s pass; genuine tamperedAEAD/same-text/wrapped/joined/closed errors remain generic; owner wakeup and byte-identical mux fallback checked",
+      "cleanup": "No live resources in implementation; final CLI frozen from real.git clone VCSmodifiedfalse",
+      "decision": "Historical generic failures remain stopped/unknown; two unstamped worktree builds retained/excluded, finalbba used",
+      "source_documents": [
+        "docs/audits/slot-patch-budget-diagnostic-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "8ae00ac→6ecd41e;CLI bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-035",
+      "candidate": "100MiB actual-main comparison with bounded read recovery, incomplete ABBA",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Candidate/main/main/candidate;100MiB+100persistent64B echoes/1250ms,1slead;300/180/60s and125krolling/150karm/600kcohort bounds",
+      "latency": "Complete candidate full-echo request/scheduledp9512.127/12.134s;main19.253/19.256 and25.899/25.902s;lastcandidate no full percentile",
+      "throughput_mbps": "18.956 /19.776 /15.387 /incomplete Mb/s in actual arm order",
+      "estimated_quota_units": "132145 /115220 /107270 /21635 last observed;2 eligible metadata timeouts +1 real disallowedPATCH timeout, counter lag retained",
+      "correctness_and_errors": "3 exact100MiBfiles+300complete echoes+11partial last echoes;first candidate40postbulk frames after both writer stops and6beyond both2min bounds, those6scheduledp953.046s; last mutablePATCH10s stopped observer before readback/fallback outcome",
+      "cleanup": "34mux+2slots deleted;8exactprefix0immediate31s;profilesgone",
+      "decision": "One candidate completed with permitted timeout, both controls clean; lastcandidate failed; no balanced candidate median/winner or universal improvement",
+      "source_documents": [
+        "docs/experiments/sustained-read-upload-recovery-2026-11-15.md",
+        "docs/experiments/sustained-read-upload-recovery-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/async-vs-main-download100m-bounded-read-recovery-20261115/"
+      ],
+      "revision_or_binary": "current6ecd41e/bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f;main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3;observerf9d9b65",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-036",
+      "candidate": "Async/shared-epoch metadata-pool one-change selector",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Same executable both arms; async slots+interaction epoch both, separateGET/PATCH pools only candidate; equal post-prelude barrier",
+      "latency": "No live pool result",
+      "throughput_mbps": null,
+      "estimated_quota_units": null,
+      "correctness_and_errors": "67 selector/existing tests pass; saved flags cleared, unequal binaries rejected, four-way common post-barrier UP record required; DOWN proof separate",
+      "cleanup": "No new runtime/Google calls; comparison conditional on separate lease",
+      "decision": "Addresses unmeasured pool interference hypothesis, not a connection-cause claim; later observer pins merged separately, composite retest before live",
+      "source_documents": [
+        "docs/experiments/async-slot-pool-comparison-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "678226f;runtime flag already exists in frozen CLI",
       "live_comparable": false
     }
   ]
