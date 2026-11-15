@@ -16,8 +16,10 @@ demoted that stream before twelve 64-byte echoes were pipelined every 250 ms.
 Text began one second after bulk started, clearing the shared scheduler's
 quiet threshold. Download used sync/async/async/sync order; upload reversed
 it. The fixed eight-second tail and both-peer quota estimates are included.
-The file no-progress allowance was 60 seconds. No CPU builds or other live
-experiments ran concurrently on this test account.
+The file no-progress allowance was 60 seconds. Other live experiments were
+serialized on this test account. The Mac was shared with offline sub-agent
+development and tests; CPU load was not recorded or fully isolated, which is
+another reason to treat the timing differences as small-sample observations.
 
 ## All arm results
 
