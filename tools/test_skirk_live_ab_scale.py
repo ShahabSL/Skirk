@@ -45,6 +45,10 @@ class ScaleBudgetValidationTests(unittest.TestCase):
         self.assertIn('requires --live', error)
         self.assertNotIn('deadlines exceed', error)
 
+    def test_recovery_mode_requires_observable_persistent_evidence(self):
+        for flags in [[], ['--observe'], ['--small-traffic', 'persistent']]:
+            self.assertIn('requires --observe and persistent', self.validation_error(['--bounded-normal-upload-timeouts', *flags]))
+
 
 if __name__ == '__main__':
     unittest.main()

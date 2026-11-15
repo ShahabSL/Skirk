@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 from skirk_live_capacity_bench import require_metrics
+from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, RecoveryCohort, RecoveryRejected
 
 
 MAIN_COMPARE_ORDERS = (("main", "current", "current", "main"),
@@ -203,6 +204,8 @@ def main():
     parser.add_argument("--max-arm-units", type=int, default=100000)
     parser.add_argument("--max-total-units", type=int, default=350000,
                         help="cohort workload estimate; explicit cleanup is reported separately")
+    parser.add_argument("--bounded-normal-upload-timeouts", action="store_true",
+                        help="separate robustness experiment: tolerate only correlated normal multipart timeouts, capped at8/arm,4/60s,16/cohort")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -228,6 +231,8 @@ def main():
         parser.error("estimated rolling quota ceiling must be1000..125000")
     if not 1000 <= args.max_arm_units <= 250000 or not args.max_arm_units <= args.max_total_units <= 1000000:
         parser.error("invalid bounded per-arm/cohort quota estimates")
+    if args.bounded_normal_upload_timeouts and (not args.observe or args.small_traffic != "persistent"):
+        parser.error("bounded recovery requires --observe and persistent traffic")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")
@@ -381,6 +386,7 @@ def main():
     summaries = []
     unit_history = []
     completed_units = 0
+    recovery_cohort = RecoveryCohort() if args.bounded_normal_upload_timeouts else None
     try:
         for index, mode in enumerate(order):
             candidate = mode in ("inline", "sparse_inline", "epoch_inline")
@@ -436,13 +442,12 @@ def main():
                    "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
 
-            def guarded_metrics():
-                if any(proc.poll() is not None for proc in procs):
-                    raise RuntimeError("Skirk exited during test")
-                snapshots = {role: require_metrics(run_dir / f"{role}-metrics.json") for role in ("client", "exit")}
+            recovery = NormalUploadRecovery(run_dir, recovery_cohort) if recovery_cohort else None
+            last_snapshots = {}
+
+            def check_quota_estimate(snapshots, now):
                 units = sum(value["quota"]["units"] for value in snapshots.values())
                 cumulative = completed_units + units
-                now = time.monotonic()
                 # Keep the sample immediately before the rolling window boundary.
                 while len(unit_history) > 1 and unit_history[1][0] <= now - 60:
                     unit_history.pop(0)
@@ -450,7 +455,33 @@ def main():
                 unit_history.append((now, cumulative))
                 if units > args.max_arm_units or cumulative > args.max_total_units or cumulative - before > args.max_units_per_minute:
                     raise RuntimeError("local quota guard")
-                if any(value["quota"]["errors"] or value.get("drive_backoff", {}).get("active") for value in snapshots.values()):
+                if any(value.get("drive_backoff", {}).get("active") for value in snapshots.values()):
+                    raise RuntimeError("local API error/backoff guard")
+
+            def guarded_metrics(final=False):
+                nonlocal last_snapshots
+                if any(proc.poll() is not None for proc in procs):
+                    raise RuntimeError("Skirk exited during test")
+                snapshots = {role: require_metrics(run_dir / f"{role}-metrics.json") for role in ("client", "exit")}
+                last_snapshots = snapshots
+                now = time.monotonic()
+                check_quota_estimate(snapshots, now)
+                if recovery:
+                    try:
+                        recovery.check(snapshots, now, final=final)
+                    except CorrelationPending:
+                        # A Drive failure is logged just before its mux result.
+                        # Permit only this bounded observation race, never a
+                        # quota/auth/terminal or other classified failure.
+                        time.sleep(.25)
+                        snapshots = {role: require_metrics(run_dir / f"{role}-metrics.json") for role in ("client", "exit")}
+                        last_snapshots = snapshots
+                        check_quota_estimate(snapshots, time.monotonic())
+                        try:
+                            recovery.check(snapshots, time.monotonic(), final=final)
+                        except CorrelationPending:
+                            raise RecoveryRejected("ambiguous_timeout_error_correlation") from None
+                elif any(value["quota"]["errors"] for value in snapshots.values()):
                     raise RuntimeError("local API error/backoff guard")
                 return snapshots
             try:
@@ -544,7 +575,7 @@ def main():
                     time.sleep(1)
                     guarded_metrics()
                 result = json.loads(report_path.read_text())
-                quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics().items()}
+                quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics(final=True).items()}
                 completed = workload_completed(result, args.small_count, bench.returncode)
                 if args.candidate_upload_stall_hedge_delay_ms:
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace") for role in ("client", "exit"))
@@ -606,6 +637,8 @@ def main():
                        "combined_units_including_warmup_and_tail": sum(q["units"] for q in quotas.values()),
                        "errors": sum(q["errors"] for q in quotas.values()),
                        "downloads": sum(q["ops"].get("download", {}).get("calls", 0) for q in quotas.values())})
+                row["completion_status"] = ("completed_with_permitted_timeouts" if row["errors"] else "completed_clean") if completed else "incomplete"
+                row["clean_api_run"] = completed and row["errors"] == 0
                 completed_units += row["combined_units_including_warmup_and_tail"]
                 if not completed and "failure" not in row:
                     row["failure"] = "incomplete_verified_workload"
@@ -616,8 +649,16 @@ def main():
                     break
             except Exception as error:
                 row["failure"] = type(error).__name__
+                if isinstance(error, RecoveryRejected):
+                    row["failure_reason"] = error.code
                 raise
             finally:
+                if recovery:
+                    row["bounded_recovery"] = recovery.report()
+                    row.setdefault("completion_status", "interrupted")
+                    row.setdefault("clean_api_run", False)
+                if last_snapshots:
+                    row["last_observed_quotas"] = {role: snapshot["quota"] for role, snapshot in last_snapshots.items()}
                 if bench is not None and bench.poll() is None:
                     bench.terminate()
                     try:
