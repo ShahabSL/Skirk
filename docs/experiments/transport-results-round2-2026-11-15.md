@@ -91,6 +91,19 @@ removed. The source kit was unchanged. These final runs had no deliberate
 agent compiler/test overlap; normal desktop/UI background activity remained
 uncontrolled. Clean-main and same-binary controls are not pooled together.
 
+The longer, separately labelled read/upload recovery cohort completed three
+exact 100 MiB files and 300 complete-arm echoes, plus eleven partial echoes
+from its last arm. Its first candidate delivered 18.956 Mb/s with scheduled
+full-echo p95 12.134 s and one retained metadata timeout. It continued after
+both 64-PATCH writer retirements and delivered six messages beyond both
+two-minute lifetimes through standard fallback. The two clean-main controls
+delivered 19.776/15.387 Mb/s and p95 19.256/25.902 s. The final candidate hit a
+metadata timeout and a mutable PATCH timeout before recovery could be
+observed; it has no completed file or full-workload p95. There is no balanced
+candidate median. All eight prefixes were empty immediately and after 31 s;
+34 mux files and two slot files were removed.
+[All arms and lifetime strata](sustained-read-upload-recovery-2026-11-15.md).
+
 The prior exact-default versus clean-main recheck also remains visible:
 request p95 6.015 → 5.690 s, scheduled p95 13.597 → 16.247 s and file
 14.220 → 12.418 Mb/s. Earlier complete pairs ranked differently. That
@@ -237,6 +250,11 @@ concurrency here. Current project/account limits, workload duty cycle and
 cleanup cost must enter a capacity model; no installation count or one fast
 primitive establishes concurrent capacity. Pub/Sub also adds resource IAM,
 provisioning and published pricing, separate from Drive's `drive.file` grant.
+
+The dated GitHub snapshot records 793 stars, 94 forks and 68,861 aggregate
+release-asset downloads across seventeen published releases. The asset sum
+includes checksums and other assets; it is neither unique installations nor
+concurrent users. [Snapshot](github-project-snapshot-2026-11-15.json).
 
 ## Validation and cleanup
 
