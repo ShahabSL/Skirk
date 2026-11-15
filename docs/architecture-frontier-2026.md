@@ -243,6 +243,19 @@ deleted and missing by ID immediately and after a delay, with zero unique-prefix
 residue. See Google's [search terms](https://developers.google.com/workspace/drive/api/guides/ref-search-terms)
 and [custom properties](https://developers.google.com/workspace/drive/api/guides/properties).
 
+### Push notifications
+
+A bounded [live Drive watch probe](experiments/drive-push-notification-live-2026-11-15.md)
+delivered six of six known-file `files.watch` updates at **2.531 s** median
+after each PATCH response; immediate known-ID GET took **0.188 s** median
+from the same anchor. `changes.watch` delivered five of six PATCH notices
+within ten seconds at **5.450 s** observed median, versus **0.159 s** for
+known-ID GET. Both public callbacks and channels were removed after exact
+cleanup. `files.watch` needs an ID already known to the client;
+`changes.watch` needs another list call to identify the object. A public HTTPS
+callback does not preserve Google-front-only client reachability, so this is
+an optional idle-wakeup idea, not a measured full-app interactive win.
+
 ## Scale and alternative architecture
 
 [Google's current Drive limits](https://developers.google.com/workspace/drive/api/guides/limits)
@@ -254,9 +267,14 @@ per-minute throughput guarantees. They deserve separate accounting in any
 large deployment.
 For 200,000 simultaneously polling users, one list per second each would be
 1.2 **billion** units per minute, 1,200 times one project's limit. Even one
-list per user per minute would be 20 million units per minute. Self-managed
-quota projects distribute project load, but do not prove 200,000-user service
-capacity, per-account stability, or acceptable setup friction.
+list per user per minute would be 20 million units per minute. The November
+15 probe on a second enabled project measured only **request-count
+attribution**: 100 header-selected, read-only
+Drive list calls appeared as about 100 requests on the second project's
+Console chart, with no corresponding OAuth-project points. It did not measure
+consumed quota units, billing, sustained rate limits, 200,000-user capacity,
+per-account stability, or acceptable setup friction. See
+[the quota-project record](research-2026.md#candidate-separate-quota-project-with-the-same-oauth-client).
 
 ### Exit restart and in-flight streams
 
@@ -517,7 +535,10 @@ passed full Go tests, 22 Rust command tests, sidecar/package checks, and a
 at `ae127e8` failed adaptive retry tests on both x64 and ARM64 because retry
 eligibility used wall-clock ordering and made no exact metadata GET. Commit
 `5c8739a` uses an atomic poll sequence instead; local deterministic and Go
-race tests passed, while native CI for exact tip `944e588` is pending. The
+race tests passed. Native Smoke at `0942237` later passed 14/14 jobs; at
+`18ba457`, [CI](https://github.com/ShahabSL/Skirk/actions/runs/43686916494)
+passed 3/3 and [Smoke](https://github.com/ShahabSL/Skirk/actions/runs/43686916482)
+passed 14/14, including macOS x64 Tauri. The
 [bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
 verified an HTTPS page plus exact 8 MiB uploads and downloads on a Pixel
 emulator, and a later Pixel run verified the on-demand exit proof plus exact
@@ -530,15 +551,31 @@ proxy in one bounded live session: authenticated Test exit **3.494 s**, text
 GET **2.050 s**, exact 1 MiB download **3.470 s**, and upload **5.084 s**,
 with zero Drive API errors and exact delayed cleanup. That tested bundle was
 at `b04bed2`, before the later transport fixes. It does not prove
-automatic browser proxy configuration or signed distribution. None of these
-platform UI runs exercised the new
+automatic browser proxy configuration or signed distribution. An isolated
+ad hoc re-sign and `ditto` round trip passed strict `codesign`, but Gatekeeper
+rejected the ad hoc copy. No Developer ID Application identity or repository
+notary secrets were available; Xcode showed a team Admin's certificate option
+without proving issuance permission. See the
+[macOS signing audit](experiments/macos-signing-audit-2026-11-15.md).
+
+Native Windows CLI [SOCKS traffic](experiments/windows-native-live-2026-11-15.md)
+verified text and exact 1 MiB GET/POST bodies through Drive; a separate
+targeted TUN run passed one HTTPS request on a `1.1.1.1/32` route with curl
+proxies disabled, zero Drive errors, restored routes, and exact delayed
+cleanup. The co-located exit required a QA-only process exemption to prevent
+TUN recursion. These are not a whole-device default-route or GUI Connect
+test. None of these platform UI runs exercised the new
 opt-in scheduler or fixed-slot delivery. Physical iPhone packet forwarding,
-sustained Android browsing/video with concurrent bulk traffic, Windows VPN
-tunnel runtime, and signed macOS distribution remain unverified. See the
+sustained Android browsing/video with concurrent bulk traffic, whole-device
+Windows GUI VPN runtime, and signed macOS distribution remain unverified. See the
 [final evidence record](experiments/final-engineering-evidence-2026-11-14.md).
 The iOS UI now gives typed recovery steps for its own `invalid_grant`, while
 labeling a local Network Extension connection “VPN active” without claiming
-that the remote exit is reachable.
+that the remote exit is reachable. Commit `6944745` also moves **Import
+renewed profile** to the primary action for rejected client Google access on
+Android, iOS, and desktop, with project-publishing steps in owner-only
+disclosures. It does not demonstrate an end-to-end revoked-grant recovery on
+every platform.
 
 An on-demand **Test exit** action now checks a nonce and HMAC response from an
 updated exit over the encrypted mux path on Android, iOS, and desktop. It
@@ -564,7 +601,7 @@ slot pools likewise lacked a joint text/file win. Further work needs
 repeatable larger mixed transfers, 5–10 clients and quota pressure, cleanup
 under backlog, sustained multi-client operation, restart/reconnect, browser
 and video behavior, Android VPN on a real device, an iPhone packet tunnel,
-and native Windows VPN tunneling. The
+and whole-device Windows GUI VPN tunneling. The
 selected Direct or Google-front route must remain the user's choice, with
 `www.google.com` pinned front as the default.
 The emergency storage-pressure sweep now retains `muxv4/` and opt-in

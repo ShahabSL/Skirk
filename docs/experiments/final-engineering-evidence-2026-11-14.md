@@ -1,4 +1,4 @@
-# Skirk engineering evidence — November 14, 2026
+# Skirk engineering evidence — November 14–15, 2026
 
 ## Decision
 
@@ -45,6 +45,14 @@ client grant has also expired or the user chooses a new grant; the setup guide
 now says this explicitly (`b5eaf9f`). The separate request for
 [multiple OAuth clients per server](https://github.com/ShahabSL/Skirk/issues/25)
 is not implemented by this renewal flow.
+
+Commit `6944745` makes rejected **client** access an actionable state on
+Android, iOS, and desktop: **Import renewed profile** becomes the primary
+action, the error says Google rejected this device's access, and Cloud
+production steps sit in a disclosure for project owners. A still-valid client
+keeps its profile after an exit-only renewal. These are UI and message changes;
+they do not establish that a revoked grant was recovered end to end on every
+platform.
 
 Renewal now identifies a kit by session, secret, Drive space and folder, and
 OAuth client ID. Client transport settings such as list page size, pool mode,
@@ -213,10 +221,22 @@ for 20 request/reply exchanges without a forced pause, and survived skipped
 Drive versions; the full-app slot comparisons above did not reproduce a joint
 text/file win. In eight sequential 1 MiB upload-mode arms, multipart median
 was **888.5 ms** versus **1,155.9 ms** for resumable upload including session
-creation. A Drive watch callback attempt failed its public HTTPS endpoint
-preflight before any Drive watch call, so it has no latency measurement. See
+creation. The first Drive watch attempt failed public HTTPS preflight before
+any Drive call. A later bounded
+[live push probe](drive-push-notification-live-2026-11-15.md) used temporary
+public receivers: `files.watch` delivered six of six known-file update
+notifications at **2.531 s median** after PATCH response, versus **0.188 s**
+for immediate known-ID GET; `changes.watch` delivered five of six within ten
+seconds at **5.450 s observed median**, versus **0.159 s** for GET. Those GET
+times were measured from the same PATCH-response anchor, not after push.
+The arms used 755 and 860 estimated units with zero API errors. Both channels
+were stopped, exact objects were deleted and rechecked, and temporary Worker
+and D1 receivers were removed. A known-file watch cannot discover new files;
+change-feed notifications still require `changes.list`. Both need a public
+callback, which does not replace polling for a Google-front-only client.
+Neither arm measured a full-app latency win. See
 [slot substrate](../architecture-frontier-2026.md),
-[upload and watch probe](drive-watch-and-upload-mode-2026-11-14.md), and their
+[earlier upload and watch probe](drive-watch-and-upload-mode-2026-11-14.md), and their
 bounded methods; none resolves observed 16–30-second Google response tails.
 
 An opt-in **combined discovery** mode queried one legacy mux prefix rather
@@ -420,11 +440,19 @@ such pairs by this arithmetic before writes, media, or retries; one user quota
 would cap the same calculation at 135 pairs. Four metadata PATCHes/second add
 12,000 units/minute per pair and lower those quota-only ceilings to 69 per
 project and 22 per user. A 200,000-person simultaneously polling deployment
-cannot use
-one shared project: even **one** 100-unit list per person per minute is
-20 million units/minute, twenty times the project limit. User-owned quota
-projects may distribute accounting, but
-the Drive-specific attribution and operational scale have not been proven.
+cannot use one shared project: even **one** 100-unit list per person per
+minute is 20 million units/minute, twenty times the project limit. With the
+same OAuth grant, 100 read-only `files.list` calls carrying
+`X-Goog-User-Project` to a second enabled project all returned HTTP 200. That
+project's one-hour Drive chart showed about **100.02 requests** after
+rounding its minute buckets, with no corresponding OAuth-project points. A
+disabled-API control had returned `SERVICE_DISABLED` for the selected
+project. This directly supports bounded **request-count attribution** to the
+header-selected project, not consumed quota units, billing, sustained rate
+limits, or 200,000-user capacity. Each advanced operator would still need a
+project, Drive API activation, and `serviceusage.services.use` access. See
+[the quota-project record](../research-2026.md#candidate-separate-quota-project-with-the-same-oauth-client)
+and private `.skirk-runs/quota-attribution-header-burst-20261115.json`.
 The shared app's non-sensitive `drive.file` grant and verified branding do
 not themselves impose the unverified-sensitive-scope 100-new-user cap;
 OAuth grant rates, user policy, and sustained Drive use remain separate scale
@@ -496,9 +524,21 @@ checks failed on the locally built bundle. No Developer ID Application
 identity or configured notary CI credentials were available, so a public
 signed package and the reported Mac
 [“damaged” app](https://github.com/ShahabSL/Skirk/issues/16) remain unresolved.
-Native Windows x64 full
-Go tests and CLI smoke and Windows ARM64
-Go/CLI smoke passed at commit `9704579` in
+
+The [November 15 signing audit](macos-signing-audit-2026-11-15.md) separates
+that distribution failure from browser routing. Re-signing an isolated copy
+with an ad hoc identity and packaging/extracting it with `ditto` preserved
+strict deep `codesign` verification; Gatekeeper still rejected the ad hoc
+copy. The release workflow has a Developer ID/notarization path, but its five
+required repository secret names and a local Developer ID Application
+identity are absent. Xcode showed a team Admin with a Developer ID creation
+option; actual certificate issuance and team-matched notary access were not
+tested. The current app starts SOCKS/HTTP listeners but does not configure
+Safari or macOS system proxy settings automatically, so the issue's browser
+symptom is also open.
+
+Native Windows x64 full Go tests and CLI smoke, plus Windows ARM64 Go/CLI
+smoke, passed at commit `9704579` in
 [native Windows CI run 43674155603](https://github.com/ShahabSL/Skirk/actions/runs/43674155603)
 for [draft PR #32](https://github.com/ShahabSL/Skirk/pull/32).
 The Windows x64 runner also passed 22 Rust command tests, built the portable
@@ -516,8 +556,37 @@ the future. Integrated Go race tests pass. The final code at `0942237` passed
 with all 14 jobs, including Windows x64 and ARM64 CLI and the native desktop
 package matrix; [CI run 43681029059](https://github.com/ShahabSL/Skirk/actions/runs/43681029059)
 passed all three jobs. The later `9bc514f` commit adds only a guarded live
-test and evidence document; its exact-tip CI is reported separately.
-The client checks cover route choice, profile recovery, and exit reachability;
+test and evidence document. At `18ba457`,
+[CI run 43686916494](https://github.com/ShahabSL/Skirk/actions/runs/43686916494)
+passed 3/3 jobs; [Smoke run 43686916482](https://github.com/ShahabSL/Skirk/actions/runs/43686916482)
+passed 14/14 jobs, including macOS x64 Tauri packaging and smoke. These
+results are for exact code tip `18ba457`; `d86ce98` adds only the separate
+watch evidence document.
+
+A separate [native Windows CLI SOCKS run](windows-native-live-2026-11-15.md)
+used a disposable session on the pinned front. Authenticated exit proof took
+**5.509 s**; exact small text GET **3.860 s**; exact 1 MiB GET **9.671 s**;
+and 1 MiB POST with matching length/SHA acknowledgment **29.500 s**. Both
+Windows processes logged zero Drive errors, and exact cleanup deleted three
+mux objects, then found both generated mux/slot prefixes empty immediately
+and after 30 seconds. This validates the native CLI and SOCKS path, not the
+Tauri GUI or a whole-device VPN.
+
+A second [scoped Windows TUN run](windows-native-live-2026-11-15.md#targeted-windows-tun-traffic)
+installed only `1.1.1.1/32` and left the default route unchanged. With curl
+proxies disabled, the pinned endpoint returned HTTP 200 through the TUN in
+**12.000 s**; a separate explicit SOCKS control took **9.422 s**. Client
+uploads rose by four and exit downloads by five around the TUN request, with
+zero Drive errors. The route and adapter were restored; exact cleanup deleted
+three mux objects and found both generated prefixes empty immediately and
+after 30 seconds. Exit and client shared the Windows runner, so a test-only
+process-name exemption prevented the exit's own traffic from re-entering the
+TUN. This proves one targeted native TUN data path, not whole-device default
+route capture, the GUI Connect flow, a separate exit host, or sustained mixed
+traffic.
+
+The client checks cover route choice, profile recovery, exit reachability,
+native Windows SOCKS, and scoped TUN traffic;
 there is no comparative usability study behind a “best UI” claim.
 
 The largest archived short live transfers were **74.928 Mb/s** for one
