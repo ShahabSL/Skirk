@@ -208,9 +208,11 @@ a personal client without a stored secret, pass its original downloaded JSON as
 have access to the original Drive folder. Use `--config /path/to/exit.json` for
 a kit in a custom location. Add `--oauth-flow desktop` when needed.
 
-Re-import the updated `client.skirk` on every device. A client profile already
-imported into an app still contains its old refresh token, so restarting the exit
-alone does not guarantee that client will keep working after its grant expires.
+Re-import the updated `client.skirk` on a device if its own Google grant has
+expired or you want it to use the newly issued grant. Existing clients with a
+still-valid grant and the same mailbox can continue after the exit is renewed.
+An imported profile retains its old refresh token, so restarting the exit alone
+does not restore a client whose grant also expired.
 Without `--restart-exit`, restart the exit service yourself after renewal. The
 backup directory printed by the command contains old refresh tokens and must be
 kept private or deleted after recovery is confirmed.
