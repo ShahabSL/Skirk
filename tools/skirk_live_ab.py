@@ -200,6 +200,9 @@ def main():
     parser.add_argument("--persistent-bulk-timeout", type=float, default=100)
     parser.add_argument("--max-units-per-minute", type=int, default=100000,
                         help="strict local estimated rolling60s ceiling; not a Google quota counter")
+    parser.add_argument("--max-arm-units", type=int, default=100000)
+    parser.add_argument("--max-total-units", type=int, default=350000,
+                        help="cohort workload estimate; explicit cleanup is reported separately")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -223,6 +226,8 @@ def main():
         parser.error("persistent deadlines exceed supported bounds")
     if not 1000 <= args.max_units_per_minute <= 125000:
         parser.error("estimated rolling quota ceiling must be1000..125000")
+    if not 1000 <= args.max_arm_units <= 250000 or not args.max_arm_units <= args.max_total_units <= 1000000:
+        parser.error("invalid bounded per-arm/cohort quota estimates")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")
@@ -412,6 +417,8 @@ def main():
                    "persistent_overall_timeout_seconds": args.persistent_overall_timeout,
                    "persistent_bulk_timeout_seconds": args.persistent_bulk_timeout,
                    "quota_guard_estimated_units_per_60s": args.max_units_per_minute,
+                   "quota_guard_estimated_arm_units": args.max_arm_units,
+                   "quota_guard_estimated_cohort_units": args.max_total_units,
                    "sparse_priority": cfg.get("tunnel", {}).get("sparse_priority", False),
                    "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
@@ -441,7 +448,7 @@ def main():
                     unit_history.pop(0)
                 before = unit_history[0][1] if unit_history and unit_history[0][0] <= now - 60 else 0
                 unit_history.append((now, cumulative))
-                if units > 100_000 or cumulative > 350_000 or cumulative - before > args.max_units_per_minute:
+                if units > args.max_arm_units or cumulative > args.max_total_units or cumulative - before > args.max_units_per_minute:
                     raise RuntimeError("local quota guard")
                 if any(value["quota"]["errors"] or value.get("drive_backoff", {}).get("active") for value in snapshots.values()):
                     raise RuntimeError("local API error/backoff guard")

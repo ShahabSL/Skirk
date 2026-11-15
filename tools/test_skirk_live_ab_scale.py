@@ -30,10 +30,17 @@ class ScaleBudgetValidationTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIn('quota ceiling', self.validation_error(['--max-units-per-minute', value]))
 
+    def test_explicit_arm_and_cohort_limits_must_remain_bounded(self):
+        for flags in [['--max-arm-units', '250001'], ['--max-total-units', '1000001'],
+                      ['--max-arm-units', '150000', '--max-total-units', '149999']]:
+            with self.subTest(flags=flags):
+                self.assertIn('per-arm/cohort', self.validation_error(flags))
+
     def test_sustained_schedule_settings_still_require_explicit_live(self):
         error = self.validation_error(['--persistent-overall-timeout', '300',
                                        '--persistent-bulk-timeout', '180',
                                        '--max-units-per-minute', '125000',
+                                       '--max-arm-units', '150000', '--max-total-units', '600000',
                                        '--small-count', '100', '--small-interval-ms', '1250'])
         self.assertIn('requires --live', error)
         self.assertNotIn('deadlines exceed', error)
