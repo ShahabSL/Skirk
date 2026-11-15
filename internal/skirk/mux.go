@@ -266,6 +266,10 @@ type driveMux struct {
 	streams            map[muxStreamKey]*muxStream
 	metadataCapsMu     sync.Mutex
 	metadataCaps       map[muxStreamKey]muxMetadataCapability
+	slotsMu            sync.Mutex
+	slots              map[muxSlotRunKey]*muxSlotLink
+	slotPending        map[muxSlotRunKey]struct{}
+	slotStopped        bool
 	opening            map[muxStreamKey]struct{}
 	closed             map[muxStreamKey]time.Time
 	pendingMu          sync.Mutex
@@ -529,6 +533,7 @@ func (m *driveMux) stopClient() {
 		m.runCancel()
 	}
 	m.closeAll()
+	m.stopSlotLinks()
 }
 
 func (t *Tunnel) getClientMux(ctx context.Context) (*driveMux, error) {
@@ -584,10 +589,16 @@ func (t *Tunnel) serveMuxExit(ctx context.Context) error {
 	}
 	cancel()
 	mux.closeAll()
+	mux.stopSlotLinks()
 	return err
 }
 
 func (m *driveMux) start(ctx context.Context) {
+	if m.role == "client" && m.t.MetadataSlotV1 {
+		// Prewarm without delaying any application OPEN. If setup is still
+		// pending, that OPEN proceeds as ordinary immutable muxv4.
+		go m.ensureClientSlot(ctx)
+	}
 	for _, lane := range m.lanes {
 		go lane.runBatchLoop(ctx)
 		for i := 0; i < m.priorityUploadWorkersPerLane(); i++ {
@@ -2006,12 +2017,16 @@ func (m *driveMux) runStoragePressureCleanup(ctx context.Context, store driveCle
 	}
 	cleanupCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
 	defer cancel()
-	for _, prefix := range []string{"muxv4/", "bench-drive/"} {
+	prefixes := []string{"muxv4/", "bench-drive/"}
+	if m.t != nil && m.t.MetadataSlotV1 {
+		prefixes = append(prefixes, "slotv1/")
+	}
+	for _, prefix := range prefixes {
 		olderThan := 10 * time.Minute
-		if prefix == "muxv4/" {
-			// An unprocessed mux object can still belong to a live stream after
-			// ten minutes. Match the mailbox janitor's retention window instead
-			// of deleting data from another active client under storage pressure.
+		if prefix == "muxv4/" || prefix == "slotv1/" {
+			// An unprocessed mux object or active slot can outlive ten minutes.
+			// Match the mailbox janitor's retention window rather than deleting
+			// another client's live data under storage pressure.
 			olderThan = 24 * time.Hour
 		}
 		result, err := store.Cleanup(cleanupCtx, DriveCleanupOptions{
@@ -2170,6 +2185,7 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 	}
 	priority := muxPriorityBatch(frames)
 	frames, echoes := l.mux.injectMetadataCapabilities(frames)
+	frames = l.mux.injectSlotOffer(frames)
 	priority = muxPriorityBatch(frames)
 	for _, frame := range frames[1:] {
 		if frame.ClientID != clientID || frame.RunID != runID {
@@ -2228,6 +2244,9 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	if len(batch.frames) == 0 {
 		return nil
 	}
+	// Shadow probes duplicate bounded priority bytes for measurement. The
+	// immutable mux object below remains the sole application delivery path.
+	l.mux.queueSlotShadow(batch)
 	if store, ok := l.mux.t.Data.(driveQuotaWaitStore); ok {
 		if err := store.WaitForDriveQuota(ctx, "mux_upload"); err != nil {
 			return err
@@ -4114,6 +4133,13 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 				continue
 			}
 			m.handleMetadataCapability(frame)
+			if m.role == "exit" && m.t.MetadataSlotV1 && len(frame.Payload) >= 4 && string(frame.Payload[:4]) == muxSlotCapabilityMagic {
+				// Exact-ID validation is opt-in I/O. Do it after this authenticated
+				// OPEN continues through the normal immutable receive path.
+				go m.handleSlotCapability(ctx, frame)
+			} else {
+				m.handleSlotCapability(ctx, frame)
+			}
 		}
 	}
 	for _, frame := range frames {

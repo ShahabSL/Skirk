@@ -449,7 +449,7 @@ const mailboxJanitorDefaultDeleteDelay = 100 * time.Millisecond
 var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
 
 func defaultCleanupPrefixes() []string {
-	return append([]string(nil), mailboxJanitorPrefixes...)
+	return append(append([]string(nil), mailboxJanitorPrefixes...), "slotv1/")
 }
 
 func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
@@ -479,7 +479,11 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 	if drive == nil || olderThan <= 0 {
 		return
 	}
-	for _, prefix := range mailboxJanitorPrefixes {
+	prefixes := mailboxJanitorPrefixes
+	if drive.MetadataSlotEnabled() {
+		prefixes = append(append([]string(nil), prefixes...), "slotv1/")
+	}
+	for _, prefix := range prefixes {
 		cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
 			Prefix:            prefix,

@@ -129,10 +129,11 @@ func TestQuotaPerRequest(t *testing.T) {
 	}
 }
 
-func TestDefaultCleanupPrefixesMatchJanitor(t *testing.T) {
+func TestDefaultCleanupPrefixesIncludeExperimentalSlots(t *testing.T) {
 	got := defaultCleanupPrefixes()
-	if strings.Join(got, ",") != strings.Join(mailboxJanitorPrefixes, ",") {
-		t.Fatalf("default cleanup prefixes = %#v, want janitor prefixes %#v", got, mailboxJanitorPrefixes)
+	want := append(append([]string(nil), mailboxJanitorPrefixes...), "slotv1/")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("default cleanup prefixes = %#v, want %#v", got, want)
 	}
 	got[0] = "changed/"
 	if mailboxJanitorPrefixes[0] == "changed/" {

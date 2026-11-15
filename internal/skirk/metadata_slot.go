@@ -15,9 +15,9 @@ import (
 	"sync"
 )
 
-// This is a pure, opt-in protocol candidate. No runtime transport uses it yet.
-// In particular, a slot record is not a Drive object and must not be queued
-// for object deletion by a future caller.
+// The opt-in runtime shadow probe uses this codec to validate candidate slot
+// traffic. It does not deliver application bytes through the slot. A slot
+// record is not a Drive object and must never enter object deletion queues.
 const (
 	metadataSlotMagic          = "SKS1"
 	metadataSlotVersion        = byte(1)

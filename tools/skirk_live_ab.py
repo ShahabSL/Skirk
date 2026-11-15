@@ -47,11 +47,17 @@ def validate_arm_order(order: list[str], main_binary: Path | None,
     return False
 
 
-def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, binary_compare: bool) -> dict:
+def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, binary_compare: bool,
+               candidate_metadata_slot_v1: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
     drive = config.setdefault("drive", {})
+    # A fresh opt-in slot run must be explicit for every arm. This keeps a
+    # saved test kit's setting from silently changing the control workload.
+    drive.pop("metadata_slot_v1", None)
+    if candidate_metadata_slot_v1 and mode == "candidate":
+        drive["metadata_slot_v1"] = True
     if binary_compare:
         # Use one supported config and OAuth quota path for both binaries.
         drive.pop("quota_project", None)
@@ -94,6 +100,8 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--main-binary", type=Path, help="clean Git main binary; use with --order main,current,current,main")
     parser.add_argument("--control-binary", type=Path, help="current default binary; use with --order control,candidate,candidate,control")
+    parser.add_argument("--candidate-metadata-slot-v1", action="store_true",
+                        help="enable bounded metadata slot shadow probe only in candidate arms")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -119,6 +127,10 @@ def main():
         binary_compare = validate_arm_order(order, args.main_binary, args.control_binary)
     except ValueError as error:
         parser.error(str(error))
+    if args.candidate_metadata_slot_v1 and tuple(order) not in CONTROL_COMPARE_ORDERS:
+        parser.error("--candidate-metadata-slot-v1 requires a control/candidate ABBA order")
+    if args.candidate_metadata_slot_v1 and not args.observe:
+        parser.error("--candidate-metadata-slot-v1 requires --observe to verify shadow activity")
     if (not args.binary.is_file() or
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
@@ -242,7 +254,8 @@ def main():
             candidate = mode in ("inline", "sparse_inline", "epoch_inline")
             run_dir = args.out / f"{index}-{mode}"
             run_dir.mkdir()
-            cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare)
+            cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare,
+                             args.candidate_metadata_slot_v1)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -257,6 +270,7 @@ def main():
                    "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
                    "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
+                   "metadata_slot_v1": cfg["drive"].get("metadata_slot_v1", False),
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
                    "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
@@ -357,6 +371,14 @@ def main():
                 result = json.loads(report_path.read_text())
                 quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics().items()}
                 completed = workload_completed(result, args.small_count, bench.returncode)
+                if args.candidate_metadata_slot_v1 and mode == "candidate":
+                    logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
+                                          for role in ("client", "exit"))
+                    row["shadow_active_count"] = logs_text.count("mux slot shadow active")
+                    row["shadow_observed_count"] = logs_text.count("mux slot shadow observed")
+                    if row["shadow_active_count"] < 2 or row["shadow_observed_count"] < 1:
+                        completed = False
+                        row["failure"] = "shadow_handshake_or_observation_missing"
                 row.update({"ok": completed, "bulk_mbps": result["bulk"]["aggregate_goodput_mbps"],
                        "small_successes": result["small"]["successes"], "small_failures": result["small"]["failures"],
                        "bulk_successes": result["bulk"]["successes"],
@@ -370,7 +392,7 @@ def main():
                        "errors": sum(q["errors"] for q in quotas.values()),
                        "downloads": sum(q["ops"].get("download", {}).get("calls", 0) for q in quotas.values())})
                 completed_units += row["combined_units_including_warmup_and_tail"]
-                if not completed:
+                if not completed and "failure" not in row:
                     row["failure"] = "incomplete_verified_workload"
                 print(json.dumps(row), flush=True)
             except Exception as error:

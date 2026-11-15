@@ -90,6 +90,7 @@ type Tunnel struct {
 	Observe              bool
 	MetadataOnlyPriority bool
 	MetadataSlotV1       bool
+	slotAttempted        atomic.Bool // One bounded shadow generation per client process/run.
 	role                 string
 	activeStreams        atomic.Int64
 	limiterMu            sync.Mutex

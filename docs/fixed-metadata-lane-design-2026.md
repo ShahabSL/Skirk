@@ -3,9 +3,11 @@
 The November 2026 [architecture frontier](architecture-frontier-2026.md)
 measured a promising Drive primitive: 20 synthetic 64-byte frames crossed two
 known metadata files, survived nine skipped Drive versions during a one-second
-reader pause, and were acknowledged in order. The probe is not integrated
-with Skirk's TCP mux. This document defines the smallest safe opt-in protocol
-candidate and its rejection gates.
+reader pause, and were acknowledged in order. An opt-in runtime shadow slice
+now mirrors some real mux batches into two slot files, but it never delivers
+application bytes through them. This document defines the proposed delivery
+protocol and its rejection gates; the [shadow slice](metadata-slot-shadow.md)
+is a narrower measurement step.
 
 ## Scope
 
