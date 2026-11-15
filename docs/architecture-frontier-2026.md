@@ -322,6 +322,29 @@ reason to build an opt-in integrated prototype, but they do not measure app
 TCP behavior, bootstrap cost, sustained capacity, or a 100 MiB mixed file.
 Raw private evidence is under `.skirk-runs/slot-mix-download-{001,002}/`.
 
+### Opt-in runtime shadow gate
+
+The next slice wires two generated-ID metadata files and an authenticated
+capability handshake into the mux, behind `drive.metadata_slot_v1` (default
+off). It mirrors bounded p0 DATA/FIN ciphertext into the files, but **only the
+existing immutable object delivers application bytes**. This tests lifecycle,
+compatibility, quota interference, and cleanup; it does not test faster app
+delivery. [Shadow design and live record](metadata-slot-shadow.md) describe
+its limits and safety gates.
+
+The first pinned-front 16 MiB download control completed with 12/12 small
+messages, 11.125 Mb/s file goodput, 23,855 estimated units, and zero API
+errors. The first shadow arm completed with 12/12 messages, 14.953 Mb/s,
+26,445 units, and 21 authenticated shadow observations across two active
+peers. The second shadow arm verified 12/12 messages and 17 observations,
+but its file stalled before the first byte and failed the progress gate;
+its 25,025 units are for an incomplete workload and cannot be compared as
+an efficiency result. Exit Drive uploads of 1 MiB objects took 16–26 seconds
+in that failed arm. The control/shadow/shadow/control sequence stopped at
+this failure, leaving no complete order-balanced comparison or causal
+attribution. Generated session cleanup verified zero remaining slot or mux
+objects. The shadow lane is not a promotion candidate from this run.
+
 At 4 Hz polling in both directions, the two known-ID GETs alone would cost
 2,400 units per minute per active pair. Four one-way metadata PATCHes per
 second add 12,000 units per minute before acknowledgements, retries, or other
@@ -344,6 +367,9 @@ mode, and Windows was not run natively. None of those app builds exercised the
 new opt-in scheduler or fixed-slot probes through a platform UI. Physical
 iPhone packet forwarding, sustained Android browsing/video with concurrent bulk traffic,
 Windows runtime, and signed macOS distribution remain unverified.
+The iOS UI now gives typed recovery steps for its own `invalid_grant`, while
+labeling a local Network Extension connection “VPN active” without claiming
+that the remote exit is reachable.
 
 ## Promotion gate
 
@@ -354,3 +380,9 @@ under backlog, sustained multi-client operation, restart/reconnect, browser and 
 real device, an iPhone packet tunnel, and native Windows execution. The
 selected Direct or Google-front route must remain the user's choice, with
 `www.google.com` pinned front as the default.
+The emergency storage-pressure sweep now retains `muxv4/` and opt-in
+`slotv1/` objects until the 24-hour janitor age, so an 11-minute slow live
+transfer is not deleted solely to free space. A separate bounded late-reply
+scan after an aborted stream passed local tests but remains isolated: it adds
+100–200 Drive units per unclean idle episode and still misses observed
+25–30-second backend stalls.
