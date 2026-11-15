@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,11 +33,25 @@ func TestRelayClientSimulated600msRPCOfferedTextWith4MiBMuxLimit(t *testing.T) {
 		if packed {
 			name = "packed-priority"
 		}
-		t.Run(name, func(t *testing.T) { relayClientSimulatedOfferedWorkload(t, packed, data) })
+		t.Run(name, func(t *testing.T) { relayClientSimulatedOfferedWorkload(t, packed, data, false) })
 	}
 }
 
-func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte) {
+func TestRelayClientSimulated600msRPCUploadTextWith4MiBMuxLimit(t *testing.T) {
+	data := make([]byte, 16<<20)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	for _, packed := range []bool{false, true} {
+		name := "scalar"
+		if packed {
+			name = "packed-priority"
+		}
+		t.Run(name, func(t *testing.T) { relayClientSimulatedOfferedWorkload(t, packed, data, true) })
+	}
+}
+
+func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte, upload bool) {
 	var largestNormal, upCalls, pullCalls atomic.Int64
 	f := relayClientSOCKSFixture(t, relayResearchConfig{FrameBytes: 768 << 10, MaxBytes: 32 << 20, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16, PackPriority: packed}, 4<<20, func(b *relayResearchBroker) relayResearchExchange {
 		x := relayClientHTTPExchange(t, b)
@@ -88,6 +104,17 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 	bulkReached := make(chan struct{}, 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bulkReached <- struct{}{}
+		if upload {
+			h := sha256.New()
+			n, e := io.Copy(h, io.LimitReader(r.Body, int64(len(data))+1))
+			if e != nil || n != int64(len(data)) || !bytes.Equal(h.Sum(nil), want[:]) {
+				http.Error(w, "exact upload mismatch", 400)
+				return
+			}
+			w.Header().Set("Content-Length", "64")
+			_, _ = io.WriteString(w, hex.EncodeToString(want[:]))
+			return
+		}
 		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
 		_, _ = w.Write(data)
 	}))
@@ -129,15 +156,28 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 	go func() {
 		begun := time.Now()
 		trace := &httptrace.ClientTrace{GotFirstResponseByte: func() { bulkFirstByteUS.CompareAndSwap(0, time.Since(begun).Microseconds()) }}
-		req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(f.ctx, trace), http.MethodGet, origin.URL, nil)
+		method := http.MethodGet
+		var body io.Reader
+		if upload {
+			method = http.MethodPost
+			body = bytes.NewReader(data)
+		}
+		req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(f.ctx, trace), method, origin.URL, body)
 		response, e := f.http.Do(req)
 		if e == nil {
-			h := sha256.New()
-			n, readErr := io.Copy(h, io.LimitReader(response.Body, int64(len(data))+1))
-			response.Body.Close()
-			if readErr != nil || response.StatusCode != 200 || n != int64(len(data)) || !bytes.Equal(h.Sum(nil), want[:]) {
-				e = fmt.Errorf("exact simulated bulk mismatch: bytes=%d status=%d", n, response.StatusCode)
+			if upload {
+				ack, readErr := io.ReadAll(io.LimitReader(response.Body, 65))
+				if readErr != nil || response.StatusCode != 200 || string(ack) != hex.EncodeToString(want[:]) {
+					e = errors.New("exact simulated upload receipt mismatch")
+				}
+			} else {
+				h := sha256.New()
+				n, readErr := io.Copy(h, io.LimitReader(response.Body, int64(len(data))+1))
+				if readErr != nil || response.StatusCode != 200 || n != int64(len(data)) || !bytes.Equal(h.Sum(nil), want[:]) {
+					e = fmt.Errorf("exact simulated bulk mismatch: bytes=%d status=%d", n, response.StatusCode)
+				}
 			}
+			response.Body.Close()
 		}
 		bulkElapsedUS.Store(time.Since(begun).Microseconds())
 		bulkFinished.Store(true)
@@ -209,7 +249,11 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 	snapshot := f.client.snapshot()
 	bulkMS, firstByteMS := float64(bulkElapsedUS.Load())/1000, float64(bulkFirstByteUS.Load())/1000
 	bulkMbps := float64(len(data)) * 8 / float64(bulkElapsedUS.Load())
-	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, pack_priority=%t,32MiBdirection, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d bulk_ttfb_ms=%.3f bulk_complete_ms=%.3f bulk_mbps=%.6f up_calls=%d pull_calls=%d packed_up_rpcs=%d packed_down_rpcs=%d max_normal_sealed=%d", packed, offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, firstByteMS, bulkMS, bulkMbps, workUp, workPull, snapshot["packed_up_rpcs"], snapshot["packed_down_rpcs"], largestNormal.Load())
+	method := http.MethodGet
+	if upload {
+		method = http.MethodPost
+	}
+	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, method=%s pack_priority=%t,32MiBdirection, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d bulk_ttfb_ms=%.3f bulk_complete_ms=%.3f bulk_mbps=%.6f up_calls=%d pull_calls=%d packed_up_rpcs=%d packed_down_rpcs=%d max_normal_sealed=%d", method, packed, offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, firstByteMS, bulkMS, bulkMbps, workUp, workPull, snapshot["packed_up_rpcs"], snapshot["packed_down_rpcs"], largestNormal.Load())
 	if firstByteMS <= 0 || bulkMS < firstByteMS {
 		t.Fatal("bulk timing observer missing or inconsistent", firstByteMS, bulkMS)
 	}
