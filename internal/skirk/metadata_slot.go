@@ -128,15 +128,7 @@ func newMetadataSlotCodec(secret string, sid [16]byte, direction byte, clientID,
 }
 
 func metadataSlotLabelValid(s string) bool {
-	if len(s) == 0 || len(s) > 128 {
-		return false
-	}
-	for _, b := range []byte(s) {
-		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '-' || b == '_') {
-			return false
-		}
-	}
-	return true
+	return isSafeObjectSegment(s)
 }
 
 func (c *metadataSlotCodec) validateRecord(r metadataSlotRecord) error {

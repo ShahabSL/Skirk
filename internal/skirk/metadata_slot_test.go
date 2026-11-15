@@ -46,6 +46,21 @@ func metadataSlotTestRecord(t *testing.T, peer *metadataSlotPeer, sid [16]byte, 
 	return record
 }
 
+func TestMetadataSlotSupportsConfiguredDottedClientAndRunIDs(t *testing.T) {
+	sid, err := ParseSessionID("00112233445566778899aabbccddeeff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := newMetadataSlotPeer("slot-test-secret", sid, DirectionUp, "client.one", "run.two", metadataSlotTestGeneration(), metadataSlotLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := muxObjectNameWithStreamIDs(sid, DirectionUp, "client.one", "run.two", "1234567890abcdef", 7, []uint64{7}, 0, 1, 1, 1, 1, 24, true)
+	if _, err := peer.enqueue(name, []byte("sealed")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMetadataSlotVersionSkipAndAckLoss(t *testing.T) {
 	up, down, sid := metadataSlotTestPair(t, metadataSlotLimits{}, metadataSlotTestGeneration())
 	var records []metadataSlotRecord
