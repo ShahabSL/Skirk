@@ -715,6 +715,12 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/firebase-feasibility-20261115/probe-result.json",
+    "bytes": 14833,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/live-exit-proof-20261114/summary.json",
     "bytes": 2345,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

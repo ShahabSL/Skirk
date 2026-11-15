@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Frozen42finalmatrix plus retainedH2/50k/125k/counterfixstrictinterruptions; futureboundedrecoveryseparate",
+  "research_tip": "Frozen42matrix and retainedstrict/recovery/C47capacityfailures; realfrontedFirestore/AppsScriptprimitives andlocalrelaystress; noarchitectureoptimumclaim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -3442,6 +3442,46 @@
         "persistent-capacity-wt/.skirk-runs/persistent-capacity-async-5clients-20261115/"
       ],
       "revision_or_binary": "63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f;harnessbace1fc",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-031",
+      "candidate": "Owned Firestore AEAD immutable documents through selected Google front",
+      "evidence_level": "live_api_primitive",
+      "workload": "6 trials:2KiB3,16KiB2,256KiB1;exists-false create+knownIDread+delete+immediate/31s404,30HTTP2calls;nativeStandardfreeTierDB",
+      "latency": "Warm2KiBcreate+knownread330.609/345.667ms;create166.828–180.727ms,read149.882–178.839ms;colddelete2213.977ms retained",
+      "throughput_mbps": null,
+      "estimated_quota_units": "30visiblecalls;conservative240HTTP2attemptsupper;40call/16MiBencodedrequestupper/1MiBresponsebounds;notDriveunits",
+      "correctness_and_errors": "6/6documentidentity,ciphertext,AEADplaintextSHAexact;all30frontedHTTP2;4separatedirectschema/authcontrolsnotfallback",
+      "cleanup": "6exactdocuments0immediate31s;initialDBLRO60swaitincomplete thenwholeDBGET404immediate31s;FirestoreAPIrestoredDISABLED,borrowedtokenremoved,billingoff",
+      "decision": "Strongsmallcontrolcarrierprimitive; noTCP/messenger/file/pushListen/capacityproof;ownerOAuthnotdrive.file,leastprivilegeFirebaseprovisioningstillneeded",
+      "source_documents": [
+        "docs/experiments/firestore-front-primitive-2026-11-15.md",
+        "docs/experiments/firestore-front-primitive-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/firebase-feasibility-20261115/probe-result.json"
+      ],
+      "revision_or_binary": "9fe438f8e39e8aaecf35f42eae17f51b7e482185/fe03fe79530548be847d5f8e93faf6c7e31c5b89b49532a5e39065f66d7da410",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-032",
+      "candidate": "Durable capacity outcome and native owned-process teardown correction",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Benchmarkonly;partialprofile/binarysetupfailure,EPERM,dead/reusedPID,unknownspawn/livewriter,partialcleanupfaults",
+      "latency": "No transport performance change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Runtimeunitsretainedwhenblocked;partialcleanupknowncommands/deletes/minimumunitssurviveverificationfailure",
+      "correctness_and_errors": "17nativehelperMac tests;95distinctintegration/existingcases;afterhardenedhelper33affectedcasesPASS1.253s;realnativejournal/sleepertest;independentreviewclear",
+      "cleanup": "Originalworkloadsyncedbeforeteardown;alloriginalparentsattempted;curlnativeidentityafterparentexit;noDrivecleanupifGo writeralive;profilesalwaysattempted;nogroup/name/sudokill",
+      "decision": "Fixobserverresource/evidencefailurewithoutrewritingoldattemptorclaimingpostfixcapacitywin;Macconditional-signalraceandLinuxnativeuntestedlimits explicit",
+      "source_documents": [
+        "docs/audits/owned-benchmark-process-teardown-2026-11-15.md",
+        "docs/audits/capacity-teardown-integration-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "helper492c253+5d87324;integration3f78be8;productbinariesunchanged",
       "live_comparable": false
     }
   ]
