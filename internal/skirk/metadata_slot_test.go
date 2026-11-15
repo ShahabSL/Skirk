@@ -388,6 +388,44 @@ func TestMetadataSlotAuthenticatedAckBounds(t *testing.T) {
 	}
 }
 
+func TestMetadataSlotReplayedSnapshotWithOldACKDoesNotClosePeer(t *testing.T) {
+	up, down, sid := metadataSlotTestPair(t, metadataSlotLimits{}, metadataSlotTestGeneration())
+	metadataSlotTestRecord(t, up, sid, DirectionUp, 1)
+	patch, err := up.prepare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := up.published(patch); err != nil {
+		t.Fatal(err)
+	}
+	seal := func(revision, ack uint64) string {
+		description, err := down.outbound.codec.seal(metadataSlotSnapshot{generation: metadataSlotTestGeneration(), direction: DirectionDown, revision: revision, ack: ack})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return description
+	}
+	old := seal(1, 0)
+	if _, err := up.receive(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.receive(seal(2, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.receive(old); !errors.Is(err, errMetadataSlotReplay) {
+		t.Fatalf("cached old ACK treated as fatal: %v", err)
+	}
+	if up.outbound.acked != 1 || up.inbound.lastRevision != 2 {
+		t.Fatal("replay mutated current state")
+	}
+	if _, err := up.receive(seal(3, 0)); err == nil || errors.Is(err, errMetadataSlotReplay) {
+		t.Fatalf("fresh regressed ACK accepted: %v", err)
+	}
+	if up.outbound.acked != 1 || up.inbound.lastRevision != 2 {
+		t.Fatal("fresh invalid ACK mutated current state")
+	}
+}
+
 func TestMetadataSlotHigherRevisionCannotRewriteStagedRecord(t *testing.T) {
 	up, down, sid := metadataSlotTestPair(t, metadataSlotLimits{}, metadataSlotTestGeneration())
 	record := metadataSlotTestRecord(t, up, sid, DirectionUp, 1)

@@ -702,6 +702,12 @@ func (p *metadataSlotPeer) receive(description string) ([]metadataSlotRecord, er
 	if err != nil {
 		return nil, err
 	}
+	// A cached authenticated older snapshot can legitimately carry an ACK
+	// below the latest one. Ignore its replay before validating current ACK
+	// monotonicity; only a fresh revision may change either direction's state.
+	if snapshot.revision <= p.inbound.lastRevision {
+		return nil, errMetadataSlotReplay
+	}
 	if err := p.outbound.validateAck(snapshot.ack); err != nil {
 		return nil, err
 	}

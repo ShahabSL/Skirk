@@ -152,6 +152,28 @@ func (m *driveMux) enqueueSlotWriterRecord(link *muxSlotLink, record slotShadowR
 }
 
 func (m *driveMux) runSlotShadowWriter(ctx context.Context, link *muxSlotLink) {
+	defer func() {
+		// The reader may remain active after a writer budget/error. Stop
+		// accepting new handoffs immediately and wake every retained owner.
+		link.mu.Lock()
+		link.sendClosed = true
+		link.mu.Unlock()
+		link.peer.fallbackAndClose()
+		link.failDeliveryWaiters(errMetadataSlotClosed)
+		for {
+			select {
+			case record := <-link.shadowQ:
+				if record.deliveryDone != nil {
+					record.deliveryDone <- errMetadataSlotClosed
+				}
+				if record.publicationDone != nil {
+					record.publicationDone <- errMetadataSlotClosed
+				}
+			default:
+				return
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():

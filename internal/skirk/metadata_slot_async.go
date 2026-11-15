@@ -41,14 +41,24 @@ func (l *muxLane) handoffSlotDelivery(ctx context.Context, batch muxPreparedUplo
 	m.slotAsyncMu.Unlock()
 	done, published := make(chan error, 1), make(chan error, 1)
 	record := slotShadowRecord{name: batch.name, sealed: bytes.Clone(batch.sealed), deliveryDone: done, publicationDone: published}
+	// Serialize admission with writer shutdown: a stopped writer must not
+	// drain its queue just before a new owner arrives behind it.
+	link.mu.Lock()
+	if !link.active || link.closed || link.sendClosed {
+		link.mu.Unlock()
+		m.releaseSlotHandoff(key)
+		return false
+	}
 	select {
 	case link.shadowQ <- record:
+		link.mu.Unlock()
 		if m.t.Observe && m.t.Logger != nil {
 			m.t.Logger.Printf("mux slot async handoff role=%s record=%s state=memory_queued", m.role, targetFingerprint(batch.name))
 		}
 		go l.finishSlotHandoff(ctx, batch, link, done, published)
 		return true
 	default:
+		link.mu.Unlock()
 		m.releaseSlotHandoff(key)
 		return false // Overflow uses immutable immediately, never the synchronous slot wait.
 	}

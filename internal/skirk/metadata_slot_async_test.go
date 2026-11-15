@@ -278,6 +278,48 @@ func TestSlotAsyncGlobalCapacityRejectsHandoff(t *testing.T) {
 	}
 }
 
+func TestSlotWriterBudgetExitStopsHandoffsAndWakesQueuedOwners(t *testing.T) {
+	store := newShadowSlotMemoryStore()
+	client, _, up, _ := deliverySlotPair(t, store)
+	client.t.MetadataSlotAsyncV1 = true
+	defer client.stopSlotLinks()
+	up.patches = muxSlotShadowMaxPatches
+	var owners []slotShadowRecord
+	for i := 1; i <= 2; i++ {
+		batch := asyncAckBatch(t, client, uint64(i))
+		r := slotShadowRecord{name: batch.name, sealed: batch.sealed, deliveryDone: make(chan error, 1), publicationDone: make(chan error, 1)}
+		owners = append(owners, r)
+		up.shadowQ <- r
+	}
+	writerDone := make(chan struct{})
+	go func() { defer close(writerDone); client.runSlotShadowWriter(context.Background(), up) }()
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("writer budget did not stop writer")
+	}
+	if up.canSend() {
+		t.Fatal("stopped writer remains sendable while reader active")
+	}
+	if !up.isActive() {
+		t.Fatal("test did not isolate live reader from stopped writer")
+	}
+	for _, r := range owners {
+		select {
+		case err := <-r.deliveryDone:
+			if err == nil {
+				t.Fatal("stopped writer ACKed processing")
+			}
+		default:
+			t.Fatal("queued owner not woken")
+		}
+	}
+	batch := asyncAckBatch(t, client, 3)
+	if client.lanes[client.frameLane(batch.frames[0])].handoffSlotDelivery(context.Background(), batch) {
+		t.Fatal("handoff accepted after writer exit")
+	}
+}
+
 func TestSlotAsyncLateProcessingACKPreventsResetAfterFallbackError(t *testing.T) {
 	for _, duringBackoff := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-error-return", true: "during-backoff"}[duringBackoff], func(t *testing.T) {
