@@ -324,6 +324,7 @@ Description=Skirk exit
 [Service]
 ExecStart=%h/.local/bin/skirk serve-exit --config %h/.config/skirk/exit.json
 Restart=on-failure
+RestartPreventExitStatus=78
 RestartSec=30s
 
 [Install]
