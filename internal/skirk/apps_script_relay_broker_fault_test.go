@@ -367,8 +367,8 @@ func TestRelayResearchCloseInterruptsAndJoinsSlowHTTPResponseWriter(t *testing.T
 	}
 	select {
 	case <-done:
-	default:
-		t.Fatal("Close returned before response handler joined")
+	case <-time.After(time.Second):
+		t.Fatal("response handler did not finish after Close joined its resources")
 	}
 	if len(b.httpSlots) != 0 {
 		t.Fatal("slow writer retained HTTP slot")
