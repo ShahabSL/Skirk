@@ -226,12 +226,14 @@ exactly-once effects at an arbitrary TCP destination cannot be promised across
 a crash. This remains an architectural limit, not a measured latency or
 throughput result.
 
-The opt-in fixed-slot delivery ACK is also an in-memory mux processing ACK.
+The opt-in fixed-slot delivery ACK is an in-memory mux processing ACK.
 An out-of-order DATA frame can be ACKed while it waits in the receiver's
 reassembly map, and an in-order frame can be ACKed while it waits for the
 socket writer. A receiver crash at either point can lose bytes because the
-sender has already skipped the immutable fallback. This is another reason
-slot delivery is not the default or a durable-message guarantee.
+sender has skipped the immutable fallback. The default mux also schedules
+immutable-object cleanup after in-memory processing, before destination
+socket delivery is confirmed. Neither path provides durable byte delivery
+across a receiver crash; the slot ACK must not be described as one.
 
 Known-ID GETs previously added speculative reads and lost to one prefix list;
 the Workspace Drive Events path adds billing, Pub/Sub, subscription renewal,
