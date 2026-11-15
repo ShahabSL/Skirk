@@ -49,7 +49,8 @@ def validate_arm_order(order: list[str], main_binary: Path | None,
 
 def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, binary_compare: bool,
                candidate_metadata_slot_v1: bool = False,
-               candidate_metadata_slot_delivery_v1: bool = False) -> dict:
+               candidate_metadata_slot_delivery_v1: bool = False,
+               candidate_separate_metadata_slot_pools: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -58,10 +59,14 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
     # saved test kit's setting from silently changing the control workload.
     drive.pop("metadata_slot_v1", None)
     drive.pop("metadata_slot_delivery_v1", None)
-    if (candidate_metadata_slot_v1 or candidate_metadata_slot_delivery_v1) and mode == "candidate":
+    drive.pop("separate_metadata_slot_pools", None)
+    if candidate_separate_metadata_slot_pools or (mode == "candidate" and
+            (candidate_metadata_slot_v1 or candidate_metadata_slot_delivery_v1)):
         drive["metadata_slot_v1"] = True
-        if candidate_metadata_slot_delivery_v1:
+        if candidate_metadata_slot_delivery_v1 or candidate_separate_metadata_slot_pools:
             drive["metadata_slot_delivery_v1"] = True
+    if candidate_separate_metadata_slot_pools and mode == "candidate":
+        drive["separate_metadata_slot_pools"] = True
     if binary_compare:
         # Use one supported config and OAuth quota path for both binaries.
         drive.pop("quota_project", None)
@@ -108,6 +113,8 @@ def main():
                         help="enable bounded metadata slot shadow probe only in candidate arms")
     parser.add_argument("--candidate-metadata-slot-delivery-v1", action="store_true",
                         help="enable bounded authenticated slot delivery only in candidate arms")
+    parser.add_argument("--candidate-separate-metadata-slot-pools", action="store_true",
+                        help="enable slot delivery in both arms, split slot GET/PATCH pools only in candidates")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -135,9 +142,11 @@ def main():
         binary_compare = validate_arm_order(order, args.main_binary, args.control_binary)
     except ValueError as error:
         parser.error(str(error))
-    if args.candidate_metadata_slot_v1 and args.candidate_metadata_slot_delivery_v1:
+    if (args.candidate_metadata_slot_v1 and args.candidate_metadata_slot_delivery_v1) or (
+            args.candidate_separate_metadata_slot_pools and
+            (args.candidate_metadata_slot_v1 or args.candidate_metadata_slot_delivery_v1)):
         parser.error("choose only one metadata slot candidate mode")
-    if args.candidate_metadata_slot_v1 or args.candidate_metadata_slot_delivery_v1:
+    if args.candidate_metadata_slot_v1 or args.candidate_metadata_slot_delivery_v1 or args.candidate_separate_metadata_slot_pools:
         if tuple(order) not in CONTROL_COMPARE_ORDERS or not args.observe:
             parser.error("metadata slot candidates require a control/candidate ABBA order and --observe")
     if (not args.binary.is_file() or
@@ -264,7 +273,8 @@ def main():
             run_dir = args.out / f"{index}-{mode}"
             run_dir.mkdir()
             cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare,
-                             args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1)
+                             args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
+                             args.candidate_separate_metadata_slot_pools)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -281,6 +291,7 @@ def main():
                    "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
                    "metadata_slot_v1": cfg["drive"].get("metadata_slot_v1", False),
                    "metadata_slot_delivery_v1": cfg["drive"].get("metadata_slot_delivery_v1", False),
+                   "separate_metadata_slot_pools": cfg["drive"].get("separate_metadata_slot_pools", False),
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
                    "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
@@ -400,7 +411,7 @@ def main():
                     if row["shadow_active_count"] < 2 or row["shadow_observed_count"] < 1:
                         completed = False
                         row["failure"] = "shadow_handshake_or_observation_missing"
-                if args.candidate_metadata_slot_delivery_v1 and mode == "candidate":
+                if (args.candidate_metadata_slot_delivery_v1 and mode == "candidate") or args.candidate_separate_metadata_slot_pools:
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
                                           for role in ("client", "exit"))
                     row["slot_active_count"] = logs_text.count("mux slot delivery active")

@@ -242,6 +242,19 @@ class MainComparisonSafetyTests(unittest.TestCase):
         self.assertEqual(control["route"], candidate["route"])
         self.assertTrue(original["drive"]["metadata_slot_delivery_v1"])
 
+    def test_slot_pool_comparison_uses_delivery_in_both_arms(self):
+        original = {"session_id": "old", "route": {"mode": "google_front_pinned"},
+                    "drive": {"folder_id": "test-folder", "separate_metadata_slot_pools": True}}
+        control = arm_config(original, "control", "one", 0, True, False, False, True)
+        candidate = arm_config(original, "candidate", "two", 0, True, False, False, True)
+        for arm in (control, candidate):
+            self.assertTrue(arm["drive"]["metadata_slot_v1"])
+            self.assertTrue(arm["drive"]["metadata_slot_delivery_v1"])
+            self.assertEqual(arm["route"], original["route"])
+        self.assertNotIn("separate_metadata_slot_pools", control["drive"])
+        self.assertTrue(candidate["drive"]["separate_metadata_slot_pools"])
+        self.assertTrue(original["drive"]["separate_metadata_slot_pools"])
+
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}
         self.assertFalse(arm_config(original, "baseline", "a", 0, False)["drive"]["separate_bulk_media_pool"])

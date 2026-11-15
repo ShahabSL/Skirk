@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const testSlotName = "slotv1/session/client/run/generation/up"
@@ -43,6 +44,142 @@ func slotTestStore(t *testing.T, cfg DriveConfig, transport roundTripFunc) *Driv
 	route := RouteConfig{Mode: "google_front_pinned"}
 	client := &GoogleHTTPClient{client: &http.Client{Transport: transport}, route: route}
 	return NewDriveStoreWithTokenSource(client, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, route), cfg)
+}
+
+func TestDriveMetadataSlotSeparatePoolsPreserveRouteAuthAndQuota(t *testing.T) {
+	for _, route := range []RouteConfig{
+		{Mode: "direct"},
+		{Mode: "google_front_pinned", GoogleIP: "203.0.113.4", Proxy: "socks5h://127.0.0.1:9"},
+	} {
+		t.Run(route.Mode, func(t *testing.T) {
+			poolRoute := route
+			if poolRoute.TimeoutSeconds == 0 {
+				poolRoute.TimeoutSeconds = 240
+			}
+			var createCalls, getCalls, patchCalls int
+			checkRequest := func(req *http.Request) {
+				t.Helper()
+				wantHost := "www.googleapis.com"
+				if route.Mode == "google_front_pinned" {
+					wantHost = "www.google.com"
+				}
+				if req.URL.Host != wantHost || req.Host != "www.googleapis.com" {
+					t.Errorf("request route URL=%q Host=%q, want %q and Google API host", req.URL.Host, req.Host, wantHost)
+				}
+				if req.Header.Get("Authorization") != "Bearer test-token" || req.Header.Get("X-Goog-User-Project") != "flowing-precept-514715-p1" {
+					t.Error("slot pool lost shared authentication or quota-project header")
+				}
+			}
+			primary := &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				checkRequest(req)
+				createCalls++
+				if req.Method != http.MethodPost {
+					t.Errorf("control pool method = %s, want POST", req.Method)
+				}
+				return stringResponse(http.StatusOK, slotResponse("generated-id", testSlotName, "", "1", "folder-1", "drive")), nil
+			})}}
+			store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, route), DriveConfig{
+				FolderID: "folder-1", QuotaProject: "flowing-precept-514715-p1",
+				MetadataSlotV1: true, SeparateMetadataSlotPools: true,
+			})
+			if store.slotReadHTTP == nil || store.slotWriteHTTP == nil || store.slotReadHTTP == store.slotWriteHTTP ||
+				store.slotReadHTTP == primary || store.slotWriteHTTP == primary ||
+				store.slotReadHTTP.route != poolRoute || store.slotWriteHTTP.route != poolRoute {
+				t.Fatal("slot pools are not independent copies of the chosen route")
+			}
+			store.slotReadHTTP = &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				checkRequest(req)
+				getCalls++
+				if req.Method != http.MethodGet {
+					t.Errorf("read pool method = %s, want GET", req.Method)
+				}
+				return stringResponse(http.StatusOK, slotResponse("generated-id", testSlotName, "", "1", "folder-1", "drive")), nil
+			})}}
+			store.slotWriteHTTP = &GoogleHTTPClient{route: route, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				checkRequest(req)
+				patchCalls++
+				if req.Method != http.MethodPatch {
+					t.Errorf("write pool method = %s, want PATCH", req.Method)
+				}
+				return stringResponse(http.StatusOK, slotResponse("generated-id", testSlotName, "c2VhbGVk", "2", "folder-1", "drive")), nil
+			})}}
+			if _, err := store.CreateMetadataSlot(context.Background(), "generated-id", testSlotName); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.GetMetadataSlot(context.Background(), "generated-id", testSlotName); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.PatchMetadataSlot(context.Background(), "generated-id", testSlotName, "c2VhbGVk"); err != nil {
+				t.Fatal(err)
+			}
+			if createCalls != 1 || getCalls != 1 || patchCalls != 1 {
+				t.Fatalf("pool calls create=%d get=%d patch=%d", createCalls, getCalls, patchCalls)
+			}
+			quota := store.QuotaSnapshot()
+			if quota.Calls != 3 || quota.Units != 105 || quota.Ops["metadata"].Units != 5 || quota.Ops["patch"].Units != 50 {
+				t.Fatalf("split pools bypassed shared quota accounting: %+v", quota)
+			}
+		})
+	}
+}
+
+func TestDriveMetadataSlotSeparatePoolsShareBackoffAndCancellation(t *testing.T) {
+	var readCalls atomic.Int32
+	store := slotTestStore(t, DriveConfig{FolderID: "folder-1", MetadataSlotV1: true, SeparateMetadataSlotPools: true}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusOK, slotResponse("generated-id", testSlotName, "", "1", "folder-1", "drive")), nil
+	}))
+	store.slotWriteHTTP = &GoogleHTTPClient{route: store.http.route, client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`), nil
+	})}}
+	store.slotReadHTTP = &GoogleHTTPClient{route: store.http.route, client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		readCalls.Add(1)
+		return stringResponse(http.StatusOK, slotResponse("generated-id", testSlotName, "", "1", "folder-1", "drive")), nil
+	})}}
+	store.backoff.base, store.backoff.max, store.backoff.jitter = 100*time.Millisecond, 100*time.Millisecond, 0
+	if _, err := store.CreateMetadataSlot(context.Background(), "generated-id", testSlotName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PatchMetadataSlot(context.Background(), "generated-id", testSlotName, "c2VhbGVk"); err == nil {
+		t.Fatal("expected write-pool rate-limit error")
+	}
+	if snapshot := store.QuotaBackoffSnapshot(); !snapshot.Active || snapshot.Op != "patch" {
+		t.Fatalf("split write pool did not trip shared quota backoff: %+v", snapshot)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if _, err := store.GetMetadataSlot(ctx, "generated-id", testSlotName); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read pool ignored canceled shared backoff: %v", err)
+	}
+	if readCalls.Load() != 0 {
+		t.Fatalf("read pool made %d requests during shared backoff", readCalls.Load())
+	}
+}
+
+func TestDriveMetadataSlotSeparatePoolsRequireExplicitSlotOptIn(t *testing.T) {
+	for _, cfg := range []DriveConfig{{FolderID: "folder-1", MetadataSlotV1: true}, {FolderID: "folder-1", SeparateMetadataSlotPools: true}} {
+		store := slotTestStore(t, cfg, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return stringResponse(http.StatusOK, "{}"), nil
+		}))
+		if store.slotReadHTTP != nil || store.slotWriteHTTP != nil {
+			t.Fatalf("created slot pools without both opt-ins: %+v", cfg)
+		}
+	}
+}
+
+func TestDriveMetadataSlotSeparatePoolsH3ProxyStaysOnSelectedFront(t *testing.T) {
+	route := RouteConfig{Mode: "google_front_h3_pinned", Proxy: "socks5h://127.0.0.1:11093", GoogleIP: "216.239.38.120"}
+	primary := NewGoogleHTTPClient(route)
+	store := NewDriveStoreWithTokenSource(primary, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, route), DriveConfig{
+		MetadataSlotV1: true, SeparateMetadataSlotPools: true,
+	})
+	for _, pool := range []*GoogleHTTPClient{store.slotReadHTTP, store.slotWriteHTTP} {
+		if pool == nil || pool.route != primary.route {
+			t.Fatal("slot pool changed selected route or SOCKS proxy")
+		}
+		if _, ok := pool.client.Transport.(*googleH3FallbackTransport); ok {
+			t.Fatal("proxied slot pool attempted direct QUIC")
+		}
+	}
 }
 
 func TestDriveMetadataSlotVisibleLifecycleAndQuota(t *testing.T) {

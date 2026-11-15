@@ -25,6 +25,8 @@ type DriveStore struct {
 	http                   *GoogleHTTPClient
 	normalUploadHTTP       *GoogleHTTPClient
 	normalDownloadHTTP     *GoogleHTTPClient
+	slotReadHTTP           *GoogleHTTPClient
+	slotWriteHTTP          *GoogleHTTPClient
 	tokenSource            *AccessTokenSource
 	folderID               string
 	space                  string
@@ -109,7 +111,14 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 			normalDownloadHTTP = normalUploadHTTP
 		}
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	var slotReadHTTP, slotWriteHTTP *GoogleHTTPClient
+	if httpClient != nil && cfg.MetadataSlotV1 && cfg.SeparateMetadataSlotPools {
+		// Read and write each get a same-route pool. Authentication, quota
+		// accounting, and backoff still belong to this DriveStore.
+		slotReadHTTP = NewGoogleHTTPClient(httpClient.route)
+		slotWriteHTTP = NewGoogleHTTPClient(httpClient.route)
+	}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
@@ -1312,7 +1321,11 @@ func (d *DriveStore) requestWithHTTP(ctx context.Context, httpClient *GoogleHTTP
 }
 
 func (d *DriveStore) requestSlotPatch(ctx context.Context, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
-	return d.requestWithHTTPMode(ctx, d.http, http.MethodPatch, path, headers, body, true)
+	httpClient := d.http
+	if d.slotWriteHTTP != nil {
+		httpClient = d.slotWriteHTTP
+	}
+	return d.requestWithHTTPMode(ctx, httpClient, http.MethodPatch, path, headers, body, true)
 }
 
 func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte, singleAttempt bool) (*HTTPResult, error) {

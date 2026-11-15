@@ -105,13 +105,14 @@ type RouteConfig struct {
 }
 
 type DriveConfig struct {
-	FolderID               string `json:"folder_id,omitempty"`
-	Space                  string `json:"space,omitempty"`
-	QuotaProject           string `json:"quota_project,omitempty"`
-	InlineSmallObjects     bool   `json:"inline_small_objects,omitempty"`
-	MetadataOnlyPriority   bool   `json:"metadata_only_priority,omitempty"`
-	MetadataSlotV1         bool   `json:"metadata_slot_v1,omitempty"`
-	MetadataSlotDeliveryV1 bool   `json:"metadata_slot_delivery_v1,omitempty"`
+	FolderID                  string `json:"folder_id,omitempty"`
+	Space                     string `json:"space,omitempty"`
+	QuotaProject              string `json:"quota_project,omitempty"`
+	InlineSmallObjects        bool   `json:"inline_small_objects,omitempty"`
+	MetadataOnlyPriority      bool   `json:"metadata_only_priority,omitempty"`
+	MetadataSlotV1            bool   `json:"metadata_slot_v1,omitempty"`
+	MetadataSlotDeliveryV1    bool   `json:"metadata_slot_delivery_v1,omitempty"`
+	SeparateMetadataSlotPools bool   `json:"separate_metadata_slot_pools,omitempty"`
 	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
 	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
 	UploadHedgeDelayMS     int  `json:"upload_hedge_delay_ms,omitempty"`

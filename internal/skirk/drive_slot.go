@@ -126,7 +126,11 @@ func (d *DriveStore) GetMetadataSlot(ctx context.Context, fileID, expectedName s
 		return MetadataSlotInfo{}, errors.New("invalid Drive metadata slot ID or name")
 	}
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=" + url.QueryEscape(driveMetadataSlotFields)
-	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	httpClient := d.http
+	if d.slotReadHTTP != nil {
+		httpClient = d.slotReadHTTP
+	}
+	result, err := d.requestWithHTTP(ctx, httpClient, http.MethodGet, path, nil, nil)
 	if err != nil {
 		return MetadataSlotInfo{}, err
 	}
