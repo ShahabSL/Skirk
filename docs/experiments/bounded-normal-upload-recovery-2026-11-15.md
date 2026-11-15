@@ -7,8 +7,9 @@ mux retry after a narrowly classified RPC timeout.
 
 `tools/skirk_live_ab.py --bounded-normal-upload-timeouts` requires persistent
 traffic and `--observe`. Limits are fixed before any call: at most eight
-observable normal multipart timeout RPCs per arm, four per rolling 60 seconds,
-and sixteen per cohort. The window uses monotonic observation timestamps with
+tolerated observable normal multipart timeout RPCs per arm, four per rolling
+60 seconds, and sixteen per cohort. The event that exceeds a cap stops the arm
+and is still retained in its observed count. The window uses monotonic observation timestamps with
 the harness's polling precision and retains the boundary event. Existing
 deadline, progress, estimated-quota, and full-workload verification guards still
 apply. For the planned sustained comparison those are 300 seconds overall,
