@@ -24,6 +24,8 @@ import (
 type stressArgs struct {
 	clients, messages, intervalMS, bulkMiB, bulkRequests int
 	putMS, getMS, listMS, pollMS                         int
+	bulkPutMSPerMiB, bulkPutSlots, chunkMiB              int
+	bulkDirection                                        string
 	sparse, interactionEpoch                             bool
 }
 
@@ -66,7 +68,7 @@ func stressConfig(secret string, sessionID string, clientID string, runID string
 		Secret: secret, SessionID: sessionID,
 		Client: skirk.ClientConfig{ID: clientID, RunID: runID},
 		Tunnel: skirk.TunnelConfig{
-			Listen: proxyAddr, Profile: "fixed", ChunkSize: 16 * 1024 * 1024,
+			Listen: proxyAddr, Profile: "fixed", ChunkSize: a.chunkMiB * 1024 * 1024,
 			PollIntervalMS: a.pollMS, SparsePriority: a.sparse,
 			InteractionEpoch: a.interactionEpoch, CleanupProcessed: true,
 		},
@@ -193,15 +195,46 @@ func stressBulkDownload(ctx context.Context, client int, proxyAddr, originURL st
 	return result
 }
 
+func stressBulkUpload(ctx context.Context, client int, proxyAddr, originURL string, requests int, payload []byte) stressBulkResult {
+	result := stressBulkResult{client: client}
+	proxy := &url.URL{Scheme: "socks5h", Host: proxyAddr}
+	httpClient := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}, Timeout: 120 * time.Second}
+	for i := 0; i < requests; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, originURL, bytes.NewReader(payload))
+		if err != nil {
+			result.err = err
+			return result
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			result.err = err
+			return result
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || !bytes.Equal(body, []byte("verified")) {
+			result.err = fmt.Errorf("client %d bulk upload response %d failed status=%d body=%q: %v", client, i, resp.StatusCode, body, err)
+			return result
+		}
+		result.bytes += int64(len(payload))
+	}
+	result.finishedAt = time.Now()
+	return result
+}
+
 func runMultiClientStress(a stressArgs) error {
 	runStarted := time.Now()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := &localStore{
-		MemoryStore: skirk.NewMemoryStore(),
-		putDelay:    time.Duration(a.putMS) * time.Millisecond,
-		getDelay:    time.Duration(a.getMS) * time.Millisecond,
-		listDelay:   time.Duration(a.listMS) * time.Millisecond,
+		MemoryStore:   skirk.NewMemoryStore(),
+		putDelay:      time.Duration(a.putMS) * time.Millisecond,
+		getDelay:      time.Duration(a.getMS) * time.Millisecond,
+		listDelay:     time.Duration(a.listMS) * time.Millisecond,
+		bulkPutPerMiB: time.Duration(a.bulkPutMSPerMiB) * time.Millisecond,
+	}
+	if a.bulkPutSlots > 0 {
+		store.bulkPutSlots = make(chan struct{}, a.bulkPutSlots)
 	}
 	logger := &stressLogCounter{}
 	secret, err := skirk.RandomSecret()
@@ -270,7 +303,18 @@ func runMultiClientStress(a stressArgs) error {
 	payload := make([]byte, a.bulkMiB*1024*1024)
 	_, _ = rand.New(rand.NewSource(42)).Read(payload)
 	hash := sha256.Sum256(payload)
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var originHashFailures atomic.Int64
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if a.bulkDirection == "upload" {
+			body, err := io.ReadAll(req.Body)
+			if err != nil || req.Method != http.MethodPost || len(body) != len(payload) || sha256.Sum256(body) != hash {
+				originHashFailures.Add(1)
+				http.Error(w, "bulk integrity failure", http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte("verified"))
+			return
+		}
 		w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
 		_, _ = w.Write(payload)
 	}))
@@ -282,6 +326,10 @@ func runMultiClientStress(a stressArgs) error {
 	bulkDone := make(chan stressBulkResult, a.clients)
 	for i := range proxyAddrs {
 		go func(i int) {
+			if a.bulkDirection == "upload" {
+				bulkDone <- stressBulkUpload(ctx, i, proxyAddrs[i], origin.URL, a.bulkRequests, payload)
+				return
+			}
 			bulkDone <- stressBulkDownload(ctx, i, proxyAddrs[i], origin.URL, a.bulkRequests, len(payload), hash)
 		}(i)
 	}
@@ -352,9 +400,11 @@ func runMultiClientStress(a stressArgs) error {
 	deleteCalls := store.deleteCalls.Load()
 	units := 100*listCalls + 200*getCalls + 50*putCalls + 50*deleteCalls
 	output := map[string]any{
-		"synthetic": true, "store_model": "shared MemoryStore with exact class filtering and fixed delays; no Drive visibility, page pollution, or quota enforcement",
+		"synthetic": true, "store_model": "shared MemoryStore with exact class filtering, configurable large-PUT delay and slots; no Drive visibility, page pollution, or quota enforcement",
 		"clients": a.clients, "messages_per_client": a.messages, "message_interval_ms": a.intervalMS,
 		"bulk_mib_per_request": a.bulkMiB, "bulk_requests_per_client": a.bulkRequests,
+		"bulk_direction": a.bulkDirection, "chunk_mib": a.chunkMiB,
+		"bulk_put_ms_per_mib": a.bulkPutMSPerMiB, "bulk_put_slots": a.bulkPutSlots,
 		"sparse_priority": a.sparse, "interaction_epoch": a.interactionEpoch,
 		"text_verified_messages": len(latencies), "text_scheduled_p50_ms": percentile(latencies, .50),
 		"text_scheduled_p95_ms": percentile(latencies, .95), "text_scheduled_max_ms": percentile(latencies, 1),
@@ -362,6 +412,7 @@ func runMultiClientStress(a stressArgs) error {
 		"bulk_verified_bytes": totalBulk, "bulk_mbps": float64(totalBulk*8) / bulkFinished.Sub(bulkStarted).Seconds() / 1e6,
 		"bulk_duration_ms":                 bulkFinished.Sub(bulkStarted).Milliseconds(),
 		"bulk_clients_active_through_text": activeThroughText,
+		"origin_hash_failures":             originHashFailures.Load(),
 		"priority_objects_after_warmup":    store.priorityPuts.Load() - priorityBefore,
 		"normal_objects_after_warmup":      store.normalPuts.Load() - normalBefore,
 		"list_calls_total":                 listCalls, "get_calls_total": getCalls,

@@ -33,8 +33,34 @@ import (
 type localStore struct {
 	*skirk.MemoryStore
 	putDelay, getDelay, listDelay            time.Duration
+	bulkPutPerMiB                            time.Duration
+	bulkPutSlots                             chan struct{}
 	priorityPuts, normalPuts, tinyNormalPuts atomic.Int64
 	listCalls, getCalls, deleteCalls         atomic.Int64
+}
+
+func (s *localStore) pausePut(ctx context.Context, size int) (func(), error) {
+	if size < 1024*1024 || (s.bulkPutPerMiB <= 0 && s.bulkPutSlots == nil) {
+		return func() {}, pause(ctx, s.putDelay)
+	}
+	if s.bulkPutSlots != nil {
+		select {
+		case s.bulkPutSlots <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	release := func() {
+		if s.bulkPutSlots != nil {
+			<-s.bulkPutSlots
+		}
+	}
+	delay := s.putDelay + time.Duration(int64(s.bulkPutPerMiB)*int64(size)/(1024*1024))
+	if err := pause(ctx, delay); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 func pause(ctx context.Context, delay time.Duration) error {
@@ -63,17 +89,21 @@ func (s *localStore) notePut(name string, size int) {
 }
 
 func (s *localStore) PutObject(ctx context.Context, name string, data []byte) (skirk.ObjectInfo, error) {
-	if err := pause(ctx, s.putDelay); err != nil {
+	release, err := s.pausePut(ctx, len(data))
+	if err != nil {
 		return skirk.ObjectInfo{}, err
 	}
+	defer release()
 	s.notePut(name, len(data))
 	return s.MemoryStore.PutObject(ctx, name, data)
 }
 
 func (s *localStore) PutObjectWithID(ctx context.Context, id, name string, data []byte) (skirk.ObjectInfo, error) {
-	if err := pause(ctx, s.putDelay); err != nil {
+	release, err := s.pausePut(ctx, len(data))
+	if err != nil {
 		return skirk.ObjectInfo{}, err
 	}
+	defer release()
 	s.notePut(name, len(data))
 	return s.MemoryStore.PutObjectWithID(ctx, id, name, data)
 }
@@ -249,7 +279,8 @@ func run() error {
 	var sparse bool
 	var interactionEpoch bool
 	var serialEcho bool
-	var messages, intervalMS, bulkMiB, bulkRequests, putMS, getMS, listMS, pollMS, clients int
+	var bulkDirection string
+	var messages, intervalMS, bulkMiB, bulkRequests, putMS, getMS, listMS, pollMS, clients, chunkMiB, bulkPutMSPerMiB, bulkPutSlots int
 	flag.BoolVar(&sparse, "sparse-priority", false, "enable opt-in sparse priority replenishment")
 	flag.BoolVar(&interactionEpoch, "interaction-epoch", false, "enable opt-in bounded interaction epoch")
 	flag.BoolVar(&serialEcho, "serial-echo", false, "wait for each echo before sending the next message")
@@ -258,6 +289,10 @@ func run() error {
 	flag.IntVar(&bulkMiB, "bulk-mib", 16, "bytes per repeated concurrent bulk HTTP response, MiB")
 	flag.IntVar(&bulkRequests, "bulk-requests", 0, "fixed verified bulk response count; zero runs until messages finish")
 	flag.IntVar(&clients, "clients", 1, "number of independent client muxes sharing one MemoryStore")
+	flag.StringVar(&bulkDirection, "bulk-direction", "download", "multi-client bulk direction: download or upload")
+	flag.IntVar(&chunkMiB, "chunk-mib", 16, "multi-client tunnel chunk setting in MiB (normal batches cap at 4 MiB)")
+	flag.IntVar(&bulkPutMSPerMiB, "bulk-put-ms-per-mib", 0, "synthetic per-MiB delay for >=1 MiB object PUTs")
+	flag.IntVar(&bulkPutSlots, "bulk-put-slots", 0, "shared concurrent large-PUT slots; 0 means unbounded")
 	flag.IntVar(&putMS, "put-ms", 150, "synthetic object upload delay")
 	flag.IntVar(&getMS, "get-ms", 100, "synthetic object download delay")
 	flag.IntVar(&listMS, "list-ms", 60, "synthetic object list delay")
@@ -266,7 +301,7 @@ func run() error {
 	if sparse && interactionEpoch {
 		return errors.New("choose one of -sparse-priority or -interaction-epoch")
 	}
-	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || bulkRequests < 0 || bulkRequests > 100 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 || clients < 1 || clients > 10 {
+	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || bulkRequests < 0 || bulkRequests > 100 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 || clients < 1 || clients > 10 || chunkMiB < 1 || chunkMiB > 16 || bulkPutMSPerMiB < 0 || bulkPutSlots < 0 || bulkPutSlots > 32 || (bulkDirection != "download" && bulkDirection != "upload") {
 		return errors.New("benchmark arguments out of range")
 	}
 	if clients > 1 {
@@ -277,6 +312,8 @@ func run() error {
 			clients: clients, messages: messages, intervalMS: intervalMS,
 			bulkMiB: bulkMiB, bulkRequests: bulkRequests,
 			putMS: putMS, getMS: getMS, listMS: listMS, pollMS: pollMS,
+			bulkDirection: bulkDirection, chunkMiB: chunkMiB,
+			bulkPutMSPerMiB: bulkPutMSPerMiB, bulkPutSlots: bulkPutSlots,
 			sparse: sparse, interactionEpoch: interactionEpoch,
 		})
 	}
