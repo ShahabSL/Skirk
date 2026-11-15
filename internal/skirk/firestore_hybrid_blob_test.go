@@ -218,7 +218,7 @@ func (s *fsHybridPriorityStore) DeleteID(ctx context.Context, id string) error {
 
 func (s *fsHybridPriorityStore) queuePhysicalCleanup(entry *fsHybridInbound) {
 	s.mu.Lock()
-	if s.closed || !entry.done || s.cleanup == nil || s.cleanupQueued[entry.info.ID] {
+	if s.closed || s.ctx.Err() != nil || !entry.done || s.cleanup == nil || s.cleanupQueued[entry.info.ID] {
 		s.mu.Unlock()
 		return
 	}

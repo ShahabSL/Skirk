@@ -249,7 +249,7 @@ func (s *fsHybridPriorityStore) ingest(doc fsPriorityDocument) error {
 
 func (s *fsHybridPriorityStore) dispatch(entry *fsHybridInbound) {
 	s.mu.Lock()
-	if s.closed || entry.done || entry.queued || s.receive == nil {
+	if s.closed || s.ctx.Err() != nil || entry.done || entry.queued || s.receive == nil {
 		s.mu.Unlock()
 		return
 	}
@@ -575,7 +575,7 @@ func (s *fsHybridPriorityStore) NoteMuxProcessed(name, id string) error {
 		return nil
 	}
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.ctx.Err() != nil {
 		s.mu.Unlock()
 		return nil
 	}

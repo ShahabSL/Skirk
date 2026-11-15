@@ -354,6 +354,28 @@ func TestFSHybridStoreRejectsUnprocessedDeleteAndLatePriorityList(t *testing.T) 
 	}
 }
 
+func TestFSHybridStoreCanceledEpochCannotManufactureLateProcessingReceipt(t *testing.T) {
+	client, exit, _, _ := fsHybridMemoryStores(t)
+	seen := fsHybridReceiveChannel(exit)
+	r := fsHybridStoreRecord(t, client, 1, 7)
+	if _, err := client.PutObject(context.Background(), r.Name, r.Sealed); err != nil {
+		t.Fatal(err)
+	}
+	var info ObjectInfo
+	select {
+	case info = <-seen:
+	case <-time.After(time.Second):
+		t.Fatal("missing primary")
+	}
+	exit.cancel()
+	if err := exit.NoteMuxProcessed(info.Name, info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if exit.Snapshot()["processed_receipts"] != 0 || exit.Snapshot()["processed_prefix"] != 0 {
+		t.Fatal("canceled epoch manufactured an ownership receipt")
+	}
+}
+
 func TestFSHybridStoreReconnectReadsCumulativeStateAndHardStopsAuthorization(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "transport_reconnect", true: "permission_hard_stop"}[terminal], func(t *testing.T) {
