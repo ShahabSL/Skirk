@@ -78,6 +78,22 @@ arms varied from 3.719 to 7.500 s. The directionally similar result is not
 proof that one code change caused the gap; see the final record and private
 `.skirk-runs/main-vs-current-upload-16m-20261114-01/`.
 
+### Dense normal-list continuation
+
+The previous default p1 scan restarted at the newest page after each
+four-page truncation. More than 4,000 persistent newer objects could therefore
+hide an older p1 object indefinitely. Commit `52cf03b` saves the page token
+and scan watermark. Its first poll reads up to four normal pages; subsequent
+polls read up to three continuation pages plus one fresh head page, including
+after normal streams go idle. On completion it replays new head arrivals from
+the saved watermark; a rejected token restarts the scan. Deterministic tests
+cover repeated newer inserts, a burst larger than the head page, idle
+continuation, and rejected-token recovery. This repairs that bounded
+starvation case. The fresh-head check comes after up to three older pages,
+so interactive latency under backlog is unmeasured. There is no live
+dense-mailbox result or guarantee under arbitrary Drive index churn. See the
+[final evidence record](experiments/final-engineering-evidence-2026-11-14.md).
+
 ## Workload and measurements
 
 The newer persistent benchmark first sends and byte-verifies a 128 KiB frame
@@ -487,16 +503,30 @@ not an additional hard concurrency limit or a measured capacity result.
 
 ## Platform validation on this branch
 
-Fresh current-branch builds passed the full preflight, Android debug
+At `b04bed2`, current-branch builds passed the full preflight, Android debug
 sidecar/APK build, iOS Simulator build with **2 passing and 1 skipped** UI
-tests, and a macOS ARM64 Tauri bundle. Native Windows x64 CI now passes full
-Go tests, 22 Rust command tests, sidecar/package checks, and a 10-second
-portable GUI launch; Windows ARM64 CLI smoke also passes. The
+tests, and a macOS ARM64 Tauri bundle. An earlier native Windows x64 CI run
+passed full Go tests, 22 Rust command tests, sidecar/package checks, and a
+10-second portable GUI launch; Windows ARM64 CLI smoke also passed. A later
+[Windows Smoke run](https://github.com/ShahabSL/Skirk/actions/runs/43680170733)
+at `ae127e8` failed adaptive retry tests on both x64 and ARM64 because retry
+eligibility used wall-clock ordering and made no exact metadata GET. Commit
+`5c8739a` uses an atomic poll sequence instead; local deterministic and Go
+race tests passed, while native CI for exact tip `944e588` is pending. The
 [bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
 verified an HTTPS page plus exact 8 MiB uploads and downloads on a Pixel
 emulator, and a later Pixel run verified the on-demand exit proof plus exact
-1 MiB transfers. iOS Simulator Connect stopped before the packet extension;
-macOS ran local proxy mode. None of these platform UI runs exercised the new
+1 MiB transfers. A generic iPhoneOS build first failed on unresolved
+lwIP/yaml symbols from stale HEV archives; `944e588` cleans the copied tree
+before its first slice, and unsigned device plus Simulator builds then passed.
+iOS Simulator Connect stopped before the packet extension;
+the native macOS GUI selected the pinned front and used its app-managed SOCKS
+proxy in one bounded live session: authenticated Test exit **3.494 s**, text
+GET **2.050 s**, exact 1 MiB download **3.470 s**, and upload **5.084 s**,
+with zero Drive API errors and exact delayed cleanup. That tested bundle was
+at `b04bed2`, before the later transport fixes. It does not prove
+automatic browser proxy configuration or signed distribution. None of these
+platform UI runs exercised the new
 opt-in scheduler or fixed-slot delivery. Physical iPhone packet forwarding,
 sustained Android browsing/video with concurrent bulk traffic, Windows VPN
 tunnel runtime, and signed macOS distribution remain unverified. See the
@@ -520,7 +550,9 @@ behavior, or sustained remote availability.
 ## Decision and remaining evidence
 
 Keep default muxv4 as the release transport while investigating the measured
-clean-main/current performance gap. The corrected epoch and metadata-only
+clean-main/current performance gap. Its normal-list continuation now resolves
+the deterministic deep-backlog starvation case; live dense Drive behavior and
+arbitrary index churn remain unverified. The corrected epoch and metadata-only
 combination helped short 16 MiB pairs but lost bulk rate with five clients
 and did not finish the 100 MiB comparison. Fixed-slot delivery and split
 slot pools likewise lacked a joint text/file win. Further work needs

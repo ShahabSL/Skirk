@@ -268,14 +268,23 @@ backlog; that dense case remains unmeasured on live Drive. The opt-in
 implementation is integrated in commits `b0fb34b`, `6d9b89e`, and
 `41688a9` on the research branch.
 
-Code review found a pre-existing default p1 discovery risk: its sliding scan
-starts each poll without a page token, reads at most 4 × 1,000 objects, and
-clears any token when truncated. If more than 4,000 newer p1 objects persist,
-an older p1 object can remain beyond every poll's window. Adaptive broad
-discovery retains its continuation token and the 8,001-object deterministic
-test exercises that progression. This is a real algorithmic distinction, not
-an observed live-drive stall; the dense-mailbox correctness and timing still
-need a bounded live test.
+Code review found that the former default p1 sliding scan restarted from the
+newest page on every poll. With more than 4,000 persistent newer p1 objects,
+an older p1 object could remain beyond its four-page window. Commit `52cf03b`
+now saves the normal-list page token and the first scan's watermark. The
+initial poll reads up to four pages; continuation polls use up to three older
+pages and one fresh head page. It continues after the last stream goes idle,
+replays arrivals from the saved watermark when the scan completes, and
+restarts from the head if Drive rejects the token. Deterministic tests cover
+older-page progress under repeated newer inserts, more than one head page of
+new arrivals, idle continuation, and rejected-token recovery
+([test source](../../internal/skirk/p1_pagination_test.go)). The head check
+runs after up to three continuation pages, so its real interactive-latency
+effect under backlog is unmeasured. This fixes the specific deterministic
+starvation case without proving delivery under arbitrary concurrent Drive
+index churn, persistent API errors, or a live dense mailbox. Adaptive
+discovery had continuation first, but it no longer has a
+unique correctness path through this tested backlog case.
 
 The same-binary pinned-front adaptive **download** ABBA measured the
 integrated four-broad-pages-before-p0-fallback implementation. It used an 8 MiB
@@ -417,9 +426,9 @@ separate economic constraint, not a hard concurrency guarantee.
 
 ## Platform verification and remaining boundaries
 
-The final integrated preflight passed after the staged adaptive and OAuth
-changes, covering Go/vet, desktop build, and Android APK. Full Go race tests
-and 49/49 Python harness tests also passed. Private logs are
+At `b04bed2`, the integrated preflight passed after the staged adaptive and
+OAuth changes, covering Go/vet, desktop build, and Android APK. Full Go race
+tests and 49/49 Python harness tests also passed. Private logs are
 `.skirk-runs/{preflight,go-race,python}-integrated-final-20261114.log`.
 
 On a Pixel 7 API 36 emulator with a full-device VPN and the pinned front,
@@ -438,18 +447,21 @@ or VPN packets;
 its private evidence is `.skirk-runs/android-final-ui-20261114/result.md`.
 These are single-device samples, not peak throughput or capacity results.
 
-The iOS app and packet extension built again on the integrated branch for
-the iPhone 17 Pro Simulator. Its UI test result is **2 passed, 1 skipped,
-0 failed**: profile lifecycle
+The iOS app and packet extension built for the iPhone 17 Pro Simulator. The
+recorded UI suite had **2 passed, 1 skipped, 0 failed**: profile lifecycle
 and route choice passed; the live profile test was skipped. Simulator Connect
 previously stopped at `NEConfigurationErrorDomain Code=11` before the packet
-extension made Drive calls. A signed physical iPhone packet-tunnel run remains
+extension made Drive calls. A later unsigned generic iPhoneOS build initially
+failed with unresolved lwIP/yaml symbols from stale ignored HEV archives in
+its first device slice. Commit `944e588` cleans the copied build tree before
+that slice; generic iPhoneOS and Simulator builds then passed, along with Go
+engine race tests. A signed physical iPhone packet-tunnel run remains
 unverified; the available iPhone was not connected for this test. Private UI
 result: `.skirk-runs/ios-ui-integrated-final-20261114.xcresult`. The macOS
 ARM64 Tauri app bundle built locally and its 23 Rust command tests passed.
 An isolated synthetic native GUI smoke at `dc6db7f` verified Google front as
 the default, explicit Direct choice across restart, and renewal-style profile
-replacement preserving route and ports. A final bundle rebuilt at `b04bed2`
+replacement preserving route and ports. The tested bundle rebuilt at `b04bed2`
 contained an ARM64 Go sidecar reporting that commit. In a separate fresh
 `shahabpre` mailbox session, the native GUI selected the pinned Google front,
 connected its local SOCKS proxy, and showed an authenticated **Test exit**
@@ -466,7 +478,9 @@ evidence is under `.skirk-runs/macos-native-live-final-20261114/`, including
 `exact-cleanup.json`; build log:
 `.skirk-runs/macos-final-integrated-app-build-20261114.log`. This proves the
 native proxy path for one bounded local-origin test, not automatic browser
-proxy configuration or sustained Mac traffic. Strict `codesign` and `spctl`
+proxy configuration or sustained Mac traffic; the later `5c8739a` and
+`52cf03b` transport fixes were not in that bundle. Strict `codesign` and
+`spctl`
 checks failed on the locally built bundle. No Developer ID Application
 identity or configured notary CI credentials were available, so a public
 signed package and the reported Mac
@@ -479,8 +493,15 @@ for [draft PR #32](https://github.com/ShahabSL/Skirk/pull/32).
 The Windows x64 runner also passed 22 Rust command tests, built the portable
 package with the Go sidecar and SHA-checked VPN sidecar, and kept the
 packaged GUI running for 10 seconds. This is a native launch smoke, not a VPN
-tunnel or file-transfer test on Windows. Native Windows CI for the final tip
-with the staged adaptive refinement had not run at this report's snapshot.
+tunnel or file-transfer test on Windows. A later
+[native Smoke run at `ae127e8`](https://github.com/ShahabSL/Skirk/actions/runs/43680170733)
+failed five x64 and four ARM64 adaptive retry tests: pending retries made no
+exact metadata GET. Their same-poll eligibility depended on wall-clock
+`addedAt.Before(pollStarted)`. Commit `5c8739a` replaces that ordering with
+an atomic poll sequence; local tests cover both withholding a new retry in
+its creation poll and probing an older retry when the clock is simulated in
+the future. Integrated Go race tests pass. Native Windows CI for the exact
+`944e588` tip is pending, so the fix has no native Windows pass yet.
 The client checks cover route choice, profile recovery, and exit reachability;
 there is no comparative usability study behind a “best UI” claim.
 
@@ -496,12 +517,12 @@ resumption. A durable or bounded automatic recovery design needs an explicit
 exit generation and replay rules; simply widening the window risks repeating
 external side effects. See [outage analysis](../architecture-frontier-2026.md#exit-restart-and-in-flight-streams).
 
-**Decision rule:** keep the known default and route choice for this research
-branch, while fixing or bounding its p1 pagination starvation before claiming
-dense-mailbox reliability. Treat page size 1,000 as a bounded discovery
+**Decision rule:** keep the default and user route choice for this research
+branch. The new bounded p1 continuation removes the demonstrated deterministic
+starvation case; dense live Drive behavior and arbitrary concurrent index
+churn remain unverified. Treat page size 1,000 as a bounded discovery
 improvement with rollback. Keep fixed slots and pool splitting opt-in until
 repeated, larger full-app mixed workloads show both interactive and file
-benefit, verified cleanup, and acceptable quota. The adaptive candidate has
-a correctness path through deep backlog, but its first sparse 8 MiB version's
-text advantage did not persist in the staged download. Dense live behavior
-and larger mixed workloads remain unmeasured.
+benefit, verified cleanup, and acceptable quota. The first adaptive version's
+sparse 8 MiB text advantage did not persist in the staged download. Larger
+mixed workloads remain unmeasured.
