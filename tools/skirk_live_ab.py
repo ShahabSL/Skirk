@@ -112,6 +112,8 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--observe", action="store_true")
+    parser.add_argument("--probe-exit", action="store_true",
+                        help="verify one authenticated on-demand exit round trip in each arm")
     parser.add_argument("--stall-seconds", type=int, default=15)
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
@@ -333,6 +335,17 @@ def main():
                 subprocess.run(["curl", "-sS", "-o", os.devnull, "--max-time", "30", "--noproxy", "",
                                 "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{origin_port}/small"],
                                check=True, capture_output=True, timeout=35)
+                if args.probe_exit:
+                    probe = subprocess.run([str(binary.resolve()), "probe-exit", "--config", str(path),
+                                            "--socks", f"127.0.0.1:{port}"],
+                                           capture_output=True, text=True, timeout=50)
+                    try:
+                        proof = json.loads(probe.stdout)
+                    except json.JSONDecodeError as error:
+                        raise RuntimeError("exit probe returned invalid JSON") from error
+                    if probe.returncode != 0 or proof.get("status") != "verified":
+                        raise RuntimeError("exit probe did not verify the running exit")
+                    row["exit_probe_round_trip_ms"] = proof.get("round_trip_ms")
                 report_path = run_dir / "mixed.json"
                 bulk_url = f"http://127.0.0.1:{origin_port}/{'bulk-upload' if args.bulk_direction == 'upload' else 'bulk'}"
                 bulk_response = bulk_ack if args.bulk_direction == "upload" else payload
