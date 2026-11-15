@@ -304,6 +304,27 @@ class MainComparisonSafetyTests(unittest.TestCase):
         self.assertTrue(original["drive"]["metadata_slot_primary_v1"])
         self.assertNotIn("metadata_slot_primary_v1",arm_config(original,"baseline","fresh",0,False)["drive"])
 
+    def test_primary_package_comparison_preserves_actual_default_control(self):
+        original={"route":{"mode":"google_front_pinned"},"drive":{
+            "metadata_slot_v1":True,"metadata_slot_delivery_v1":True,"metadata_slot_async_v1":True,
+            "metadata_slot_primary_v1":True,"separate_metadata_slot_pools":True,
+            "inline_small_objects":True,"metadata_only_priority":True,"quota_project":"example-project"},
+            "tunnel":{"interaction_epoch":True,"sparse_priority":True}}
+        control=arm_config(original,"control","control",0,True,candidate_metadata_slot_primary_vs_mux=True)
+        candidate=arm_config(original,"candidate","candidate",0,True,candidate_metadata_slot_primary_vs_mux=True)
+        for key in ("metadata_slot_v1","metadata_slot_delivery_v1","metadata_slot_async_v1","metadata_slot_primary_v1",
+                    "separate_metadata_slot_pools","inline_small_objects","metadata_only_priority","quota_project"):
+            self.assertNotIn(key,control["drive"])
+        self.assertNotIn("interaction_epoch",control["tunnel"])
+        self.assertNotIn("sparse_priority",control["tunnel"])
+        for key in ("metadata_slot_v1","metadata_slot_delivery_v1","metadata_slot_async_v1","metadata_slot_primary_v1"):
+            self.assertTrue(candidate["drive"][key])
+        self.assertTrue(candidate["tunnel"]["interaction_epoch"])
+        self.assertEqual(control["route"],candidate["route"])
+        self.assertTrue(original["drive"]["metadata_slot_primary_v1"])
+        shared=arm_config(original,"control","shared",0,True,candidate_metadata_slot_primary_vs_mux=True,shared_interaction_epoch=True)
+        self.assertTrue(shared["tunnel"]["interaction_epoch"])
+
     def test_normal_page_comparison_changes_only_page_size_and_session(self):
         original = {"secret": "fictional", "session_id": "old",
                     "route": {"mode": "google_front_pinned"},

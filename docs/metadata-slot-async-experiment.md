@@ -31,6 +31,18 @@ recovery. The separate harness flag `--candidate-metadata-slot-primary-v1`
 enables asynchronous slots in both arms and changes only this deadline in the
 candidate, so its effect can be measured independently.
 
+`--candidate-metadata-slot-primary-vs-mux` instead leaves the control on the
+default mux configuration and enables primary asynchronous slots plus the
+interaction-epoch scheduler only in candidates. This measures a complete
+persistent-text transport package, not just carrier selection. Adding
+`--shared-interaction-epoch` deliberately gives both peers that scheduler to
+isolate the carrier. The harness clears saved slot, inline, pool, quota-project
+and scheduler experiments from default controls; tests verify that isolation
+and preserve the chosen Google route. A clean-main binary may be passed as
+`--control-binary`, with exit probing omitted if it lacks that command. Record
+both binary hashes to distinguish the same-binary default comparison from
+the clean-main comparison.
+
 The slot writer drains up to the bounded queue size after its PATCH-rate wait
 and before preparing the next cumulative snapshot. One PATCH may therefore
 publish several queued records. Publication waiters are completed only through
