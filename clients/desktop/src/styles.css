@@ -116,16 +116,17 @@ button {
     transform 120ms ease;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--surface-raised);
   border-color: var(--border-strong);
 }
 
-button:active:not(:disabled) {
+button:active:not(:disabled):not([aria-disabled="true"]) {
   transform: translateY(1px);
 }
 
-button:disabled {
+button:disabled,
+button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.5;
   box-shadow: none;
@@ -137,7 +138,7 @@ button.primary {
   border-color: var(--accent);
 }
 
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   color: #ffffff;

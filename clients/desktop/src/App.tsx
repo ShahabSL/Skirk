@@ -457,7 +457,8 @@ function App() {
           <div className="mode-selector" role="radiogroup" aria-label="Connection mode" onKeyDown={handleRadioGroupKeyDown}>
             <ModeButton
               active={selectedMode === "proxy"}
-              disabled={runtimeBusy || connected}
+              disabled={false}
+              interactionLocked={runtimeBusy || connected}
               icon={<Network />}
               label="Proxy"
               detail="SOCKS and HTTP"
@@ -465,7 +466,8 @@ function App() {
             />
             <ModeButton
               active={selectedMode === "system"}
-              disabled={runtimeBusy || connected || !snapshot?.capabilities.systemProxySupported}
+              disabled={!snapshot?.capabilities.systemProxySupported}
+              interactionLocked={runtimeBusy || connected}
               icon={<MonitorCog />}
               label="System proxy"
               detail={snapshot?.capabilities.systemProxySupported === false ? "Windows and Mac" : "Proxy-aware apps"}
@@ -473,7 +475,8 @@ function App() {
             />
             <ModeButton
               active={selectedMode === "vpn"}
-              disabled={runtimeBusy || connected || !snapshot?.capabilities.vpnModeSupported}
+              disabled={!snapshot?.capabilities.vpnModeSupported}
+              interactionLocked={runtimeBusy || connected}
               icon={<ShieldCheck />}
               label="VPN"
               detail={vpnModeDetail(snapshot)}
@@ -489,7 +492,8 @@ function App() {
             <div className="route-selector" role="radiogroup" aria-label="Google access route" onKeyDown={handleRadioGroupKeyDown}>
               <ModeButton
                 active={Boolean(selectedProfile) && routeSelection === "google_front_pinned"}
-                disabled={runtimeBusy || connected || !selectedProfile}
+                disabled={!selectedProfile}
+                interactionLocked={runtimeBusy || connected}
                 icon={<Cloud />}
                 label="Google front"
                 detail="www.google.com SNI"
@@ -497,7 +501,8 @@ function App() {
               />
               <ModeButton
                 active={Boolean(selectedProfile) && routeSelection === "direct"}
-                disabled={runtimeBusy || connected || !selectedProfile}
+                disabled={!selectedProfile}
+                interactionLocked={runtimeBusy || connected}
                 icon={<Network />}
                 label="Direct Google"
                 detail="Drive API hosts"
@@ -515,8 +520,11 @@ function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={busyAction !== null && busyAction !== "connect"}
-                onClick={() => void run("disconnect", () => desktopApi.disconnect())}
+                aria-disabled={busyAction !== null && busyAction !== "connect"}
+                onClick={() => {
+                  if (busyAction !== null && busyAction !== "connect") return;
+                  void run("disconnect", () => desktopApi.disconnect());
+                }}
               >
                 {busyAction === "disconnect" || disconnecting ? <Loader2 className="spin" /> : proxyRestorePending && !connected ? <RefreshCw /> : <Power />}
                 {proxyRestorePending && !connected && !connecting ? "Retry proxy restore" : connecting ? "Cancel connection" : "Disconnect"}
@@ -525,8 +533,13 @@ function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={runtimeBusy || !selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
-                onClick={googleGrantExpired ? beginProfileReplacement : () => void run("connect", () => desktopApi.connect())}
+                disabled={!selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
+                aria-disabled={runtimeBusy || !selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
+                onClick={() => {
+                  if (runtimeBusy) return;
+                  if (googleGrantExpired) beginProfileReplacement();
+                  else void run("connect", () => desktopApi.connect());
+                }}
               >
                 {googleGrantExpired ? (
                   <Upload />
@@ -947,6 +960,7 @@ function ProfileRow({
 function ModeButton({
   active,
   disabled,
+  interactionLocked,
   icon,
   label,
   detail,
@@ -954,6 +968,7 @@ function ModeButton({
 }: {
   active: boolean;
   disabled: boolean;
+  interactionLocked: boolean;
   icon: ReactNode;
   label: string;
   detail: string;
@@ -964,10 +979,13 @@ function ModeButton({
       type="button"
       className={active ? "mode-button active" : "mode-button"}
       disabled={disabled}
+      aria-disabled={disabled || interactionLocked}
       role="radio"
       aria-checked={active}
-      tabIndex={active ? 0 : -1}
-      onClick={onClick}
+      tabIndex={active && !disabled && !interactionLocked ? 0 : -1}
+      onClick={() => {
+        if (!disabled && !interactionLocked) onClick();
+      }}
     >
       {icon}
       <span>
@@ -980,7 +998,7 @@ function ModeButton({
 
 function handleRadioGroupKeyDown(event: KeyboardEvent<HTMLDivElement>) {
   if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-  const choices = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(":scope > button[role='radio']:not(:disabled), :scope > .route-selector > button[role='radio']:not(:disabled)"));
+  const choices = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(":scope > button[role='radio']:not(:disabled):not([aria-disabled='true'])"));
   if (!choices.length) return;
   event.preventDefault();
   const current = choices.indexOf(document.activeElement as HTMLButtonElement);
