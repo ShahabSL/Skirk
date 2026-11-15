@@ -725,11 +725,14 @@ func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, sin
 	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, driveListMaxPages, driveListPageSize)
 }
 
-func (d *DriveStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
+func (d *DriveStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
 	if !strings.HasPrefix(prefix, "muxv4/") {
 		return ObjectListInfo{}, errors.New("adaptive mux list requires a muxv4 prefix")
 	}
-	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, driveMuxFreshListMaxPages, strconv.Itoa(d.normalListPageSize))
+	if maxPages < 1 || maxPages > driveMuxFreshListMaxPages {
+		return ObjectListInfo{}, errors.New("adaptive mux list page budget must be 1..4")
+	}
+	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, maxPages, strconv.Itoa(d.normalListPageSize))
 }
 
 func (d *DriveStore) listFreshPrefixPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int, pageSize string) (ObjectListInfo, error) {

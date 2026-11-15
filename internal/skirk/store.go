@@ -118,7 +118,7 @@ type FreshListPageStatusStore interface {
 // AdaptiveMuxListPageStatusStore keeps the broad mux list bounded while using
 // the store's configured normal page size. Only adaptive discovery calls it.
 type AdaptiveMuxListPageStatusStore interface {
-	ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error)
+	ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error)
 }
 
 type FreshListContainsPageStatusStore interface {

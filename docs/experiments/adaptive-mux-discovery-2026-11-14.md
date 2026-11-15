@@ -8,25 +8,28 @@ not change the mux wire format, encryption, route, peer negotiation, or
 cleanup. Old peers' untagged object names remain visible. This flag takes
 precedence over `drive.combined_mux_discovery` if both are set.
 
-DriveStore's adaptive broad query is limited to four pages at the configured
-normal list page size (1,000 by default). The p0
-fallback is also limited to four pages of 100. A dense poll therefore makes
-at most eight discovery files.list requests without a rejected-token retry,
-and a sparse poll makes one. The default split strategy remains unchanged.
-Normal p1 discovery in the default split strategy can return up to four pages
-of 1,000 objects. The adaptive broad query has the same object count ceiling,
-but scans both classes and issues its p0 fallback after the broad query, so
-priority latency under a dense backlog still needs live measurement. The broad page token
+DriveStore's adaptive scan requests one broad page at the configured normal
+list page size (1,000 by default). If that page is partial, it queries p0
+before continuing the broad scan for up to three more pages. The p0 fallback
+is limited to four pages of 100. A dense poll therefore makes at most eight
+discovery files.list requests without a rejected-token retry, and a sparse
+poll makes one. The default split strategy remains unchanged. Normal p1
+discovery in the default split strategy can return up to four pages of 1,000
+objects; adaptive discovery has the same broad object count ceiling. Under
+a dense backlog, p0 waits for one broad page, rather than all four, before
+its separate query. Live latency and quota still need measurement. The broad page token
 continues across polls; the freshness cursor advances only after a complete
 query, and a rejected page token restarts at the same cursor. Incomplete
 results are retried from the same cursor even if Google returns a page token.
-Failed queue
-insertion retains the existing cursor rewind.
+If a continuation finishes empty, the first page still advances the cursor.
+Failed queue insertion retains the existing cursor rewind and prevents the
+same poll from continuing from a stale page token.
 
 The deterministic test creates 8,001 newer p1 objects, inserts an older p0
-after the first truncated poll, and verifies the next poll finds p0 through
-the class fallback while broad pagination continues and eventually completes.
-Other tests cover a one-list sparse poll with an old-peer object and an
-incomplete search with and without a page token. These tests prove the discovery and
+after the first truncated poll, and verifies the next poll queries p0 between
+broad page one and broad page two, then continues and eventually completes.
+Other tests cover a one-list sparse poll with an old-peer object, incomplete
+searches with and without page tokens, an empty final page, a rejected page
+token, and queue backpressure. These tests prove the discovery and
 cursor behavior, not Google-side latency, bulk goodput, or long-run quota.
 Keep this mode opt-in until bounded live A/B runs measure all three.

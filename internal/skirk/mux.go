@@ -2468,7 +2468,12 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
 	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && m.t.AdaptiveMuxDiscovery {
-		combinedWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive", m.listRecvMuxObjectsAdaptive, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
+		var firstInfos []ObjectInfo
+		var firstErr error
+		combinedWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive_first", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+			firstInfos, firstErr = m.listRecvMuxObjectsAdaptive(ctx, prefix, 1)
+			return firstInfos, firstErr
+		}, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
 		priorityWork := false
 		if m.hasListFreshPartial() || m.hasPriorityListPartial() {
 			priorityWork = m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority_fallback", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -2478,6 +2483,19 @@ func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal boo
 			}, func(metas []muxObjectMeta) {
 				m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
 			})
+		}
+		if firstErr == nil && m.hasListFreshPageToken() {
+			continuationWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive_continuation", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+				infos, err := m.listRecvMuxObjectsAdaptive(ctx, prefix, muxAdaptiveCombinedListPages-1)
+				if err == nil && !m.hasListFreshPartial() {
+					// The last page can be empty. Include the first page when
+					// advancing only after the full scan completes; a later
+					// enqueue rewind can still move this cursor back.
+					m.advanceListSince(firstInfos)
+				}
+				return infos, err
+			}, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
+			combinedWork = combinedWork || continuationWork
 		}
 		receiveGapWork := m.maintainReceiveGaps(ctx)
 		pendingOpenWork := m.maintainPendingOpens(ctx)
@@ -2628,17 +2646,17 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 	return m.listMuxObjectsByPrefix(ctx, prefix)
 }
 
-func (m *driveMux) listRecvMuxObjectsAdaptive(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+func (m *driveMux) listRecvMuxObjectsAdaptive(ctx context.Context, prefix string, maxPages int) ([]ObjectInfo, error) {
 	return m.listRecvMuxObjectsFresh(ctx, prefix, func(ctx context.Context, since time.Time, pageToken string) (ObjectListInfo, error) {
 		var result ObjectListInfo
 		var err error
 		if store, ok := m.t.Data.(AdaptiveMuxListPageStatusStore); ok {
-			result, err = store.ListFreshAdaptiveMuxPageStatus(ctx, prefix, since, pageToken)
+			result, err = store.ListFreshAdaptiveMuxPageStatus(ctx, prefix, since, pageToken, maxPages)
 		} else {
 			// Other stores can still opt in through the existing bounded
 			// prefix query. DriveStore uses its configured normal page size.
 			store := m.t.Data.(FreshListContainsPageStatusStore)
-			result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, muxAdaptiveCombinedListPages)
+			result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, maxPages)
 		}
 		if err != nil {
 			return result, err
