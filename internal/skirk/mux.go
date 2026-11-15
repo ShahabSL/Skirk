@@ -270,6 +270,7 @@ type driveMux struct {
 	slots              map[muxSlotRunKey]*muxSlotLink
 	slotPending        map[muxSlotRunKey]struct{}
 	slotStopped        bool
+	slotSetupDone      chan struct{}
 	opening            map[muxStreamKey]struct{}
 	closed             map[muxStreamKey]time.Time
 	pendingMu          sync.Mutex
@@ -597,7 +598,11 @@ func (m *driveMux) start(ctx context.Context) {
 	if m.role == "client" && m.t.MetadataSlotV1 {
 		// Prewarm without delaying any application OPEN. If setup is still
 		// pending, that OPEN proceeds as ordinary immutable muxv4.
-		go m.ensureClientSlot(ctx)
+		m.slotSetupDone = make(chan struct{})
+		go func() {
+			defer close(m.slotSetupDone)
+			m.ensureClientSlot(ctx)
+		}()
 	}
 	for _, lane := range m.lanes {
 		go lane.runBatchLoop(ctx)

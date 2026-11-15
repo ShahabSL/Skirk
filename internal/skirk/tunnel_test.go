@@ -3180,6 +3180,16 @@ func TestMuxStoragePressureCleanupContinuesAfterPrefixError(t *testing.T) {
 	}
 }
 
+func TestMuxStoragePressureCleanupRetainsActiveOptInSlots(t *testing.T) {
+	store := &storageQuotaPrefixErrorStore{}
+	mux := &driveMux{t: &Tunnel{MetadataSlotV1: true}}
+	mux.runStoragePressureCleanup(context.Background(), store)
+	opts := store.cleanupOptions()
+	if len(opts) != 3 || opts[2].Prefix != "slotv1/" || opts[2].OlderThan != 24*time.Hour {
+		t.Fatalf("opt-in slot cleanup options = %#v, want slotv1/ older than 24h", opts)
+	}
+}
+
 type storageQuotaOnceStore struct {
 	*MemoryStore
 	putCalls atomic.Int32

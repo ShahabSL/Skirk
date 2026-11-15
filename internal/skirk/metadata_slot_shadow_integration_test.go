@@ -305,6 +305,34 @@ func TestMuxSlotShadowSlowFailedPrewarmDoesNotBlockOpen(t *testing.T) {
 	client.stopSlotLinks()
 }
 
+func TestMuxSlotShadowStopWaitsForCanceledPrewarmCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := newShadowSlotMemoryStore()
+	store.createGate = make(chan struct{})
+	store.createStart = make(chan struct{})
+	client := shadowSlotTestMux(t, store, "client", true)
+	client.start(ctx)
+	select {
+	case <-store.createStart:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("prewarm did not reach Create")
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { client.stopSlotLinks(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not wait for exact-ID prewarm cleanup")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.deletedIDs) != 1 || len(store.slots) != 0 {
+		t.Fatalf("canceled prewarm cleanup IDs=%v slots=%d", store.deletedIDs, len(store.slots))
+	}
+}
+
 func TestMuxSlotShadowLostCreateResponseUsesFreshReadback(t *testing.T) {
 	store := &shadowLostCreateResponseStore{shadowSlotMemoryStore: newShadowSlotMemoryStore()}
 	client := shadowSlotTestMux(t, store.shadowSlotMemoryStore, "client", true)

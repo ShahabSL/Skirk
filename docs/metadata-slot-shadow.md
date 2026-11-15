@@ -47,6 +47,8 @@ exact-ID readback and bounded delayed exact-ID cleanup retries. A process
 crash or a commit later than the recovery window can still leave files until
 the opt-in `slotv1/` janitor runs. Manual cleanup
 also includes that prefix. Slot records never enter ordinary mux object cleanup.
+Client shutdown waits up to 30 seconds for a canceled prewarm's exact-ID
+cleanup to finish before exiting.
 
 This adds quota cost and storage churn. A fully active pair can use up to 640
 known-ID GETs and 128 PATCH attempts in its two-minute shadow lifetime,

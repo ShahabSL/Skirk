@@ -292,6 +292,20 @@ func (m *driveMux) logSlotShadowError(err error) {
 func (m *driveMux) stopSlotLinks() {
 	m.slotsMu.Lock()
 	m.slotStopped = true
+	setupDone := m.slotSetupDone
+	m.slotsMu.Unlock()
+	// A canceled prewarm may still own generated IDs. Give it time to
+	// perform exact-ID cleanup before a short-lived client process exits.
+	if setupDone != nil {
+		timer := time.NewTimer(3 * muxSlotSetupTimeout)
+		select {
+		case <-setupDone:
+		case <-timer.C:
+			m.logSlotShadowError(errors.New("metadata slot setup cleanup exceeded shutdown wait"))
+		}
+		timer.Stop()
+	}
+	m.slotsMu.Lock()
 	links := make([]*muxSlotLink, 0, len(m.slots))
 	for _, link := range m.slots {
 		links = append(links, link)
