@@ -61,6 +61,12 @@
   },
   {
     "worktree": "pubsub-streaming-wt",
+    "path": ".skirk-runs/hybrid-pools-f2109da-20261115.json",
+    "bytes": 5727,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "pubsub-streaming-wt",
     "path": ".skirk-runs/pubsub-stream-live-20261115.json",
     "bytes": 529,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

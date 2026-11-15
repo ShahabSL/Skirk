@@ -2934,6 +2934,26 @@
       "raw_archive_paths": [],
       "revision_or_binary": "b9ca1478e15fd7642643f384cb487c10b778d1c7",
       "live_comparable": false
+    },
+    {
+      "id": "R3-006",
+      "candidate": "REST PubSub pull worker-count transitions, retained one-way pool experiment",
+      "evidence_level": "live_api_substrate",
+      "workload": "18 authenticated synthetic256B records; worker counts1/2/4/4/2/1 with stop/join/restart on same subscription;3records each condition;203.48s",
+      "latency": "Pool1/2/4 medians784.440/459.436/191.483ms across6each; maxima30929.909/30913.051/30902.708ms; all18 retained, no tail removed",
+      "throughput_mbps": "Not a bulk or messenger RTT test",
+      "estimated_quota_units": "0Drive units;97RESTcalls;18507request-body+23353response-body bytes",
+      "correctness_and_errors": "18/18 exactAEAD/session/sequence,18ACK IDs,13empty pulls,0duplicate deliveries; every restarted condition first sample ~30.9s; no clean worker-count ranking",
+      "cleanup": "Both exact topics and subscriptions404 immediately and31s later; borrowed token and private recovery ledger removed",
+      "decision": "Warm~170ms one-way demonstrated but restart tails dominate; canceled-pull/30sACK-lease explanation is an unisolated inference. Fresh stable2worker hybrid is a separate experiment",
+      "source_documents": [
+        "docs/experiments/pubsub-drive-hybrid-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "pubsub-streaming-wt/.skirk-runs/hybrid-pools-f2109da-20261115.json"
+      ],
+      "revision_or_binary": "f2109da;f7a3d059b9b785b4ceeb6dd167492f4825357e6984c44277cd766a7bdd300330",
+      "live_comparable": false
     }
   ]
 }
