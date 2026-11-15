@@ -251,9 +251,27 @@ Load-bearing cautions from independent review:
   safety polling still consume quota. Neither the example capacity arithmetic
   nor a metadata-register plan demonstrates 200,000 concurrent users.
 
-No extra Claude calls were made after the external short-request rejection.
-The three already-running passes were allowed to finish, and all generated
-recommendations were retained with provenance and corrections.
+The external short-request safeguard rejection was not retried or bypassed.
+The three already-running architecture passes were allowed to finish, and all
+generated recommendations were retained with provenance and corrections.
+The separate client lifecycle/UI requests described above were usage-limit
+attempts, not retries of that rejected architecture request.
+
+### Client lifecycle retry after the correct reset
+
+At 20:22:45 UTC, a read-only request supplied seventeen current public source
+files (428,495 prompt characters, revision `a1f8857`). Tools, MCP and session
+persistence were disabled. It ran for 1,322,205 ms under `claude-fable-5-2`,
+reporting 128,000 output tokens, all classified as thinking tokens, then
+returned an account usage-limit error at 20:44:47 UTC. **No final audit or
+findings were returned.** Inference usage cannot be counted as a completed
+review. The next reported reset was 19:20 America/Chicago, November 15
+(01:20 UTC, November 16). No further attempt or account switch followed.
+
+The three completed architecture reviews remain available with their raw
+answers and model provenance. Client-state fixes and native tests in this
+branch are independently reviewed Codex work; they are not attributed to a
+completed external Claude UI audit.
 
 ## Official API facts checked independently
 

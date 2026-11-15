@@ -197,6 +197,38 @@
       "outcome": "Same five-hour usage limit, no findings. Retry was an hour early because Chicago reset conversion was incorrect.",
       "corrected_reset_utc": "2026-11-15T20:20:00Z",
       "reset_local": "2026-11-15 14:20 America/Chicago"
+    },
+    {
+      "label": "client_ui_lifecycle_post_reset_no_final_answer",
+      "requested_model_alias": "fable",
+      "effort": "max",
+      "purpose": "Read-only current client lifecycle/UI/native backend audit; no tools, MCP, code changes or session persistence.",
+      "source_revision_short": "a1f8857",
+      "source_file_count": 17,
+      "prompt_characters": 428495,
+      "started_utc": "2026-11-15T20:22:45Z",
+      "finished_utc": "2026-11-15T20:44:47Z",
+      "return_code": 1,
+      "is_error": true,
+      "duration_ms": 1322205,
+      "turns": 2,
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 174114,
+      "cache_read_input_tokens": 649,
+      "output_tokens": 128000,
+      "thinking_tokens": 128000,
+      "web_search_requests": 0,
+      "models": {
+        "claude-fable-5-2": {
+          "canonicalModel": "claude-fable-5-2",
+          "provider": "firstParty",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000
+        }
+      },
+      "outcome": "Inference ran after the correct reset but reached the account five-hour limit before returning a final audit. No findings or completed UI audit were returned; thinking-token usage is not a completed review. No account switching, limit bypass or further retry.",
+      "next_reported_reset_local": "2026-11-15 19:20 America/Chicago",
+      "next_reported_reset_utc": "2026-11-16T01:20:00Z"
     }
   ]
 }
