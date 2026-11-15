@@ -410,6 +410,10 @@ func TestLivePinnedPubSubStreamingPull(t *testing.T) {
 	publisher := &pubsubStreamAPI{http: NewGoogleHTTPClient(route), token: control.token}
 	unary := &pubsubStreamAPI{http: NewGoogleHTTPClient(route), token: control.token}
 	streamHTTP := NewGoogleHTTPClient(route)
+	defer control.http.client.CloseIdleConnections()
+	defer publisher.http.client.CloseIdleConnections()
+	defer unary.http.client.CloseIdleConnections()
+	defer streamHTTP.client.CloseIdleConnections()
 	var nonce [12]byte
 	if _, e = rand.Read(nonce[:]); e != nil {
 		t.Fatal(e)
