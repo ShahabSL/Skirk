@@ -100,6 +100,37 @@ Cleanup needed 37–46 s at ten clients. The simulation lacks real Drive
 visibility, quota enforcement, and class-index pollution; it is a capacity
 warning, not a 200,000-user proof.
 
+The live five-client upload harness then ran five distinct clients against one
+fresh session and exit, with 16 MiB per client and six pipelined 64-byte text
+echoes each. A 128 KiB verified prelude had already demoted every text stream.
+Each arm required all 80 MiB of file bodies, all 30 echoes, simultaneous file
+transfers, zero origin hash failures, and exact-session cleanup. The two arms
+used the same binary and pinned front, with a 65-second quota cooldown between
+them. A 60-second low-speed window was necessary for this buffered POST: with
+the initial 25-second window, one file in each mode was canceled at about 32
+seconds, although curl had sent its full body to the local SOCKS proxy and
+Drive uploads were still in flight. This was a genuine 25-second no-response
+UX failure, not evidence of a mux deadlock or a candidate-only failure.
+
+| Live five-client upload, one reversed pair | Default | Corrected epoch+metadata |
+| --- | ---: | ---: |
+| Verified file/text transfers | 5 × 16 MiB; 30/30 echoes | 5 × 16 MiB; 30/30 echoes |
+| Overlapping text scheduled p95 | **8.214 s** | **5.211 s** |
+| Aggregate file goodput | **26.421 Mb/s** | **22.293 Mb/s** |
+| Estimated Drive units, both peers | **73,380** | **66,730** |
+| Drive API errors / final session objects | 0 / 0 | 0 / 0 |
+
+The candidate improved text p95 by 37% and used 9% fewer estimated units in
+this pair, while aggregate file goodput was 16% lower. All five candidate
+files needed 28–30 seconds; the five default files needed 23–25 seconds. The
+whole test consumed 143,710 estimated units including cleanup; its maximum
+observed 60-second rolling count was 75,080, below the 100,000-unit test
+guard. The project/user published limits are much higher, but this small
+shared-account run cannot establish sustained capacity or how many people the
+service supports. A delayed exact-session sweep found zero objects from both
+arms. Private details are under
+`.skirk-runs/architecture-five-client-longstall-20261114/`.
+
 ## Drive class discovery pilot
 
 Google documents `name contains` as **prefix-only** for file names, whereas
@@ -128,6 +159,10 @@ and [custom properties](https://developers.google.com/workspace/drive/api/guides
 [Google's current Drive limits](https://developers.google.com/workspace/drive/api/guides/limits)
 are 1,000,000 units per minute per project and 325,000 per minute per user per
 project. A list costs 100, a file create or delete 50, and a media GET 200.
+Google also publishes a 1 TB daily project egress threshold before charges and
+a 400-million-unit daily project billing threshold; these are not substitute
+per-minute throughput guarantees. They deserve separate accounting in any
+large deployment.
 For 200,000 simultaneously polling users, one list per second each would be
 1.2 **billion** units per minute, 1,200 times one project's limit. Even one
 list per user per minute would be 20 million units per minute. Self-managed
@@ -144,12 +179,25 @@ StreamingPull control plane might reduce text polling delay, while keeping
 Drive for bulk, but would be a different product mode: pinned-front reachability,
 billing, OAuth/IAM, and sharded 200,000-user operation are untested.
 
+A more radical, still unmeasured small-control design is a pair of fixed Drive
+files, one writer per direction. Each update would store a bounded cumulative
+encrypted queue of unacknowledged frames in the file description; the peer
+would poll its known file ID with `files.get` metadata (5 units) instead of
+discovering new objects with `files.list` (100 units). The latest snapshot must
+retain every unacknowledged frame, because Drive versions can advance across
+polls. Peer acknowledgements would ride the opposite file; sequencing,
+restart fencing, description size, and read-after-update visibility need live
+validation. Earlier live media-update ring experiments reached 7.85–13.87
+Mb/s with a 74.2-second 16 MiB upload p95, so mutable blob files are not a
+proven bulk replacement. No release architecture should depend on this idea
+until its small-message visibility and correctness are measured.
+
 ## Promotion gate
 
 Keep the proven default while testing the corrected epoch and metadata-only
 combination against both upload and download. A release decision needs
 repeatable larger mixed transfers, 5–10 clients and quota pressure, cleanup
-under backlog, restart/reconnect, browser and video behavior, Android VPN on a
+under backlog, sustained multi-client operation, restart/reconnect, browser and video behavior, Android VPN on a
 real device, an iPhone packet tunnel, and native Windows execution. The
 selected Direct or Google-front route must remain the user's choice, with
 `www.google.com` pinned front as the default.

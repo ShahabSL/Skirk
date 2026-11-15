@@ -213,13 +213,15 @@ def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[
 
 def bulk_window(reports: list[dict[str, Any]]) -> tuple[float | None, int]:
     events: list[tuple[float, int]] = []
+    all_verified = True
     for report in reports:
         if not report.get("probe_started_utc"):
             return None, 0
         started = datetime.fromisoformat(report["probe_started_utc"]).timestamp()
         sample = next(item for item in report["samples"] if item["kind"] == "bulk")
-        if not sample["ok"] or sample["total_ms"] is None:
+        if sample["total_ms"] is None:
             return None, 0
+        all_verified = all_verified and sample["ok"]
         begin = started + sample["start_offset_ms"] / 1000
         end = begin + sample["total_ms"] / 1000
         events.extend(((begin, 1), (end, -1)))
@@ -227,6 +229,8 @@ def bulk_window(reports: list[dict[str, Any]]) -> tuple[float | None, int]:
     for _, change in sorted(events, key=lambda item: (item[0], item[1])):
         active += change
         peak = max(peak, active)
+    if not all_verified:
+        return None, peak
     seconds = max(time for time, change in events if change == -1) - min(time for time, change in events if change == 1)
     return seconds, peak
 
@@ -377,7 +381,7 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
                        "--small-interval-ms", str(args.text_interval_ms), "--pipelined",
                        "--prelude-bytes", str(PRELUDE_BYTES), "--prelude-seed", "skirk-capacity-prelude-v1",
                        "--overall-timeout", "180", "--prelude-timeout", "75", "--request-timeout", "75",
-                       "--bulk-timeout", "120", "--stall-seconds", "25",
+                       "--bulk-timeout", "120", "--stall-seconds", str(args.bulk_stall_seconds),
                        "--ready-file", str(run_dir / f"bench-{client_index}.ready"),
                        "--start-signal", str(start_signal), "--out", str(report_path)]
             with (run_dir / f"bench-{client_index}.log").open("xb") as stream:
@@ -455,6 +459,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--text-interval-ms", type=int, default=250)
     parser.add_argument("--port-base", type=int, default=18100)
     parser.add_argument("--tail-seconds", type=int, default=8)
+    parser.add_argument("--bulk-stall-seconds", type=int, default=60,
+                        help="curl low-speed window for a buffered file POST")
+    parser.add_argument("--between-arm-seconds", type=int, default=65,
+                        help="cool down the shared Drive quota window after each cleaned arm")
     parser.add_argument("--max-arm-units", type=int, default=80_000)
     parser.add_argument("--max-total-units", type=int, default=175_000)
     parser.add_argument("--max-rolling-units", type=int, default=100_000)
@@ -474,8 +482,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--out must be a fresh directory inside .skirk-runs")
     if not 1 <= args.file_mib <= 32 or not 1 <= args.text_count <= 24 or not 200 <= args.text_interval_ms <= 3000:
         parser.error("file/text workload bounds exceeded")
-    if not 1024 <= args.port_base <= 65535 - CLIENTS or not 5 <= args.tail_seconds <= 30:
-        parser.error("invalid local ports or tail")
+    if not 1024 <= args.port_base <= 65535 - CLIENTS or not 5 <= args.tail_seconds <= 30 or not 25 <= args.bulk_stall_seconds <= 120 or not 0 <= args.between_arm_seconds <= 120:
+        parser.error("invalid local ports, tail, stall, or cooldown")
     limits = (args.max_arm_units, args.max_total_units, args.max_rolling_units,
               args.max_recent_units_per_minute, args.cleanup_reserve_units)
     if any(not 1000 <= value <= 250_000 for value in limits):
@@ -499,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ready": True, "clients": CLIENTS, "route": "google_front_pinned",
                           "order": args.order, "binary_sha256": binary_sha256,
                           "file_mib_per_client": args.file_mib, "text_count_per_client": args.text_count,
+                          "bulk_stall_seconds": args.bulk_stall_seconds,
+                          "between_arm_seconds": args.between_arm_seconds,
                           "live_calls": False}, sort_keys=True))
         return 0
     os.umask(0o077)
@@ -516,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
                                "order": args.order, "file_mib_per_client": args.file_mib,
                                "file_sha256": file_sha256, "text_bytes": TEXT_BYTES,
                                "text_count_per_client": args.text_count, "text_interval_ms": args.text_interval_ms,
+                               "bulk_stall_seconds": args.bulk_stall_seconds,
+                               "between_arm_seconds": args.between_arm_seconds,
                                "quota_guards": {"arm_units": args.max_arm_units, "total_units": args.max_total_units,
                                                 "rolling_units": args.max_rolling_units,
                                                 "recent_units_per_minute": args.max_recent_units_per_minute,
@@ -523,6 +535,8 @@ def main(argv: list[str] | None = None) -> int:
                                "arms": [], "ok": False}
     try:
         for index, mode in enumerate(args.order):
+            if index and args.between_arm_seconds:
+                time.sleep(args.between_arm_seconds)
             row = run_arm(args, index, mode, originals, guard, file_path, file_sha256,
                           http_origin.server_address[1], echo_origin.server_address[1], origin_failures)
             summary["arms"].append(row)

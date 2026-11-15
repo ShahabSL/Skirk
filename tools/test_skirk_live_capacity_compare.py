@@ -66,6 +66,8 @@ class CapacityCompareTests(unittest.TestCase):
             self.assertFalse(output.exists())
             self.assertNotIn("do-not-print", stream.getvalue())
             self.assertIn('"live_calls": false', stream.getvalue())
+            self.assertEqual(json.loads(stream.getvalue())["between_arm_seconds"], 65)
+            self.assertEqual(json.loads(stream.getvalue())["bulk_stall_seconds"], 60)
 
     def test_both_end_quota_guard_stops_on_one_client_error(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -145,6 +147,10 @@ class CapacityCompareTests(unittest.TestCase):
         seconds, peak = bulk_window(reports)
         self.assertEqual(peak, CLIENTS)
         self.assertAlmostEqual(seconds, 1.04, places=2)
+        reports[2]["samples"][0]["ok"] = False
+        seconds, peak = bulk_window(reports)
+        self.assertIsNone(seconds)
+        self.assertEqual(peak, CLIENTS)
 
     def test_local_origin_accepts_only_exact_file_hash(self):
         payload = b"synthetic-file-contents"
