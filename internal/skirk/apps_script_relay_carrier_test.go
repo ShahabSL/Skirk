@@ -12,7 +12,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+type relayResearchRetryAfter struct{ delay time.Duration }
+
+func (e *relayResearchRetryAfter) Error() string { return "relay Google HTTP temporarily unavailable" }
 
 // Limits count visible HTTP dispatches and reserve the x/net/http2 v0.61
 // internal replay upper bound before dispatch. Body limits exclude TLS/headers;
@@ -80,7 +85,14 @@ func newRelayResearchGoogleExchange(client *GoogleHTTPClient, endpoint string, a
 				return nil, errors.New("relay Google HTTP exchange failed")
 			}
 			if result.Status == http.StatusTooManyRequests || result.Status >= 500 {
-				return nil, errors.New("relay Google HTTP temporarily unavailable")
+				delay := retryAfter(result)
+				if delay < time.Second {
+					delay = time.Second
+				}
+				if delay > 30*time.Second {
+					delay = 30 * time.Second
+				}
+				return nil, &relayResearchRetryAfter{delay: delay}
 			}
 			switch result.Status {
 			case http.StatusOK:

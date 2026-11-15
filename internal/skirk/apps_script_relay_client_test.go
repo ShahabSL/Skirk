@@ -334,7 +334,7 @@ func (s *relayResearchClient) call(packet relayResearchPacket) (relayResearchPac
 			s.retries++
 		}
 		s.mu.Unlock()
-		ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PollWait+5*time.Second)
+		ctx, cancel := context.WithTimeout(s.ctx, s.cfg.PollWait+15*time.Second)
 		response, callErr := s.exchange(ctx, wire)
 		cancel()
 		if callErr == nil {
@@ -364,6 +364,10 @@ func (s *relayResearchClient) call(packet relayResearchPacket) (relayResearchPac
 		delay := time.Duration(attempt+1) * 20 * time.Millisecond
 		if delay > 250*time.Millisecond {
 			delay = 250 * time.Millisecond
+		}
+		var unavailable *relayResearchRetryAfter
+		if errors.As(callErr, &unavailable) && unavailable.delay > delay {
+			delay = unavailable.delay
 		}
 		select {
 		case <-s.ctx.Done():
