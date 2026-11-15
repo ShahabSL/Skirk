@@ -8,7 +8,7 @@ the tenth scheduled message. Each data snapshot retains all frames that the
 writer has not yet seen acknowledged, so skipped Drive versions need not imply
 lost messages.
 
-The probe uses random synthetic 64-byte frames and HMAC tags to check sequence
+The default probe uses random synthetic 64-byte frames and HMAC tags to check sequence
 integrity. A production protocol would use Skirk's authenticated encryption,
 replay protection, restart recovery, and separately validated device ownership.
 This probe makes no claim about bulk traffic, sustained throughput, or service
@@ -30,3 +30,6 @@ two separate 404 checks per ID. The JSON result contains only sanitized counts
 and timing. A mode-0600 `.recovery-ids` sidecar is created before either test
 file and removed only after verified cleanup; if cleanup fails, use it for an
 exact-ID recovery sweep. Both files are ignored by Git under `.skirk-runs/`.
+
+For a matched mixed-traffic latency arm, pass `--reader-pause-ms 0`. The default
+one-second pause remains the version-skip correctness stress.

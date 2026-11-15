@@ -138,8 +138,16 @@ func TestRequiresLiveAndPrivateCreateOnlyFiles(t *testing.T) {
 		t.Fatal("accepted non-private output")
 	}
 	path := ".skirk-runs/result.json"
-	if _, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path}); err != nil {
+	defaultOptions, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path})
+	if err != nil || defaultOptions.readerPauseMS != 1000 {
 		t.Fatal(err)
+	}
+	zeroPause, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path, "--reader-pause-ms", "0"})
+	if err != nil || zeroPause.readerPauseMS != 0 {
+		t.Fatalf("zero pause rejected: %v", err)
+	}
+	if _, err := parseOptions([]string{"--live", "--config", "test.json", "--out", path, "--reader-pause-ms", "1001"}); err == nil {
+		t.Fatal("accepted pause outside bound")
 	}
 	if err := writeRecoveryIDs(path+".recovery-ids", []string{"id-a", "id-b"}); err != nil {
 		t.Fatal(err)

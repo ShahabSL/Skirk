@@ -35,14 +35,14 @@ const (
 	interval        = 250 * time.Millisecond
 	pollInterval    = 200 * time.Millisecond
 	pauseAfter      = 10
-	pauseDuration   = time.Second
 	hotQuotaCeiling = 6500 // Reserve <=3300 units for six deletes and twelve verification reads.
 )
 
 type options struct {
-	config string
-	out    string
-	live   bool
+	config        string
+	out           string
+	live          bool
+	readerPauseMS int
 }
 
 type metadata struct {
@@ -81,6 +81,7 @@ type report struct {
 	MaxSnapshotFrames    int     `json:"max_snapshot_frames"`
 	MaxUnacknowledged    int     `json:"max_unacknowledged"`
 	ForcedPauseCompleted bool    `json:"forced_pause_completed"`
+	ReaderPauseMS        int     `json:"reader_pause_ms"`
 	TextScheduledP50MS   float64 `json:"text_scheduled_p50_ms,omitempty"`
 	TextScheduledP95MS   float64 `json:"text_scheduled_p95_ms,omitempty"`
 	TextScheduledMaxMS   float64 `json:"text_scheduled_max_ms,omitempty"`
@@ -99,11 +100,15 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&value.config, "config", "", "isolated test exit config")
 	flags.StringVar(&value.out, "out", "", "fresh private JSON under .skirk-runs")
 	flags.BoolVar(&value.live, "live", false, "allow bounded Drive calls")
+	flags.IntVar(&value.readerPauseMS, "reader-pause-ms", 1000, "bounded reader pause after frame ten; 0 disables delay")
 	if err := flags.Parse(args); err != nil {
 		return value, err
 	}
 	if !value.live || value.config == "" || value.out == "" || len(flags.Args()) != 0 {
 		return value, errors.New("requires --live, --config and --out")
+	}
+	if value.readerPauseMS < 0 || value.readerPauseMS > 1000 {
+		return value, errors.New("--reader-pause-ms must be between 0 and 1000")
 	}
 	if err := validateOutputPath(value.out); err != nil {
 		return value, err
@@ -175,18 +180,20 @@ type probe struct {
 	reservedUnits int
 	recovery      string
 	recoveryOwned bool
+	readerPause   time.Duration
 }
 
-func newProbe(config *skirk.Config, outputPath string) *probe {
+func newProbe(config *skirk.Config, outputPath string, readerPause time.Duration) *probe {
 	tokens := skirk.NewAccessTokenSource(config.Auth, config.Route)
 	return &probe{
 		config: config, tokens: tokens,
-		store:      skirk.NewDriveStoreWithTokenSource(skirk.NewGoogleHTTPClient(config.Route), tokens, config.Drive),
-		dataWriter: skirk.NewGoogleHTTPClient(config.Route),
-		dataReader: skirk.NewGoogleHTTPClient(config.Route),
-		ackWriter:  skirk.NewGoogleHTTPClient(config.Route),
-		ackReader:  skirk.NewGoogleHTTPClient(config.Route),
-		recovery:   outputPath + ".recovery-ids",
+		store:       skirk.NewDriveStoreWithTokenSource(skirk.NewGoogleHTTPClient(config.Route), tokens, config.Drive),
+		dataWriter:  skirk.NewGoogleHTTPClient(config.Route),
+		dataReader:  skirk.NewGoogleHTTPClient(config.Route),
+		ackWriter:   skirk.NewGoogleHTTPClient(config.Route),
+		ackReader:   skirk.NewGoogleHTTPClient(config.Route),
+		recovery:    outputPath + ".recovery-ids",
+		readerPause: readerPause,
 	}
 }
 
@@ -461,7 +468,7 @@ func (p *probe) readData(ctx context.Context, dataID, ackID string) error {
 			p.state.mu.Lock()
 			p.state.forcedPauseDone = true
 			p.state.mu.Unlock()
-			if !sleep(ctx, pauseDuration) {
+			if !sleep(ctx, p.readerPause) {
 				return errors.New("reader_pause_canceled")
 			}
 		}
@@ -609,7 +616,8 @@ func (p *probe) cleanup(ids []string, result *report) {
 }
 
 func (p *probe) run() (result report) {
-	result = report{SchemaVersion: 1, Route: "google_front_pinned", FramesScheduled: frameCount}
+	result = report{SchemaVersion: 1, Route: "google_front_pinned", FramesScheduled: frameCount,
+		ReaderPauseMS: int(p.readerPause / time.Millisecond)}
 	var ids []string
 	defer func() {
 		p.cleanup(ids, &result)
@@ -737,7 +745,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ack-slot-probe: requires an isolated pinned-front test folder")
 		os.Exit(2)
 	}
-	result := newProbe(config, options.out).run()
+	result := newProbe(config, options.out, time.Duration(options.readerPauseMS)*time.Millisecond).run()
 	if err := writeReport(options.out, result); err != nil {
 		fmt.Fprintln(os.Stderr, "ack-slot-probe: private result write failed")
 		os.Exit(2)
