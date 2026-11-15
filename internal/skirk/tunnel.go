@@ -86,6 +86,7 @@ type Tunnel struct {
 	BurstPollInterval    time.Duration
 	BurstPollWindow      time.Duration
 	SparsePriority       bool
+	InteractionEpoch     bool
 	Observe              bool
 	MetadataOnlyPriority bool
 	role                 string
@@ -133,6 +134,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		BurstPollInterval:    time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
 		BurstPollWindow:      time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
 		SparsePriority:       cfg.Tunnel.SparsePriority,
+		InteractionEpoch:     cfg.Tunnel.InteractionEpoch,
 		Observe:              cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
 		MetadataOnlyPriority: cfg.Drive.MetadataOnlyPriority,
 		PollInterval:         cfg.PollInterval(),

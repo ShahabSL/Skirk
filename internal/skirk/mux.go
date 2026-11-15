@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -99,12 +100,21 @@ const (
 )
 
 const (
-	muxSparsePriorityMaxPayload   = 4 * 1024
-	muxSparsePriorityIdleGap      = 750 * time.Millisecond
-	muxSparsePriorityMinInterval  = 2 * time.Second
-	muxSparsePriorityGlobalBurst  = 8
-	muxSparsePriorityGlobalRefill = 250 * time.Millisecond
+	muxSparsePriorityMaxPayload    = 4 * 1024
+	muxSparsePriorityIdleGap       = 750 * time.Millisecond
+	muxSparsePriorityMinInterval   = 2 * time.Second
+	muxSparsePriorityGlobalBurst   = 8
+	muxSparsePriorityGlobalRefill  = 250 * time.Millisecond
+	muxInteractionEpochDuration    = 6 * time.Second
+	muxInteractionEpochBytes       = 16 * 1024
+	muxInteractionEpochMinInterval = 200 * time.Millisecond
+	muxInteractionWaitTTL          = time.Second
 )
+
+type muxInteractionWaiter struct {
+	stream   *muxStream
+	lastSeen time.Time
+}
 
 type muxFrame struct {
 	Kind       byte
@@ -247,6 +257,8 @@ type driveMux struct {
 	sparsePriorityMu     sync.Mutex
 	sparsePriorityTokens int
 	sparsePriorityAt     time.Time
+	interactionWaiters   *list.List
+	interactionWaitIndex map[*muxStream]*list.Element
 
 	lanes []*muxLane
 
@@ -363,28 +375,31 @@ type muxStream struct {
 	once    sync.Once
 	ready   atomic.Bool
 
-	deliverMu        sync.Mutex
-	mu               sync.Mutex
-	localReadDone    bool
-	remoteReadDone   bool
-	openedAt         time.Time
-	targetLog        string
-	targetID         string
-	observeMu        sync.RWMutex
-	firstSendLogged  atomic.Bool
-	firstRecvLogged  atomic.Bool
-	sendSeq          atomic.Uint64
-	sendPayloadBytes atomic.Int64
-	recvPayloadBytes atomic.Int64
-	sendClassMu      sync.Mutex
-	prioritySent     int64
-	priorityDemoted  bool
-	lastPayloadAt    time.Time
-	lastSparseAt     time.Time
-	normalPending    atomic.Int64
-	recvExpected     uint64
-	recvPending      map[uint64]muxFrame
-	recvPendingBytes int
+	deliverMu         sync.Mutex
+	mu                sync.Mutex
+	localReadDone     bool
+	remoteReadDone    bool
+	openedAt          time.Time
+	targetLog         string
+	targetID          string
+	observeMu         sync.RWMutex
+	firstSendLogged   atomic.Bool
+	firstRecvLogged   atomic.Bool
+	sendSeq           atomic.Uint64
+	sendPayloadBytes  atomic.Int64
+	recvPayloadBytes  atomic.Int64
+	sendClassMu       sync.Mutex
+	prioritySent      int64
+	priorityDemoted   bool
+	lastPayloadAt     time.Time
+	lastSparseAt      time.Time
+	interactionUntil  time.Time
+	interactionBytes  int
+	lastInteractionAt time.Time
+	normalPending     atomic.Int64
+	recvExpected      uint64
+	recvPending       map[uint64]muxFrame
+	recvPendingBytes  int
 }
 
 func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, error) {
@@ -997,7 +1012,7 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 	for {
 		var n int
 		var err error
-		if m.t.SparsePriority {
+		if m.t.SparsePriority || m.t.InteractionEpoch {
 			n, err = readChunkWithPolicyFunc(stream.conn, buffer, stream.bulkSendCoalescing)
 		} else {
 			n, err = readChunkWithPolicy(stream.conn, buffer, stream.bulkSendCoalescing())
@@ -1061,7 +1076,7 @@ func (m *driveMux) sendDataPayload(ctx context.Context, stream *muxStream, paylo
 		chunk := append([]byte(nil), payload[:chunkSize]...)
 		priority := stream.claimPriorityPayload(len(chunk))
 		frame := muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: seq, Payload: chunk, Priority: priority}
-		if !priority && m.t.SparsePriority {
+		if !priority && (m.t.SparsePriority || m.t.InteractionEpoch) {
 			stream.normalPending.Add(1)
 			frame.normalOwner = stream
 		}
@@ -1103,9 +1118,13 @@ func (s *muxStream) claimPriorityPayloadAt(n int, now time.Time) bool {
 	s.lastPayloadAt = now
 	if n > muxPriorityStreamBytes || (!s.priorityDemoted && s.prioritySent+int64(n) > muxPriorityStreamBytes) {
 		s.priorityDemoted = true
+		s.interactionUntil = time.Time{}
 		return false
 	}
 	if s.priorityDemoted {
+		if s.mux != nil && s.mux.t != nil && s.mux.t.InteractionEpoch {
+			return s.claimInteractionPriorityLocked(n, now, previous)
+		}
 		if s.mux == nil || s.mux.t == nil || !s.mux.t.SparsePriority ||
 			n > muxSparsePriorityMaxPayload || previous.IsZero() || now.Sub(previous) < muxSparsePriorityIdleGap ||
 			(!s.lastSparseAt.IsZero() && now.Sub(s.lastSparseAt) < muxSparsePriorityMinInterval) ||
@@ -1119,9 +1138,46 @@ func (s *muxStream) claimPriorityPayloadAt(n int, now time.Time) bool {
 	return true
 }
 
+// The caller holds sendClassMu. A quiet stream may send a bounded burst of
+// small messages, while the existing global token budget caps object churn.
+func (s *muxStream) claimInteractionPriorityLocked(n int, now, previous time.Time) bool {
+	if s.normalPending.Load() != 0 {
+		return false
+	}
+	if s.interactionUntil.IsZero() || !now.Before(s.interactionUntil) {
+		if previous.IsZero() || now.Sub(previous) < muxSparsePriorityIdleGap {
+			return false
+		}
+		s.interactionUntil = now.Add(muxInteractionEpochDuration)
+		s.interactionBytes = 0
+	}
+	if n > muxSparsePriorityMaxPayload || s.interactionBytes+n > muxInteractionEpochBytes {
+		s.interactionUntil = time.Time{}
+		return false
+	}
+	if !s.lastInteractionAt.IsZero() && now.Sub(s.lastInteractionAt) < muxInteractionEpochMinInterval {
+		return false
+	}
+	if !s.mux.claimInteractionPriorityAt(s, now) {
+		return false
+	}
+	s.interactionBytes += n
+	s.lastInteractionAt = now
+	return true
+}
+
 func (m *driveMux) claimSparsePriorityAt(now time.Time) bool {
 	m.sparsePriorityMu.Lock()
 	defer m.sparsePriorityMu.Unlock()
+	m.refillSparsePriorityLocked(now)
+	if m.sparsePriorityTokens == 0 {
+		return false
+	}
+	m.sparsePriorityTokens--
+	return true
+}
+
+func (m *driveMux) refillSparsePriorityLocked(now time.Time) {
 	if m.sparsePriorityAt.IsZero() {
 		m.sparsePriorityAt = now
 		m.sparsePriorityTokens = muxSparsePriorityGlobalBurst
@@ -1136,11 +1192,49 @@ func (m *driveMux) claimSparsePriorityAt(now time.Time) bool {
 			m.sparsePriorityAt = m.sparsePriorityAt.Add(refills * muxSparsePriorityGlobalRefill)
 		}
 	}
-	if m.sparsePriorityTokens == 0 {
+}
+
+func (m *driveMux) claimInteractionPriorityAt(stream *muxStream, now time.Time) bool {
+	m.sparsePriorityMu.Lock()
+	defer m.sparsePriorityMu.Unlock()
+	m.refillSparsePriorityLocked(now)
+	if m.interactionWaiters == nil {
+		m.interactionWaiters = list.New()
+		m.interactionWaitIndex = make(map[*muxStream]*list.Element)
+	}
+	for front := m.interactionWaiters.Front(); front != nil; front = m.interactionWaiters.Front() {
+		waiter := front.Value.(muxInteractionWaiter)
+		if now.Sub(waiter.lastSeen) <= muxInteractionWaitTTL {
+			break
+		}
+		m.interactionWaiters.Remove(front)
+		delete(m.interactionWaitIndex, waiter.stream)
+	}
+	if element := m.interactionWaitIndex[stream]; element != nil {
+		element.Value = muxInteractionWaiter{stream: stream, lastSeen: now}
+	} else {
+		m.interactionWaitIndex[stream] = m.interactionWaiters.PushBack(muxInteractionWaiter{stream: stream, lastSeen: now})
+	}
+	front := m.interactionWaiters.Front()
+	if front == nil || front.Value.(muxInteractionWaiter).stream != stream || m.sparsePriorityTokens == 0 {
 		return false
 	}
 	m.sparsePriorityTokens--
+	m.interactionWaiters.Remove(front)
+	delete(m.interactionWaitIndex, stream)
 	return true
+}
+
+func (m *driveMux) dropInteractionWaiter(stream *muxStream) {
+	if m == nil || m.t == nil || !m.t.InteractionEpoch || stream == nil {
+		return
+	}
+	m.sparsePriorityMu.Lock()
+	if element := m.interactionWaitIndex[stream]; element != nil {
+		m.interactionWaiters.Remove(element)
+		delete(m.interactionWaitIndex, stream)
+	}
+	m.sparsePriorityMu.Unlock()
 }
 
 func (s *muxStream) claimPriorityFIN() bool {
@@ -1181,7 +1275,7 @@ func (s *muxStream) bulkSendCoalescingAt(now time.Time) bool {
 	if s.sendPayloadBytes.Load() < bulkStreamCoalesceAfter {
 		return false
 	}
-	if s.mux != nil && s.mux.t != nil && s.mux.t.SparsePriority && s.normalPending.Load() == 0 {
+	if s.mux != nil && s.mux.t != nil && (s.mux.t.SparsePriority || s.mux.t.InteractionEpoch) && s.normalPending.Load() == 0 {
 		s.sendClassMu.Lock()
 		last := s.lastPayloadAt
 		s.sendClassMu.Unlock()
@@ -1246,6 +1340,9 @@ func (s *muxStream) close() bool {
 		closed = true
 		if s.conn != nil {
 			_ = s.conn.Close()
+		}
+		if s.mux != nil {
+			s.mux.dropInteractionWaiter(s)
 		}
 		close(s.done)
 		s.observeClose()

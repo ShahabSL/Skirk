@@ -211,3 +211,20 @@ For a local persistent TCP echo with concurrent verified bulk responses, run
 `go run ./tools/persistent_bench` once with and once without
 `-sparse-priority`, using the same delay and workload flags. The tool uses
 localhost sockets and MemoryStore only.
+
+## Opt-in interaction epoch candidate
+
+`tunnel.interaction_epoch: true` is a separate experimental policy for a burst
+of text on a long-lived TCP stream. After the initial 64 KiB demotion, a 750 ms
+quiet gap can arm a six-second epoch. During that epoch, frames of at most 4
+KiB can use priority until the stream spends 16 KiB. Grants require no pending
+normal upload, have at least 200 ms between frames on one stream, and share an
+eight-grant burst that refills at four grants per second across the mux. A
+larger frame ends the epoch. Priority FIN remains disabled after demotion.
+
+This mode and `sparse_priority` are alternatives; if both are set, the
+interaction epoch policy takes precedence. Both remain disabled by default.
+The protocol and Google route are unchanged. The local benchmark accepts
+`-interaction-epoch`; compare default, sparse, and epoch arms with the same
+`-interval-ms` value, including a 250 ms text burst and a 3,000 ms sparse
+case. Promotion still requires the mixed live and quota gates above.

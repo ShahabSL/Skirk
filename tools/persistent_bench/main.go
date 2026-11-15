@@ -236,17 +236,25 @@ func percentile(values []float64, p float64) float64 {
 
 func run() error {
 	var sparse bool
-	var messages, intervalMS, bulkMiB, putMS, getMS, listMS, pollMS int
+	var interactionEpoch bool
+	var serialEcho bool
+	var messages, intervalMS, bulkMiB, bulkRequests, putMS, getMS, listMS, pollMS int
 	flag.BoolVar(&sparse, "sparse-priority", false, "enable opt-in sparse priority replenishment")
+	flag.BoolVar(&interactionEpoch, "interaction-epoch", false, "enable opt-in bounded interaction epoch")
+	flag.BoolVar(&serialEcho, "serial-echo", false, "wait for each echo before sending the next message")
 	flag.IntVar(&messages, "messages", 8, "persistent 128-byte echo messages after a 384 KiB warmup")
 	flag.IntVar(&intervalMS, "interval-ms", 3000, "scheduled interval between messages")
 	flag.IntVar(&bulkMiB, "bulk-mib", 16, "bytes per repeated concurrent bulk HTTP response, MiB")
+	flag.IntVar(&bulkRequests, "bulk-requests", 0, "fixed verified bulk response count; zero runs until messages finish")
 	flag.IntVar(&putMS, "put-ms", 150, "synthetic object upload delay")
 	flag.IntVar(&getMS, "get-ms", 100, "synthetic object download delay")
 	flag.IntVar(&listMS, "list-ms", 60, "synthetic object list delay")
 	flag.IntVar(&pollMS, "poll-ms", 250, "mux poll interval")
 	flag.Parse()
-	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 {
+	if sparse && interactionEpoch {
+		return errors.New("choose one of -sparse-priority or -interaction-epoch")
+	}
+	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || bulkRequests < 0 || bulkRequests > 100 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 {
 		return errors.New("benchmark arguments out of range")
 	}
 	echoAddr, stopEcho, err := echoServer()
@@ -268,7 +276,7 @@ func run() error {
 		return err
 	}
 	proxyAddr := localAddr()
-	cfg := &skirk.Config{Secret: secret, SessionID: "00112233445566778899aabbccddeeff", Client: skirk.ClientConfig{ID: "bench-client", RunID: "bench-run"}, Tunnel: skirk.TunnelConfig{Listen: proxyAddr, ChunkSize: 16 * 1024 * 1024, PollIntervalMS: pollMS, SparsePriority: sparse, CleanupProcessed: true}}
+	cfg := &skirk.Config{Secret: secret, SessionID: "00112233445566778899aabbccddeeff", Client: skirk.ClientConfig{ID: "bench-client", RunID: "bench-run"}, Tunnel: skirk.TunnelConfig{Listen: proxyAddr, Profile: "fixed", ChunkSize: 16 * 1024 * 1024, PollIntervalMS: pollMS, SparsePriority: sparse, InteractionEpoch: interactionEpoch, CleanupProcessed: true}}
 	cfg.ApplyDefaults()
 	clientTunnel, err := skirk.NewTunnel(store, cfg)
 	if err != nil {
@@ -317,12 +325,13 @@ func run() error {
 		count int
 		bytes int64
 		err   error
+		wall  time.Duration
 	}
 	bulkDone := make(chan bulkResult, 1)
 	bulkStarted := time.Now()
 	go func() {
 		var result bulkResult
-		for bulkCtx.Err() == nil {
+		for bulkCtx.Err() == nil && (bulkRequests == 0 || result.count < bulkRequests) {
 			req, err := http.NewRequestWithContext(bulkCtx, http.MethodGet, server.URL, nil)
 			if err != nil {
 				result.err = err
@@ -350,38 +359,100 @@ func run() error {
 			result.count++
 			result.bytes += int64(len(body))
 		}
+		result.wall = time.Since(bulkStarted)
 		bulkDone <- result
 	}()
 	latencies := make([]float64, 0, messages)
 	messageStart := time.Now()
-	for i := 0; i < messages; i++ {
-		scheduled := messageStart.Add(time.Duration(i) * time.Duration(intervalMS) * time.Millisecond)
-		if wait := time.Until(scheduled); wait > 0 {
-			time.Sleep(wait)
+	if serialEcho {
+		for i := 0; i < messages; i++ {
+			scheduled := messageStart.Add(time.Duration(i) * time.Duration(intervalMS) * time.Millisecond)
+			if wait := time.Until(scheduled); wait > 0 {
+				time.Sleep(wait)
+			}
+			message := bytes.Repeat([]byte{byte(i)}, 128)
+			if err := messageConn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+				return err
+			}
+			if _, err := messageConn.Write(message); err != nil {
+				return fmt.Errorf("message %d write: %w", i, err)
+			}
+			got := make([]byte, len(message))
+			if _, err := io.ReadFull(messageConn, got); err != nil || !bytes.Equal(got, message) {
+				return fmt.Errorf("message %d mismatch: %w", i, err)
+			}
+			latencies = append(latencies, float64(time.Since(scheduled).Microseconds())/1000)
 		}
-		message := bytes.Repeat([]byte{byte(i)}, 128)
-		if err := messageConn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+	} else {
+		sendErr := make(chan error, 1)
+		go func() {
+			for i := 0; i < messages; i++ {
+				scheduled := messageStart.Add(time.Duration(i) * time.Duration(intervalMS) * time.Millisecond)
+				if wait := time.Until(scheduled); wait > 0 {
+					time.Sleep(wait)
+				}
+				message := bytes.Repeat([]byte{byte(i)}, 128)
+				if err := messageConn.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+					sendErr <- fmt.Errorf("message %d write deadline: %w", i, err)
+					_ = messageConn.Close()
+					return
+				}
+				for len(message) > 0 {
+					n, err := messageConn.Write(message)
+					if err != nil {
+						sendErr <- fmt.Errorf("message %d write: %w", i, err)
+						_ = messageConn.Close()
+						return
+					}
+					if n == 0 {
+						sendErr <- fmt.Errorf("message %d write made no progress", i)
+						_ = messageConn.Close()
+						return
+					}
+					message = message[n:]
+				}
+			}
+			sendErr <- nil
+		}()
+		for i := 0; i < messages; i++ {
+			scheduled := messageStart.Add(time.Duration(i) * time.Duration(intervalMS) * time.Millisecond)
+			if err := messageConn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+				return err
+			}
+			got := make([]byte, 128)
+			if _, err := io.ReadFull(messageConn, got); err != nil || !bytes.Equal(got, bytes.Repeat([]byte{byte(i)}, 128)) {
+				return fmt.Errorf("message %d mismatch: %w", i, err)
+			}
+			latencies = append(latencies, float64(time.Since(scheduled).Microseconds())/1000)
+		}
+		if err := <-sendErr; err != nil {
 			return err
 		}
-		if _, err := messageConn.Write(message); err != nil {
-			return fmt.Errorf("message %d write: %w", i, err)
-		}
-		got := make([]byte, len(message))
-		if _, err := io.ReadFull(messageConn, got); err != nil || !bytes.Equal(got, message) {
-			return fmt.Errorf("message %d mismatch: %w", i, err)
-		}
-		latencies = append(latencies, float64(time.Since(scheduled).Microseconds())/1000)
 	}
-	stopBulk()
-	bulk := <-bulkDone
-	bulkWall := time.Since(bulkStarted)
+	var bulk bulkResult
+	bulkActiveThroughMessages := true
+	select {
+	case bulk = <-bulkDone:
+		bulkActiveThroughMessages = false
+	default:
+		if bulkRequests == 0 {
+			stopBulk()
+		}
+		bulk = <-bulkDone
+	}
+	bulkWall := bulk.wall
 	if bulk.err != nil || bulk.count == 0 {
 		return fmt.Errorf("bulk workload: count=%d error=%v", bulk.count, bulk.err)
 	}
+	putCalls := store.priorityPuts.Load() + store.normalPuts.Load()
+	listCalls := store.listCalls.Load()
+	getCalls := store.getCalls.Load()
 	out := map[string]any{
 		"synthetic":                     true,
 		"store_model":                   "MemoryStore class-filtered lists with fixed operation delays; no Drive visibility, network, or quota enforcement",
 		"sparse_priority":               sparse,
+		"interaction_epoch":             interactionEpoch,
+		"serial_echo":                   serialEcho,
 		"persistent_warmup_bytes":       len(warmup),
 		"messages":                      messages,
 		"message_interval_ms":           intervalMS,
@@ -390,13 +461,18 @@ func run() error {
 		"message_scheduled_max_ms":      percentile(latencies, 1),
 		"message_samples_ms":            latencies,
 		"bulk_verified_requests":        bulk.count,
+		"bulk_requested_count":          bulkRequests,
+		"bulk_active_through_messages":  bulkActiveThroughMessages,
 		"bulk_verified_bytes":           bulk.bytes,
+		"bulk_window_s":                 bulkWall.Seconds(),
 		"bulk_mbps":                     float64(bulk.bytes*8) / bulkWall.Seconds() / 1e6,
 		"priority_objects_after_warmup": store.priorityPuts.Load() - baselinePriority,
 		"normal_objects_after_warmup":   store.normalPuts.Load() - baselineNormal,
 		"tiny_normal_objects_total":     store.tinyNormalPuts.Load(),
-		"list_calls_total":              store.listCalls.Load(),
-		"get_calls_total":               store.getCalls.Load(),
+		"list_calls_total":              listCalls,
+		"get_calls_total":               getCalls,
+		"put_calls_total":               putCalls,
+		"estimated_units_with_cleanup":  100*listCalls + 200*getCalls + 100*putCalls,
 	}
 	encoded, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(encoded))
