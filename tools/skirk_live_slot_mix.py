@@ -364,9 +364,9 @@ def run_arm(args: argparse.Namespace, index: int, mode: str,
                 stop_processes([slot_process])
         if benchmark is not None:
             stop_processes([benchmark])
+        stop_processes(services)
         if idle_text_sock is not None:
             idle_text_sock.close()
-        stop_processes(services)
         if slot_report is None and slot_report_path.exists():
             try:
                 slot_report = json.loads(slot_report_path.read_text())
