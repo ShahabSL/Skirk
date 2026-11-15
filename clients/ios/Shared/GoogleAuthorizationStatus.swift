@@ -3,7 +3,7 @@ import Foundation
 enum GoogleAuthorizationStatus {
     static let errorDomain = "app.skirk.ios.google-authorization"
     static let expiredCode = 78
-    static let recoveryMessage = "Google authorization needs renewal. Ask the exit owner to renew the kit, then replace this profile with the updated client.skirk."
+    static let recoveryMessage = "Google access needs renewal. Ask the exit owner for an updated client.skirk, then replace this profile."
 
     static var expiredDisconnectError: NSError {
         NSError(

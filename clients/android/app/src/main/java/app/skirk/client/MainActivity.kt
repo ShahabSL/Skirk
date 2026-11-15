@@ -797,7 +797,7 @@ private fun ConnectionPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                if (uiState == ConnectionUiState.Error) {
+                if (uiState == ConnectionUiState.Error && !googleGrantExpired) {
                     connectionActionableMessage(message)?.let { detail ->
                         Text(
                             text = detail,
@@ -809,8 +809,8 @@ private fun ConnectionPanel(
             }
         }
         Button(
-            onClick = if (running) onDisconnect else onConnect,
-            enabled = running || (selected != null && (selectedMode != ClientProfile.CONNECTION_MODE_VPN ||
+            onClick = if (running) onDisconnect else if (googleGrantExpired) onReplaceProfile else onConnect,
+            enabled = running || (selected != null && (googleGrantExpired || selectedMode != ClientProfile.CONNECTION_MODE_VPN ||
                 selected.vpnAppMode != ClientProfile.VPN_APPS_SELECTED || selected.vpnAllowedApps.isNotEmpty())),
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
@@ -819,10 +819,10 @@ private fun ConnectionPanel(
             ),
         ) {
             Icon(
-                if (running) Icons.Rounded.PowerSettingsNew else Icons.Rounded.PlayArrow,
+                if (running) Icons.Rounded.PowerSettingsNew else if (googleGrantExpired) Icons.Rounded.Storage else Icons.Rounded.PlayArrow,
                 contentDescription = null,
             )
-            Text(if (running) "Disconnect" else "Connect")
+            Text(if (running) "Disconnect" else if (googleGrantExpired) "Import renewed profile" else "Connect")
         }
         if (phase == ConnectionPhase.CONNECTED) {
             OutlinedButton(
@@ -841,10 +841,8 @@ private fun ConnectionPanel(
         }
         if (googleGrantExpired) {
             OAuthRecoveryCard(
-                onReplaceProfile = onReplaceProfile,
                 onCopyRenewalCommand = onCopyRenewalCommand,
                 onOpenOAuthSettings = onOpenOAuthSettings,
-                enabled = selected != null && !running,
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -927,11 +925,10 @@ private fun ConnectionPanel(
 
 @Composable
 private fun OAuthRecoveryCard(
-    onReplaceProfile: () -> Unit,
     onCopyRenewalCommand: () -> Unit,
     onOpenOAuthSettings: () -> Unit,
-    enabled: Boolean,
 ) {
+    var showProjectOwnerHelp by remember { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -943,27 +940,27 @@ private fun OAuthRecoveryCard(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("Google authorization needs renewal", fontWeight = FontWeight.SemiBold)
+                Text("Google access needs renewal", fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "The exit owner can renew Google access and share an updated client.skirk. " +
-                    "On the exit, run: skirk setup renew-oauth --kit skirk-kit, then restart the exit service.",
+                "Google rejected this device's saved access. Ask the exit owner to run the renewal command, restart the exit, and send you an updated client.skirk. Then import it with the button above.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Text(
-                "If the OAuth app is in Testing, its refresh tokens expire after seven days. " +
-                    "The project owner can publish it in Google Cloud → Google Auth Platform → Audience. " +
-                    "Production removes that automatic weekly expiry, but tokens can still become invalid. " +
-                    "Publishing does not revive an expired token; renew it and import the updated client.skirk.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                TextButton(onClick = onCopyRenewalCommand) { Text("Copy exit command") }
-                TextButton(onClick = onOpenOAuthSettings) { Text("OAuth settings for project owner") }
+                TextButton(onClick = onCopyRenewalCommand) { Text("Copy command for exit owner") }
             }
-            OutlinedButton(onClick = onReplaceProfile, enabled = enabled) {
-                Text("Replace profile with renewed config")
+            TextButton(onClick = { showProjectOwnerHelp = !showProjectOwnerHelp }) {
+                Text(if (showProjectOwnerHelp) "Hide project-owner help" else "For Google Cloud project owners")
+            }
+            if (showProjectOwnerHelp) {
+                Text(
+                    "If the OAuth app is in Testing, its refresh tokens expire after seven days. " +
+                        "Publishing it under Google Auth Platform → Audience removes that automatic expiry for new grants. " +
+                        "Publishing does not restore rejected access; renew the kit first. Other token failures can still happen later.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onOpenOAuthSettings) { Text("Open OAuth audience settings") }
             }
         }
     }
@@ -1936,7 +1933,7 @@ private fun connectionActionableMessage(message: String): String? {
         return null
     }
     if (isGoogleGrantExpired(normalized)) {
-        return "Google authorization expired. Use the recovery steps below."
+        return "Google rejected this device's saved access. See recovery steps below."
     }
     val lower = normalized.lowercase()
     if (
@@ -2111,7 +2108,7 @@ private fun driveErrorReasonLabel(reason: String): String {
     return when {
         "storagequotaexceeded" in compact -> "Drive storage full"
         "ratelimit" in compact || "toomany" in compact || compact == "status429" -> "Drive rate limited"
-        "invalidgrant" in compact || "unauthorized" in compact || compact == "status401" -> "Google login expired"
+        "invalidgrant" in compact || "unauthorized" in compact || compact == "status401" -> "Google access rejected"
         "notfound" in compact -> "Drive mailbox missing"
         "timeout" in compact || "deadline" in compact -> "Drive timeout"
         else -> "Drive errors"

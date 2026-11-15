@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
 
 internal fun skirkEngineExitMessage(code: Int): String =
     if (code == 78) {
-        "Google authorization expired. Renew the exit kit and replace this profile."
+        "Google access needs renewal (invalid_grant). Ask the exit owner for an updated client.skirk, then replace this profile."
     } else {
         "Skirk engine exited with code $code"
     }

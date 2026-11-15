@@ -1472,7 +1472,7 @@ fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
 
 fn client_exit_message(code: Option<i32>, status: &str) -> String {
     if code == Some(78) {
-        return "Google authorization expired (invalid_grant). Renew the exit kit and replace this profile.".into();
+        return "Google access needs renewal (invalid_grant). Ask the exit owner for an updated client.skirk, then replace this profile.".into();
     }
     format!("Skirk exited: {status}")
 }

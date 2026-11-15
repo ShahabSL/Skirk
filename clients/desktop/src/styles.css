@@ -459,14 +459,23 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.recovery-label {
-  color: var(--danger);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .recovery-card .button-row {
   justify-content: flex-start;
+}
+
+.recovery-owner-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  font-size: 13px;
+}
+
+.recovery-owner-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.recovery-owner-details p {
+  margin-top: 8px;
 }
 
 .control-surface {

@@ -407,25 +407,27 @@ function App() {
         {googleGrantExpired ? (
           <section className="recovery-card" aria-labelledby="recovery-title">
             <div>
-              <span className="recovery-label">Google sign-in</span>
-              <h2 id="recovery-title">Authorization needs attention</h2>
-              <p role="alert">The saved Google authorization was rejected. The exit owner needs to renew it.</p>
+              <h2 id="recovery-title">Google access needs renewal</h2>
+              <p role="alert">Google rejected this device's saved access. Ask the exit owner for a renewed client profile.</p>
             </div>
             <ol>
               <li>On the exit, run <code>skirk setup renew-oauth --kit skirk-kit</code> using your kit folder, then restart the exit.</li>
-              <li>Paste the updated <code>client.skirk</code> here and replace this profile. Your ports, route, and performance settings stay saved.</li>
-              <li>If you own the Google Cloud project and its OAuth app is in <strong>Testing</strong>, open Google Auth Platform → Audience and publish it to <strong>In production</strong> to remove the automatic seven-day expiry for new grants. Google may require app verification. Publishing does not revive this grant; tokens can still become invalid later.</li>
+              <li>Get the updated <code>client.skirk</code> from the exit owner and replace this profile. Your ports, route, and performance settings stay saved.</li>
             </ol>
             <div className="button-row">
               <button type="button" onClick={() => void copyRenewCommand()}>
                 {copyStatus === "Renew command copied." ? <Check /> : <Copy />}
-                {copyStatus === "Renew command copied." ? "Command copied" : "Copy exit command"}
+                {copyStatus === "Renew command copied." ? "Command copied" : "Copy command for exit owner"}
               </button>
               <button type="button" className="primary" disabled={!selectedProfile || runtimeBusy || connected} onClick={beginProfileReplacement}>
-                <Upload /> Replace selected profile
+                <Upload /> Import renewed profile
               </button>
             </div>
             {connected ? <small>Disconnect before replacing the saved profile.</small> : null}
+            <details className="recovery-owner-details">
+              <summary>For Google Cloud project owners</summary>
+              <p>If your OAuth app is in <strong>Testing</strong>, publish it under Google Auth Platform → Audience to remove the automatic seven-day expiry for new grants. Publishing does not restore a rejected grant. Renew it first; other token failures can still happen later.</p>
+            </details>
           </section>
         ) : error ? (
           <div className="alert" role="alert">
@@ -522,17 +524,19 @@ function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={runtimeBusy || !selectedProfile || vpnNeedsAdmin}
-                onClick={() => void run("connect", () => desktopApi.connect())}
+                disabled={runtimeBusy || !selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
+                onClick={googleGrantExpired ? beginProfileReplacement : () => void run("connect", () => desktopApi.connect())}
               >
-                {busyAction === "connect" || connecting ? (
+                {googleGrantExpired ? (
+                  <Upload />
+                ) : busyAction === "connect" || connecting ? (
                   <Loader2 className="spin" />
                 ) : vpnNeedsAdmin ? (
                   <ShieldCheck />
                 ) : (
                   <Play />
                 )}
-                {vpnNeedsAdmin ? "Admin required" : "Connect"}
+                {googleGrantExpired ? "Import renewed profile" : vpnNeedsAdmin ? "Admin required" : "Connect"}
               </button>
             )}
             <button
@@ -1525,7 +1529,7 @@ function driveErrorReasonLabel(reason?: string) {
     return "Drive rate limited";
   }
   if (compact.includes("invalidgrant") || compact.includes("unauthorized") || compact === "status401") {
-    return "Google login expired";
+    return "Google access rejected";
   }
   if (compact.includes("notfound")) {
     return "Drive mailbox missing";

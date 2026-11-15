@@ -64,30 +64,34 @@ struct ContentView: View {
                             .disabled(tunnel.isTestingExit)
                         }
                     } else {
-                        Button("Connect") {
-                            Task { await tunnel.connect() }
+                        if tunnel.googleAuthorizationNeedsRenewal {
+                            Button("Import renewed profile") {
+                                copiedRenewalCommand = false
+                                replacingProfile = true
+                            }
+                            .disabled(!tunnel.canConnect || replacingProfile)
+                        } else {
+                            Button("Connect") {
+                                Task { await tunnel.connect() }
+                            }
+                            .disabled(!tunnel.canConnect || replacingProfile)
                         }
-                        .disabled(!tunnel.canConnect || replacingProfile)
                     }
                 }
 
                 if tunnel.hasProfile && tunnel.googleAuthorizationNeedsRenewal {
                     Section {
-                        Label("Google authorization needs renewal", systemImage: "exclamationmark.triangle.fill")
+                        Label("Google access needs renewal", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                        Text("Ask the exit owner to renew the kit, then import the updated client.skirk on this iPhone.")
-                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
+                        Text("Google rejected this iPhone's saved access. Ask the exit owner to renew the kit, restart the exit, and send you an updated client.skirk.")
+                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy command for exit owner") {
                             UIPasteboard.general.string = Self.renewalCommand
                             copiedRenewalCommand = true
                         }
-                        Button("Replace profile") {
-                            copiedRenewalCommand = false
-                            replacingProfile = true
+                        DisclosureGroup("For Google Cloud project owners") {
+                            Text("If the OAuth app is in Testing, publishing it removes the automatic seven-day expiry for new grants. Publishing does not restore rejected access; renew the kit first. Other token failures can still happen later.")
+                            Link("Open OAuth audience settings", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
                         }
-                            .disabled(!tunnel.canConnect || replacingProfile)
-                        Link("OAuth settings for project owner", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
-                    } footer: {
-                        Text("Production removes the Testing app's seven-day limit for new grants. It cannot revive this one; the exit owner must renew it first.")
                     }
                 }
 
@@ -153,13 +157,8 @@ struct ContentView: View {
                 } footer: {
                     if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("If Google login expires:")
-                            Text("1. Copy the command and run it on the exit.")
-                            Text("2. Restart the exit.")
-                            Text("3. Disconnect, then replace this profile with the updated client.skirk.")
-                            Text("Use your kit folder name instead of skirk-kit if different.")
+                            Text("If this iPhone's Google access is rejected, ask the exit owner for a renewed client.skirk and replace this profile. If only the exit's grant fails, keep this profile while the owner renews the exit.")
                             Link("OAuth settings for project owner", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
-                            Text("Production removes the automatic seven-day Testing expiry. A token can still become invalid and need renewal.")
                         }
                     } else if !tunnel.hasProfile {
                         Text("Import client.skirk from your Skirk exit. iOS stores it in this device's Keychain.")
