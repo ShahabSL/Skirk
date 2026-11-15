@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +51,44 @@ func relayClientWait(t *testing.T, condition func() bool, message string) {
 			t.Fatal(message)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func relayClientHTTPExchange(t *testing.T, b *relayResearchBroker) relayResearchExchange {
+	t.Helper()
+	auth := "synthetic-research-auth-at-least32-characters"
+	server := httptest.NewServer(b.handler(auth))
+	t.Cleanup(server.Close)
+	client := &http.Client{Timeout: time.Second * 30}
+	t.Cleanup(client.CloseIdleConnections)
+	return func(ctx context.Context, wire []byte) ([]byte, error) {
+		raw, err := json.Marshal(relayResearchHTTPEnvelope{Auth: auth, Data: base64.StdEncoding.EncodeToString(wire)})
+		if err != nil {
+			return nil, err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/exchange", bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, err
+		}
+		defer response.Body.Close()
+		limit := base64.StdEncoding.EncodedLen(b.codec.maxWireBytes()) + 1024
+		raw, err = io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+		if err != nil {
+			return nil, err
+		}
+		if response.StatusCode != 200 || len(raw) > limit {
+			return nil, errRelayResearchConflict
+		}
+		var envelope relayResearchHTTPEnvelope
+		if json.Unmarshal(raw, &envelope) != nil {
+			return nil, errRelayResearchConflict
+		}
+		return base64.StdEncoding.Strict().DecodeString(envelope.Data)
 	}
 }
 
@@ -378,6 +418,7 @@ func relayClientSOCKSFixture(t *testing.T, wrap func(*relayResearchBroker) relay
 		cancel()
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { cancel(); c.Close(); b.Close() })
 	sid, _ := NewSessionID()
 	cfg := &Config{Secret: "relay-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client-a", RunID: "run-a"}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: 256 << 10, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
@@ -455,8 +496,9 @@ func relayClientSOCKSFixture(t *testing.T, wrap func(*relayResearchBroker) relay
 func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T) {
 	var upLost, downLost atomic.Bool
 	f := relayClientSOCKSFixture(t, func(b *relayResearchBroker) relayResearchExchange {
+		httpExchange := relayClientHTTPExchange(t, b)
 		return func(ctx context.Context, wire []byte) ([]byte, error) {
-			response, err := b.exchange(ctx, wire)
+			response, err := httpExchange(ctx, wire)
 			if err != nil {
 				return nil, err
 			}
@@ -494,7 +536,7 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 			http.NotFound(w, r)
 		}
 	}))
-	defer origin.Close()
+	defer func() { f.close(); origin.Close() }()
 	request := func(path string, body []byte) error {
 		method := "GET"
 		if body != nil {
