@@ -115,6 +115,35 @@
         }
       },
       "outcome": "External service cyber safeguards rejected architecture-priorities request; no recommendations returned."
+    },
+    {
+      "label": "client_ui_lifecycle_usage_limit",
+      "requested_model_alias": "fable",
+      "effort": "max",
+      "purpose": "Read-only client lifecycle and UI audit, distinct from transport architecture requests.",
+      "source_revision": "13216ba4c66c1356ea38cc9103a7e8a7f6032410",
+      "source_files": [
+        "clients/android/app/src/main/java/app/skirk/client/MainActivity.kt",
+        "clients/android/app/src/main/java/app/skirk/client/ClientProfile.kt",
+        "clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt",
+        "clients/ios/App/ContentView.swift",
+        "clients/ios/App/TunnelController.swift",
+        "clients/desktop/src/App.tsx",
+        "clients/desktop/src/lib/api.ts",
+        "cmd/skirk/setup_renew.go"
+      ],
+      "prompt_sha256": "241792aacdd2e7b72aaa3797b5547df0adb54f6b2ed47207e167997b31550a38",
+      "return_code": 1,
+      "is_error": true,
+      "turns": 1,
+      "duration_ms": 339,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "thinking_tokens": 0,
+      "web_search_requests": 0,
+      "permission_denials": [],
+      "models": {},
+      "outcome": "Account five-hour usage limit; reset reported as 2:20pm America/Chicago. No model inference, completed audit, recommendations, account switching, bypass or retry."
     }
   ]
 }

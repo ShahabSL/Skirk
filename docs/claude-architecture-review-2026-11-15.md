@@ -20,6 +20,15 @@ No credentials, real profiles, or ignored runtime logs were supplied. The
 input evidence consists of tracked documentation and a sanitized constraints
 summary. Raw CLI outputs remain ignored under `.skirk-runs/`.
 
+A later, materially separate client UI/lifecycle review was prepared from
+eight public Android, iOS, desktop and renewal source files at `13216ba`.
+It requested Fable with tools/MCP disabled from an empty temporary directory.
+The CLI returned an account five-hour usage-limit error after 339 ms, with
+zero input/output tokens and empty `modelUsage`; it reported a reset at
+2:20 pm America/Chicago. **No client UI audit ran or recommendations returned.**
+No account switch, quota bypass or retry was attempted. This failed attempt
+does not extend the scope of the three completed transport reviews.
+
 ## Returned model evidence
 
 The CLI requested Fable 5.2, but the evidence-aware response records both
