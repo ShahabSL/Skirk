@@ -74,3 +74,34 @@ record. The private raw summaries are
 `.skirk-runs/ack-slot-roundtrip-live-20261114.json` and
 `.skirk-runs/ack-slot-roundtrip-nopause-live-20261114.json`. The tool does not
 measure separate one-way times or prove steady-state user capacity.
+
+### Polling and concurrent-pair sensitivity
+
+An order-reversed four-arm no-pause comparison used the same isolated account
+and 20 request/reply exchanges per arm, with a 65-second cooldown:
+
+| Known-ID GET interval | Two scheduled RTT p95 values | Median p95 | Median GETs | Median complete-arm unit bound |
+| --- | --- | ---: | ---: | ---: |
+| 100 ms | 1.436 / 1.743 s | 1.589 s | 56 | 4,055 |
+| 200 ms | 1.483 / 1.879 s | 1.681 s | 40 | 3,925 |
+
+All 80 round trips and ACKs verified; each arm read back 8,192 bytes and
+deleted both exact IDs. The 92 ms median-p95 gap is small beside run variation;
+100 ms used 40% more GETs and was not promoted as the probe default. Private
+summary: `.skirk-runs/ack-slot-poll-sensitivity-20261114.json`.
+
+Separate bursts started five and ten independent two-file probes concurrently
+on the same account, each at 200 ms polling and with no reader pause. The
+ten-pair burst used a stricter 5,000-unit per-pair hot cap so even its
+worst-case complete-arm bound stayed below 90,000 units.
+
+| Concurrent pairs | Verified request/reply and ACKs | Combined scheduled RTT p50 / p95 | Conservative total units | Final slot files |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 100/100 | 1.397 / 2.382 s | 17,755 | 0 |
+| 10 | 200/200 | 1.118 / 1.515 s | 39,565 | 0 |
+
+Every pair completed its exact 8,192-byte readback and twice verified both
+deleted IDs as 404. There were no probe/API errors or recovery ledgers. The
+ten-pair sample was faster than the earlier five-pair sample under changing
+conditions; these are **not** matched capacity curves or Skirk app workloads.
+Private summaries: `.skirk-runs/ack-slot-{five,ten}-pair-20261114.json`.

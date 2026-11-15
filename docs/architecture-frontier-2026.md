@@ -252,6 +252,20 @@ round trips, not application message latency. Source and method are in
 `tools/ack_slot_probe/README.md`; raw private summaries are under
 `.skirk-runs/ack-slot-roundtrip-{live,nopause-live}-20261114.json`.
 
+Four order-reversed no-pause arms compared 100 ms and 200 ms known-ID polling.
+Their pair-median scheduled RTT p95 was **1.589 versus 1.681 s**, while median
+GETs were **56 versus 40** and conservative complete-arm units **4,055 versus
+3,925**. The small latency difference did not exceed ordinary run variation;
+the probe retains 200 ms by default. Separate simultaneous bursts verified
+**100/100** request/reply exchanges across five independent slot pairs and
+**200/200** across ten, with exact cleanup, no API errors, and conservative
+unit totals of **17,755** and **39,565**. Combined scheduled RTT p95 was
+**2.382 s** for five pairs and **1.515 s** for ten. The later, larger burst
+being faster shows these are not matched capacity curves; neither tests a real
+Skirk mux or supports a 200,000-user claim. Raw private summaries are under
+`.skirk-runs/ack-slot-poll-sensitivity-20261114.json` and
+`.skirk-runs/ack-slot-{five,ten}-pair-20261114.json`.
+
 The [DriveStore compatibility probe](metadata-slot-compat-2026.md) then
 verified the runtime adapter's distinct API path: generated-ID metadata-only
 create, independent exact-ID GET, an exact 8,192-byte PATCH/readback, and
