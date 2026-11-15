@@ -124,10 +124,12 @@ type DriveConfig struct {
 	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
 	// NormalListPageSize applies to broad p1 and opt-in adaptive mux discovery queries.
 	// Zero uses the measured default of 1000; 500 and 100 remain available.
-	NormalListPageSize    int  `json:"normal_list_page_size,omitempty"`
-	UploadHedgeDelayMS    int  `json:"upload_hedge_delay_ms,omitempty"`
-	SeparateUploadPool    bool `json:"separate_upload_pool,omitempty"`
-	SeparateBulkMediaPool bool `json:"separate_bulk_media_pool,omitempty"`
+	NormalListPageSize          int   `json:"normal_list_page_size,omitempty"`
+	UploadHedgeDelayMS          int   `json:"upload_hedge_delay_ms,omitempty"`
+	UploadStallHedgeDelayMS     int   `json:"upload_stall_hedge_delay_ms,omitempty"`
+	UploadStallHedgeBudgetBytes int64 `json:"upload_stall_hedge_budget_bytes,omitempty"`
+	SeparateUploadPool          bool  `json:"separate_upload_pool,omitempty"`
+	SeparateBulkMediaPool       bool  `json:"separate_bulk_media_pool,omitempty"`
 }
 
 // ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
@@ -386,6 +388,15 @@ func (c *Config) Validate() error {
 	}
 	if delay := c.Drive.UploadHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
 		return errors.New("config.drive.upload_hedge_delay_ms must be 0 or between 1000 and 10000")
+	}
+	if delay := c.Drive.UploadStallHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
+		return errors.New("config.drive.upload_stall_hedge_delay_ms must be 0 or between 1000 and 10000")
+	}
+	if c.Drive.UploadHedgeDelayMS != 0 && c.Drive.UploadStallHedgeDelayMS != 0 {
+		return errors.New("choose only one upload hedge mode")
+	}
+	if budget := c.Drive.UploadStallHedgeBudgetBytes; budget != 0 && (budget < 128*1024 || budget > 64*1024*1024) {
+		return errors.New("config.drive.upload_stall_hedge_budget_bytes must be 0 or between 128KiB and 64MiB")
 	}
 	if size := c.Drive.NormalListPageSize; size != 0 && size != 100 && size != 500 && size != 1000 {
 		return errors.New("config.drive.normal_list_page_size must be 100, 500, or 1000")

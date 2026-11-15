@@ -437,6 +437,25 @@ class MainComparisonSafetyTests(unittest.TestCase):
         candidate["session_id"]="one"
         self.assertEqual(candidate,control)
 
+    def test_stall_hedge_comparison_isolates_delay_and_preserves_saved_kit(self):
+        original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {
+            "upload_hedge_delay_ms": 3000, "upload_stall_hedge_delay_ms": 5000,
+            "upload_stall_hedge_budget_bytes": 64 * 1024 * 1024}}
+        saved = json.loads(json.dumps(original))
+        control = arm_config(original, "control", "one", 0, True, candidate_upload_stall_hedge_delay_ms=2500)
+        candidate = arm_config(original, "candidate", "two", 0, True, candidate_upload_stall_hedge_delay_ms=2500)
+        self.assertEqual(original, saved)
+        self.assertEqual(control["drive"]["upload_hedge_delay_ms"], 0)
+        self.assertEqual(candidate["drive"]["upload_hedge_delay_ms"], 0)
+        self.assertEqual(control["drive"]["upload_stall_hedge_delay_ms"], 0)
+        self.assertEqual(candidate["drive"]["upload_stall_hedge_delay_ms"], 2500)
+        self.assertEqual(candidate["drive"]["upload_stall_hedge_budget_bytes"], 16 * 1024 * 1024)
+        candidate["drive"]["upload_stall_hedge_delay_ms"] = 0
+        candidate["session_id"] = "one"
+        self.assertEqual(candidate, control)
+        self.assertEqual(candidate["route"], original["route"])
+        self.assertNotIn("upload_stall_hedge_delay_ms", arm_config(original, "baseline", "new", 0, False)["drive"])
+
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}
         self.assertFalse(arm_config(original, "baseline", "a", 0, False)["drive"]["separate_bulk_media_pool"])

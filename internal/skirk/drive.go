@@ -40,6 +40,11 @@ type DriveStore struct {
 	normalListPageSize     int
 	uploadHedgeDelay       time.Duration
 	uploadHedgeSlots       chan struct{}
+	uploadStallHedgeDelay  time.Duration
+	uploadStallHedgeBudget int64
+	uploadStallHedgeSlots  chan struct{}
+	uploadStallBudgetMu    sync.Mutex
+	uploadStallCharges     []driveUploadDuplicateCharge
 	newHedgeHTTPClient     func() *GoogleHTTPClient
 	quota                  *driveQuotaStats
 	backoff                *driveQuotaBackoff
@@ -145,7 +150,7 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 	if normalListPageSize != 100 && normalListPageSize != 500 && normalListPageSize != 1000 {
 		normalListPageSize = 100 // Direct constructor calls still fail safe without Config.Validate.
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataOnlyMaxBytes: metadataOnlyByteLimit(cfg.MetadataOnlyMaxBytes), metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataOnlyMaxBytes: metadataOnlyByteLimit(cfg.MetadataOnlyMaxBytes), metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), uploadStallHedgeDelay: time.Duration(cfg.UploadStallHedgeDelayMS) * time.Millisecond, uploadStallHedgeBudget: cfg.UploadStallHedgeBudgetBytes, uploadStallHedgeSlots: make(chan struct{}, 1), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
@@ -341,6 +346,9 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 	upload := func(uploadCtx context.Context, client *GoogleHTTPClient) (ObjectInfo, error) {
 		return d.uploadObjectWithHTTP(uploadCtx, client, fileID, name, len(data), headers, body.Bytes())
 	}
+	if d.uploadStallHedgeDelay > 0 && isNormalGeneratedMuxUpload(fileID, name, len(data)) {
+		return d.uploadObjectWithStallHedge(ctx, primaryHTTP, fileID, name, data, headers, body.Bytes())
+	}
 	if d.shouldHedgeUpload(fileID, name, len(data)) {
 		return d.uploadObjectWithHedge(ctx, primaryHTTP, upload)
 	}
@@ -475,11 +483,25 @@ func (d *DriveStore) freshHedgeHTTPClient() *GoogleHTTPClient {
 }
 
 func (d *DriveStore) uploadObjectWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte) (ObjectInfo, error) {
-	result, err := d.requestWithHTTP(ctx, httpClient, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body)
+	return d.uploadObjectWithHTTPMode(ctx, httpClient, fileID, name, size, headers, body, "")
+}
+
+func (d *DriveStore) uploadObjectWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte, expectedSHA256 string) (ObjectInfo, error) {
+	result, err := d.requestWithHTTPMode(ctx, httpClient, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body, expectedSHA256 != "")
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	if result.Status == http.StatusConflict && fileID != "" {
+		if expectedSHA256 != "" {
+			info, committed, err := d.readUploadCommitProof(ctx, httpClient, fileID, name, size, expectedSHA256)
+			if err != nil {
+				return ObjectInfo{}, err
+			}
+			if !committed {
+				return ObjectInfo{}, errors.New("upload conflict has no exact content commit proof")
+			}
+			return info, nil
+		}
 		info, err := d.getObjectInfoByIDWithHTTP(ctx, httpClient, fileID)
 		if err != nil {
 			return ObjectInfo{}, err
@@ -1482,6 +1504,9 @@ func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *Google
 	}
 	var last *HTTPResult
 	label := driveRequestLabel(method, path)
+	if ctx.Value(driveUploadCommitProbeKey{}) == true && method == http.MethodGet {
+		label = "upload_commit_probe"
+	}
 	started := time.Now()
 	for attempt := 0; attempt < 2; attempt++ {
 		if d.backoff != nil {
@@ -1514,6 +1539,9 @@ func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *Google
 			result.ResponseReceived = time.Now()
 		}
 		if err != nil {
+			if errors.Is(err, errDriveUploadDuplicateBudget) {
+				return nil, err
+			}
 			d.logDriveRequest(label, httpAttemptCount(result, err), 0, nil, time.Since(started), err)
 			return nil, err
 		}
@@ -1827,7 +1855,7 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	if durationMS < 0 {
 		durationMS = 0
 	}
-	failed := err != nil || status >= 400
+	failed := err != nil || status >= 400 && !(op == "upload_commit_probe" && status == http.StatusNotFound)
 	failedAttempts := attempts - 1 // Every retry follows a failed HTTP attempt.
 	if failed {
 		failedAttempts = attempts

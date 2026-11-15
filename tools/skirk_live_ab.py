@@ -60,7 +60,9 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
                candidate_metadata_16k: bool = False,
                candidate_metadata_slot_primary_v1: bool = False,
                candidate_metadata_slot_primary_vs_mux: bool = False,
-               candidate_metadata_slot_async_vs_mux: bool = False) -> dict:
+               candidate_metadata_slot_async_vs_mux: bool = False,
+               candidate_upload_stall_hedge_delay_ms: int = 0,
+               upload_stall_hedge_budget_bytes: int = 16 * 1024 * 1024) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -75,6 +77,8 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
     drive.pop("combined_mux_discovery", None)
     drive.pop("adaptive_mux_discovery", None)
     drive.pop("metadata_only_max_bytes", None)
+    drive.pop("upload_stall_hedge_delay_ms", None)
+    drive.pop("upload_stall_hedge_budget_bytes", None)
     if candidate_metadata_slot_async_v1 or candidate_separate_metadata_slot_pools or (mode == "candidate" and
             (candidate_metadata_slot_v1 or candidate_metadata_slot_delivery_v1)):
         drive["metadata_slot_v1"] = True
@@ -134,6 +138,10 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
         drive["metadata_only_priority"] = True
         drive["metadata_only_max_bytes"] = 16384 if mode == "candidate" else 8192
         drive["normal_list_page_size"] = 100
+    if candidate_upload_stall_hedge_delay_ms:
+        drive["upload_hedge_delay_ms"] = 0
+        drive["upload_stall_hedge_delay_ms"] = candidate_upload_stall_hedge_delay_ms if mode == "candidate" else 0
+        drive["upload_stall_hedge_budget_bytes"] = upload_stall_hedge_budget_bytes
     return config
 
 
@@ -176,6 +184,10 @@ def main():
                         help="compare default split discovery against bounded combined discovery with partial-list p0 fallback")
     parser.add_argument("--candidate-metadata-16k", action="store_true",
                         help="compare negotiated16KiB against8KiB metadata caps; both use100-file pages")
+    parser.add_argument("--candidate-upload-stall-hedge-delay-ms", type=int, default=0,
+                        help="compare default upload against after-write stall recovery at 1000..10000ms on the same binary")
+    parser.add_argument("--upload-stall-hedge-budget-bytes", type=int, default=16 * 1024 * 1024,
+                        help="rolling one-minute duplicate multipart body budget per peer; default 16MiB")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -220,7 +232,12 @@ def main():
                        args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery,
                        args.candidate_metadata_slot_async_v1,
                        args.candidate_metadata_16k, args.candidate_metadata_slot_primary_v1,
-                       args.candidate_metadata_slot_primary_vs_mux,args.candidate_metadata_slot_async_vs_mux)
+                       args.candidate_metadata_slot_primary_vs_mux, args.candidate_metadata_slot_async_vs_mux,
+                       bool(args.candidate_upload_stall_hedge_delay_ms))
+    if args.candidate_upload_stall_hedge_delay_ms and not 1000 <= args.candidate_upload_stall_hedge_delay_ms <= 10000:
+        parser.error("stall hedge delay must be0 or1000..10000ms")
+    if not 128 * 1024 <= args.upload_stall_hedge_budget_bytes <= 64 * 1024 * 1024:
+        parser.error("stall hedge budget must be128KiB..64MiB")
     if sum(candidate_modes) > 1:
         parser.error("choose only one candidate mode")
     if any(candidate_modes):
@@ -230,8 +247,8 @@ def main():
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
-    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
-        parser.error("discovery comparison requires the same binary in both arms")
+    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k or args.candidate_upload_stall_hedge_delay_ms) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
+        parser.error("configuration comparison requires the same binary in both arms")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
     if not 0 <= args.small_response_bytes <= 16384 or (args.small_response_bytes and args.small_traffic == "persistent"):
@@ -366,7 +383,9 @@ def main():
                              args.candidate_metadata_16k,
                              args.candidate_metadata_slot_primary_v1,
                              args.candidate_metadata_slot_primary_vs_mux,
-                             args.candidate_metadata_slot_async_vs_mux)
+                             args.candidate_metadata_slot_async_vs_mux,
+                             args.candidate_upload_stall_hedge_delay_ms,
+                             args.upload_stall_hedge_budget_bytes)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -374,6 +393,8 @@ def main():
             bench = None
             binary = args.main_binary if mode == "main" else args.control_binary if mode == "control" else args.binary
             row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"].get("upload_hedge_delay_ms", 0),
+                   "upload_stall_hedge_delay_ms": cfg["drive"].get("upload_stall_hedge_delay_ms", 0),
+                   "upload_stall_hedge_budget_bytes": cfg["drive"].get("upload_stall_hedge_budget_bytes", 0),
                    "ok": False, "session_id": cfg["session_id"], "chunk_size_override": args.chunk_size,
                    "small_traffic": args.small_traffic, "bulk_direction": args.bulk_direction,
                    "small_response_bytes": len(small_payload),
@@ -504,6 +525,15 @@ def main():
                 result = json.loads(report_path.read_text())
                 quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics().items()}
                 completed = workload_completed(result, args.small_count, bench.returncode)
+                if args.candidate_upload_stall_hedge_delay_ms:
+                    logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace") for role in ("client", "exit"))
+                    row["upload_stall_commit_proven_count"] = logs_text.count("drive upload stall action=commit_proven")
+                    row["upload_stall_secondary_launch_count"] = logs_text.count("drive upload stall action=secondary")
+                    reserved = re.findall(r"drive upload stall action=duplicate_reserved body_bytes=(\d+)", logs_text)
+                    row["upload_stall_duplicate_reserved_attempts"] = len(reserved)
+                    row["upload_stall_duplicate_reserved_body_bytes"] = sum(map(int, reserved))
+                    row["upload_stall_duplicate_budget_denied_count"] = logs_text.count("drive upload stall action=duplicate_budget_denied")
+                    row["upload_commit_probe_calls"] = sum(q["ops"].get("upload_commit_probe", {}).get("calls", 0) for q in quotas.values())
                 if args.candidate_metadata_16k:
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace") for role in ("client", "exit"))
                     large_sizes = [int(value) for value in re.findall(r"drive large metadata publication sealed_bytes=(\d+)", logs_text)]

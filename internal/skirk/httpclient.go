@@ -315,7 +315,7 @@ func (c *GoogleHTTPClient) RequestNoRateLimitRetry(ctx context.Context, method, 
 // PATCH must not be transparently replayed after a transport timeout.
 func (c *GoogleHTTPClient) RequestSingleAttempt(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
 	result, err := c.requestOnce(ctx, method, host, path, headers, body)
-	if result != nil {
+	if result != nil && result.Attempts < 1 {
 		result.Attempts = 1
 	}
 	return result, err
@@ -431,8 +431,22 @@ func shouldTryNextGoogleRoute(result *HTTPResult, err error) bool {
 	}
 }
 
-func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (out *HTTPResult, outErr error) {
 	status := 0
+	ctx, stallAttempt, stallErr := startDriveStallHTTPAttempt(ctx, method, path, len(body))
+	if stallErr != nil {
+		return nil, stallErr
+	}
+	if stallAttempt != nil {
+		defer func() {
+			if out != nil {
+				out.Attempts = stallAttempt.count()
+			}
+			if outErr != nil {
+				outErr = &httpAttemptError{err: outErr, attempts: stallAttempt.count()}
+			}
+		}()
+	}
 	if os.Getenv("SKIRK_HTTP_TRACE") == "1" {
 		started := time.Now()
 		var acquired, wrote, firstByte atomic.Int64
@@ -473,6 +487,11 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 	if err != nil {
 		return nil, err
 	}
+	if stallAttempt != nil {
+		// The coordinator owns retries and duplicate-byte reservations. Do
+		// not let net/http replay this body behind that accounting boundary.
+		req.GetBody = nil
+	}
 	if isGoogleFrontRoute(c.route.Mode) {
 		req.Host = host
 	}
@@ -495,6 +514,9 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if stallAttempt != nil {
+		stallAttempt.gotHeaders()
+	}
 	status = resp.StatusCode
 	bodyReader := resp.Body
 	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
