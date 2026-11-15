@@ -36,11 +36,12 @@ import {
   type PerformancePreset,
   type UserRouteMode,
 } from "./lib/api";
+import { SnapshotGuard, type SnapshotAction } from "./lib/snapshotGuard";
 import logoMark from "./assets/logo-mark.png";
 import packageInfo from "../package.json";
 
 type Theme = "light" | "dark";
-type BusyAction = "connect" | "disconnect" | "import" | "select" | "delete" | "mode" | "performance" | "route";
+type BusyAction = SnapshotAction;
 const APP_VERSION = packageInfo.version;
 const DRIVE_USER_UNITS_PER_MINUTE = 325_000;
 const CUSTOM_MIN_POLL_MS = 250;
@@ -66,6 +67,7 @@ function App() {
   const [exitProbeError, setExitProbeError] = useState("");
   const [exitProbeRunning, setExitProbeRunning] = useState(false);
   const exitProbeGeneration = useRef(0);
+  const snapshotGuard = useRef(new SnapshotGuard());
   const [copyStatus, setCopyStatus] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -81,10 +83,15 @@ function App() {
   const rawConfigId = useId();
 
   const refresh = useCallback(async () => {
+    const read = snapshotGuard.current.beginRead();
+    if (!read) return;
     try {
-      setSnapshot(await desktopApi.loadSnapshot());
+      const next = await desktopApi.loadSnapshot();
+      if (snapshotGuard.current.acceptsRead(read)) setSnapshot(next);
     } catch (nextError) {
-      setError(normalizeError(nextError));
+      if (snapshotGuard.current.acceptsRead(read)) setError(normalizeError(nextError));
+    } finally {
+      snapshotGuard.current.finishRead(read);
     }
   }, []);
 
@@ -106,7 +113,10 @@ function App() {
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 1500);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      snapshotGuard.current.reset();
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -132,7 +142,7 @@ function App() {
     (profile) => profile.id === snapshot.connection.activeProfileId,
   );
   const connected = snapshot?.connection.phase === "connected";
-  const connecting = snapshot?.connection.phase === "connecting";
+  const connecting = snapshot?.connection.phase === "connecting" || busyAction === "connect";
   const disconnecting = snapshot?.connection.phase === "disconnecting";
   const proxyRestorePending = Boolean(snapshot?.connection.systemProxyRestorePending);
   const disconnectAvailable = connected || connecting || disconnecting || proxyRestorePending;
@@ -220,16 +230,24 @@ function App() {
   }, [googleGrantExpired, initialLoading, selectedProfile?.id, snapshot?.profiles.length]);
 
   async function run(actionName: BusyAction, action: () => Promise<DesktopSnapshot>) {
+    const mutation = snapshotGuard.current.beginMutation(actionName);
+    if (!mutation) return;
     setBusyAction(actionName);
     try {
-      setSnapshot(await action());
-      setError("");
+      await action();
+      if (snapshotGuard.current.ownsMutation(mutation)) setError("");
     } catch (nextError) {
-      const message = normalizeError(nextError);
-      if (message !== "Connection cancelled") setError(message);
-      await refresh();
+      if (snapshotGuard.current.ownsMutation(mutation)) {
+        const message = normalizeError(nextError);
+        if (message !== "Connection cancelled") setError(message);
+      }
     } finally {
-      setBusyAction((current) => current === actionName ? null : current);
+      if (snapshotGuard.current.settleMutation(mutation)) {
+        // The RPC's snapshot can arrive after a newer poll. Read after the
+        // mutation acknowledgement instead of rendering that stale result.
+        await refresh();
+        if (snapshotGuard.current.finishMutation(mutation)) setBusyAction(null);
+      }
     }
   }
 

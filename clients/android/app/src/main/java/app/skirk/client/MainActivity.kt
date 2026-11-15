@@ -383,6 +383,11 @@ fun ConfigScreen() {
         activeProbeProfile?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
     } else selectedMode
     val panelShareLan = if (running) activeProbeProfile?.shareLan ?: false else proxyShareLan
+    val panelConnection = connectionState.forProfile(panelProfile?.id)
+    val otherFailure = connectionState.phase == ConnectionPhase.FAILED &&
+        connectionState.profileId != panelProfile?.id
+    val failureOwner = profiles.firstOrNull { it.id == connectionState.profileId }
+
     LaunchedEffect(selected?.id) {
         selectedMode = selected?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
         proxyShareLan = selected?.shareLan ?: false
@@ -464,13 +469,21 @@ fun ConfigScreen() {
     }
 
     val connectionPanelContent: @Composable () -> Unit = {
+        if (otherFailure) {
+            Text(
+                failureOwner?.let { "The last connection for ${it.name} failed. Select that profile to review its recovery options." }
+                    ?: "A previous connection failed. Connect the selected profile to check its status.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         ConnectionPanel(
             selected = panelProfile,
             selectedMode = panelMode,
             proxyShareLan = panelShareLan,
             running = running,
-            phase = connectionState.phase,
-            message = if (connectionState.phase == ConnectionPhase.FAILED) connectionState.message else message,
+            phase = panelConnection.phase,
+            message = if (connectionState.phase == ConnectionPhase.FAILED) panelConnection.message else message,
             metrics = driveMetrics,
             onModeChange = { mode ->
                 selectedMode = mode
