@@ -3,11 +3,86 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"net"
 	"time"
 )
 
 var errMuxSlotPatchBudgetExhausted = errors.New("metadata slot shadow PATCH budget exhausted")
+var errMuxSlotPatchTimeoutFallback = errors.New("metadata slot shadow PATCH unresolved; immutable path continues")
+
+// A classification for diagnostics only: never infer timeout from error text.
+func metadataSlotDiagnosticTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	// A joined integrity/state error must never borrow a timeout classification.
+	current := err
+	for depth := 0; ; depth++ {
+		if depth == 32 {
+			return false
+		}
+		if _, multiple := current.(interface{ Unwrap() []error }); multiple {
+			return false
+		}
+		current = errors.Unwrap(current)
+		if current == nil {
+			break
+		}
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var apiError *GoogleAPIError
+	if errors.As(err, &apiError) || IsTerminalOAuthTokenError(err) {
+		return false
+	}
+	var timeout net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout()
+}
+
+func (m *driveMux) logSlotPatchRecovery(patch metadataSlotPatch, id, name, result string) {
+	if m.t.Observe && m.t.Logger != nil {
+		digest := sha256.Sum256([]byte(patch.description))
+		target := sha256.Sum256([]byte(id + "\x00" + name))
+		m.t.Logger.Printf("mux slot patch recovery role=%s target=%x patch=%x revision=%d result=%s readback_ms=%d", m.role, target, digest, patch.revision, result,
+			muxDriveAttemptTimeout(0, true, m.t.RouteProxy != "").Milliseconds())
+	}
+}
+
+func (m *driveMux) logSlotFiniteRetirement(link *muxSlotLink, reason string, limit int64) {
+	if m.t.Observe && m.t.Logger != nil {
+		generation := sha256.Sum256(link.generation[:])
+		m.t.Logger.Printf("mux slot finite retirement role=%s generation=%x reason=%s limit=%d", m.role, generation, reason, limit)
+	}
+}
+
+func metadataSlotOwnLifetimeExpired(parent, child context.Context) bool {
+	return child.Err() == context.DeadlineExceeded && parent.Err() == nil
+}
+
+// Read-only diagnostic validation of a nonmatching readback. It changes no
+// protocol state or fallback decision, but prevents an integrity failure from
+// being relabeled as an ordinary older/empty snapshot.
+func metadataSlotDiagnosticBenignReadback(peer *metadataSlotPeer, patch metadataSlotPatch, description string) bool {
+	if description == "" || description == patch.description {
+		return true // Freshly created slots have no encrypted description yet.
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	snapshot, err := peer.outbound.codec.open(description)
+	return err == nil && snapshot.revision < patch.revision
+}
+
+func metadataSlotDiagnosticACKResolved(peer *metadataSlotPeer, patch metadataSlotPatch) bool {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	// A received authenticated processing ACK can clear an ambiguous in-flight
+	// PATCH while exact readback is in progress. This is positive evidence,
+	// never permission to suppress a malformed readback or closed generation.
+	return patch.highestSeq > 0 && !peer.outbound.closed && peer.outbound.inFlight == nil && peer.outbound.acked >= patch.highestSeq
+}
 
 // A shadow record contains a real sealed mux batch, but the receiver only
 // authenticates it. The ordinary immutable object remains authoritative for
@@ -113,6 +188,11 @@ func (m *driveMux) runSlotShadow(ctx context.Context, link *muxSlotLink) {
 		}
 	}
 	m.runSlotShadowReader(shadowCtx, link)
+	// Inspect before our own cancel. An inherited parent deadline/cancellation
+	// also ends parent.Err(), and is never labeled as the local lifetime cap.
+	if metadataSlotOwnLifetimeExpired(ctx, shadowCtx) {
+		m.logSlotFiniteRetirement(link, "lifetime_expired", muxSlotShadowLifetime.Milliseconds())
+	}
 	cancel()
 	<-writerDone
 	m.closeSlotLink(link)
@@ -259,7 +339,11 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 	opCtx, stop := context.WithTimeout(ctx, muxDriveAttemptTimeout(len(patch.description), true, m.t.RouteProxy != ""))
 	_, err = store.PatchMetadataSlot(opCtx, id, name, patch.description)
 	stop()
-	if err == nil && link.peer.published(patch) == nil {
+	var publicationErr error
+	if err == nil {
+		publicationErr = link.peer.published(patch)
+	}
+	if err == nil && publicationErr == nil {
 		link.mu.Lock()
 		link.lastAck = ackAtPrepare
 		link.mu.Unlock()
@@ -269,24 +353,62 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 		}
 		return nil
 	}
+	// Parent/shadow shutdown is independent of an owned per-request timeout.
+	// Do not let its cancellation acquire the ordinary recovery label.
+	timeout := ctx.Err() == nil && metadataSlotDiagnosticTimeout(err)
+	if timeout {
+		m.logSlotPatchRecovery(patch, id, name, "timeout_started")
+	} else {
+		m.logSlotPatchRecovery(patch, id, name, "non_timeout_failure")
+	}
 	// The one-shot PATCH has returned, but its response might have been lost.
 	// Exact readback is required before any subsequent PATCH by this writer.
-	if link.peer.ambiguous(patch) == nil {
+	safeFallback := false
+	if ambiguousErr := link.peer.ambiguous(patch); ambiguousErr == nil {
 		readCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(0, true, m.t.RouteProxy != ""))
 		readback, readErr := store.GetMetadataSlot(readCtx, id, name)
 		cancel()
-		if readErr == nil && link.peer.resolveAmbiguous(patch, readback.Description) == nil {
+		var resolveErr error
+		if readErr == nil {
+			resolveErr = link.peer.resolveAmbiguous(patch, readback.Description)
+		}
+		if readErr == nil && resolveErr == nil {
 			link.mu.Lock()
 			link.lastAck = ackAtPrepare
 			link.mu.Unlock()
 			link.completePublicationWaiters(patch.highestSeq)
+			if timeout {
+				if readback.ID == id && readback.Name == name {
+					m.logSlotPatchRecovery(patch, id, name, "exact_readback")
+				} else {
+					m.logSlotPatchRecovery(patch, id, name, "invalid_readback_identity")
+				}
+			}
 			return nil
 		}
+		if timeout && m.t.Observe && m.t.Logger != nil {
+			readTimedOut := ctx.Err() == nil && metadataSlotDiagnosticTimeout(readErr)
+			safeReadback := readTimedOut || readErr == nil && readback.ID == id && readback.Name == name && metadataSlotDiagnosticBenignReadback(link.peer, patch, readback.Description)
+			ackResolved := metadataSlotDiagnosticACKResolved(link.peer, patch)
+			safeFallback = safeReadback && (readTimedOut || errors.Is(resolveErr, errMetadataSlotBusy) || ackResolved)
+			if safeFallback && ackResolved {
+				m.logSlotPatchRecovery(patch, id, name, "peer_processed_before_retirement")
+			}
+			if !safeFallback {
+				m.logSlotPatchRecovery(patch, id, name, "invalid_readback_or_state")
+			}
+		}
+	} else if timeout {
+		m.logSlotPatchRecovery(patch, id, name, "invalid_ambiguity_state")
 	}
 	link.peer.fallbackAndClose() // Delivery callers retain the same sealed immutable fallback.
 	link.mu.Lock()
 	link.sendClosed = true
 	link.mu.Unlock()
+	if safeFallback {
+		m.logSlotPatchRecovery(patch, id, name, "immutable_fallback")
+		return errMuxSlotPatchTimeoutFallback
+	}
 	return errors.New("metadata slot shadow PATCH unresolved; immutable path continues")
 }
 
@@ -310,6 +432,7 @@ func (m *driveMux) runSlotShadowReader(ctx context.Context, link *muxSlotLink) {
 		link.mu.Lock()
 		if link.gets >= muxSlotShadowMaxGets {
 			link.mu.Unlock()
+			m.logSlotFiniteRetirement(link, "get_budget_exhausted", muxSlotShadowMaxGets)
 			return
 		}
 		link.gets++
@@ -529,6 +652,8 @@ func (m *driveMux) logSlotShadowError(err error) {
 		// not acquire a healthy label merely by sharing text or one cause.
 		if err == errMuxSlotPatchBudgetExhausted {
 			reason = "patch_budget_exhausted"
+		} else if err == errMuxSlotPatchTimeoutFallback {
+			reason = "patch_timeout_immutable_fallback"
 		}
 		m.t.Logger.Printf("mux slot shadow stopped role=%s reason=%s authoritative=immutable", m.role, reason)
 	}

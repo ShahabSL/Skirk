@@ -153,6 +153,9 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 		}
 		err := l.uploadPreparedImmutableBatchV4(ctx, batch)
 		if err == nil {
+			if l.mux.t.Observe && l.mux.t.Logger != nil {
+				l.mux.t.Logger.Printf("mux slot async fallback_done role=%s record=%s state=immutable_published", l.mux.role, targetFingerprint(batch.name))
+			}
 			return
 		}
 		// A fallback response can fail after the peer has already processed
