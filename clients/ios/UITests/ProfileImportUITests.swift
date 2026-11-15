@@ -108,7 +108,7 @@ final class ProfileImportUITests: XCTestCase {
         app.terminate()
         app.launch()
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Google authorization is checked when traffic starts"].exists)
+        XCTAssertTrue(app.staticTexts["Google authorization status: not verified here"].exists)
 
         app.buttons["Copy exit renewal command"].tap()
         XCTAssertTrue(app.buttons["Renewal command copied"].exists)
@@ -120,7 +120,7 @@ final class ProfileImportUITests: XCTestCase {
             if allow.waitForExistence(timeout: 5) {
                 allow.tap()
             }
-            let connected = app.staticTexts["Connected"].waitForExistence(timeout: 15)
+            let connected = app.staticTexts["VPN active"].waitForExistence(timeout: 15)
             print("SIMULATOR_PACKET_TUNNEL_CONNECTED=\(connected)")
             let vpnUnavailable = app.staticTexts[
                 "This Simulator cannot reach iOS VPN services. Test profile import here; use a signed iPhone to test the packet tunnel."

@@ -13,11 +13,14 @@ final class TunnelController: ObservableObject {
     @Published private(set) var hasProfile = false
     @Published private(set) var isConnecting = false
     @Published private(set) var routeMode: GoogleRouteMode = .front
+    @Published private(set) var googleAuthorizationNeedsRenewal = false
     @Published var message: String?
 
     private let providerBundleID = "app.skirk.ios.PacketTunnel"
     private let legacyClientIDKey = "skirk.ios.client-id"
     private var cancelRequested = false
+    private var intentionalDisconnect = false
+    private var authorizationCheckGeneration: UInt64 = 0
     private var manager: NETunnelProviderManager?
 
     init() {
@@ -28,7 +31,7 @@ final class TunnelController: ObservableObject {
     var statusText: String {
         if isConnecting { return "Connecting…" }
         return switch status {
-        case .connected: "Connected"
+        case .connected: "VPN active"
         case .connecting, .reasserting: "Connecting…"
         case .disconnecting: "Disconnecting…"
         case .disconnected, .invalid: "Disconnected"
@@ -63,6 +66,8 @@ final class TunnelController: ObservableObject {
         do {
             try ProfileVault.save(value, replacing: replacing)
             hasProfile = true
+            googleAuthorizationNeedsRenewal = false
+            authorizationCheckGeneration &+= 1
             message = nil
         } catch {
             message = error.localizedDescription
@@ -78,6 +83,8 @@ final class TunnelController: ObservableObject {
             try ProfileVault.remove()
             hasProfile = false
             routeMode = .front
+            googleAuthorizationNeedsRenewal = false
+            authorizationCheckGeneration &+= 1
             message = nil
         } catch {
             message = error.localizedDescription
@@ -97,6 +104,9 @@ final class TunnelController: ObservableObject {
         guard canConnect else { return }
         isConnecting = true
         cancelRequested = false
+        intentionalDisconnect = false
+        authorizationCheckGeneration &+= 1
+        message = nil
         defer { isConnecting = false }
         do {
             guard let profile = try ProfileVault.read() else {
@@ -124,12 +134,39 @@ final class TunnelController: ObservableObject {
 
     func disconnect() {
         if isConnecting { cancelRequested = true }
+        intentionalDisconnect = true
+        authorizationCheckGeneration &+= 1
         manager?.connection.stopVPNTunnel()
         refreshStatus()
     }
 
     func refreshStatus() {
+        let previous = status
         status = manager?.connection.status ?? .invalid
+        if status == .connected {
+            intentionalDisconnect = false
+            googleAuthorizationNeedsRenewal = false
+            message = nil
+            return
+        }
+        // A cold launch can expose an old provider error after the profile was replaced.
+        // Only attribute a disconnect to this session after observing a connection attempt.
+        let observedAttempt = isConnecting || previous == .connecting || previous == .connected
+            || previous == .reasserting || previous == .disconnecting
+        guard hasProfile, status == .disconnected, previous != .disconnected,
+              observedAttempt, !intentionalDisconnect,
+              let connection = manager?.connection else { return }
+        let checkGeneration = authorizationCheckGeneration
+        connection.fetchLastDisconnectError { [weak self] error in
+            let authorizationExpired = GoogleAuthorizationStatus.isExpiredDisconnectError(error)
+            guard authorizationExpired else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.status == .disconnected, !self.intentionalDisconnect,
+                      self.authorizationCheckGeneration == checkGeneration else { return }
+                self.googleAuthorizationNeedsRenewal = true
+                self.message = nil
+            }
+        }
     }
 
     private func show(_ error: Error) {
@@ -141,7 +178,13 @@ final class TunnelController: ObservableObject {
             return
         }
         #endif
-        message = error.localizedDescription
+        if GoogleAuthorizationStatus.isExpiredDisconnectError(error)
+            || GoogleAuthorizationStatus.isExpiredEngineError(error.localizedDescription) {
+            googleAuthorizationNeedsRenewal = true
+            message = nil
+        } else {
+            message = error.localizedDescription
+        }
     }
 
     private func stableClientID() throws -> String {

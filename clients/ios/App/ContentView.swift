@@ -40,7 +40,11 @@ struct ContentView: View {
                             .font(.title2)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(tunnel.statusText).font(.headline)
-                            Text("Google Drive transport").font(.subheadline).foregroundStyle(.secondary)
+                            Text(tunnel.status == .connected
+                                 ? "Exit reachability is not verified here"
+                                 : "Google Drive transport")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                             Text("Google access: \(tunnel.routeMode.title)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -58,6 +62,26 @@ struct ContentView: View {
                             Task { await tunnel.connect() }
                         }
                         .disabled(!tunnel.canConnect || replacingProfile)
+                    }
+                }
+
+                if tunnel.hasProfile && tunnel.googleAuthorizationNeedsRenewal {
+                    Section {
+                        Label("Google authorization needs renewal", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Ask the exit owner to renew the kit, then import the updated client.skirk on this iPhone.")
+                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
+                            UIPasteboard.general.string = Self.renewalCommand
+                            copiedRenewalCommand = true
+                        }
+                        Button("Replace profile") {
+                            copiedRenewalCommand = false
+                            replacingProfile = true
+                        }
+                            .disabled(!tunnel.canConnect || replacingProfile)
+                        Link("Open Google OAuth audience settings", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
+                    } footer: {
+                        Text("Production removes the Testing app's seven-day limit for new grants. It cannot revive this one; the exit owner must renew it first.")
                     }
                 }
 
@@ -82,17 +106,19 @@ struct ContentView: View {
                     if tunnel.hasProfile && !replacingProfile {
                         Label("Profile stored on this iPhone", systemImage: "key.fill")
                             .foregroundStyle(.secondary)
-                        Label("Google authorization is checked when traffic starts", systemImage: "questionmark.circle")
-                            .foregroundStyle(.secondary)
-                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
-                            UIPasteboard.general.string = Self.renewalCommand
-                            copiedRenewalCommand = true
+                        if !tunnel.googleAuthorizationNeedsRenewal {
+                            Label("Google authorization status: not verified here", systemImage: "questionmark.circle")
+                                .foregroundStyle(.secondary)
+                            Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
+                                UIPasteboard.general.string = Self.renewalCommand
+                                copiedRenewalCommand = true
+                            }
+                            Button("Replace profile") {
+                                copiedRenewalCommand = false
+                                replacingProfile = true
+                            }
+                                .disabled(!tunnel.canConnect)
                         }
-                        Button("Replace profile") {
-                            copiedRenewalCommand = false
-                            replacingProfile = true
-                        }
-                            .disabled(!tunnel.canConnect)
                         Button("Remove profile", role: .destructive) {
                             showingRemoveConfirmation = true
                         }
@@ -119,7 +145,7 @@ struct ContentView: View {
                 } header: {
                     Text("Profile")
                 } footer: {
-                    if tunnel.hasProfile {
+                    if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("If Google login expires:")
                             Text("1. Copy the command and run it on the exit.")
@@ -129,7 +155,7 @@ struct ContentView: View {
                             Link("Open Google OAuth audience settings", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
                             Text("Production removes the automatic seven-day Testing expiry. A token can still become invalid and need renewal.")
                         }
-                    } else {
+                    } else if !tunnel.hasProfile {
                         Text("Import client.skirk from your Skirk exit. iOS stores it in this device's Keychain.")
                     }
                 }

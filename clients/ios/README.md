@@ -9,6 +9,9 @@ extension routes IPv4 and IPv6 through the local SOCKS listener.
 For system resolver queries, its mapped DNS returns synthetic A and AAAA
 addresses and sends the original hostname to the exit through SOCKS. Android's
 IPv4-only mapped DNS configuration is separate.
+The app reports **VPN active** only when iOS reports the local packet tunnel
+connected. It does not treat that state as proof that the remote exit is
+reachable.
 
 ## Build
 
@@ -51,8 +54,10 @@ A profile whose OAuth
 grant expires needs a renewed profile imported again; publishing the Google
 OAuth app avoids the seven-day Testing grant limit but cannot guarantee an
 indefinite grant.
-The Profile section reports the Google grant as unknown because this screen
-cannot independently verify it. Its Copy exit renewal command button copies
+The Profile section reports the Google grant as unverified because this screen
+cannot independently verify it. If the tunnel reports `invalid_grant`, the app
+shows renewal steps and profile replacement in a separate recovery section.
+Its Copy exit renewal command button copies
 only the nonsecret CLI command; Replace profile accepts the renewed
 `client.skirk` from Files or pasted text into Keychain. Restart the exit after
 renewing its kit. Neither

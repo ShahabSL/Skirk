@@ -210,11 +210,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private func finishStartWithError(_ error: Error, generation currentGeneration: UInt64) {
         guard active && generation == currentGeneration else { return }
-        logger.error("Tunnel start failed: \(error.localizedDescription, privacy: .public)")
+        let reportedError = GoogleAuthorizationStatus.isExpiredEngineError(error.localizedDescription)
+            ? GoogleAuthorizationStatus.expiredDisconnectError : error
+        logger.error("Tunnel start failed: \(reportedError.localizedDescription, privacy: .public)")
         let completion = startCompletion
         startCompletion = nil
         stopRuntime()
-        completion?.finish(error)
+        completion?.finish(reportedError)
     }
 
     private func stopRuntime() {
@@ -245,11 +247,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         timer.setEventHandler { [weak self] in
             guard let self, self.active && self.generation == currentGeneration else { return }
             guard GoTunnelEngine.isRunning else {
-                let error = NSError(
-                    domain: "app.skirk.ios.tunnel",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The Skirk client engine stopped unexpectedly."]
-                )
+                let authorizationExpired = GoogleAuthorizationStatus.isExpiredEngineError(GoTunnelEngine.lastError)
+                let error = authorizationExpired
+                    ? GoogleAuthorizationStatus.expiredDisconnectError
+                    : NSError(
+                        domain: "app.skirk.ios.tunnel",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "The Skirk client engine stopped unexpectedly."]
+                    )
                 self.logger.error("Go tunnel engine stopped unexpectedly")
                 self.stopRuntime()
                 self.cancelTunnelWithError(error)

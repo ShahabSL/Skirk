@@ -39,4 +39,8 @@ enum GoTunnelEngine {
     static var isRunning: Bool {
         EngineIsRunning()
     }
+
+    static var lastError: String {
+        EngineLastError()
+    }
 }
