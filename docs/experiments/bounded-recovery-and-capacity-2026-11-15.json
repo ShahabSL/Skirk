@@ -1,0 +1,2006 @@
+{
+  "date": "2026-11-15",
+  "binary_source": "63532c8a92fef95cdd30a8f1e45eb20dbe207d50",
+  "binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+  "harness": "bace1fc(codea21d1bc);independentreadreviewclear;52Pythontestspassbeforetimings",
+  "host_conditions": {
+    "started_utc": "2026-11-15T19:34:23.234274+00:00",
+    "load_before": [
+      2.91748046875,
+      3.08642578125,
+      3.23388671875
+    ],
+    "condition": "Root coordinated no agent compilers/tests during timed arms; ordinary desktop background uncontrolled",
+    "candidate_source_revision": "63532c8a92fef95cdd30a8f1e45eb20dbe207d50",
+    "candidate_binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+    "control_binary_sha256": "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+    "harness_revision": "bace1fc (codea21d1bc)",
+    "harness_sha256": "69de16d044cf3abebbee1e3d9bc808cf915fed8562a8fa5abda8034ee4c5b362",
+    "persistent_bench_sha256": "0355cff9608e2f1fee1a63bff0f2ddeab369c65b37b78d5a92d316f2df4982fe",
+    "trace_enabled_both": false,
+    "schedule": {
+      "frames": 100,
+      "interval_ms": 1250,
+      "bulk_lead_ms": 1000,
+      "overall_timeout_s": 300,
+      "bulk_timeout_s": 180,
+      "stall_progress_s": 60,
+      "rolling_estimated_units_60s": 125000,
+      "arm_estimated_units": 150000,
+      "cohort_workload_estimated_units": 600000
+    },
+    "counter_fix": "Only exact post-delete owned-slot404verification reclassified as slot_cleanup_probe; calls/units retained; no historical correction",
+    "evidence": "Atomic file checkpoints and synced frame receipt journals equally enabled in all arms",
+    "bounded_recovery_limits": {
+      "arm_timeout_rpc_events": 8,
+      "observed_events_per_60s": 4,
+      "cohort_timeout_rpc_events": 16,
+      "counter_correlation_grace_ms": 250,
+      "errors_retained": true,
+      "success_label": "completed_with_permitted_timeouts"
+    },
+    "recovery_policy_sha256": "e62a7d745cfa77213c7ad3349a5dbeb5bf47f3389ca60c548c4dd90839516da1",
+    "background_condition": "Parent reports external read-only Claude audit stream may coexist; no agent compiler/test loads planned. CPU quiet does not establish idle network; ordinary desktop background uncontrolled. Parent disclosed a few separate-project Firestore administrative GET/API-restoration calls may overlap; no other payload benchmark. No compilers/tests/emulator boot.",
+    "independent_review": "Fresh source verdict clear fora21d1bc;52Python tests passed beforetiming"
+  },
+  "recovery_cohort": {
+    "status": "first_candidate_interrupted_no_control",
+    "planned_order": [
+      "candidate",
+      "control",
+      "control",
+      "candidate"
+    ],
+    "arm": {
+      "run": "0-candidate",
+      "upload_hedge_delay_ms": 0,
+      "upload_stall_hedge_delay_ms": 0,
+      "upload_stall_hedge_budget_bytes": 0,
+      "ok": false,
+      "chunk_size_override": 0,
+      "small_traffic": "persistent",
+      "bulk_direction": "download",
+      "small_response_bytes": 17,
+      "persistent_pipeline": true,
+      "persistent_bulk_lead_ms": 1000,
+      "persistent_overall_timeout_seconds": 300.0,
+      "persistent_bulk_timeout_seconds": 180.0,
+      "quota_guard_estimated_units_per_60s": 125000,
+      "quota_guard_estimated_arm_units": 150000,
+      "quota_guard_estimated_cohort_units": 600000,
+      "sparse_priority": false,
+      "interaction_epoch": true,
+      "separate_upload_pool": false,
+      "metadata_only_priority": false,
+      "metadata_only_max_bytes": 8192,
+      "metadata_slot_v1": true,
+      "metadata_slot_delivery_v1": true,
+      "metadata_slot_async_v1": true,
+      "metadata_slot_primary_v1": false,
+      "separate_metadata_slot_pools": false,
+      "normal_list_page_size": null,
+      "combined_mux_discovery": false,
+      "adaptive_mux_discovery": false,
+      "separate_bulk_media_pool": false,
+      "binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+      "route_mode": "google_front_pinned",
+      "quota_project_header": false,
+      "failure": "RecoveryRejected",
+      "failure_reason": "non_single_multipart_transport_timeout",
+      "bounded_recovery": {
+        "mode": "bounded_observable_normal_multipart_timeouts",
+        "arm_timeout_cap": 8,
+        "observed_timeouts_per_60s_cap": 4,
+        "cohort_timeout_cap": 16,
+        "arm_observed_timeout_events": 0,
+        "cohort_observed_timeout_events": 0,
+        "cohort_permitted_timeout_events": 0,
+        "correlation": "one_to_one_role_counts_not_per_request_identity_or_wire_attempts",
+        "roles": {
+          "client": {
+            "drive_timeout_events": 0,
+            "normal_mux_timeout_events": 0,
+            "reported_api_errors": 0,
+            "normal_mux_records": []
+          },
+          "exit": {
+            "drive_timeout_events": 0,
+            "normal_mux_timeout_events": 0,
+            "reported_api_errors": 0,
+            "normal_mux_records": []
+          }
+        }
+      },
+      "completion_status": "interrupted",
+      "clean_api_run": false,
+      "last_observed_quotas": {
+        "client": {
+          "calls": 157,
+          "units": 9765,
+          "errors": 0,
+          "response_bytes": 23354076,
+          "ops": {
+            "create": {
+              "calls": 2,
+              "units": 100,
+              "errors": 0,
+              "total_duration_ms": 734,
+              "avg_duration_ms": 367,
+              "p50_duration_ms": 384,
+              "p95_duration_ms": 384,
+              "max_duration_ms": 384
+            },
+            "delete": {
+              "calls": 7,
+              "units": 350,
+              "errors": 0,
+              "total_duration_ms": 1893,
+              "avg_duration_ms": 270,
+              "p50_duration_ms": 285,
+              "p95_duration_ms": 311,
+              "max_duration_ms": 311
+            },
+            "download": {
+              "calls": 17,
+              "units": 3400,
+              "errors": 0,
+              "total_duration_ms": 8270,
+              "avg_duration_ms": 486,
+              "p50_duration_ms": 408,
+              "p95_duration_ms": 878,
+              "max_duration_ms": 878
+            },
+            "generate_ids": {
+              "calls": 2,
+              "units": 10,
+              "errors": 0,
+              "total_duration_ms": 378,
+              "avg_duration_ms": 189,
+              "p50_duration_ms": 270,
+              "p95_duration_ms": 270,
+              "max_duration_ms": 270
+            },
+            "list": {
+              "calls": 44,
+              "units": 4400,
+              "errors": 0,
+              "total_duration_ms": 8812,
+              "avg_duration_ms": 200,
+              "p50_duration_ms": 185,
+              "p95_duration_ms": 365,
+              "max_duration_ms": 448
+            },
+            "metadata": {
+              "calls": 61,
+              "units": 305,
+              "errors": 0,
+              "total_duration_ms": 10714,
+              "avg_duration_ms": 175,
+              "p50_duration_ms": 151,
+              "p95_duration_ms": 337,
+              "max_duration_ms": 599
+            },
+            "patch": {
+              "calls": 19,
+              "units": 950,
+              "errors": 0,
+              "total_duration_ms": 7370,
+              "avg_duration_ms": 387,
+              "p50_duration_ms": 324,
+              "p95_duration_ms": 803,
+              "max_duration_ms": 803
+            },
+            "upload": {
+              "calls": 5,
+              "units": 250,
+              "errors": 0,
+              "total_duration_ms": 3311,
+              "avg_duration_ms": 662,
+              "p50_duration_ms": 665,
+              "p95_duration_ms": 716,
+              "max_duration_ms": 716
+            }
+          }
+        },
+        "exit": {
+          "calls": 199,
+          "units": 10585,
+          "errors": 0,
+          "response_bytes": 259986,
+          "ops": {
+            "delete": {
+              "calls": 5,
+              "units": 250,
+              "errors": 0,
+              "total_duration_ms": 1589,
+              "avg_duration_ms": 317,
+              "p50_duration_ms": 302,
+              "p95_duration_ms": 376,
+              "max_duration_ms": 376
+            },
+            "download": {
+              "calls": 6,
+              "units": 1200,
+              "errors": 0,
+              "total_duration_ms": 1686,
+              "avg_duration_ms": 281,
+              "p50_duration_ms": 293,
+              "p95_duration_ms": 340,
+              "max_duration_ms": 340
+            },
+            "generate_ids": {
+              "calls": 1,
+              "units": 5,
+              "errors": 0,
+              "total_duration_ms": 94,
+              "avg_duration_ms": 94,
+              "p50_duration_ms": 94,
+              "p95_duration_ms": 94,
+              "max_duration_ms": 94
+            },
+            "list": {
+              "calls": 64,
+              "units": 6400,
+              "errors": 0,
+              "total_duration_ms": 15514,
+              "avg_duration_ms": 242,
+              "p50_duration_ms": 249,
+              "p95_duration_ms": 370,
+              "max_duration_ms": 543
+            },
+            "metadata": {
+              "calls": 76,
+              "units": 380,
+              "errors": 0,
+              "total_duration_ms": 17348,
+              "avg_duration_ms": 228,
+              "p50_duration_ms": 231,
+              "p95_duration_ms": 356,
+              "max_duration_ms": 457
+            },
+            "patch": {
+              "calls": 22,
+              "units": 1100,
+              "errors": 0,
+              "total_duration_ms": 10012,
+              "avg_duration_ms": 455,
+              "p50_duration_ms": 428,
+              "p95_duration_ms": 646,
+              "max_duration_ms": 708
+            },
+            "upload": {
+              "calls": 25,
+              "units": 1250,
+              "errors": 0,
+              "total_duration_ms": 54865,
+              "avg_duration_ms": 2194,
+              "p50_duration_ms": 1899,
+              "p95_duration_ms": 4399,
+              "max_duration_ms": 4411
+            }
+          }
+        }
+      },
+      "interruption_evidence": {
+        "status": "first_candidate_stopped_on_disallowed_metadata_timeout",
+        "drive_failed_log_events": [
+          {
+            "role": "client",
+            "op": "metadata",
+            "attempts": 1,
+            "status": "none",
+            "duration_ms": 6002,
+            "reason": "context deadline exceeded",
+            "log_time_local": "2026-11-15 13:34:52"
+          }
+        ],
+        "verified_echo_receipts": 9,
+        "full_file_checkpoint": false,
+        "normal_multipart_timeout_allowance_consumed": 0,
+        "last_metrics_error_count": 0,
+        "metrics_lag_note": "Observer saw failedmetadataRPCbeforethelastperiodicmetricssnapshot;0countersisnot0actualfailures",
+        "cleanup_verified_utc": "2026-11-15T19:36:53.781458+00:00",
+        "cleanup_deleted": 25,
+        "exact_prefix_count": 2,
+        "immediate_and31s_zero": true,
+        "configs_remaining": 0
+      },
+      "partial_receipts": [
+        {
+          "kind": "observation_start",
+          "probe_started_utc": "2026-11-15T19:34:32.925797+00:00",
+          "prelude_verified": true,
+          "prelude_bytes_each_direction": 131072,
+          "expected_frames": 100,
+          "frame_bytes": 64
+        },
+        {
+          "kind": "small",
+          "index": 0,
+          "start_offset_ms": 1008.41,
+          "queue_ms": 8.41,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1182.407,
+          "total_ms": 1182.527,
+          "scheduled_ttfb_ms": 1190.817,
+          "scheduled_total_ms": 1190.937,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 1,
+          "start_offset_ms": 2250.768,
+          "queue_ms": 0.768,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1378.722,
+          "total_ms": 1378.784,
+          "scheduled_ttfb_ms": 1379.49,
+          "scheduled_total_ms": 1379.552,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 2,
+          "start_offset_ms": 3505.726,
+          "queue_ms": 5.726,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1148.597,
+          "total_ms": 1148.63,
+          "scheduled_ttfb_ms": 1154.323,
+          "scheduled_total_ms": 1154.356,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 3,
+          "start_offset_ms": 4753.919,
+          "queue_ms": 3.919,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1825.793,
+          "total_ms": 1825.857,
+          "scheduled_ttfb_ms": 1829.712,
+          "scheduled_total_ms": 1829.776,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 4,
+          "start_offset_ms": 6007.365,
+          "queue_ms": 7.365,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1623.531,
+          "total_ms": 1623.6,
+          "scheduled_ttfb_ms": 1630.896,
+          "scheduled_total_ms": 1630.965,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 5,
+          "start_offset_ms": 7251.903,
+          "queue_ms": 1.903,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1427.176,
+          "total_ms": 1427.221,
+          "scheduled_ttfb_ms": 1429.079,
+          "scheduled_total_ms": 1429.124,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 6,
+          "start_offset_ms": 8504.756,
+          "queue_ms": 4.756,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1417.537,
+          "total_ms": 1417.586,
+          "scheduled_ttfb_ms": 1422.293,
+          "scheduled_total_ms": 1422.342,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 7,
+          "start_offset_ms": 9752.017,
+          "queue_ms": 2.017,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 2088.519,
+          "total_ms": 2088.573,
+          "scheduled_ttfb_ms": 2090.536,
+          "scheduled_total_ms": 2090.59,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        },
+        {
+          "kind": "small",
+          "index": 8,
+          "start_offset_ms": 11002.319,
+          "queue_ms": 2.319,
+          "overlapped_bulk_at_dispatch": true,
+          "overlapped_bulk_at_start": true,
+          "ok": true,
+          "failure": null,
+          "http_status": null,
+          "ttfb_ms": 1745.507,
+          "total_ms": 1745.563,
+          "scheduled_ttfb_ms": 1747.826,
+          "scheduled_total_ms": 1747.882,
+          "body_bytes": 64,
+          "uploaded_bytes": 64,
+          "transfer_bytes": 64,
+          "goodput_mbps": null,
+          "integrity_checked": true
+        }
+      ],
+      "cleanup": {
+        "deleted": 25,
+        "prefix_count": 2,
+        "immediate_zero": true,
+        "31s_zero": true,
+        "config_copies_remaining": 0
+      }
+    },
+    "raw_path": "slot-async-wt/.skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/"
+  },
+  "five_client_cohort": {
+    "status": "baselinecomplete_asyncinterrupted_plusobservercleanupfailure",
+    "planned_order": [
+      "baseline",
+      "async"
+    ],
+    "baseline": {
+      "aggregate_bulk_mbps": 27.456,
+      "all_small_body_p95_ms": 11333.019,
+      "all_small_scheduled_body_p95_ms": 11342.099,
+      "arm": 0,
+      "barrier_release_utc": "2026-11-15T19:38:16.904656+00:00",
+      "binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+      "bulk_successes": 5,
+      "bulk_verified_bytes": 83886080,
+      "cleanup": {
+        "deleted": 41,
+        "ok": true,
+        "exact_prefix_count": 2,
+        "immediate_and31s_zero": true,
+        "estimated_units_minimum": 2650,
+        "delayed_rounds": 1
+      },
+      "client_mixed_slot_activity": [
+        {
+          "active": 0,
+          "fallback": 0,
+          "handoff": 0,
+          "matched_down_records": 0,
+          "matched_up_records": 0,
+          "processed": 0,
+          "processing_ack": 0,
+          "publication": 0,
+          "stopped": 0
+        },
+        {
+          "active": 0,
+          "fallback": 0,
+          "handoff": 0,
+          "matched_down_records": 0,
+          "matched_up_records": 0,
+          "processed": 0,
+          "processing_ack": 0,
+          "publication": 0,
+          "stopped": 0
+        },
+        {
+          "active": 0,
+          "fallback": 0,
+          "handoff": 0,
+          "matched_down_records": 0,
+          "matched_up_records": 0,
+          "processed": 0,
+          "processing_ack": 0,
+          "publication": 0,
+          "stopped": 0
+        },
+        {
+          "active": 0,
+          "fallback": 0,
+          "handoff": 0,
+          "matched_down_records": 0,
+          "matched_up_records": 0,
+          "processed": 0,
+          "processing_ack": 0,
+          "publication": 0,
+          "stopped": 0
+        },
+        {
+          "active": 0,
+          "fallback": 0,
+          "handoff": 0,
+          "matched_down_records": 0,
+          "matched_up_records": 0,
+          "processed": 0,
+          "processing_ack": 0,
+          "publication": 0,
+          "stopped": 0
+        }
+      ],
+      "clients": 5,
+      "drive_calls": 737,
+      "drive_errors": 0,
+      "drive_units": 75280,
+      "exit_slot_activity": {
+        "active": 0,
+        "fallback": 0,
+        "handoff": 0,
+        "processed": 0,
+        "processing_ack": 0,
+        "publication": 0,
+        "stopped": 0
+      },
+      "experimental_async": false,
+      "last_observed_role_quotas": {
+        "client-0": {
+          "calls": 96,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 463,
+              "calls": 5,
+              "errors": 0,
+              "max_duration_ms": 840,
+              "p50_duration_ms": 286,
+              "p95_duration_ms": 840,
+              "total_duration_ms": 2315,
+              "units": 250
+            },
+            "download": {
+              "avg_duration_ms": 304,
+              "calls": 7,
+              "errors": 0,
+              "max_duration_ms": 545,
+              "p50_duration_ms": 271,
+              "p95_duration_ms": 545,
+              "total_duration_ms": 2132,
+              "units": 1400
+            },
+            "generate_ids": {
+              "avg_duration_ms": 156,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 156,
+              "p50_duration_ms": 156,
+              "p95_duration_ms": 156,
+              "total_duration_ms": 156,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 300,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 772,
+              "p50_duration_ms": 260,
+              "p95_duration_ms": 593,
+              "total_duration_ms": 19240,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2517,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 10051,
+              "p50_duration_ms": 1153,
+              "p95_duration_ms": 10051,
+              "total_duration_ms": 47834,
+              "units": 950
+            }
+          },
+          "response_bytes": 154188,
+          "units": 9005
+        },
+        "client-1": {
+          "calls": 93,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 339,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 567,
+              "p50_duration_ms": 350,
+              "p95_duration_ms": 567,
+              "total_duration_ms": 2036,
+              "units": 300
+            },
+            "download": {
+              "avg_duration_ms": 410,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 503,
+              "p50_duration_ms": 450,
+              "p95_duration_ms": 503,
+              "total_duration_ms": 2464,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 145,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 145,
+              "p50_duration_ms": 145,
+              "p95_duration_ms": 145,
+              "total_duration_ms": 145,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 262,
+              "calls": 61,
+              "errors": 0,
+              "max_duration_ms": 666,
+              "p50_duration_ms": 265,
+              "p95_duration_ms": 458,
+              "total_duration_ms": 16008,
+              "units": 6100
+            },
+            "upload": {
+              "avg_duration_ms": 2008,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 7339,
+              "p50_duration_ms": 1021,
+              "p95_duration_ms": 7339,
+              "total_duration_ms": 38156,
+              "units": 950
+            }
+          },
+          "response_bytes": 152245,
+          "units": 8555
+        },
+        "client-2": {
+          "calls": 94,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 359,
+              "calls": 4,
+              "errors": 0,
+              "max_duration_ms": 518,
+              "p50_duration_ms": 383,
+              "p95_duration_ms": 518,
+              "total_duration_ms": 1436,
+              "units": 200
+            },
+            "download": {
+              "avg_duration_ms": 421,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 590,
+              "p50_duration_ms": 478,
+              "p95_duration_ms": 590,
+              "total_duration_ms": 2529,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 125,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 125,
+              "p50_duration_ms": 125,
+              "p95_duration_ms": 125,
+              "total_duration_ms": 125,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 291,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 594,
+              "p50_duration_ms": 308,
+              "p95_duration_ms": 505,
+              "total_duration_ms": 18682,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2454,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 9108,
+              "p50_duration_ms": 961,
+              "p95_duration_ms": 9108,
+              "total_duration_ms": 46634,
+              "units": 950
+            }
+          },
+          "response_bytes": 153418,
+          "units": 8755
+        },
+        "client-3": {
+          "calls": 98,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 391,
+              "calls": 5,
+              "errors": 0,
+              "max_duration_ms": 720,
+              "p50_duration_ms": 282,
+              "p95_duration_ms": 720,
+              "total_duration_ms": 1955,
+              "units": 250
+            },
+            "download": {
+              "avg_duration_ms": 468,
+              "calls": 7,
+              "errors": 0,
+              "max_duration_ms": 726,
+              "p50_duration_ms": 540,
+              "p95_duration_ms": 726,
+              "total_duration_ms": 3277,
+              "units": 1400
+            },
+            "generate_ids": {
+              "avg_duration_ms": 116,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 116,
+              "p50_duration_ms": 116,
+              "p95_duration_ms": 116,
+              "total_duration_ms": 116,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 297,
+              "calls": 65,
+              "errors": 0,
+              "max_duration_ms": 666,
+              "p50_duration_ms": 289,
+              "p95_duration_ms": 529,
+              "total_duration_ms": 19318,
+              "units": 6500
+            },
+            "upload": {
+              "avg_duration_ms": 2370,
+              "calls": 20,
+              "errors": 0,
+              "max_duration_ms": 9743,
+              "p50_duration_ms": 1120,
+              "p95_duration_ms": 9743,
+              "total_duration_ms": 47400,
+              "units": 1000
+            }
+          },
+          "response_bytes": 153476,
+          "units": 9155
+        },
+        "client-4": {
+          "calls": 93,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 281,
+              "calls": 4,
+              "errors": 0,
+              "max_duration_ms": 385,
+              "p50_duration_ms": 259,
+              "p95_duration_ms": 385,
+              "total_duration_ms": 1127,
+              "units": 200
+            },
+            "download": {
+              "avg_duration_ms": 375,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 533,
+              "p50_duration_ms": 461,
+              "p95_duration_ms": 533,
+              "total_duration_ms": 2255,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 112,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 112,
+              "p50_duration_ms": 112,
+              "p95_duration_ms": 112,
+              "total_duration_ms": 112,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 311,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 1121,
+              "p50_duration_ms": 310,
+              "p95_duration_ms": 588,
+              "total_duration_ms": 19937,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2689,
+              "calls": 18,
+              "errors": 0,
+              "max_duration_ms": 10379,
+              "p50_duration_ms": 1045,
+              "p95_duration_ms": 10379,
+              "total_duration_ms": 48417,
+              "units": 900
+            }
+          },
+          "response_bytes": 152455,
+          "units": 8705
+        },
+        "exit": {
+          "calls": 263,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 439,
+              "calls": 60,
+              "errors": 0,
+              "max_duration_ms": 2203,
+              "p50_duration_ms": 288,
+              "p95_duration_ms": 1824,
+              "total_duration_ms": 26389,
+              "units": 3000
+            },
+            "download": {
+              "avg_duration_ms": 737,
+              "calls": 95,
+              "errors": 0,
+              "max_duration_ms": 3550,
+              "p50_duration_ms": 383,
+              "p95_duration_ms": 2531,
+              "total_duration_ms": 70045,
+              "units": 19000
+            },
+            "generate_ids": {
+              "avg_duration_ms": 116,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 116,
+              "p50_duration_ms": 116,
+              "p95_duration_ms": 116,
+              "total_duration_ms": 116,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 326,
+              "calls": 75,
+              "errors": 0,
+              "max_duration_ms": 2387,
+              "p50_duration_ms": 198,
+              "p95_duration_ms": 931,
+              "total_duration_ms": 24511,
+              "units": 7500
+            },
+            "upload": {
+              "avg_duration_ms": 838,
+              "calls": 32,
+              "errors": 0,
+              "max_duration_ms": 2473,
+              "p50_duration_ms": 736,
+              "p95_duration_ms": 1254,
+              "total_duration_ms": 26832,
+              "units": 1600
+            }
+          },
+          "response_bytes": 85275015,
+          "units": 31105
+        }
+      },
+      "mode": "baseline",
+      "ok": true,
+      "origin_hash_failures": 0,
+      "peak_parallel_bulk": 5,
+      "roles": {
+        "client-0": {
+          "calls": 96,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 463,
+              "calls": 5,
+              "errors": 0,
+              "max_duration_ms": 840,
+              "p50_duration_ms": 286,
+              "p95_duration_ms": 840,
+              "total_duration_ms": 2315,
+              "units": 250
+            },
+            "download": {
+              "avg_duration_ms": 304,
+              "calls": 7,
+              "errors": 0,
+              "max_duration_ms": 545,
+              "p50_duration_ms": 271,
+              "p95_duration_ms": 545,
+              "total_duration_ms": 2132,
+              "units": 1400
+            },
+            "generate_ids": {
+              "avg_duration_ms": 156,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 156,
+              "p50_duration_ms": 156,
+              "p95_duration_ms": 156,
+              "total_duration_ms": 156,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 300,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 772,
+              "p50_duration_ms": 260,
+              "p95_duration_ms": 593,
+              "total_duration_ms": 19240,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2517,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 10051,
+              "p50_duration_ms": 1153,
+              "p95_duration_ms": 10051,
+              "total_duration_ms": 47834,
+              "units": 950
+            }
+          },
+          "response_bytes": 154188,
+          "units": 9005
+        },
+        "client-1": {
+          "calls": 93,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 339,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 567,
+              "p50_duration_ms": 350,
+              "p95_duration_ms": 567,
+              "total_duration_ms": 2036,
+              "units": 300
+            },
+            "download": {
+              "avg_duration_ms": 410,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 503,
+              "p50_duration_ms": 450,
+              "p95_duration_ms": 503,
+              "total_duration_ms": 2464,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 145,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 145,
+              "p50_duration_ms": 145,
+              "p95_duration_ms": 145,
+              "total_duration_ms": 145,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 262,
+              "calls": 61,
+              "errors": 0,
+              "max_duration_ms": 666,
+              "p50_duration_ms": 265,
+              "p95_duration_ms": 458,
+              "total_duration_ms": 16008,
+              "units": 6100
+            },
+            "upload": {
+              "avg_duration_ms": 2008,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 7339,
+              "p50_duration_ms": 1021,
+              "p95_duration_ms": 7339,
+              "total_duration_ms": 38156,
+              "units": 950
+            }
+          },
+          "response_bytes": 152245,
+          "units": 8555
+        },
+        "client-2": {
+          "calls": 94,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 359,
+              "calls": 4,
+              "errors": 0,
+              "max_duration_ms": 518,
+              "p50_duration_ms": 383,
+              "p95_duration_ms": 518,
+              "total_duration_ms": 1436,
+              "units": 200
+            },
+            "download": {
+              "avg_duration_ms": 421,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 590,
+              "p50_duration_ms": 478,
+              "p95_duration_ms": 590,
+              "total_duration_ms": 2529,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 125,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 125,
+              "p50_duration_ms": 125,
+              "p95_duration_ms": 125,
+              "total_duration_ms": 125,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 291,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 594,
+              "p50_duration_ms": 308,
+              "p95_duration_ms": 505,
+              "total_duration_ms": 18682,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2454,
+              "calls": 19,
+              "errors": 0,
+              "max_duration_ms": 9108,
+              "p50_duration_ms": 961,
+              "p95_duration_ms": 9108,
+              "total_duration_ms": 46634,
+              "units": 950
+            }
+          },
+          "response_bytes": 153418,
+          "units": 8755
+        },
+        "client-3": {
+          "calls": 98,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 391,
+              "calls": 5,
+              "errors": 0,
+              "max_duration_ms": 720,
+              "p50_duration_ms": 282,
+              "p95_duration_ms": 720,
+              "total_duration_ms": 1955,
+              "units": 250
+            },
+            "download": {
+              "avg_duration_ms": 468,
+              "calls": 7,
+              "errors": 0,
+              "max_duration_ms": 726,
+              "p50_duration_ms": 540,
+              "p95_duration_ms": 726,
+              "total_duration_ms": 3277,
+              "units": 1400
+            },
+            "generate_ids": {
+              "avg_duration_ms": 116,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 116,
+              "p50_duration_ms": 116,
+              "p95_duration_ms": 116,
+              "total_duration_ms": 116,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 297,
+              "calls": 65,
+              "errors": 0,
+              "max_duration_ms": 666,
+              "p50_duration_ms": 289,
+              "p95_duration_ms": 529,
+              "total_duration_ms": 19318,
+              "units": 6500
+            },
+            "upload": {
+              "avg_duration_ms": 2370,
+              "calls": 20,
+              "errors": 0,
+              "max_duration_ms": 9743,
+              "p50_duration_ms": 1120,
+              "p95_duration_ms": 9743,
+              "total_duration_ms": 47400,
+              "units": 1000
+            }
+          },
+          "response_bytes": 153476,
+          "units": 9155
+        },
+        "client-4": {
+          "calls": 93,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 281,
+              "calls": 4,
+              "errors": 0,
+              "max_duration_ms": 385,
+              "p50_duration_ms": 259,
+              "p95_duration_ms": 385,
+              "total_duration_ms": 1127,
+              "units": 200
+            },
+            "download": {
+              "avg_duration_ms": 375,
+              "calls": 6,
+              "errors": 0,
+              "max_duration_ms": 533,
+              "p50_duration_ms": 461,
+              "p95_duration_ms": 533,
+              "total_duration_ms": 2255,
+              "units": 1200
+            },
+            "generate_ids": {
+              "avg_duration_ms": 112,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 112,
+              "p50_duration_ms": 112,
+              "p95_duration_ms": 112,
+              "total_duration_ms": 112,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 311,
+              "calls": 64,
+              "errors": 0,
+              "max_duration_ms": 1121,
+              "p50_duration_ms": 310,
+              "p95_duration_ms": 588,
+              "total_duration_ms": 19937,
+              "units": 6400
+            },
+            "upload": {
+              "avg_duration_ms": 2689,
+              "calls": 18,
+              "errors": 0,
+              "max_duration_ms": 10379,
+              "p50_duration_ms": 1045,
+              "p95_duration_ms": 10379,
+              "total_duration_ms": 48417,
+              "units": 900
+            }
+          },
+          "response_bytes": 152455,
+          "units": 8705
+        },
+        "exit": {
+          "calls": 263,
+          "errors": 0,
+          "ops": {
+            "delete": {
+              "avg_duration_ms": 439,
+              "calls": 60,
+              "errors": 0,
+              "max_duration_ms": 2203,
+              "p50_duration_ms": 288,
+              "p95_duration_ms": 1824,
+              "total_duration_ms": 26389,
+              "units": 3000
+            },
+            "download": {
+              "avg_duration_ms": 737,
+              "calls": 95,
+              "errors": 0,
+              "max_duration_ms": 3550,
+              "p50_duration_ms": 383,
+              "p95_duration_ms": 2531,
+              "total_duration_ms": 70045,
+              "units": 19000
+            },
+            "generate_ids": {
+              "avg_duration_ms": 116,
+              "calls": 1,
+              "errors": 0,
+              "max_duration_ms": 116,
+              "p50_duration_ms": 116,
+              "p95_duration_ms": 116,
+              "total_duration_ms": 116,
+              "units": 5
+            },
+            "list": {
+              "avg_duration_ms": 326,
+              "calls": 75,
+              "errors": 0,
+              "max_duration_ms": 2387,
+              "p50_duration_ms": 198,
+              "p95_duration_ms": 931,
+              "total_duration_ms": 24511,
+              "units": 7500
+            },
+            "upload": {
+              "avg_duration_ms": 838,
+              "calls": 32,
+              "errors": 0,
+              "max_duration_ms": 2473,
+              "p50_duration_ms": 736,
+              "p95_duration_ms": 1254,
+              "total_duration_ms": 26832,
+              "units": 1600
+            }
+          },
+          "response_bytes": 85275015,
+          "units": 31105
+        }
+      },
+      "route_mode": "google_front_pinned",
+      "run_id_source": "CLI-generated random run IDs, verified unique in actual startup logs",
+      "session_fingerprint": "c93fc84427ce",
+      "small_failures": 0,
+      "small_overlap_count": 60,
+      "small_overlap_scheduled_body_p95_ms": 11342.099,
+      "small_overlap_scheduled_p95_ms": 11342.046,
+      "small_successes": 60,
+      "telemetry_complete": true,
+      "verified_unique_actual_namespaces": 5
+    },
+    "async": {
+      "status": "asyncinterruptedandmanuallycleaned_afterharnessEPERM",
+      "original_async_arm_summary_present": false,
+      "original_guard_exception_text": null,
+      "original_guard_exception_note": "Lostwhenfinallyraised; earliestobservedAPIfailuresdo notproveexactdiscardedexceptiontext",
+      "roles": {
+        "exit": {
+          "quota": {
+            "calls": 950,
+            "units": 36655,
+            "errors": 10,
+            "last_error_reason": "timeout",
+            "response_bytes": 31620769,
+            "ops": {
+              "delete": {
+                "calls": 76,
+                "units": 3800,
+                "errors": 0,
+                "total_duration_ms": 39684,
+                "avg_duration_ms": 522,
+                "p50_duration_ms": 266,
+                "p95_duration_ms": 431,
+                "max_duration_ms": 8257
+              },
+              "download": {
+                "calls": 95,
+                "units": 19000,
+                "errors": 2,
+                "last_error_reason": "timeout",
+                "total_duration_ms": 204006,
+                "avg_duration_ms": 2147,
+                "p50_duration_ms": 392,
+                "p95_duration_ms": 7756,
+                "max_duration_ms": 8500
+              },
+              "generate_ids": {
+                "calls": 1,
+                "units": 5,
+                "errors": 0,
+                "total_duration_ms": 104,
+                "avg_duration_ms": 104,
+                "p50_duration_ms": 104,
+                "p95_duration_ms": 104,
+                "max_duration_ms": 104
+              },
+              "list": {
+                "calls": 66,
+                "units": 6600,
+                "errors": 0,
+                "total_duration_ms": 34011,
+                "avg_duration_ms": 515,
+                "p50_duration_ms": 213,
+                "p95_duration_ms": 1964,
+                "max_duration_ms": 7848
+              },
+              "metadata": {
+                "calls": 630,
+                "units": 3150,
+                "errors": 8,
+                "last_error_reason": "timeout",
+                "total_duration_ms": 198906,
+                "avg_duration_ms": 315,
+                "p50_duration_ms": 151,
+                "p95_duration_ms": 329,
+                "max_duration_ms": 6002
+              },
+              "patch": {
+                "calls": 33,
+                "units": 1650,
+                "errors": 0,
+                "total_duration_ms": 64834,
+                "avg_duration_ms": 1964,
+                "p50_duration_ms": 461,
+                "p95_duration_ms": 6608,
+                "max_duration_ms": 8260
+              },
+              "upload": {
+                "calls": 49,
+                "units": 2450,
+                "errors": 0,
+                "total_duration_ms": 176915,
+                "avg_duration_ms": 3610,
+                "p50_duration_ms": 2390,
+                "p95_duration_ms": 8121,
+                "max_duration_ms": 8463
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        },
+        "client-0": {
+          "quota": {
+            "calls": 262,
+            "units": 9625,
+            "errors": 0,
+            "response_bytes": 355825,
+            "ops": {
+              "create": {
+                "calls": 2,
+                "units": 100,
+                "errors": 0,
+                "total_duration_ms": 772,
+                "avg_duration_ms": 386,
+                "p50_duration_ms": 404,
+                "p95_duration_ms": 404,
+                "max_duration_ms": 404
+              },
+              "delete": {
+                "calls": 12,
+                "units": 600,
+                "errors": 0,
+                "total_duration_ms": 6132,
+                "avg_duration_ms": 511,
+                "p50_duration_ms": 580,
+                "p95_duration_ms": 765,
+                "max_duration_ms": 765
+              },
+              "download": {
+                "calls": 12,
+                "units": 2400,
+                "errors": 0,
+                "total_duration_ms": 8221,
+                "avg_duration_ms": 685,
+                "p50_duration_ms": 585,
+                "p95_duration_ms": 1113,
+                "max_duration_ms": 1113
+              },
+              "generate_ids": {
+                "calls": 2,
+                "units": 10,
+                "errors": 0,
+                "total_duration_ms": 467,
+                "avg_duration_ms": 233,
+                "p50_duration_ms": 307,
+                "p95_duration_ms": 307,
+                "max_duration_ms": 307
+              },
+              "list": {
+                "calls": 43,
+                "units": 4300,
+                "errors": 0,
+                "total_duration_ms": 18136,
+                "avg_duration_ms": 421,
+                "p50_duration_ms": 472,
+                "p95_duration_ms": 765,
+                "max_duration_ms": 790
+              },
+              "metadata": {
+                "calls": 163,
+                "units": 815,
+                "errors": 0,
+                "total_duration_ms": 37838,
+                "avg_duration_ms": 232,
+                "p50_duration_ms": 155,
+                "p95_duration_ms": 528,
+                "max_duration_ms": 707
+              },
+              "patch": {
+                "calls": 6,
+                "units": 300,
+                "errors": 0,
+                "total_duration_ms": 4856,
+                "avg_duration_ms": 809,
+                "p50_duration_ms": 751,
+                "p95_duration_ms": 1114,
+                "max_duration_ms": 1114
+              },
+              "upload": {
+                "calls": 22,
+                "units": 1100,
+                "errors": 0,
+                "total_duration_ms": 60176,
+                "avg_duration_ms": 2735,
+                "p50_duration_ms": 1143,
+                "p95_duration_ms": 11125,
+                "max_duration_ms": 12993
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        },
+        "client-1": {
+          "quota": {
+            "calls": 249,
+            "units": 8600,
+            "errors": 0,
+            "response_bytes": 494230,
+            "ops": {
+              "create": {
+                "calls": 2,
+                "units": 100,
+                "errors": 0,
+                "total_duration_ms": 771,
+                "avg_duration_ms": 385,
+                "p50_duration_ms": 419,
+                "p95_duration_ms": 419,
+                "max_duration_ms": 419
+              },
+              "delete": {
+                "calls": 9,
+                "units": 450,
+                "errors": 0,
+                "total_duration_ms": 4954,
+                "avg_duration_ms": 550,
+                "p50_duration_ms": 581,
+                "p95_duration_ms": 1066,
+                "max_duration_ms": 1066
+              },
+              "download": {
+                "calls": 9,
+                "units": 1800,
+                "errors": 0,
+                "total_duration_ms": 5879,
+                "avg_duration_ms": 653,
+                "p50_duration_ms": 571,
+                "p95_duration_ms": 993,
+                "max_duration_ms": 993
+              },
+              "generate_ids": {
+                "calls": 2,
+                "units": 10,
+                "errors": 0,
+                "total_duration_ms": 524,
+                "avg_duration_ms": 262,
+                "p50_duration_ms": 326,
+                "p95_duration_ms": 326,
+                "max_duration_ms": 326
+              },
+              "list": {
+                "calls": 40,
+                "units": 4000,
+                "errors": 0,
+                "total_duration_ms": 18246,
+                "avg_duration_ms": 456,
+                "p50_duration_ms": 475,
+                "p95_duration_ms": 1023,
+                "max_duration_ms": 1064
+              },
+              "metadata": {
+                "calls": 158,
+                "units": 790,
+                "errors": 0,
+                "total_duration_ms": 37792,
+                "avg_duration_ms": 239,
+                "p50_duration_ms": 160,
+                "p95_duration_ms": 575,
+                "max_duration_ms": 779
+              },
+              "patch": {
+                "calls": 5,
+                "units": 250,
+                "errors": 0,
+                "total_duration_ms": 3514,
+                "avg_duration_ms": 702,
+                "p50_duration_ms": 665,
+                "p95_duration_ms": 834,
+                "max_duration_ms": 834
+              },
+              "upload": {
+                "calls": 24,
+                "units": 1200,
+                "errors": 0,
+                "total_duration_ms": 62802,
+                "avg_duration_ms": 2616,
+                "p50_duration_ms": 1095,
+                "p95_duration_ms": 12247,
+                "max_duration_ms": 12798
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        },
+        "client-2": {
+          "quota": {
+            "calls": 264,
+            "units": 9585,
+            "errors": 0,
+            "response_bytes": 350249,
+            "ops": {
+              "create": {
+                "calls": 2,
+                "units": 100,
+                "errors": 0,
+                "total_duration_ms": 855,
+                "avg_duration_ms": 427,
+                "p50_duration_ms": 464,
+                "p95_duration_ms": 464,
+                "max_duration_ms": 464
+              },
+              "delete": {
+                "calls": 10,
+                "units": 500,
+                "errors": 0,
+                "total_duration_ms": 4674,
+                "avg_duration_ms": 467,
+                "p50_duration_ms": 538,
+                "p95_duration_ms": 759,
+                "max_duration_ms": 759
+              },
+              "download": {
+                "calls": 10,
+                "units": 2000,
+                "errors": 0,
+                "total_duration_ms": 4653,
+                "avg_duration_ms": 465,
+                "p50_duration_ms": 503,
+                "p95_duration_ms": 629,
+                "max_duration_ms": 629
+              },
+              "generate_ids": {
+                "calls": 2,
+                "units": 10,
+                "errors": 0,
+                "total_duration_ms": 412,
+                "avg_duration_ms": 206,
+                "p50_duration_ms": 313,
+                "p95_duration_ms": 313,
+                "max_duration_ms": 313
+              },
+              "list": {
+                "calls": 48,
+                "units": 4800,
+                "errors": 0,
+                "total_duration_ms": 17591,
+                "avg_duration_ms": 366,
+                "p50_duration_ms": 309,
+                "p95_duration_ms": 662,
+                "max_duration_ms": 2207
+              },
+              "metadata": {
+                "calls": 165,
+                "units": 825,
+                "errors": 0,
+                "total_duration_ms": 35092,
+                "avg_duration_ms": 212,
+                "p50_duration_ms": 152,
+                "p95_duration_ms": 482,
+                "max_duration_ms": 785
+              },
+              "patch": {
+                "calls": 4,
+                "units": 200,
+                "errors": 0,
+                "total_duration_ms": 1632,
+                "avg_duration_ms": 408,
+                "p50_duration_ms": 395,
+                "p95_duration_ms": 527,
+                "max_duration_ms": 527
+              },
+              "upload": {
+                "calls": 23,
+                "units": 1150,
+                "errors": 0,
+                "total_duration_ms": 52855,
+                "avg_duration_ms": 2298,
+                "p50_duration_ms": 1013,
+                "p95_duration_ms": 7894,
+                "max_duration_ms": 8966
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        },
+        "client-3": {
+          "quota": {
+            "calls": 246,
+            "units": 8535,
+            "errors": 0,
+            "response_bytes": 499617,
+            "ops": {
+              "create": {
+                "calls": 2,
+                "units": 100,
+                "errors": 0,
+                "total_duration_ms": 842,
+                "avg_duration_ms": 421,
+                "p50_duration_ms": 428,
+                "p95_duration_ms": 428,
+                "max_duration_ms": 428
+              },
+              "delete": {
+                "calls": 7,
+                "units": 350,
+                "errors": 0,
+                "total_duration_ms": 3588,
+                "avg_duration_ms": 512,
+                "p50_duration_ms": 579,
+                "p95_duration_ms": 635,
+                "max_duration_ms": 635
+              },
+              "download": {
+                "calls": 7,
+                "units": 1400,
+                "errors": 0,
+                "total_duration_ms": 3978,
+                "avg_duration_ms": 568,
+                "p50_duration_ms": 531,
+                "p95_duration_ms": 935,
+                "max_duration_ms": 935
+              },
+              "generate_ids": {
+                "calls": 2,
+                "units": 10,
+                "errors": 0,
+                "total_duration_ms": 501,
+                "avg_duration_ms": 250,
+                "p50_duration_ms": 339,
+                "p95_duration_ms": 339,
+                "max_duration_ms": 339
+              },
+              "list": {
+                "calls": 45,
+                "units": 4500,
+                "errors": 0,
+                "total_duration_ms": 19257,
+                "avg_duration_ms": 427,
+                "p50_duration_ms": 457,
+                "p95_duration_ms": 698,
+                "max_duration_ms": 782
+              },
+              "metadata": {
+                "calls": 155,
+                "units": 775,
+                "errors": 0,
+                "total_duration_ms": 37917,
+                "avg_duration_ms": 244,
+                "p50_duration_ms": 161,
+                "p95_duration_ms": 599,
+                "max_duration_ms": 838
+              },
+              "patch": {
+                "calls": 4,
+                "units": 200,
+                "errors": 0,
+                "total_duration_ms": 3111,
+                "avg_duration_ms": 777,
+                "p50_duration_ms": 838,
+                "p95_duration_ms": 870,
+                "max_duration_ms": 870
+              },
+              "upload": {
+                "calls": 24,
+                "units": 1200,
+                "errors": 0,
+                "total_duration_ms": 64473,
+                "avg_duration_ms": 2686,
+                "p50_duration_ms": 1112,
+                "p95_duration_ms": 12332,
+                "max_duration_ms": 14203
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        },
+        "client-4": {
+          "quota": {
+            "calls": 250,
+            "units": 8655,
+            "errors": 0,
+            "response_bytes": 496160,
+            "ops": {
+              "create": {
+                "calls": 2,
+                "units": 100,
+                "errors": 0,
+                "total_duration_ms": 727,
+                "avg_duration_ms": 363,
+                "p50_duration_ms": 381,
+                "p95_duration_ms": 381,
+                "max_duration_ms": 381
+              },
+              "delete": {
+                "calls": 8,
+                "units": 400,
+                "errors": 0,
+                "total_duration_ms": 4492,
+                "avg_duration_ms": 561,
+                "p50_duration_ms": 658,
+                "p95_duration_ms": 837,
+                "max_duration_ms": 837
+              },
+              "download": {
+                "calls": 8,
+                "units": 1600,
+                "errors": 0,
+                "total_duration_ms": 4694,
+                "avg_duration_ms": 586,
+                "p50_duration_ms": 615,
+                "p95_duration_ms": 704,
+                "max_duration_ms": 704
+              },
+              "generate_ids": {
+                "calls": 2,
+                "units": 10,
+                "errors": 0,
+                "total_duration_ms": 414,
+                "avg_duration_ms": 207,
+                "p50_duration_ms": 292,
+                "p95_duration_ms": 292,
+                "max_duration_ms": 292
+              },
+              "list": {
+                "calls": 44,
+                "units": 4400,
+                "errors": 0,
+                "total_duration_ms": 18102,
+                "avg_duration_ms": 411,
+                "p50_duration_ms": 450,
+                "p95_duration_ms": 779,
+                "max_duration_ms": 863
+              },
+              "metadata": {
+                "calls": 159,
+                "units": 795,
+                "errors": 0,
+                "total_duration_ms": 37963,
+                "avg_duration_ms": 238,
+                "p50_duration_ms": 166,
+                "p95_duration_ms": 635,
+                "max_duration_ms": 809
+              },
+              "patch": {
+                "calls": 5,
+                "units": 250,
+                "errors": 0,
+                "total_duration_ms": 3773,
+                "avg_duration_ms": 754,
+                "p50_duration_ms": 750,
+                "p95_duration_ms": 985,
+                "max_duration_ms": 985
+              },
+              "upload": {
+                "calls": 22,
+                "units": 1100,
+                "errors": 0,
+                "total_duration_ms": 62940,
+                "avg_duration_ms": 2860,
+                "p50_duration_ms": 1120,
+                "p95_duration_ms": 10856,
+                "max_duration_ms": 13001
+              }
+            }
+          },
+          "backoff": {
+            "active": false
+          }
+        }
+      },
+      "observed_drive_failure_events": [
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:40:54",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6.001s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:40:54",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:40:54",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:40:55",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6.002s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "metadata",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "download",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6.002s",
+          "failure": "timeout"
+        },
+        {
+          "role": "exit",
+          "local_time": "2026/11/15 13:41:07",
+          "operation": "download",
+          "attempts": 1,
+          "status": "none",
+          "duration": "6.002s",
+          "failure": "timeout"
+        }
+      ],
+      "cleanup_exception": {
+        "type": "PermissionError",
+        "errno": 1,
+        "message": "Operation not permitted",
+        "file": "tools/skirk_live_capacity_compare.py",
+        "line": 105,
+        "call": "os.killpg(process.pid, signal.SIGKILL)",
+        "phase": "stop_processes(benches) in run_arm finally",
+        "exact_failed_target_pid": null,
+        "consequence": "Skippedservice shutdown/exactcleanup/configremoval untilmanualintervention; originalarmfailurestring lost"
+      },
+      "complete_candidate_reports": 0,
+      "candidate_aggregate_or_p95": null,
+      "manual_cleanup": {
+        "deleted": 40,
+        "ok": true,
+        "exact_prefix_count": 2,
+        "immediate_and31s_zero": true,
+        "estimated_units_minimum": null,
+        "delayed_rounds": 1
+      },
+      "remaining_config_copies": 0
+    },
+    "raw_path": "persistent-capacity-wt/.skirk-runs/persistent-capacity-async-5clients-20261115/",
+    "limits": {
+      "estimated_units_rolling60s": 125000,
+      "estimated_units_arm": 80000,
+      "estimated_units_cohort": 250000,
+      "cleanup_reserve": 20000,
+      "projected_rate_guard": 250000
+    },
+    "limitations": [
+      "Onecompletebaseline doesnotrankasync or200000users",
+      "Fiveuniqueauthenticatednamespaces anddistinctpreludes; sharedfile/text do notproveadversarialcrossclientpayloadisolation",
+      "AfterEPERM orphanservicescontinued beforemanualSIGTERM; finalarmunits81655 exceed80kby1655; sourceguardtextlostandnotinvented",
+      "Actual10errorsretained; earliest4metadatafailuresseparatefromlaterorphanactivity",
+      "CleanupunitestimatesareminimumsandopaqueHTTP2retriescanbeomitted"
+    ]
+  }
+}

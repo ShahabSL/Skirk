@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **167 interpreted experiment records**, **297 recognized raw result files** indexed across local worktrees, and **273 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **170 interpreted experiment records**, **300 recognized raw result files** indexed across local worktrees, and **276 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -237,3 +237,7 @@ R3-021 preserves all twelve successful owned Apps Script opaque AEAD echo exchan
 ## Retained reliable relay local stress and packing tradeoffs
 
 R3-023..027 preserve the independent reliable-relay fault tests, initial cleanup/overlap/object-size assertion failures, and all three matched local600ms packing pairs. GETecho medians fell3.432→1.528s, but observed fileTTFB worsened6.646→15.806s. POSTfile completion improved32.377→24.485s while echoqueuegrowth still reached3.326s. All72rawRTTs are retained in the sanitized arm catalog. These are actual localSOCKS/mux tests with synthetic RPC delay, not Google speed measurements, and they expose a remaining service-rate/fairness frontier rather than an optimal protocol.
+
+## Bounded recovery and actual five-client proof
+
+R3-028..030 retain the separately labeled narrow recovery policy and two fresh interrupted comparisons. The100MiBcandidate stopped on a real6.002smetadata timeout after9exactechoes; oldmetricslagged, so zero countererrors is not zeroactualfailures. Five-client actualdefault completed80MiB+60exactechoes at27.456Mb/s aggregate, full-echo scheduledp9511.342s. Async produced no completecapacityresult; its observercleanupEPERM skippedservicestop, all10finaltimeout errors/81655units remain, and exactmanualcleanup plus31s verifiedempty. No missingguardstring, candidatep95 orspeed is invented.

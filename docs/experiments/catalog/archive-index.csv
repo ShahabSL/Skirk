@@ -12,6 +12,8 @@ fresh-architecture-wt,.skirk-runs/id-train-parallel2-live-20261115.json,2454,sou
 list-page-probe-wt,.skirk-runs/list-page-live-20261114-a.json,15066,source-index-only; inspect cited catalog entry or raw file for exact values
 metadata-16k-response-review-wt,.skirk-runs/metadata-16k-down16m-20261115-02/arms/summary.json,6304,source-index-only; inspect cited catalog entry or raw file for exact values
 metadata-16k-response-review-wt,.skirk-runs/metadata-16k-up16m-20261115/arms/summary.json,6296,source-index-only; inspect cited catalog entry or raw file for exact values
+persistent-capacity-wt,.skirk-runs/persistent-capacity-async-5clients-20261115/1-async/interruption-evidence.json,19893,source-index-only; inspect cited catalog entry or raw file for exact values
+persistent-capacity-wt,.skirk-runs/persistent-capacity-async-5clients-20261115/summary.json,14888,source-index-only; inspect cited catalog entry or raw file for exact values
 pubsub-streaming-wt,.skirk-runs/hybrid-full-75bab64-20261115.json,9922,source-index-only; inspect cited catalog entry or raw file for exact values
 pubsub-streaming-wt,.skirk-runs/hybrid-pools-f2109da-20261115.json,5727,source-index-only; inspect cited catalog entry or raw file for exact values
 pubsub-streaming-wt,.skirk-runs/pubsub-stream-live-20261115.json,529,source-index-only; inspect cited catalog entry or raw file for exact values
@@ -281,6 +283,7 @@ repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v4-latest-100mb.json,4008,so
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-100mb.json,4504,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-coalesce-100mb.json,4514,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp-indexed-class-20261114,.skirk-runs/indexed-class-pilot/summary.json,2023,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/arms/summary.json,7068,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/async-vs-main-download100m-counterfix-20261115/arms/summary.json,1388,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/async-vs-main-download100m-sustained-20261115-125k/arms/summary.json,3289,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/async-vs-main-download100m-sustained-20261115/arms/summary.json,1290,source-index-only; inspect cited catalog entry or raw file for exact values

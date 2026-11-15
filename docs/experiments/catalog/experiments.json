@@ -3382,6 +3382,67 @@
       ],
       "revision_or_binary": "89f508a/deeebb2b5116399513f3986e0e633a36f994950ab8241ecead15a48db069f4cc",
       "live_comparable": false
+    },
+    {
+      "id": "R3-028",
+      "candidate": "Bounded normal multipart timeout observer policy",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Optinobserveronly,strictdefaultunchanged;atmost8toleratedRPCtimeouts/arm,4observed/60s,16/cohort;250mscorrelationgrace",
+      "latency": "No performancechange",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Allestimatedquota/deadlineguardsremain;allactualAPIerrorsretained",
+      "correctness_and_errors": "52Python tests andindependentreadreview;singleattemptmultipartstatusnone transportdeadline pairednormalpriorityfalse idempotentmuxresult; role/countnotrequestidentity/wireproof",
+      "cleanup": "NoCloudresourcescreatedbyimplementation",
+      "decision": "Separate labeledrobustnessmode, neverrewriteoldstrictfailures orcallwith-errorcompletionclean",
+      "source_documents": [
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.md",
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.json"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "a21d1bc+bace1fc;productbinariesunchanged",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-029",
+      "candidate": "Candidate-first100MiB bounded normal-timeout recovery interrupted on metadata",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Plannedcandidate/main/main/candidate100MiB+100persistent64Bechoes/1250ms;firstcandidateonly;125k/150k/600kestimates;300s/180s/60sdeadlines",
+      "latency": "9exactpartialecho receipts;no100framep95",
+      "throughput_mbps": "No100MiBcheckpoint",
+      "estimated_quota_units": "Lastperiodicmetrics20350units/0errors;failurelogahead:1actualmetadata timeout",
+      "correctness_and_errors": "Clientopmetadataattempts1statusnone timeout6002ms disallowedbynormalmultipart-onlypolicy;0normalallowancesconsumed;no controlran",
+      "cleanup": "25residualmuxdeleted;2exactprefix0immediate31s;configsgone",
+      "decision": "Observerstopisnotprooftunnelcouldnotrecover; realmetadatafailure retaineddespitecounterlag; no broadeningmidrun",
+      "source_documents": [
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.md",
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/"
+      ],
+      "revision_or_binary": "63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f;harnessbace1fc",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-030",
+      "candidate": "Five-client actualdefault/async strict capacity pair, baselinecomplete",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Oneownedexit+5actualuniquenamespaces;5exact16MiBuploads+60persistent64Bechoes,128KiBdistinctpreludes,sharedbarrier;strict80karm/125krolling/250kcohort",
+      "latency": "Baselinefull-echo request/scheduledp9511.333/11.342s;asyncnop95",
+      "throughput_mbps": "Baseline27.456Mb/s aggregate80MiB;async noaggregate",
+      "estimated_quota_units": "Baseline75280units737calls0errors;asyncfinal81655units10errorsafterorphanactivity",
+      "correctness_and_errors": "Baselineall5files60echoesexactsimultaneous;async4earlyexitmetadatafailures,final8metadata+2downloadtimeouts;EPERMcleanupskipped6services,manualstop;originalguardtextlost",
+      "cleanup": "Baseline41mux;asyncmanual40mux;all4exactprefix0immediate31s;12configcopiesgone;noactiveCLI",
+      "decision": "Capacityproved5baselineflows only; no asyncwinner/200000userclaim. RetainobserverEPERMand1655postguardarmbudgetovershoot, fixcleanupbeforefreshcohort",
+      "source_documents": [
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.md",
+        "docs/experiments/bounded-recovery-and-capacity-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "persistent-capacity-wt/.skirk-runs/persistent-capacity-async-5clients-20261115/"
+      ],
+      "revision_or_binary": "63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f;harnessbace1fc",
+      "live_comparable": false
     }
   ]
 }

@@ -78,6 +78,18 @@
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
+    "worktree": "persistent-capacity-wt",
+    "path": ".skirk-runs/persistent-capacity-async-5clients-20261115/1-async/interruption-evidence.json",
+    "bytes": 19893,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "persistent-capacity-wt",
+    "path": ".skirk-runs/persistent-capacity-async-5clients-20261115/summary.json",
+    "bytes": 14888,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
     "worktree": "pubsub-streaming-wt",
     "path": ".skirk-runs/hybrid-full-75bab64-20261115.json",
     "bytes": 9922,
@@ -1689,6 +1701,12 @@
     "worktree": "repocomp-indexed-class-20261114",
     "path": ".skirk-runs/indexed-class-pilot/summary.json",
     "bytes": 2023,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/arms/summary.json",
+    "bytes": 7068,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {

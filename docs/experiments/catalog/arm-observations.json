@@ -7807,5 +7807,46 @@
     "packed_down_rpcs": 0,
     "max_normal_sealed_bytes": 4194338,
     "exact_file_verified": true
+  },
+  {
+    "source_worktree": "slot-async-wt",
+    "source_path": ".skirk-runs/async-vs-main-download100m-bounded-recovery-20261115/arms/summary.json",
+    "arm_index": 0,
+    "run": "0-candidate",
+    "ok": false,
+    "binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+    "failure": "RecoveryRejected",
+    "failure_reason": "non_single_multipart_transport_timeout",
+    "completion_status": "interrupted",
+    "clean_api_run": false
+  },
+  {
+    "source_worktree": "persistent-capacity-wt",
+    "source_path": ".skirk-runs/persistent-capacity-async-5clients-20261115/summary.json",
+    "arm_index": 0,
+    "aggregate_bulk_mbps": 27.456,
+    "all_small_body_p95_ms": 11333.019,
+    "all_small_scheduled_body_p95_ms": 11342.099,
+    "binary_sha256": "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
+    "bulk_successes": 5,
+    "bulk_verified_bytes": 83886080,
+    "clients": 5,
+    "drive_calls": 737,
+    "drive_errors": 0,
+    "drive_units": 75280,
+    "mode": "baseline",
+    "ok": true,
+    "small_successes": 60
+  },
+  {
+    "source_worktree": "persistent-capacity-wt",
+    "source_path": ".skirk-runs/persistent-capacity-async-5clients-20261115/1-async/interruption-evidence.json",
+    "arm_index": 0,
+    "run": "1-async",
+    "ok": false,
+    "failure": "originalguardtextlost_plus_cleanupPermissionError",
+    "drive_units": 81655,
+    "drive_errors": 10,
+    "clients": 5
   }
 ]
