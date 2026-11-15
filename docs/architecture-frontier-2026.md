@@ -205,6 +205,34 @@ list per user per minute would be 20 million units per minute. Self-managed
 quota projects distribute project load, but do not prove 200,000-user service
 capacity, per-account stability, or acceptable setup friction.
 
+### Exit restart and in-flight streams
+
+The current mux has a bounded 30-second startup catch-up window
+(`muxStartupCatchup`). A newly started exit skips Drive objects older than that
+window. A client `OPEN` written while the exit was offline for longer can
+therefore be missed. The client-side `OPEN` acknowledgment means its Drive
+upload finished; it does not mean the exit accepted or dialed the stream.
+Skirk does not resume that TCP stream after the exit restarts. A calling app
+may eventually time out and create a new connection, but there is no bounded
+transport recovery guarantee for the old one.
+
+Simply widening the catch-up window would risk replaying an `OPEN` with
+initial request bytes after the exit crashed between an external side effect
+and Drive cleanup. Drive can show the same quiet mailbox for a healthy idle
+stream and a stopped exit, so a client-only inactivity timer would also close
+valid long-lived connections. Reliable recovery needs an explicit exit
+generation/liveness signal plus stream-level acknowledgment and replay rules;
+exactly-once effects at an arbitrary TCP destination cannot be promised across
+a crash. This remains an architectural limit, not a measured latency or
+throughput result.
+
+The opt-in fixed-slot delivery ACK is also an in-memory mux processing ACK.
+An out-of-order DATA frame can be ACKed while it waits in the receiver's
+reassembly map, and an in-order frame can be ACKed while it waits for the
+socket writer. A receiver crash at either point can lose bytes because the
+sender has already skipped the immutable fallback. This is another reason
+slot delivery is not the default or a durable-message guarantee.
+
 Known-ID GETs previously added speculative reads and lost to one prefix list;
 the Workspace Drive Events path adds billing, Pub/Sub, subscription renewal,
 and delivery uncertainty. Google says event generation may take minutes, so
