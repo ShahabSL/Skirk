@@ -372,6 +372,13 @@ fun ConfigScreen() {
 
     val selected = profiles.firstOrNull { it.id == selectedId } ?: profiles.firstOrNull()
     val activeProbeProfile = profiles.firstOrNull { it.id == connectionState.profileId }
+    // A restarted activity can retain a different selected profile while the
+    // service is still running. Show the profile that owns the live connection.
+    val panelProfile = if (running) activeProbeProfile else selected
+    val panelMode = if (running) connectionState.mode.ifBlank {
+        activeProbeProfile?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
+    } else selectedMode
+    val panelShareLan = if (running) activeProbeProfile?.shareLan ?: false else proxyShareLan
     LaunchedEffect(selected?.id) {
         selectedMode = selected?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
         proxyShareLan = selected?.shareLan ?: false
@@ -454,9 +461,9 @@ fun ConfigScreen() {
 
     val connectionPanelContent: @Composable () -> Unit = {
         ConnectionPanel(
-            selected = selected,
-            selectedMode = selectedMode,
-            proxyShareLan = proxyShareLan,
+            selected = panelProfile,
+            selectedMode = panelMode,
+            proxyShareLan = panelShareLan,
             running = running,
             phase = connectionState.phase,
             message = if (connectionState.phase == ConnectionPhase.FAILED) connectionState.message else message,
@@ -588,7 +595,7 @@ fun ConfigScreen() {
                 item {
                     ProfilesPanel(
                         profiles = profiles,
-                        selectedId = selected?.id,
+                        selectedId = (if (running) activeProbeProfile else selected)?.id,
                         running = running,
                         onSelect = { profile ->
                             store.selectProfile(profile.id)
@@ -777,11 +784,15 @@ private fun ConnectionPanel(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = connectionDetail(
-                        selected = selected,
-                        selectedMode = selectedMode,
-                        proxyShareLan = proxyShareLan,
-                    ),
+                    text = if (running && selected == null) {
+                        "Active profile is unavailable. Disconnect and import it again."
+                    } else {
+                        connectionDetail(
+                            selected = selected,
+                            selectedMode = selectedMode,
+                            proxyShareLan = proxyShareLan,
+                        )
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -1903,9 +1914,9 @@ private enum class ConnectionUiState(val title: String) {
 }
 
 private fun connectionUiState(phase: ConnectionPhase, selected: ClientProfile?): ConnectionUiState = when {
-    selected == null -> ConnectionUiState.Setup
     phase == ConnectionPhase.CONNECTING -> ConnectionUiState.Connecting
     phase == ConnectionPhase.CONNECTED -> ConnectionUiState.Connected
+    selected == null -> ConnectionUiState.Setup
     phase == ConnectionPhase.FAILED -> ConnectionUiState.Error
     else -> ConnectionUiState.Ready
 }
