@@ -1,0 +1,378 @@
+{
+  "probe_source_commit": "dbc52b9fff891c9243a53b5a8b054d4934caab66",
+  "probe_binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325",
+  "google_ip": "216.239.38.120",
+  "measurement": {
+    "maximum_posts": 12,
+    "route_mode": "google_front_pinned",
+    "rows": [
+      {
+        "plain_bytes": 64,
+        "new_client": true,
+        "round_trip_ms": 1077.703,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 908.519,
+            "connection_reused": false,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 169.156,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 64,
+        "new_client": false,
+        "round_trip_ms": 624.779,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 531.309,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 93.453,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 64,
+        "new_client": false,
+        "round_trip_ms": 913.552,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 779.246,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 134.286,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 64,
+        "new_client": false,
+        "round_trip_ms": 650.347,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 522.706,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 127.618,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 64,
+        "new_client": false,
+        "round_trip_ms": 529.33,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 380.19,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 149.128,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 64,
+        "new_client": false,
+        "round_trip_ms": 577.365,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 434.655,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 142.696,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 16384,
+        "new_client": false,
+        "round_trip_ms": 623.176,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 479.111,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 144.05,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 16384,
+        "new_client": false,
+        "round_trip_ms": 635.255,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 441.308,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 193.694,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 262144,
+        "new_client": false,
+        "round_trip_ms": 804.882,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 567.151,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 237.711,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 262144,
+        "new_client": false,
+        "round_trip_ms": 814.141,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 593.372,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 220.75,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 1048576,
+        "new_client": false,
+        "round_trip_ms": 1077.115,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 799.625,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 277.458,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      },
+      {
+        "plain_bytes": 1048576,
+        "new_client": false,
+        "round_trip_ms": 1061.15,
+        "verified": true,
+        "hops": [
+          {
+            "authority": "script.google.com",
+            "method": "POST",
+            "status": 302,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 815.574,
+            "connection_reused": true,
+            "http_attempts": 1
+          },
+          {
+            "authority": "script.googleusercontent.com",
+            "method": "GET",
+            "status": 200,
+            "protocol": "HTTP/2.0",
+            "duration_ms": 245.558,
+            "connection_reused": true,
+            "http_attempts": 1
+          }
+        ]
+      }
+    ],
+    "scope": "owned opaque echo only; no URL Fetch or TCP-exit hop",
+    "tls_front": "www.google.com"
+  },
+  "cleanup": {
+    "deployment_archived_ui": true,
+    "project_moved_to_recoverable_trash_ui": true,
+    "endpoint_check": {
+      "front": "www.google.com",
+      "route_mode": "google_front_pinned",
+      "maximum_posts": 1,
+      "post_count": 1,
+      "hops": [
+        {
+          "authority": "script.google.com",
+          "method": "POST",
+          "status": 404,
+          "http_version": "2",
+          "duration_ms": 396.667
+        }
+      ],
+      "active_echo": false,
+      "no_active_echo_verified": true,
+      "error": null
+    },
+    "oauth_scopes_added": 0,
+    "url_fetch_calls": 0,
+    "billing_enabled": false,
+    "private_endpoint_and_secret_files_removed": true
+  },
+  "summary": {
+    "64": {
+      "warm_samples": 5,
+      "min_ms": 529.33,
+      "median_ms": 624.779,
+      "max_ms": 913.552
+    },
+    "16384": {
+      "warm_samples": 2,
+      "min_ms": 623.176,
+      "median_ms": 629.2155,
+      "max_ms": 635.255
+    },
+    "262144": {
+      "warm_samples": 2,
+      "min_ms": 804.882,
+      "median_ms": 809.5115,
+      "max_ms": 814.141
+    },
+    "1048576": {
+      "warm_samples": 2,
+      "min_ms": 1061.15,
+      "median_ms": 1069.1325000000002,
+      "max_ms": 1077.115
+    },
+    "cold_64b_ms": 1077.703
+  }
+}
