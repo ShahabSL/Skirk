@@ -13,7 +13,7 @@ from unittest import mock
 
 from skirk_live_capacity_compare import (CLIENTS, QuotaGuard, arm_config,
                                          bulk_window, cleanup_exact, main, serve_origins,
-                                         require_client_namespaces, require_slot_activity)
+                                         require_client_namespaces, require_slot_activity, stop_processes)
 
 
 class Running:
@@ -166,17 +166,39 @@ class CapacityCompareTests(unittest.TestCase):
             require_client_namespaces(logs)
         logs = [f"skirk client SOCKS5 listening client=c{i} run=r{i}" for i in range(CLIENTS)]
         self.assertEqual(len(set(require_client_namespaces(logs))), CLIENTS)
+        reused_clients = [f"skirk client SOCKS5 listening client=same run=r{i}" for i in range(CLIENTS)]
+        with self.assertRaisesRegex(RuntimeError, "not_unique"):
+            require_client_namespaces(reused_clients)
 
-    def test_flag_only_or_prelude_only_async_activity_is_rejected(self):
+    def test_correlated_mixed_record_proof_rejects_unrelated_markers(self):
         before = ["mux slot delivery active"] * CLIENTS
-        mixed = ["\n".join(("mux slot async handoff", "mux slot async storage_ack",
-                              "mux slot delivery receiver_processed", "mux slot delivery sender_ack"))] * CLIENTS
-        self.assertEqual(len(require_slot_activity("async", before, mixed)), CLIENTS)
-        missing = mixed.copy(); missing[3] = "mux slot async handoff"
-        with self.assertRaisesRegex(RuntimeError, "activity_missing"):
-            require_slot_activity("async", before, missing)
+        mixed = []
+        exit_lines = []
+        for index in range(CLIENTS):
+            record = f"{index + 1:012x}"
+            mixed.append("\n".join(f"{marker} record={record}" for marker in
+                ("mux slot async handoff", "mux slot async storage_ack", "mux slot delivery sender_ack")))
+            exit_lines.append(f"mux slot delivery receiver_processed record={record}")
+        exit_mixed = "\n".join(exit_lines)
+        proof = require_slot_activity("async", before, mixed, exit_mixed)
+        self.assertEqual([row["matched_up_records"] for row in proof], [1] * CLIENTS)
+        self.assertEqual([row["matched_down_records"] for row in proof], [0] * CLIENTS)
+        wrong = mixed.copy()
+        wrong[3] = wrong[3].replace("storage_ack record=000000000004", "storage_ack record=ffffffffffff")
+        with self.assertRaisesRegex(RuntimeError, "record_proof_missing"):
+            require_slot_activity("async", before, wrong, exit_mixed)
+        with self.assertRaisesRegex(RuntimeError, "record_proof_missing"):
+            require_slot_activity("async", before, mixed, "")
         with self.assertRaisesRegex(RuntimeError, "unexpected_control"):
-            require_slot_activity("baseline", before, mixed)
+            require_slot_activity("baseline", before, mixed, exit_mixed)
+
+    def test_dead_group_leader_does_not_leave_owned_curl_behind(self):
+        dead = argparse.Namespace(pid=43210, poll=lambda: 0)
+        with mock.patch("os.killpg") as kill:
+            stop_processes([dead])
+        import signal
+        self.assertEqual(kill.call_args_list, [mock.call(43210, signal.SIGTERM),
+                                             mock.call(43210, signal.SIGKILL)])
 
     def test_late_slot_object_requires_second_full_visibility_check(self):
         session = "00112233445566778899aabbccddeeff"

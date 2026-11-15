@@ -88,22 +88,25 @@ def arm_config(original: dict[str, Any], mode: str, session: str) -> dict[str, A
 
 
 def stop_processes(processes: list[subprocess.Popen[bytes]]) -> None:
+    # All launched services/benches use start_new_session=True. A dead group
+    # leader can still leave curl children in its owned process group.
     for process in processes:
-        if process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     for process in processes:
         if process.poll() is None:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=3)
+                pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if process.poll() is None:
+            process.wait(timeout=3)
 
 
 def wait_for_clients(processes: list[subprocess.Popen[bytes]], ports: list[int]) -> None:
@@ -370,25 +373,37 @@ def slot_activity(text: str) -> dict[str, int]:
 def require_client_namespaces(logs: list[str]) -> list[str]:
     namespaces = []
     runs = []
+    clients = []
     for text in logs:
         line = next((line for line in text.splitlines() if "skirk client SOCKS5 listening" in line), "")
         client, run = re.search(r"\bclient=([A-Za-z0-9_.-]+)", line), re.search(r"\brun=([A-Za-z0-9_.-]+)", line)
         if client is None or run is None:
             raise RuntimeError("client_namespace_proof_missing")
         runs.append(run.group(1))
+        clients.append(client.group(1))
         namespaces.append(client.group(1) + "/" + run.group(1))
-    if len(set(namespaces)) != CLIENTS or len(set(runs)) != CLIENTS:
+    if len(set(namespaces)) != CLIENTS or len(set(runs)) != CLIENTS or len(set(clients)) != CLIENTS:
         raise RuntimeError("client_namespaces_not_unique")
     return [hashlib.sha256(value.encode()).hexdigest()[:16] for value in namespaces]
 
 
-def require_slot_activity(mode: str, before: list[str], mixed: list[str]) -> list[dict[str, int]]:
+def require_slot_activity(mode: str, before: list[str], mixed: list[str], exit_mixed: str) -> list[dict[str, int]]:
+    def records(text: str, marker: str) -> set[str]:
+        return {match.group(1) for line in text.splitlines() if marker in line
+                for match in [re.search(r"\brecord=([a-f0-9]{12,64})\b", line)] if match}
     counts = [slot_activity(text) for text in mixed]
+    for text, row in zip(mixed, counts):
+        up = records(text, "mux slot async handoff") & records(text, "mux slot async storage_ack")
+        up &= records(text, "mux slot delivery sender_ack") & records(exit_mixed, "mux slot delivery receiver_processed")
+        down = records(exit_mixed, "mux slot async handoff") & records(exit_mixed, "mux slot async storage_ack")
+        down &= records(exit_mixed, "mux slot delivery sender_ack") & records(text, "mux slot delivery receiver_processed")
+        row["matched_up_records"] = len(up)
+        row["matched_down_records"] = len(down)
     if mode == "async":
         if any(slot_activity(text)["active"] < 1 for text in before):
             raise RuntimeError("async_slot_handshake_missing")
-        if any(any(row[key] < 1 for key in ("handoff", "publication", "processed", "processing_ack")) for row in counts):
-            raise RuntimeError("async_slot_mixed_activity_missing")
+        if any(row["matched_up_records"] < 1 for row in counts):
+            raise RuntimeError("async_slot_mixed_record_proof_missing")
     elif any(slot_activity(text)["active"] for text in before + mixed):
         raise RuntimeError("unexpected_control_slot_activity")
     return counts
@@ -445,7 +460,7 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
                        "--bulk-sha256", hashlib.sha256(FILE_ACK).hexdigest(),
                        "--bulk-max-mib", str(args.file_mib), "--small-count", str(args.text_count),
                        "--small-interval-ms", str(args.text_interval_ms), "--pipelined", "--bulk-lead-ms", "1000",
-                       "--prelude-bytes", str(PRELUDE_BYTES), "--prelude-seed", "skirk-capacity-prelude-v1",
+                       "--prelude-bytes", str(PRELUDE_BYTES), "--prelude-seed", f"skirk-capacity-prelude-v1-{client_index}",
                        "--overall-timeout", "240", "--prelude-timeout", "75", "--request-timeout", "75",
                        "--bulk-timeout", "120", "--stall-seconds", str(args.bulk_stall_seconds),
                        "--ready-file", str(run_dir / f"bench-{client_index}.ready"),
@@ -463,6 +478,7 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
             time.sleep(1)
         before_logs = [(run_dir / f"client-{i}.log").read_text(errors="replace") for i in range(CLIENTS)]
         log_offsets = [(run_dir / f"client-{i}.log").stat().st_size for i in range(CLIENTS)]
+        exit_offset = (run_dir / "exit.log").stat().st_size
         row["client_namespace_fingerprints"] = require_client_namespaces(before_logs)
         row["run_id_source"] = "CLI-generated random run IDs, verified unique in actual startup logs"
         row["barrier_release_utc"] = datetime.now(timezone.utc).isoformat()
@@ -487,7 +503,10 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
             with (run_dir / f"client-{client_index}.log").open("rb") as stream:
                 stream.seek(offset)
                 mixed_logs.append(stream.read().decode(errors="replace"))
-        row["client_mixed_slot_activity"] = require_slot_activity(mode, before_logs, mixed_logs)
+        with (run_dir / "exit.log").open("rb") as stream:
+            stream.seek(exit_offset)
+            exit_mixed = stream.read().decode(errors="replace")
+        row["client_mixed_slot_activity"] = require_slot_activity(mode, before_logs, mixed_logs, exit_mixed)
         row["exit_slot_activity"] = slot_activity((run_dir / "exit.log").read_text(errors="replace"))
         row["roles"] = {"exit" if i == 0 else f"client-{i-1}": snapshot["quota"] for i, snapshot in enumerate(snapshots)}
         if not row["ok"]:
