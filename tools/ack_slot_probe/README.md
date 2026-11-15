@@ -33,3 +33,27 @@ exact-ID recovery sweep. Both files are ignored by Git under `.skirk-runs/`.
 
 For a matched mixed-traffic latency arm, pass `--reader-pause-ms 0`. The default
 one-second pause remains the version-skip correctness stress.
+
+## Bidirectional request/reply mode
+
+`--roundtrip` uses the same two file IDs with one serialized writer per file.
+Each metadata snapshot contains a cumulative unacknowledged suffix plus the
+latest ACK for the opposite direction. It schedules 20 random 64-byte requests
+at 250 ms intervals. The reader generates a 64-byte echo only after receiving
+each request; the client records scheduled request-to-reply latency. Both
+directions must acknowledge all 20 records. The default one-second server
+reader pause after request ten tests recovery when Drive versions are skipped.
+
+Before the workload, this mode PATCHes an exactly 8,192-byte description and
+GETs it back byte for byte. The round-trip snapshots are capped at that same
+encoded size. The mode allows at most 70 PATCHes per direction and 260 GETs
+total, with a 12,000-unit hot-traffic budget and 16,000-unit complete-arm
+bound including conservative setup and cleanup reserves. The probe deletes and
+twice verifies both exact IDs as above. It is still a synthetic Drive substrate
+test, not a Skirk app or TCP round trip.
+
+```sh
+go run ./tools/ack_slot_probe --live --roundtrip \
+  --config .skirk-runs/personal-test/quota-kit/exit.json \
+  --out .skirk-runs/ack-slot-roundtrip-20261114.json
+```

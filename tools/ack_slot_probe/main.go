@@ -43,6 +43,7 @@ type options struct {
 	out           string
 	live          bool
 	readerPauseMS int
+	roundtrip     bool
 }
 
 type metadata struct {
@@ -85,7 +86,7 @@ type report struct {
 	TextScheduledP50MS   float64 `json:"text_scheduled_p50_ms,omitempty"`
 	TextScheduledP95MS   float64 `json:"text_scheduled_p95_ms,omitempty"`
 	TextScheduledMaxMS   float64 `json:"text_scheduled_max_ms,omitempty"`
-	WorkloadCompletedUTC  string  `json:"workload_completed_utc,omitempty"`
+	WorkloadCompletedUTC string  `json:"workload_completed_utc,omitempty"`
 	CleanupVerified      bool    `json:"cleanup_verified"`
 	CleanupDeletes       int     `json:"cleanup_deletes"`
 	CleanupGets          int     `json:"cleanup_gets"`
@@ -102,6 +103,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&value.out, "out", "", "fresh private JSON under .skirk-runs")
 	flags.BoolVar(&value.live, "live", false, "allow bounded Drive calls")
 	flags.IntVar(&value.readerPauseMS, "reader-pause-ms", 1000, "bounded reader pause after frame ten; 0 disables delay")
+	flags.BoolVar(&value.roundtrip, "roundtrip", false, "run bounded two-way request/reply probe")
 	if err := flags.Parse(args); err != nil {
 		return value, err
 	}
@@ -182,6 +184,7 @@ type probe struct {
 	recovery      string
 	recoveryOwned bool
 	readerPause   time.Duration
+	roundtrip     bool
 }
 
 func newProbe(config *skirk.Config, outputPath string, readerPause time.Duration) *probe {
@@ -257,26 +260,31 @@ func (p *probe) reserve(kind string, cleanup bool) error {
 	if kind != "get" {
 		cost = 250
 	}
-	if !cleanup && p.units+p.reservedUnits+cost > hotQuotaCeiling {
+	hotCeiling := hotQuotaCeiling
+	getCap, dataCap, ackCap := maxGets, maxDataPatches, maxAckPatches
+	if p.roundtrip {
+		hotCeiling, getCap, dataCap, ackCap = 12000, 260, 70, 70
+	}
+	if !cleanup && p.units+p.reservedUnits+cost > hotCeiling {
 		return errors.New("quota_cap")
 	}
 	switch kind {
 	case "get":
-		limit := maxGets - 12
+		limit := getCap - 12
 		if cleanup {
-			limit = maxGets
+			limit = getCap
 		}
 		if p.gets >= limit {
 			return errors.New("get_cap")
 		}
 		p.gets++
 	case "data":
-		if p.dataWrites >= maxDataPatches {
+		if p.dataWrites >= dataCap {
 			return errors.New("data_patch_cap")
 		}
 		p.dataWrites++
 	case "ack":
-		if p.ackWrites >= maxAckPatches {
+		if p.ackWrites >= ackCap {
 			return errors.New("ack_patch_cap")
 		}
 		p.ackWrites++
@@ -726,7 +734,7 @@ func writeRecoveryIDs(path string, ids []string) error {
 	return json.NewEncoder(file).Encode(ids)
 }
 
-func writeReport(path string, value report) error {
+func writeReport(path string, value any) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -747,7 +755,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ack-slot-probe: requires an isolated pinned-front test folder")
 		os.Exit(2)
 	}
-	result := newProbe(config, options.out, time.Duration(options.readerPauseMS)*time.Millisecond).run()
+	p := newProbe(config, options.out, time.Duration(options.readerPauseMS)*time.Millisecond)
+	if options.roundtrip {
+		p.roundtrip = true
+		result := p.runRoundtrip()
+		if err := writeReport(options.out, result); err != nil {
+			fmt.Fprintln(os.Stderr, "ack-slot-probe: private result write failed")
+			os.Exit(2)
+		}
+		fmt.Printf("{\"ok\":%t,\"roundtrips\":%d,\"quota_units_upper_bound\":%d,\"cleanup_verified\":%t,\"failure\":%q}\n",
+			result.OK, result.Roundtrips, result.QuotaUnitsUpperBound, result.CleanupVerified, result.Failure)
+		if !result.OK {
+			os.Exit(1)
+		}
+		return
+	}
+	result := p.run()
 	if err := writeReport(options.out, result); err != nil {
 		fmt.Fprintln(os.Stderr, "ack-slot-probe: private result write failed")
 		os.Exit(2)
