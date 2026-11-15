@@ -40,6 +40,8 @@ type relayResearchBroker struct {
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	wg                        sync.WaitGroup
+	httpWG                    sync.WaitGroup
+	httpSlots                 chan struct{}
 	closed                    bool
 	cfg                       relayResearchConfig
 	codec                     *relayResearchCodec
@@ -66,7 +68,7 @@ func newRelayResearchBroker(parent context.Context, key []byte, epoch [16]byte, 
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	b := &relayResearchBroker{ctx: ctx, cancel: cancel, cfg: cfg, codec: codec, upStore: NewMemoryStore(), downStore: NewMemoryStore(), up: map[string]*relayResearchRecord{}, down: map[string]*relayResearchRecord{}, upNames: map[string]string{}, downNames: map[string]string{}, channels: map[byte]*relayResearchChannel{}, changed: make(chan struct{})}
+	b := &relayResearchBroker{ctx: ctx, cancel: cancel, cfg: cfg, codec: codec, upStore: NewMemoryStore(), downStore: NewMemoryStore(), up: map[string]*relayResearchRecord{}, down: map[string]*relayResearchRecord{}, upNames: map[string]string{}, downNames: map[string]string{}, channels: map[byte]*relayResearchChannel{}, changed: make(chan struct{}), httpSlots: make(chan struct{}, 4)}
 	for _, kind := range []byte{rrUp, rrPull} {
 		b.channels[kind] = &relayResearchChannel{next: 1, replies: map[uint64]*relayResearchReply{}}
 	}
@@ -102,6 +104,7 @@ func (b *relayResearchBroker) Close() {
 	}
 	b.mu.Unlock()
 	b.wg.Wait()
+	b.httpWG.Wait()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, store := range []*MemoryStore{b.upStore, b.downStore} {

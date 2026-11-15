@@ -1,12 +1,14 @@
 package skirk
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 )
 
 type relayResearchHTTPEnvelope struct {
@@ -21,6 +23,28 @@ func (b *relayResearchBroker) handler(auth string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		select {
+		case b.httpSlots <- struct{}{}:
+		default:
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "relay HTTP concurrency bound", http.StatusTooManyRequests)
+			return
+		}
+		defer func() { <-b.httpSlots }()
+		b.mu.Lock()
+		if b.closed {
+			b.mu.Unlock()
+			http.Error(w, "relay session closed", http.StatusServiceUnavailable)
+			return
+		}
+		b.httpWG.Add(1)
+		b.mu.Unlock()
+		defer b.httpWG.Done()
+		controller := http.NewResponseController(w)
+		_ = controller.SetReadDeadline(time.Now().Add(10 * time.Second))
+		defer controller.SetReadDeadline(time.Time{})
+		stop := context.AfterFunc(b.ctx, func() { _ = r.Body.Close() })
+		defer stop()
 		limit := int64(base64.StdEncoding.EncodedLen(b.codec.maxWireBytes()) + 1024)
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 		if err != nil {
