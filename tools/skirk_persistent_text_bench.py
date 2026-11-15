@@ -299,7 +299,8 @@ def synthetic_bulk_failure(run_start: float, failure: str) -> dict[str, Any]:
 
 
 def summarize(samples: list[dict[str, Any]], prelude: dict[str, Any],
-              args: argparse.Namespace, started_utc: str, duration_s: float) -> dict[str, Any]:
+              args: argparse.Namespace, started_utc: str, duration_s: float,
+              probe_started_utc: str | None = None) -> dict[str, Any]:
     small = sorted((sample for sample in samples if sample["kind"] == "small"), key=lambda item: item["index"])
     bulk = [sample for sample in samples if sample["kind"] == "bulk"]
     during = [sample for sample in small if sample["overlapped_bulk_at_start"]]
@@ -313,6 +314,7 @@ def summarize(samples: list[dict[str, Any]], prelude: dict[str, Any],
         "schema_version": 2,
         "label": "persistent_text",
         "started_utc": started_utc,
+        "probe_started_utc": probe_started_utc,
         "duration_s": round(duration_s, 3),
         "method": {
             "transport": "one persistent SOCKS5 TCP stream via Skirk",
@@ -367,7 +369,8 @@ def run_workload(args: argparse.Namespace,
     samples: list[dict[str, Any]] = []
     try:
         sock = connect_socks(args.port, args.echo_port, min(deadline, started + args.connect_timeout))
-        prelude_payload = os.urandom(args.prelude_bytes)
+        prelude_payload = (hashlib.shake_256(args.prelude_seed.encode("utf-8")).digest(args.prelude_bytes)
+                           if args.prelude_seed else os.urandom(args.prelude_bytes))
         first_s, total_s = exchange(sock, prelude_payload,
                                     min(deadline, time.monotonic() + args.prelude_timeout))
         prelude.update(ok=True, bytes_each_direction=args.prelude_bytes,
@@ -384,7 +387,14 @@ def run_workload(args: argparse.Namespace,
         return summarize(samples, prelude, args, started_utc, time.monotonic() - started)
 
     assert sock is not None
+    if args.start_signal is not None:
+        descriptor = os.open(args.ready_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        while not args.start_signal.exists():
+            remaining(deadline)
+            time.sleep(0.05)
     run_start = time.monotonic()
+    probe_started_utc = datetime.now(timezone.utc).isoformat()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             bulk_future = pool.submit(
@@ -424,7 +434,8 @@ def run_workload(args: argparse.Namespace,
                 samples.append(synthetic_bulk_failure(run_start, "bulk_worker_error"))
     finally:
         sock.close()
-    return summarize(samples, prelude, args, started_utc, time.monotonic() - started)
+    return summarize(samples, prelude, args, started_utc, time.monotonic() - started,
+                     probe_started_utc)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -442,6 +453,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pipelined", action="store_true", help="send scheduled text frames without waiting for their echoes")
     parser.add_argument("--bulk-lead-ms", type=int, default=250)
     parser.add_argument("--prelude-bytes", type=int, default=128 * 1024)
+    parser.add_argument("--prelude-seed", help="fixed synthetic prelude across matched capacity arms")
+    parser.add_argument("--ready-file", type=Path, help="create after the prelude for a local start barrier")
+    parser.add_argument("--start-signal", type=Path, help="wait for this local file before starting file and text probes")
     parser.add_argument("--overall-timeout", type=float, default=180)
     parser.add_argument("--connect-timeout", type=float, default=20)
     parser.add_argument("--prelude-timeout", type=float, default=60)
@@ -460,6 +474,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--bulk-lead-ms must be 0..60000")
     if not MIN_PRELUDE_BYTES <= args.prelude_bytes <= MAX_PRELUDE_BYTES:
         parser.error("--prelude-bytes must be >64 KiB and <=1 MiB")
+    if (args.ready_file is None) != (args.start_signal is None):
+        parser.error("--ready-file and --start-signal must be used together")
+    if args.ready_file is not None and (args.ready_file.exists() or ".skirk-runs" not in args.ready_file.resolve().parts or
+                                        ".skirk-runs" not in args.start_signal.resolve().parts):
+        parser.error("barrier files must be fresh paths under .skirk-runs")
     if not 1 <= args.connect_timeout <= 120 or not 1 <= args.prelude_timeout <= 180:
         parser.error("connect/prelude timeouts are outside the supported range")
     if not 1 <= args.request_timeout <= 180 or not 1 <= args.bulk_timeout <= 600:

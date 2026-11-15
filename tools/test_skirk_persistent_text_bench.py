@@ -140,7 +140,8 @@ def arguments(proxy: LocalSocksEcho, *, direction: str = "download",
         bulk_upload_bytes=upload_file.stat().st_size if upload_file else None,
         small_count=3, small_interval_ms=30, bulk_lead_ms=0,
         pipelined=False,
-        prelude_bytes=128 * 1024, overall_timeout=5,
+        prelude_bytes=128 * 1024, prelude_seed=None,
+        ready_file=None, start_signal=None, overall_timeout=5,
         connect_timeout=2, prelude_timeout=prelude_timeout,
         request_timeout=1, bulk_timeout=2, stall_seconds=1,
         stall_bytes_per_second=1, bulk_max_mib=1,
@@ -164,6 +165,30 @@ def successful_bulk(*params):
 
 
 class PersistentTextTests(unittest.TestCase):
+    def test_start_barrier_holds_bulk_and_text_after_verified_prelude(self):
+        with tempfile.TemporaryDirectory() as directory, LocalSocksEcho() as proxy:
+            private = Path(directory) / ".skirk-runs"
+            private.mkdir()
+            args = arguments(proxy)
+            args.ready_file = private / "ready"
+            args.start_signal = private / "go"
+            args.prelude_seed = "same-prelude"
+            result = []
+            worker = threading.Thread(target=lambda: result.append(run_workload(args, successful_bulk)), daemon=True)
+            worker.start()
+            deadline = time.monotonic() + 2
+            while not args.ready_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(args.ready_file.exists())
+            self.assertEqual(proxy.frame_lengths, [128 * 1024])
+            time.sleep(0.05)
+            self.assertEqual(proxy.frame_lengths, [128 * 1024])
+            args.start_signal.touch()
+            worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result[0]["small"]["successes"], 3)
+            self.assertIsNotNone(result[0]["probe_started_utc"])
+
     def test_one_demoted_stream_carries_prelude_and_text_during_bulk(self):
         with LocalSocksEcho() as proxy:
             report = run_workload(arguments(proxy), successful_bulk)
