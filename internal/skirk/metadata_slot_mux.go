@@ -10,20 +10,25 @@ import (
 )
 
 const (
-	muxSlotCapabilityMagic   = "SKSL"
-	muxSlotCapabilityVersion = byte(1)
-	muxSlotCapabilityOffer   = byte(1)
-	muxSlotCapabilityAccept  = byte(2)
-	muxSlotCapabilityMaxID   = 128
-	muxSlotMaxActiveRuns     = 16
-	muxSlotSetupTimeout      = 10 * time.Second
-	muxSlotMinPatchInterval  = 250 * time.Millisecond
-	muxSlotShadowLifetime    = 2 * time.Minute
-	muxSlotAcceptTimeout     = 45 * time.Second
-	muxSlotShadowMaxPatches  = 64
-	muxSlotShadowMaxGets     = 320
-	muxSlotShadowMaxRecords  = 64
-	muxSlotShadowQueue       = 16
+	muxSlotCapabilityMagic     = "SKSL"
+	muxSlotDeliveryMagic       = "SKSD"
+	muxSlotCapabilityVersion   = byte(1)
+	muxSlotCapabilityOffer     = byte(1)
+	muxSlotCapabilityAccept    = byte(2)
+	muxSlotCapabilityMaxID     = 128
+	muxSlotMaxActiveRuns       = 16
+	muxSlotSetupTimeout        = 10 * time.Second
+	muxSlotMinPatchInterval    = 250 * time.Millisecond
+	muxSlotShadowLifetime      = 2 * time.Minute
+	muxSlotAcceptTimeout       = 45 * time.Second
+	muxSlotShadowMaxPatches    = 64
+	muxSlotShadowMaxGets       = 320
+	muxSlotShadowMaxRecords    = 64
+	muxSlotShadowQueue         = 16
+	muxSlotDeliveryACKWait     = 1500 * time.Millisecond
+	muxSlotDigestRetention     = 30 * time.Minute
+	muxSlotDigestMax           = 65536
+	muxSlotDeferredPhysicalMax = 8
 )
 
 type muxSlotRunKey struct {
@@ -34,28 +39,30 @@ type muxSlotRunKey struct {
 type muxSlotCleanupTarget struct{ id, name string }
 
 type muxSlotLink struct {
-	key        muxSlotRunKey
-	generation [16]byte
-	upID       string
-	downID     string
-	upName     string
-	downName   string
-	peer       *metadataSlotPeer
-	created    bool // Only the client that created the files deletes them at stop.
-	mu         sync.Mutex
-	active     bool
-	closed     bool
-	sendClosed bool
-	lastPatch  time.Time
-	lastAck    uint64
-	patches    int
-	gets       int
-	mirrored   map[string]struct{}
-	shadowQ    chan slotShadowRecord
-	ackWake    chan struct{}
-	pollOnce   sync.Once
-	closeOnce  sync.Once
-	sendMu     sync.Mutex
+	key             muxSlotRunKey
+	generation      [16]byte
+	upID            string
+	downID          string
+	upName          string
+	downName        string
+	peer            *metadataSlotPeer
+	delivery        bool
+	created         bool // Only the client that created the files deletes them at stop.
+	mu              sync.Mutex
+	active          bool
+	closed          bool
+	sendClosed      bool
+	lastPatch       time.Time
+	lastAck         uint64
+	patches         int
+	gets            int
+	mirrored        map[string]struct{}
+	shadowQ         chan slotShadowRecord
+	ackWake         chan struct{}
+	deliveryWaiters map[uint64]chan error
+	pollOnce        sync.Once
+	closeOnce       sync.Once
+	sendMu          sync.Mutex
 }
 
 func (s *muxSlotLink) setActive() bool {
@@ -84,6 +91,27 @@ func (s *muxSlotLink) canSend() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.active && !s.closed && !s.sendClosed
+}
+
+func (s *muxSlotLink) completeDeliveryACKs() {
+	acked := s.peer.outboundAcked()
+	s.mu.Lock()
+	for seq, done := range s.deliveryWaiters {
+		if seq <= acked {
+			delete(s.deliveryWaiters, seq)
+			done <- nil
+		}
+	}
+	s.mu.Unlock()
+}
+
+func (s *muxSlotLink) failDeliveryWaiters(err error) {
+	s.mu.Lock()
+	for seq, done := range s.deliveryWaiters {
+		delete(s.deliveryWaiters, seq)
+		done <- err
+	}
+	s.mu.Unlock()
 }
 
 func (m *driveMux) slotStore() (MetadataSlotStore, bool) {
@@ -173,7 +201,7 @@ func (m *driveMux) ensureClientSlot(ctx context.Context) {
 		m.logSlotSetupError(err)
 		return
 	}
-	link := &muxSlotLink{key: key, generation: generation, upID: up.ID, downID: down.ID, upName: upName, downName: downName, peer: peer, created: true, shadowQ: make(chan slotShadowRecord, muxSlotShadowQueue), ackWake: make(chan struct{}, 1)}
+	link := &muxSlotLink{key: key, generation: generation, upID: up.ID, downID: down.ID, upName: upName, downName: downName, peer: peer, delivery: m.t.MetadataSlotDeliveryV1, created: true, shadowQ: make(chan slotShadowRecord, muxSlotShadowQueue), ackWake: make(chan struct{}, 1)}
 	m.slotsMu.Lock()
 	if m.slotStopped {
 		m.slotsMu.Unlock()
@@ -238,7 +266,7 @@ func (m *driveMux) injectSlotOffer(frames []muxFrame) []muxFrame {
 		if frame.Kind != muxFrameOpen || frame.ClientID != key.clientID || frame.RunID != key.runID {
 			continue
 		}
-		payload, err := encodeMuxSlotCapability(muxSlotCapability{kind: muxSlotCapabilityOffer, generation: link.generation, limit: metadataSlotMaxDescription, upID: link.upID, downID: link.downID})
+		payload, err := encodeMuxSlotCapability(muxSlotCapability{kind: muxSlotCapabilityOffer, delivery: link.delivery, generation: link.generation, limit: metadataSlotMaxDescription, upID: link.upID, downID: link.downID})
 		encodedBytes := muxBatchHeaderSize + muxFrameHeaderSize + len(payload)
 		for _, existing := range frames {
 			encodedBytes += encodedMuxFrameSize(existing)
@@ -255,11 +283,14 @@ func (m *driveMux) injectSlotOffer(frames []muxFrame) []muxFrame {
 }
 
 func (m *driveMux) handleSlotCapability(ctx context.Context, frame muxFrame) {
-	if len(frame.Payload) < 4 || string(frame.Payload[:4]) != muxSlotCapabilityMagic {
+	if len(frame.Payload) < 4 || (string(frame.Payload[:4]) != muxSlotCapabilityMagic && string(frame.Payload[:4]) != muxSlotDeliveryMagic) {
 		return
 	}
 	capability, err := decodeMuxSlotCapability(frame.Payload)
 	if err != nil || frame.StreamID == 0 {
+		return
+	}
+	if capability.delivery && !m.t.MetadataSlotDeliveryV1 {
 		return
 	}
 	store, ok := m.slotStore()
@@ -269,7 +300,7 @@ func (m *driveMux) handleSlotCapability(ctx context.Context, frame muxFrame) {
 	key := muxSlotRunKey{clientID: frame.ClientID, runID: frame.RunID}
 	if capability.kind == muxSlotCapabilityAccept && m.role == "client" {
 		link := m.slotLink(key)
-		if link != nil && capability.generation == link.generation && capability.limit == metadataSlotMaxDescription && link.setActive() {
+		if link != nil && capability.generation == link.generation && capability.limit == metadataSlotMaxDescription && capability.delivery == link.delivery && link.setActive() {
 			if m.t.Observe && m.t.Logger != nil {
 				m.t.Logger.Printf("mux slot shadow acceptance role=client authoritative=immutable")
 			}
@@ -325,7 +356,7 @@ func (m *driveMux) handleSlotCapability(ctx context.Context, frame muxFrame) {
 		m.logSlotSetupError(err)
 		return
 	}
-	link := &muxSlotLink{key: key, generation: capability.generation, upID: capability.upID, downID: capability.downID, upName: upName, downName: downName, peer: peer, shadowQ: make(chan slotShadowRecord, muxSlotShadowQueue), ackWake: make(chan struct{}, 1)}
+	link := &muxSlotLink{key: key, generation: capability.generation, upID: capability.upID, downID: capability.downID, upName: upName, downName: downName, peer: peer, delivery: capability.delivery, shadowQ: make(chan slotShadowRecord, muxSlotShadowQueue), ackWake: make(chan struct{}, 1)}
 	m.slotsMu.Lock()
 	if m.slotStopped {
 		m.slotsMu.Unlock()
@@ -350,7 +381,7 @@ func (m *driveMux) sendSlotAccept(ctx context.Context, link *muxSlotLink, stream
 			m.closeSlotLink(link)
 		}
 	}()
-	payload, err := encodeMuxSlotCapability(muxSlotCapability{kind: muxSlotCapabilityAccept, generation: link.generation, limit: metadataSlotMaxDescription})
+	payload, err := encodeMuxSlotCapability(muxSlotCapability{kind: muxSlotCapabilityAccept, delivery: link.delivery, generation: link.generation, limit: metadataSlotMaxDescription})
 	if err != nil {
 		return
 	}
@@ -382,6 +413,7 @@ func (m *driveMux) startSlotPoll(ctx context.Context, link *muxSlotLink) {
 // first reply. Older muxv4 peers ignore its length and still process the OPEN.
 type muxSlotCapability struct {
 	kind       byte
+	delivery   bool
 	generation [16]byte
 	limit      uint16
 	upID       string
@@ -406,7 +438,11 @@ func encodeMuxSlotCapability(value muxSlotCapability) ([]byte, error) {
 		return nil, errors.New("mux slot acceptance cannot carry file IDs")
 	}
 	payload := make([]byte, 0, 27+len(value.upID)+len(value.downID))
-	payload = append(payload, muxSlotCapabilityMagic...)
+	if value.delivery {
+		payload = append(payload, muxSlotDeliveryMagic...)
+	} else {
+		payload = append(payload, muxSlotCapabilityMagic...)
+	}
 	payload = append(payload, muxSlotCapabilityVersion, value.kind)
 	payload = append(payload, value.generation[:]...)
 	payload = binary.BigEndian.AppendUint16(payload, value.limit)
@@ -419,10 +455,10 @@ func encodeMuxSlotCapability(value muxSlotCapability) ([]byte, error) {
 }
 
 func decodeMuxSlotCapability(payload []byte) (muxSlotCapability, error) {
-	if len(payload) < 24 || string(payload[:4]) != muxSlotCapabilityMagic || payload[4] != muxSlotCapabilityVersion {
+	if len(payload) < 24 || (string(payload[:4]) != muxSlotCapabilityMagic && string(payload[:4]) != muxSlotDeliveryMagic) || payload[4] != muxSlotCapabilityVersion {
 		return muxSlotCapability{}, errors.New("mux slot capability marker invalid")
 	}
-	value := muxSlotCapability{kind: payload[5], limit: binary.BigEndian.Uint16(payload[22:24])}
+	value := muxSlotCapability{kind: payload[5], delivery: string(payload[:4]) == muxSlotDeliveryMagic, limit: binary.BigEndian.Uint16(payload[22:24])}
 	copy(value.generation[:], payload[6:22])
 	if value.kind == muxSlotCapabilityOffer {
 		if len(payload) < 26 {

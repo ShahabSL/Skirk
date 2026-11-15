@@ -68,44 +68,45 @@ const (
 )
 
 type Tunnel struct {
-	Data                 BlobStore
-	Secret               string
-	SessionID            [16]byte
-	ClientID             string
-	RunID                string
-	ChunkSize            int
-	Transport            string
-	Concurrency          int
-	UploadConcurrency    int
-	DownloadConcurrency  int
-	Profile              string
-	RouteProxy           string
-	ExitProxy            string
-	ExitIPFamily         string
-	BurstPoll            bool
-	BurstPollInterval    time.Duration
-	BurstPollWindow      time.Duration
-	SparsePriority       bool
-	InteractionEpoch     bool
-	Observe              bool
-	MetadataOnlyPriority bool
-	MetadataSlotV1       bool
-	slotAttempted        atomic.Bool // One bounded shadow generation per client process/run.
-	role                 string
-	activeStreams        atomic.Int64
-	limiterMu            sync.Mutex
-	uploadLimiter        *adaptiveLimiter
-	downloadLimiter      *adaptiveLimiter
-	muxMu                sync.Mutex
-	clientMux            *driveMux
-	clientMuxListeners   int
-	lastActivityNS       atomic.Int64
-	lastUploadNS         atomic.Int64
-	burstDisabledUntilNS atomic.Int64
-	PollInterval         time.Duration
-	CleanupProcessed     bool
-	Logger               *log.Logger
-	roleOnce             sync.Once
+	Data                   BlobStore
+	Secret                 string
+	SessionID              [16]byte
+	ClientID               string
+	RunID                  string
+	ChunkSize              int
+	Transport              string
+	Concurrency            int
+	UploadConcurrency      int
+	DownloadConcurrency    int
+	Profile                string
+	RouteProxy             string
+	ExitProxy              string
+	ExitIPFamily           string
+	BurstPoll              bool
+	BurstPollInterval      time.Duration
+	BurstPollWindow        time.Duration
+	SparsePriority         bool
+	InteractionEpoch       bool
+	Observe                bool
+	MetadataOnlyPriority   bool
+	MetadataSlotV1         bool
+	MetadataSlotDeliveryV1 bool
+	slotAttempted          atomic.Bool // One bounded shadow generation per client process/run.
+	role                   string
+	activeStreams          atomic.Int64
+	limiterMu              sync.Mutex
+	uploadLimiter          *adaptiveLimiter
+	downloadLimiter        *adaptiveLimiter
+	muxMu                  sync.Mutex
+	clientMux              *driveMux
+	clientMuxListeners     int
+	lastActivityNS         atomic.Int64
+	lastUploadNS           atomic.Int64
+	burstDisabledUntilNS   atomic.Int64
+	PollInterval           time.Duration
+	CleanupProcessed       bool
+	Logger                 *log.Logger
+	roleOnce               sync.Once
 }
 
 func (t *Tunnel) setRole(role string) {
@@ -118,31 +119,32 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		return nil, err
 	}
 	t := &Tunnel{
-		Data:                 data,
-		Secret:               cfg.Secret,
-		SessionID:            sid,
-		ClientID:             strings.TrimSpace(cfg.Client.ID),
-		RunID:                strings.TrimSpace(cfg.Client.RunID),
-		ChunkSize:            cfg.Tunnel.ChunkSize,
-		Transport:            strings.TrimSpace(cfg.Tunnel.Transport),
-		Concurrency:          cfg.Tunnel.Concurrency,
-		UploadConcurrency:    cfg.Tunnel.UploadConcurrency,
-		DownloadConcurrency:  cfg.Tunnel.DownloadConcurrency,
-		Profile:              cfg.Tunnel.Profile,
-		RouteProxy:           cfg.Route.Proxy,
-		ExitProxy:            strings.TrimSpace(cfg.Tunnel.ExitProxy),
-		ExitIPFamily:         strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
-		BurstPoll:            cfg.Tunnel.BurstPoll,
-		BurstPollInterval:    time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
-		BurstPollWindow:      time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
-		SparsePriority:       cfg.Tunnel.SparsePriority,
-		InteractionEpoch:     cfg.Tunnel.InteractionEpoch,
-		Observe:              cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
-		MetadataOnlyPriority: cfg.Drive.MetadataOnlyPriority,
-		MetadataSlotV1:       cfg.Drive.MetadataSlotV1,
-		PollInterval:         cfg.PollInterval(),
-		CleanupProcessed:     cfg.Tunnel.CleanupProcessed,
-		Logger:               log.Default(),
+		Data:                   data,
+		Secret:                 cfg.Secret,
+		SessionID:              sid,
+		ClientID:               strings.TrimSpace(cfg.Client.ID),
+		RunID:                  strings.TrimSpace(cfg.Client.RunID),
+		ChunkSize:              cfg.Tunnel.ChunkSize,
+		Transport:              strings.TrimSpace(cfg.Tunnel.Transport),
+		Concurrency:            cfg.Tunnel.Concurrency,
+		UploadConcurrency:      cfg.Tunnel.UploadConcurrency,
+		DownloadConcurrency:    cfg.Tunnel.DownloadConcurrency,
+		Profile:                cfg.Tunnel.Profile,
+		RouteProxy:             cfg.Route.Proxy,
+		ExitProxy:              strings.TrimSpace(cfg.Tunnel.ExitProxy),
+		ExitIPFamily:           strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
+		BurstPoll:              cfg.Tunnel.BurstPoll,
+		BurstPollInterval:      time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
+		BurstPollWindow:        time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
+		SparsePriority:         cfg.Tunnel.SparsePriority,
+		InteractionEpoch:       cfg.Tunnel.InteractionEpoch,
+		Observe:                cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
+		MetadataOnlyPriority:   cfg.Drive.MetadataOnlyPriority,
+		MetadataSlotV1:         cfg.Drive.MetadataSlotV1,
+		MetadataSlotDeliveryV1: cfg.Drive.MetadataSlotDeliveryV1,
+		PollInterval:           cfg.PollInterval(),
+		CleanupProcessed:       cfg.Tunnel.CleanupProcessed,
+		Logger:                 log.Default(),
 	}
 	t.markActivity()
 	return t, nil

@@ -736,3 +736,18 @@ func (p *metadataSlotPeer) acked() uint64 {
 	defer p.mu.Unlock()
 	return p.inbound.processedSeq
 }
+
+func (p *metadataSlotPeer) outboundAcked() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.outbound.acked
+}
+
+func (p *metadataSlotPeer) stagedHead() (metadataSlotRecord, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.inbound.staged) == 0 || p.inbound.staged[0].externalDone {
+		return metadataSlotRecord{}, false
+	}
+	return p.inbound.staged[0].record.clone(), true
+}

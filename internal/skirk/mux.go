@@ -161,6 +161,10 @@ func completeMuxFrameAcks(frames []muxFrame, err error) {
 type muxObjectMeta struct {
 	Name            string
 	ID              string
+	SlotSealed      []byte
+	SlotSeq         uint64
+	SlotLink        *muxSlotLink
+	SlotAlternates  []muxObjectMeta
 	InlineData      []byte
 	MetadataOnly    bool
 	ClientID        string
@@ -188,6 +192,16 @@ type muxReceiveGapState struct {
 	nextMinSeq  uint64
 	nextMaxSeq  uint64
 	repairCount int
+}
+
+type muxSlotDigestClaim struct {
+	digest  [32]byte
+	expires time.Time
+}
+
+type muxSlotDigestOrderEntry struct {
+	name    string
+	expires time.Time
 }
 
 type cleanupRetryWork struct {
@@ -286,12 +300,18 @@ type driveMux struct {
 	pendingTotalBytes  int
 	active             atomic.Int64
 
-	seenMu     sync.Mutex
-	seen       map[string]struct{}
-	queued     map[string]struct{}
-	knownIDs   map[string]map[string]struct{}
-	primaryIDs map[string]string
-	processed  map[string]struct{}
+	seenMu           sync.Mutex
+	seen             map[string]struct{}
+	queued           map[string]struct{}
+	queuedSlot       map[string]struct{}
+	deferredPhysical map[string]map[string]muxObjectMeta
+	deferredOverflow map[string]muxObjectMeta
+	knownIDs         map[string]map[string]struct{}
+	primaryIDs       map[string]string
+	processed        map[string]struct{}
+	slotDigests      map[string]muxSlotDigestClaim
+	slotDigestOrder  []muxSlotDigestOrderEntry
+	slotVerifySlots  chan struct{}
 
 	listMu        sync.Mutex
 	listSince     time.Time
@@ -2251,8 +2271,15 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	if len(batch.frames) == 0 {
 		return nil
 	}
-	// Shadow probes duplicate bounded priority bytes for measurement. The
-	// immutable mux object below remains the sole application delivery path.
+	if l.mux.trySlotDelivery(ctx, batch) {
+		completeMuxFrameAcks(batch.frames, nil)
+		l.mux.t.markUpload()
+		if l.mux.t.Observe && l.mux.t.Logger != nil {
+			l.mux.t.Logger.Printf("mux slot delivery sender_ack role=%s lane=%d seq=%d stream=%016x record=%s sealed_bytes=%d", l.mux.role, l.idx, batch.seq, batch.frames[0].StreamID, targetFingerprint(batch.name), len(batch.sealed))
+		}
+		return nil
+	}
+	// Shadow mode remains a separate experiment with immutable delivery.
 	l.mux.queueSlotShadow(batch)
 	if store, ok := l.mux.t.Data.(driveQuotaWaitStore); ok {
 		if err := store.WaitForDriveQuota(ctx, "mux_upload"); err != nil {
@@ -3054,6 +3081,25 @@ func (m *driveMux) runReceiveWorker(ctx context.Context, priorityOnly bool) {
 			m.finishNormalMuxObject(ctx, meta)
 		}
 		if err != nil {
+			if meta.SlotLink != nil {
+				// A virtual record has no Drive ID. Release its claim so the
+				// already observed physical fallback can be processed without
+				// relying on a priority-list cursor rewind.
+				physical, overflow, overflowed := m.releaseFailedSlotClaim(meta.Name)
+				m.logSlotShadowError(err)
+				go m.closeSlotLink(meta.SlotLink)
+				if overflowed {
+					m.rewindReceiveListForMeta(overflow)
+				}
+				m.enqueueSlotPhysicalCandidates(ctx, physical)
+				continue
+			}
+			if len(meta.SlotAlternates) > 0 && ctx.Err() == nil {
+				m.unclaimQueued(meta.Name)
+				if m.enqueueSlotPhysicalCandidates(ctx, meta.SlotAlternates) {
+					continue
+				}
+			}
 			if isDriveNotFound(err) {
 				m.dropStaleMuxObject(ctx, meta, err)
 				continue
@@ -3069,7 +3115,21 @@ func (m *driveMux) runReceiveWorker(ctx context.Context, priorityOnly bool) {
 			continue
 		}
 		m.markSeenProcessed(meta)
-		m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+		if meta.SlotLink != nil {
+			if err := meta.SlotLink.peer.markProcessed(meta.SlotSeq, meta.Name); err != nil {
+				m.logSlotShadowError(err)
+			} else {
+				if m.t.Observe && m.t.Logger != nil {
+					m.t.Logger.Printf("mux slot delivery receiver_processed role=%s slot_seq=%d lane=%d seq=%d record=%s", m.role, meta.SlotSeq, meta.Lane, meta.Seq, targetFingerprint(meta.Name))
+				}
+				select {
+				case meta.SlotLink.ackWake <- struct{}{}:
+				default:
+				}
+			}
+		} else {
+			m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+		}
 		if m.t.Observe && m.t.Logger != nil {
 			target, targetID := m.streamObserveTarget(meta.key())
 			m.t.Logger.Printf("mux process role=%s direction=%s lane=%d seq=%d priority=%t stream=%016x target=%s target_id=%s plain_bytes=%d object=%s duration=%s", m.role, directionName(m.recvDir), meta.Lane, meta.Seq, meta.Priority, meta.StreamID, target, targetID, meta.PlainBytes, muxShortName(meta.Name), time.Since(started).Round(time.Millisecond))
@@ -4099,12 +4159,17 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 		}
 		return decodeMuxBatch(raw)
 	}
-	sealed, err := m.downloadMuxObject(ctx, meta)
-	if err != nil {
-		return err
+	var sealed []byte
+	if meta.SlotLink != nil {
+		sealed = meta.SlotSealed
+	} else {
+		sealed, err = m.downloadMuxObject(ctx, meta)
+		if err != nil {
+			return err
+		}
 	}
 	frames, err := decodeFrames(sealed)
-	if err != nil && !meta.MetadataOnly && len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
+	if err != nil && meta.SlotLink == nil && !meta.MetadataOnly && len(meta.InlineData) > 0 && len(meta.InlineData) <= muxInlineSealedMaxBytes {
 		// The media copy remains authoritative if a description was damaged or
 		// replaced. No frame has been delivered before authentication completes.
 		meta.InlineData = nil
@@ -4116,6 +4181,12 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 	}
 	if err != nil {
 		return err
+	}
+	if meta.SlotLink != nil {
+		stream := m.streamByKey(meta.key())
+		if stream == nil || !stream.ready.Load() || m.isClosedStream(meta.key()) {
+			return errors.New("metadata slot destination stream is not ready")
+		}
 	}
 	// Claim OPENs before accepting any capability request. A duplicate OPEN
 	// must not turn an existing legacy stream into a metadata-only sender.
@@ -4140,7 +4211,7 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 				continue
 			}
 			m.handleMetadataCapability(frame)
-			if m.role == "exit" && m.t.MetadataSlotV1 && len(frame.Payload) >= 4 && string(frame.Payload[:4]) == muxSlotCapabilityMagic {
+			if m.role == "exit" && m.t.MetadataSlotV1 && len(frame.Payload) >= 4 && (string(frame.Payload[:4]) == muxSlotCapabilityMagic || string(frame.Payload[:4]) == muxSlotDeliveryMagic) {
 				// Exact-ID validation is opt-in I/O. Do it after this authenticated
 				// OPEN continues through the normal immutable receive path.
 				go m.handleSlotCapability(ctx, frame)
@@ -4168,6 +4239,9 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 		m.handleFrame(ctx, frame)
 	}
 	m.t.markActivity()
+	if meta.SlotLink == nil {
+		m.noteSlotFallbackProcessed(meta, sealed, frames)
+	}
 	return nil
 }
 
@@ -4795,6 +4869,9 @@ func (m *driveMux) isKnown(name string) bool {
 	if _, ok := m.seen[name]; ok {
 		return true
 	}
+	if _, ok := m.slotDigestLocked(name); ok {
+		return true
+	}
 	_, ok := m.queued[name]
 	return ok
 }
@@ -4803,14 +4880,24 @@ func (m *driveMux) isKnownMuxObject(meta muxObjectMeta) bool {
 	m.seenMu.Lock()
 	_, seen := m.seen[meta.Name]
 	_, queued := m.queued[meta.Name]
-	known := seen || queued
-	duplicate := known && m.noteKnownObjectIDLocked(meta.Name, meta.ID)
+	claim, slotDelivered := m.slotDigestLocked(meta.Name)
+	known := seen || queued || slotDelivered
+	retain := true
+	if queued {
+		retain = m.rememberQueuedPhysicalLocked(meta)
+	}
+	duplicate := known && retain && m.noteKnownObjectIDLocked(meta.Name, meta.ID)
 	_, processed := m.processed[meta.Name]
+	processed = processed || slotDelivered
 	m.seenMu.Unlock()
 	if duplicate && processed {
-		// A retried priority POST can create another Drive ID with the same
-		// encrypted mux name. Ignore its frames but remove that exact file.
-		m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+		if slotDelivered {
+			m.verifySlotDuplicateAsync(meta, claim.digest)
+		} else {
+			// A retried priority POST can create another Drive ID with the same
+			// encrypted mux name. Ignore its frames but remove that exact file.
+			m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+		}
 	}
 	return known
 }
@@ -4825,7 +4912,7 @@ func (m *driveMux) noteKnownObjectIDLocked(name, id string) bool {
 	ids := m.knownIDs[name]
 	if ids == nil {
 		m.knownIDs[name] = map[string]struct{}{id: {}}
-		return false
+		return true
 	}
 	if _, exists := ids[id]; exists {
 		return false
@@ -4842,12 +4929,22 @@ func (m *driveMux) claimQueuedObject(meta muxObjectMeta) bool {
 	m.seenMu.Lock()
 	_, seen := m.seen[meta.Name]
 	_, queued := m.queued[meta.Name]
-	if seen || queued {
-		duplicate := m.noteKnownObjectIDLocked(meta.Name, meta.ID)
+	claim, slotDelivered := m.slotDigestLocked(meta.Name)
+	if seen || queued || slotDelivered {
+		retain := true
+		if queued {
+			retain = m.rememberQueuedPhysicalLocked(meta)
+		}
+		duplicate := retain && m.noteKnownObjectIDLocked(meta.Name, meta.ID)
 		_, processed := m.processed[meta.Name]
+		processed = processed || slotDelivered
 		m.seenMu.Unlock()
 		if duplicate && processed {
-			m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+			if slotDelivered {
+				m.verifySlotDuplicateAsync(meta, claim.digest)
+			} else {
+				m.enqueueCleanup(cleanupTask{name: meta.Name, id: meta.ID})
+			}
 		}
 		return false
 	}
@@ -4855,6 +4952,12 @@ func (m *driveMux) claimQueuedObject(meta muxObjectMeta) bool {
 		m.queued = map[string]struct{}{}
 	}
 	m.queued[meta.Name] = struct{}{}
+	if meta.SlotLink != nil {
+		if m.queuedSlot == nil {
+			m.queuedSlot = make(map[string]struct{})
+		}
+		m.queuedSlot[meta.Name] = struct{}{}
+	}
 	if meta.ID != "" {
 		if m.knownIDs == nil {
 			m.knownIDs = map[string]map[string]struct{}{}
@@ -4873,10 +4976,89 @@ func (m *driveMux) unclaimQueued(name string) {
 	m.seenMu.Lock()
 	defer m.seenMu.Unlock()
 	delete(m.queued, name)
+	delete(m.queuedSlot, name)
+	delete(m.deferredPhysical, name)
+	delete(m.deferredOverflow, name)
 	if _, seen := m.seen[name]; !seen {
 		delete(m.knownIDs, name)
 		delete(m.primaryIDs, name)
 	}
+}
+
+func (m *driveMux) rememberQueuedPhysicalLocked(meta muxObjectMeta) bool {
+	if meta.SlotLink != nil {
+		return true
+	}
+	if _, ok := m.queuedSlot[meta.Name]; !ok {
+		return true
+	}
+	if meta.ID == "" {
+		m.rememberDeferredOverflowLocked(meta)
+		return false
+	}
+	if m.deferredPhysical == nil {
+		m.deferredPhysical = make(map[string]map[string]muxObjectMeta)
+	}
+	byID := m.deferredPhysical[meta.Name]
+	if byID == nil {
+		byID = make(map[string]muxObjectMeta)
+		m.deferredPhysical[meta.Name] = byID
+	}
+	if _, exists := byID[meta.ID]; exists {
+		return true
+	}
+	if len(byID) >= muxSlotDeferredPhysicalMax {
+		m.rememberDeferredOverflowLocked(meta)
+		return false
+	}
+	byID[meta.ID] = meta
+	return true
+}
+
+func (m *driveMux) rememberDeferredOverflowLocked(meta muxObjectMeta) {
+	if m.deferredOverflow == nil {
+		m.deferredOverflow = make(map[string]muxObjectMeta)
+	}
+	old, exists := m.deferredOverflow[meta.Name]
+	if !exists || (!meta.Updated.IsZero() && (old.Updated.IsZero() || meta.Updated.Before(old.Updated))) {
+		m.deferredOverflow[meta.Name] = meta
+	}
+}
+
+func (m *driveMux) releaseFailedSlotClaim(name string) ([]muxObjectMeta, muxObjectMeta, bool) {
+	m.seenMu.Lock()
+	deferred := m.deferredPhysical[name]
+	physical := make([]muxObjectMeta, 0, len(deferred))
+	for _, meta := range deferred {
+		physical = append(physical, meta)
+	}
+	sort.Slice(physical, func(i, j int) bool { return physical[i].ID < physical[j].ID })
+	overflow, overflowed := m.deferredOverflow[name]
+	delete(m.queued, name)
+	delete(m.queuedSlot, name)
+	delete(m.deferredPhysical, name)
+	delete(m.deferredOverflow, name)
+	delete(m.knownIDs, name)
+	delete(m.primaryIDs, name)
+	m.seenMu.Unlock()
+	return physical, overflow, overflowed
+}
+
+func (m *driveMux) enqueueSlotPhysicalCandidates(ctx context.Context, physical []muxObjectMeta) bool {
+	if len(physical) == 0 {
+		return false
+	}
+	candidate := physical[0]
+	candidate.SlotAlternates = append([]muxObjectMeta(nil), physical[1:]...)
+	if !m.enqueueMuxObject(ctx, candidate) {
+		return false
+	}
+	m.seenMu.Lock()
+	for _, alternate := range physical[1:] {
+		m.noteKnownObjectIDLocked(candidate.Name, alternate.ID)
+	}
+	m.seenMu.Unlock()
+	return true
 }
 
 func (m *driveMux) markSeen(name string) {
@@ -4891,27 +5073,88 @@ func (m *driveMux) markSeenProcessed(meta muxObjectMeta) {
 		m.processed = map[string]struct{}{}
 	}
 	m.processed[meta.Name] = struct{}{}
+	if meta.SlotLink != nil {
+		m.rememberSlotDigestLocked(meta.Name, metadataSlotRecordDigest(metadataSlotRecord{MuxName: meta.Name, MuxSealed: meta.SlotSealed}))
+	}
 	if m.primaryIDs == nil {
 		m.primaryIDs = map[string]string{}
 	}
 	if m.primaryIDs[meta.Name] == "" {
 		m.primaryIDs[meta.Name] = meta.ID
 	}
+	deferred := m.deferredPhysical[meta.Name]
+	overflow, overflowed := m.deferredOverflow[meta.Name]
 	m.markSeenLocked(meta.Name)
 	var duplicates []string
+	claim, slotDelivered := m.slotDigestLocked(meta.Name)
 	for id := range m.knownIDs[meta.Name] {
-		if id != m.primaryIDs[meta.Name] {
+		if meta.SlotLink != nil || id != m.primaryIDs[meta.Name] {
 			duplicates = append(duplicates, id)
 		}
 	}
 	m.seenMu.Unlock()
+	if overflowed {
+		m.rewindReceiveListForMeta(overflow)
+	}
 	for _, id := range duplicates {
-		m.enqueueCleanup(cleanupTask{name: meta.Name, id: id})
+		if slotDelivered {
+			physical, ok := deferred[id]
+			if !ok {
+				physical = meta
+				physical.ID = id
+				physical.SlotLink = nil
+				physical.SlotSealed = nil
+			}
+			m.verifySlotDuplicateAsync(physical, claim.digest)
+		} else {
+			m.enqueueCleanup(cleanupTask{name: meta.Name, id: id})
+		}
+	}
+}
+
+// The virtual identity cache outlives the 200,000-entry mux discovery set.
+// Late immutable copies are verified before exact-ID cleanup. After this
+// bounded retention window, DATA/FIN stream sequence checks still suppress
+// application replay when an old physical copy is rediscovered.
+func (m *driveMux) slotDigestLocked(name string) (muxSlotDigestClaim, bool) {
+	claim, ok := m.slotDigests[name]
+	if ok && time.Now().After(claim.expires) {
+		delete(m.slotDigests, name)
+		return muxSlotDigestClaim{}, false
+	}
+	return claim, ok
+}
+
+func (m *driveMux) rememberSlotDigestLocked(name string, digest [32]byte) {
+	if existing, ok := m.slotDigestLocked(name); ok {
+		if existing.digest == digest {
+			return
+		}
+		// Preserve the first processed identity for any later physical copy.
+		return
+	}
+	if m.slotDigests == nil {
+		m.slotDigests = make(map[string]muxSlotDigestClaim)
+	}
+	now := time.Now()
+	expires := now.Add(muxSlotDigestRetention)
+	m.slotDigests[name] = muxSlotDigestClaim{digest: digest, expires: expires}
+	m.slotDigestOrder = append(m.slotDigestOrder, muxSlotDigestOrderEntry{name: name, expires: expires})
+	for len(m.slotDigestOrder) > 0 && (len(m.slotDigestOrder) > muxSlotDigestMax || now.After(m.slotDigestOrder[0].expires)) {
+		oldest := m.slotDigestOrder[0]
+		m.slotDigestOrder[0] = muxSlotDigestOrderEntry{}
+		m.slotDigestOrder = m.slotDigestOrder[1:]
+		if current, ok := m.slotDigests[oldest.name]; ok && current.expires.Equal(oldest.expires) {
+			delete(m.slotDigests, oldest.name)
+		}
 	}
 }
 
 func (m *driveMux) markSeenLocked(name string) {
 	delete(m.queued, name)
+	delete(m.queuedSlot, name)
+	delete(m.deferredPhysical, name)
+	delete(m.deferredOverflow, name)
 	m.seen[name] = struct{}{}
 	if len(m.seen) > 200000 {
 		m.seen = map[string]struct{}{name: struct{}{}}
