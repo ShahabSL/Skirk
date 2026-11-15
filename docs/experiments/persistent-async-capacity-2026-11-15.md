@@ -35,8 +35,14 @@ error, backoff or global quota ceiling stops the comparison. Counters and
 cleanup-unit estimates can omit opaque HTTP2 retries and are not Google billing
 measurements.
 
-All owned process groups are signaled even if a leader has exited, including
-inherited curl children, before cleanup. Cleanup touches only exact
+Each service, benchmark and curl child records a private native identity before
+teardown. Individual signals require that identity or a still-unreaped original
+Popen handle; a dead leader never authorizes signaling its old process group.
+The original workload outcome is synced before teardown. Every parent is
+attempted even if another signal fails; child manifests are read after parent
+exit, and ambiguous spawn intents remain explicit failures. No further Drive
+cleanup starts unless all original Go writers have exited. Workload failure,
+teardown failure and partial cleanup counters remain separate. Cleanup touches only exact
 `muxv4/<session>/` and `slotv1/<session>/` prefixes, checks immediate absence,
 waits 31 seconds and checks again. A late object is deleted and requires another
 full 31-second empty check; three delayed passes bound this work. Every generated
@@ -68,3 +74,10 @@ Local tests cover saved-config isolation, actual run-ID reuse, flag-only and
 prelude-only carrier activity rejection, global guard failure, exact origin
 hashes, simultaneous file overlap and late slot cleanup. The pre-existing real
 loopback SOCKS/echo tests cover the shared persistent probe and start barrier.
+
+The first live baseline/async pair is retained in
+[the bounded recovery and capacity report](bounded-recovery-and-capacity-2026-11-15.md).
+Its baseline completed five files and sixty exact echoes. The interrupted async
+arm and its process-group EPERM led to the separate teardown correction; no
+post-fix live capacity result is implied. The observer now also retains each
+client's receipt journal and atomic file checkpoint when interrupted.

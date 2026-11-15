@@ -82,10 +82,50 @@ def classify_failure(returncode: int, stderr: str, status: int | None) -> str | 
 
 
 def execute_curl(command: list[str], timeout: float, expected_bytes: int | None,
-                 expected_sha256: str | None) -> tuple[subprocess.CompletedProcess, str | None]:
+                 expected_sha256: str | None, process_observer=None) -> tuple[subprocess.CompletedProcess, str | None]:
     """Keep response bodies private and discard them even on curl failure."""
     def execute(cmd):
-        return subprocess.run(cmd, text=True, capture_output=True, check=False, timeout=timeout)
+        if process_observer is None:
+            return subprocess.run(cmd, text=True, capture_output=True, check=False, timeout=timeout)
+        process_observer("before", None, cmd)
+        try:
+            process = subprocess.Popen(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except BaseException as error:
+            try:
+                process_observer("spawn_failed", None, cmd)
+            except Exception as secondary:
+                error.skirk_cleanup_failures = [{"phase": "spawn_failure_journal", "type": type(secondary).__name__,
+                                                 "errno": getattr(secondary, "errno", None)}]
+            raise
+        primary_error = None
+        try:
+            process_observer("spawn", process, cmd)
+            stdout, stderr = process.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+        except BaseException as error:
+            primary_error = error
+            # This is our still-unreaped direct child, not a recycled PID/group.
+            cleanup_failures = []
+            for phase, action in (("kill", process.kill), ("reap", lambda: process.communicate(timeout=3))):
+                try:
+                    action()
+                except Exception as secondary:
+                    cleanup_failures.append({"phase": phase, "type": type(secondary).__name__,
+                                             "errno": getattr(secondary, "errno", None)})
+            if cleanup_failures:
+                error.skirk_cleanup_failures = cleanup_failures
+            raise
+        finally:
+            try:
+                if process.poll() is not None:
+                    process_observer("exit", process, cmd)
+            except Exception as secondary:
+                if primary_error is None:
+                    raise
+                failures = getattr(primary_error, "skirk_cleanup_failures", [])
+                failures.append({"phase": "exit_journal", "type": type(secondary).__name__,
+                                 "errno": getattr(secondary, "errno", None)})
+                primary_error.skirk_cleanup_failures = failures
 
     if expected_bytes is None and expected_sha256 is None:
         return execute(command), None
@@ -128,6 +168,7 @@ def run_one(
     small_request_file: str | None = None,
     bulk_request_file: str | None = None,
     expected_upload_bytes: int | None = None,
+    process_observer=None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     queue_ms = max(0.0, (started - submitted) * 1000)
@@ -185,14 +226,21 @@ def run_one(
         command.extend(("--request", "POST", "--data-binary", "@" + request_file))
     command.append(url)
     try:
-        proc, integrity_failure = execute_curl(command, allowed + 3, expected_bytes, expected_sha256)
-    except subprocess.TimeoutExpired:
+        if process_observer is None:
+            proc, integrity_failure = execute_curl(command, allowed + 3, expected_bytes, expected_sha256)
+        else:
+            proc, integrity_failure = execute_curl(command, allowed + 3, expected_bytes, expected_sha256, process_observer)
+    except subprocess.TimeoutExpired as error:
         common["failure"] = "process_timeout"
+        if getattr(error, "skirk_cleanup_failures", None):
+            common["process_cleanup_failures"] = error.skirk_cleanup_failures
         common["total_ms"] = round((time.monotonic() - started) * 1000, 3)
         common["scheduled_total_ms"] = round(queue_ms + common["total_ms"], 3)
         return common
-    except OSError:
+    except OSError as error:
         common["failure"] = "curl_unavailable"
+        if getattr(error, "skirk_cleanup_failures", None):
+            common["process_cleanup_failures"] = error.skirk_cleanup_failures
         return common
 
     # curl's timing JSON contains URLs and other details, so select only metrics.

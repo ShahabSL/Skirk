@@ -192,13 +192,13 @@ class CapacityCompareTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unexpected_control"):
             require_slot_activity("baseline", before, mixed, exit_mixed)
 
-    def test_dead_group_leader_does_not_leave_owned_curl_behind(self):
+    def test_dead_group_leader_is_not_authority_for_blind_group_kill(self):
         dead = argparse.Namespace(pid=43210, poll=lambda: 0)
-        with mock.patch("os.killpg") as kill:
-            stop_processes([dead])
-        import signal
-        self.assertEqual(kill.call_args_list, [mock.call(43210, signal.SIGTERM),
-                                             mock.call(43210, signal.SIGKILL)])
+        with mock.patch("os.killpg") as kill, \
+             mock.patch("skirk_live_capacity_compare.terminate_records", return_value={"ok": True}) as terminate:
+            self.assertTrue(stop_processes([dead])["ok"])
+        kill.assert_not_called()
+        self.assertEqual(terminate.call_args.kwargs["known_handles"], {43210: dead})
 
     def test_late_slot_object_requires_second_full_visibility_check(self):
         session = "00112233445566778899aabbccddeeff"

@@ -14,7 +14,6 @@ import http.server
 import json
 import os
 import re
-import signal
 import socket
 import socketserver
 import struct
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from skirk_live_capacity_bench import percentile, quota, require_metrics
+from skirk_owned_processes import append_process_record, load_process_records, terminate_records
 
 
 CLIENTS = 5
@@ -47,6 +47,26 @@ def private_text(path: Path, value: str) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         stream.write(value)
+
+
+def durable_json(path: Path, value: dict[str, Any]) -> None:
+    """Publish an immutable private outcome before resource teardown can fail."""
+    pending = path.with_name(path.name + "." + uuid.uuid4().hex + ".pending")
+    try:
+        descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(pending, path)  # Never replace an original workload outcome.
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def load_kit(kit_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -87,26 +107,167 @@ def arm_config(original: dict[str, Any], mode: str, session: str) -> dict[str, A
     return config
 
 
-def stop_processes(processes: list[subprocess.Popen[bytes]]) -> None:
-    # All launched services/benches use start_new_session=True. A dead group
-    # leader can still leave curl children in its owned process group.
-    for process in processes:
+def stop_processes(processes: list[subprocess.Popen[bytes]], records=None, **timeout_options) -> dict[str, Any]:
+    # A reaped leader PID is not authority to signal its old process group.
+    # Child curl identities come from the benchmark's private spawn journal.
+    known = {process.pid: process for process in processes}
+    captured = [record for record in (records or [])
+                if not processes or (isinstance(record, dict) and record.get("pid") in known)]
+    registered = {record["pid"] for record in captured}
+    captured.extend({"pid": process.pid, "role": "known_child", "identity_status": "unavailable",
+                     "observer_pid": os.getpid(),
+                     "requested_argv": list(process.args) if isinstance(getattr(process, "args", None), (tuple, list)) else None}
+                    for process in processes if process.pid not in registered)
+    return terminate_records(captured, known_handles=known, **timeout_options)
+
+
+def finalize_arm(row: dict[str, Any], run_dir: Path, services, benches,
+                 manifest_paths: list[Path], metrics_paths: list[Path],
+                 profile_paths: list[Path], cleanup_call, guard: "QuotaGuard") -> dict[str, Any]:
+    """Retain workload evidence and stop every writer before Drive cleanup."""
+    row["workload_ok"] = row.get("ok", False)
+    row["workload_failure"] = row.get("failure")
+    row["at_workload_stop_role_quotas"] = {"exit" if i == 0 else f"client-{i-1}": snapshot.get("quota")
+        for i, snapshot in enumerate(getattr(guard, "latest_snapshots", []))}
+    failures = []
+
+    def failed(phase, error):
+        failures.append({"phase": phase, "type": type(error).__name__,
+                         "errno": getattr(error, "errno", None)})
+
+    try:
+        durable_json(run_dir / "workload-outcome.json", row)
+    except Exception as error:
+        failed("persist_workload_outcome", error)
+    records = []
+    # Only the driver writes the parent manifest. Child journals are read
+    # after benchmarks stop so an in-flight append is not mistaken for damage.
+    for path in manifest_paths[:1]:
         try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    for process in processes:
-        if process.poll() is None:
+            if path.exists():
+                records.extend(load_process_records(path))
+        except Exception as error:
+            failed("read_process_manifest", error)
+    # Never let one rejected signal prevent attempting the six Google writers.
+    try:
+        row["process_teardown"] = stop_processes([*benches, *services], records)
+        if not row["process_teardown"].get("ok"):
+            failures.append({"phase": "stop_owned_processes", "type": "UnresolvedProcessTeardown", "errno": None})
+    except Exception as error:
+        failed("stop_owned_processes", error)
+        # If the best-effort helper itself fails, attempt every original
+        # handle independently. Zero per-handle waits avoid multiplying a
+        # cleanup deadline by eleven; one shared wait follows the signals.
+        row["parent_teardown_retry"] = []
+        for process in [*benches, *services]:
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
+                outcome = stop_processes([process], records, term_timeout=0, kill_timeout=0)
+                row["parent_teardown_retry"].append({"pid": process.pid, "result": outcome})
+            except Exception as retry_error:
+                failed("stop_parent_after_helper_error", retry_error)
+        retry_deadline = time.monotonic() + 3
+        while time.monotonic() < retry_deadline:
+            try:
+                if all(process.poll() is not None for process in [*benches, *services]):
+                    break
+            except Exception as retry_error:
+                failed("verify_parent_retry_exit", retry_error)
+                break
+            time.sleep(.02)
+    try:
+        row["all_original_benchmarks_stopped"] = all(process.poll() is not None for process in benches)
+    except Exception as error:
+        row["all_original_benchmarks_stopped"] = False
+        failed("verify_benchmark_exit", error)
+    if not row["all_original_benchmarks_stopped"]:
+        failures.append({"phase": "verify_benchmark_exit", "type": "LiveOrUnresolvedBenchmark", "errno": None})
+    children = []
+    for path in manifest_paths[1:]:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        if process.poll() is None:
-            process.wait(timeout=3)
+            if row["all_original_benchmarks_stopped"] and path.exists():
+                children.extend(load_process_records(path))
+            if path.with_name(path.name + ".spawn-pending").exists():
+                failures.append({"phase": "unresolved_child_spawn", "type": "UnresolvedSpawnIntent", "errno": None})
+        except Exception as error:
+            failed("read_child_process_manifest", error)
+    if row["all_original_benchmarks_stopped"]:
+        try:
+            row["child_process_teardown"] = stop_processes([], children)
+            if not row["child_process_teardown"].get("ok"):
+                failures.append({"phase": "stop_owned_children", "type": "UnresolvedProcessTeardown", "errno": None})
+        except Exception as error:
+            failed("stop_owned_children", error)
+    else:
+        # A live benchmark may hold its append lock or spawn another child.
+        # Never block indefinitely reading that journal or claim a complete set.
+        row["child_process_teardown"] = {"ok": False, "all_stopped": False,
+                                         "blocked": "benchmark_exit_not_verified"}
+    writers_stopped = True
+    for process in services:
+        try:
+            if process.poll() is None:
+                writers_stopped = False
+        except Exception as error:
+            writers_stopped = False
+            failed("verify_writer_exit", error)
+    row["all_original_google_writers_stopped"] = writers_stopped
+    final_snapshots = []
+    latest = getattr(guard, "latest_snapshots", [])
+    telemetry_complete = True
+    for index, path in enumerate(metrics_paths):
+        snapshot = read_metrics_safe(path)
+        q = snapshot.get("quota")
+        if not isinstance(q, dict) or any(type(q.get(key)) is not int or q[key] < 0 for key in ("calls", "units", "errors")):
+            telemetry_complete = False
+            failures.append({"phase": "read_final_metrics", "type": "MissingOrInvalidMetrics", "errno": None})
+            snapshot = latest[index] if index < len(latest) else {}
+        elif index < len(latest) and any(q[key] < latest[index]["quota"][key] for key in ("calls", "units", "errors")):
+            telemetry_complete = False
+            failures.append({"phase": "read_final_metrics", "type": "RegressedMetrics", "errno": None})
+            snapshot = latest[index]
+        final_snapshots.append(snapshot)
+    row["last_observed_role_quotas"] = {"exit" if i == 0 else f"client-{i-1}": snapshot.get("quota")
+                                         for i, snapshot in enumerate(final_snapshots)}
+    row["telemetry_complete"] = telemetry_complete
+    # Even a blocked cleanup must not erase this arm's observed account usage.
+    guard.completed_units += sum(quota(snapshot, "units") for snapshot in final_snapshots)
+    if services and writers_stopped:
+        try:
+            row["cleanup"] = cleanup_call()
+            guard.completed_units += row["cleanup"].get("estimated_units", 0)
+            if not row["cleanup"].get("ok"):
+                failures.append({"phase": "exact_drive_cleanup", "type": "IncompleteCleanup", "errno": None})
+        except Exception as error:
+            failed("exact_drive_cleanup", error)
+            partial = getattr(error, "partial_result", None)
+            row["cleanup"] = dict(partial) if isinstance(partial, dict) else {"ok": False}
+            row["cleanup"]["ok"] = False
+            guard.completed_units += row["cleanup"].get("estimated_units", 0)
+    elif services:
+        row["cleanup"] = {"ok": False, "blocked": "google_writer_exit_not_verified", "calls_started": 0}
+        failures.append({"phase": "exact_drive_cleanup", "type": "LiveOrUnresolvedGoogleWriter", "errno": None})
+    else:
+        row["cleanup"] = {"ok": True, "skipped": "no_service_was_launched", "calls_started": 0}
+    for path in profile_paths:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception as error:
+            failed("remove_profile", error)
+    if guard.completed_units > guard.args.max_total_units:
+        failures.append({"phase": "post_cleanup_quota_guard", "type": "CohortEstimateExceeded", "errno": None})
+    row["teardown_failures"] = failures
+    if failures:
+        row["ok"] = False
+        if not row.get("failure"):
+            row["failure"] = "teardown_failed"
+    try:
+        durable_json(run_dir / "teardown-outcome.json", row)
+    except Exception as error:
+        failed("persist_teardown_outcome", error)
+        row["ok"] = False
+        if not row.get("failure"):
+            row["failure"] = "teardown_failed"
+    return row
 
 
 def wait_for_clients(processes: list[subprocess.Popen[bytes]], ports: list[int]) -> None:
@@ -146,11 +307,13 @@ class QuotaGuard:
         self.max_recent = 0.0
         self.max_rolling = 0
         self.max_total = 0
+        self.latest_snapshots = []
 
     def check(self, paths: list[Path], processes: list[subprocess.Popen[bytes]]) -> list[dict[str, Any]]:
         if any(process.poll() is not None for process in processes):
             raise RuntimeError("service_exited")
         snapshots = [require_metrics(path) for path in paths]
+        self.latest_snapshots = snapshots
         if any(quota(snapshot, "errors") or snapshot.get("drive_backoff", {}).get("active") for snapshot in snapshots):
             raise RuntimeError("drive_error_or_backoff")
         current = sum(quota(snapshot, "units") for snapshot in snapshots)
@@ -174,13 +337,19 @@ class QuotaGuard:
         return snapshots
 
 
+class ExactCleanupError(RuntimeError):
+    def __init__(self, code: str, result: dict[str, Any]):
+        super().__init__(code)
+        self.partial_result = json.loads(json.dumps(result))
+
+
 def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[str, Any]:
     if not re.fullmatch(r"[a-f0-9]{32}", session):
         raise ValueError("exact generated session required")
     prefixes = [f"{kind}/{session}/" for kind in ("muxv4", "slotv1")]
     result = {"attempts": 0, "matched": 0, "deleted": 0, "remaining": None,
               "failed": 0, "truncated": False, "estimated_units": 0, "ok": False,
-              "prefixes": prefixes, "delayed_checks": [],
+              "prefixes": prefixes, "delayed_checks": [], "commands_started": 0, "operations": [],
               "units_note": "minimum from list pages and deleted objects; opaque retry/auth calls omitted"}
 
     def invoke(prefix: str, delete: bool) -> int:
@@ -188,27 +357,36 @@ def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[
                    "--prefix", prefix, "--older-than", "1ns", "--concurrency", "2", "--max-pages", "32"]
         if delete:
             command.append("--delete")
-        completed = subprocess.run(command, capture_output=True, timeout=90, check=False)
-        if completed.returncode:
-            raise RuntimeError("exact_session_cleanup_command_failed")
+        operation = {"prefix": prefix, "delete": delete, "complete": False}
+        result["operations"].append(operation)
+        result["commands_started"] += 1
+        try:
+            completed = subprocess.run(command, capture_output=True, timeout=90, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            operation["error_type"] = type(error).__name__
+            raise ExactCleanupError("exact_session_cleanup_command_failed", result) from None
+        operation["returncode"] = completed.returncode
         try:
             parsed = json.loads(completed.stdout)
         except (ValueError, TypeError):
-            raise RuntimeError("exact_session_cleanup_result_invalid") from None
+            raise ExactCleanupError("exact_session_cleanup_result_invalid", result) from None
         if (not isinstance(parsed, dict) or parsed.get("prefix") != prefix or
                 type(parsed.get("dry_run")) is not bool or parsed["dry_run"] == delete):
-            raise RuntimeError("exact_session_cleanup_prefix_mismatch")
+            raise ExactCleanupError("exact_session_cleanup_prefix_mismatch", result)
         pages, matched, deleted, failed = (parsed.get(key) for key in ("pages", "matched", "deleted", "failed"))
         if any(type(value) is not int or value < 0 for value in (pages, matched, deleted, failed)):
-            raise RuntimeError("exact_session_cleanup_counts_invalid")
+            raise ExactCleanupError("exact_session_cleanup_counts_invalid", result)
+        operation.update(complete=True, pages=pages, matched=matched, deleted=deleted, failed=failed)
         result["estimated_units"] += pages * 100 + deleted * 50
         result["truncated"] = result["truncated"] or bool(parsed.get("truncated"))
         result["failed"] += failed
         if delete:
             result["matched"] += matched
             result["deleted"] += deleted
+        if completed.returncode:
+            raise ExactCleanupError("exact_session_cleanup_command_failed", result)
         if result["truncated"] or result["failed"]:
-            raise RuntimeError("exact_session_cleanup_incomplete")
+            raise ExactCleanupError("exact_session_cleanup_incomplete", result)
         return matched
 
     for prefix in prefixes:
@@ -218,11 +396,13 @@ def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[
             if invoke(prefix, False) == 0:
                 break
         else:
-            raise RuntimeError("exact_session_cleanup_debt")
+            raise ExactCleanupError("exact_session_cleanup_debt", result)
     for _ in range(3):
         time.sleep(31)
-        remaining = {prefix: invoke(prefix, False) for prefix in prefixes}
+        remaining = {}
         result["delayed_checks"].append(remaining)
+        for prefix in prefixes:
+            remaining[prefix] = invoke(prefix, False)
         result["remaining"] = sum(remaining.values())
         if not result["remaining"]:
             result["ok"] = True
@@ -232,8 +412,8 @@ def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[
             if count:
                 invoke(prefix, True)
                 if invoke(prefix, False):
-                    raise RuntimeError("late_exact_session_cleanup_debt")
-    raise RuntimeError("exact_session_cleanup_debt")
+                    raise ExactCleanupError("late_exact_session_cleanup_debt", result)
+    raise ExactCleanupError("exact_session_cleanup_debt", result)
 
 
 def bulk_window(reports: list[dict[str, Any]]) -> tuple[float | None, int]:
@@ -415,38 +595,42 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
     run_dir = args.out / f"{index}-{mode}"
     run_dir.mkdir(mode=0o700)
     session = uuid.uuid4().hex
-    private_text(run_dir / "session-id.txt", session + "\n")
     client_configs = [run_dir / f"client-{i}-config.json" for i in range(CLIENTS)]
     exit_config = run_dir / "exit-config.json"
-    for client_index, path in enumerate(client_configs):
-        config = arm_config(originals[0], mode, session)
-        config.setdefault("client", {}).update(id=f"capacity-{session[:12]}-{client_index}", run_id=uuid.uuid4().hex)
-        private_json(path, config)
-    private_json(exit_config, arm_config(originals[1], mode, session))
     binary = args.binary if mode != "baseline" else args.control_binary
     row: dict[str, Any] = {"arm": index, "mode": mode, "ok": False,
-                           "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                           "binary_sha256": None,
                            "route_mode": "google_front_pinned", "experimental_async": mode == "async",
                            "session_fingerprint": hashlib.sha256(session.encode()).hexdigest()[:12]}
     services: list[subprocess.Popen[bytes]] = []
     benches: list[subprocess.Popen[bytes]] = []
-    launched = False
+    process_manifest = run_dir / "processes.jsonl"
+    curl_manifests = [run_dir / f"bench-{i}-processes.jsonl" for i in range(CLIENTS)]
     paths = [run_dir / "exit-metrics.json"] + [run_dir / f"client-{i}-metrics.json" for i in range(CLIENTS)]
+    guard.latest_snapshots = []  # Current-arm evidence; completed account units remain intact.
     ports = [args.port_base + i for i in range(CLIENTS)]
     failures_before = origin_failures[0]
     try:
+        private_text(run_dir / "session-id.txt", session + "\n")
+        row["binary_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+        for client_index, path in enumerate(client_configs):
+            config = arm_config(originals[0], mode, session)
+            config.setdefault("client", {}).update(id=f"capacity-{session[:12]}-{client_index}", run_id=uuid.uuid4().hex)
+            private_json(path, config)
+        private_json(exit_config, arm_config(originals[1], mode, session))
         with (run_dir / "exit.log").open("xb") as stream:
-            services.append(subprocess.Popen([str(binary), "serve-exit", "--config", str(exit_config),
-                                              "--observe", "--metrics-path", str(paths[0])], stdout=stream,
-                                             stderr=subprocess.STDOUT, start_new_session=True))
-        launched = True
+            command = [str(binary), "serve-exit", "--config", str(exit_config),
+                       "--observe", "--metrics-path", str(paths[0])]
+            services.append(subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True))
+            append_process_record(process_manifest, services[-1].pid, "exit", command)
         for client_index, port in enumerate(ports):
             with (run_dir / f"client-{client_index}.log").open("xb") as stream:
-                services.append(subprocess.Popen([str(binary), "serve-client", "--config", str(client_configs[client_index]),
-                                                  "--listen", f"127.0.0.1:{port}",
-                                                  "--client-id", f"capacity-{session[:12]}-{client_index}",
-                                                  "--observe", "--metrics-path", str(paths[client_index + 1])], stdout=stream,
-                                                 stderr=subprocess.STDOUT, start_new_session=True))
+                command = [str(binary), "serve-client", "--config", str(client_configs[client_index]),
+                           "--listen", f"127.0.0.1:{port}",
+                           "--client-id", f"capacity-{session[:12]}-{client_index}",
+                           "--observe", "--metrics-path", str(paths[client_index + 1])]
+                services.append(subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True))
+                append_process_record(process_manifest, services[-1].pid, f"client-{client_index}", command)
         wait_for_clients(services, ports)
         wait_for_metrics(paths, services)
         guard.check(paths, services)
@@ -463,11 +647,15 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
                        "--prelude-bytes", str(PRELUDE_BYTES), "--prelude-seed", f"skirk-capacity-prelude-v1-{client_index}",
                        "--overall-timeout", "240", "--prelude-timeout", "75", "--request-timeout", "75",
                        "--bulk-timeout", "120", "--stall-seconds", str(args.bulk_stall_seconds),
+                       "--bulk-result-file", str(run_dir / f"bench-{client_index}-file-completion.json"),
+                       "--sample-journal", str(run_dir / f"bench-{client_index}-receipts.jsonl"),
+                       "--owned-process-journal", str(curl_manifests[client_index]),
                        "--ready-file", str(run_dir / f"bench-{client_index}.ready"),
                        "--start-signal", str(start_signal), "--out", str(report_path)]
             with (run_dir / f"bench-{client_index}.log").open("xb") as stream:
                 benches.append(subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
                                                 start_new_session=True))
+                append_process_record(process_manifest, benches[-1].pid, f"bench-{client_index}", command)
         ready_deadline = time.monotonic() + 85
         while not all((run_dir / f"bench-{i}.ready").exists() for i in range(CLIENTS)):
             if any(process.poll() is not None for process in benches):
@@ -515,31 +703,9 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
         row["ok"] = False
         row["failure"] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     finally:
-        stop_processes(benches)
-        stop_processes(services)
-        final_snapshots = [read_metrics_safe(path) for path in paths]
-        row["last_observed_role_quotas"] = {
-            "exit" if i == 0 else f"client-{i-1}": snapshot.get("quota")
-            for i, snapshot in enumerate(final_snapshots)}
-        row["telemetry_complete"] = all("quota" in snapshot for snapshot in final_snapshots)
-        if launched:
-            try:
-                cleanup = cleanup_exact(args.binary, args.kit_dir / "exit.json", session)
-                row["cleanup"] = cleanup
-                guard.completed_units += sum(quota(snapshot, "units") for snapshot in [
-                    read_metrics_safe(path) for path in paths]) + cleanup["estimated_units"]
-                if guard.completed_units > args.max_total_units:
-                    row["ok"] = False
-                    row["failure"] = "total_quota_guard_after_cleanup"
-            except Exception as error:
-                row["cleanup"] = {"ok": False}
-                row["ok"] = False
-                row["failure"] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
-        for path in client_configs:
-            path.unlink(missing_ok=True)
-        exit_config.unlink(missing_ok=True)
-        if not row.get("cleanup", {}).get("ok", False):
-            row["ok"] = False
+        finalize_arm(row, run_dir, services, benches, [process_manifest, *curl_manifests], paths,
+                     [*client_configs, exit_config],
+                     lambda: cleanup_exact(args.binary, args.kit_dir / "exit.json", session), guard)
     return row
 
 

@@ -8,7 +8,9 @@ listener, first round-trips a 128 KiB frame, then sends distinct 64-byte text
 frames while one bulk HTTP transfer runs through the same SOCKS listener.
 
 Only bounded timings, counts, and failure categories enter the private report.
-No URL, path, payload, credential, or socket diagnostic is recorded. The tool
+No URL, path, payload, credential, or socket diagnostic enters the measurement
+report. An optional private process journal records synthetic curl arguments
+and native process identity for safe teardown. The tool
 does not start Skirk or contact Google unless pointed at a live Skirk listener.
 """
 
@@ -34,6 +36,31 @@ FRAME_HEADER = struct.Struct("!I")
 TEXT_BYTES = 64
 MIN_PRELUDE_BYTES = 65537
 MAX_PRELUDE_BYTES = 1024 * 1024
+
+
+def owned_process_observer(journal: Path):
+    # Write intent before spawning. A parent killed between Popen and identity
+    # registration leaves a visible unresolved marker, never kill authority.
+    import skirk_owned_processes
+    pending = journal.with_name(journal.name + ".spawn-pending")
+
+    def observe(event, process, command):
+        if event == "before":
+            descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w") as stream:
+                json.dump({"role": "curl", "argv": command,
+                           "started_utc": datetime.now(timezone.utc).isoformat()}, stream)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        elif event == "spawn":
+            record = skirk_owned_processes.append_process_record(journal, process.pid, "curl", command)
+            if record.get("identity_status") != "captured":
+                raise RuntimeError("curl_process_identity_unavailable")
+            pending.unlink()
+        elif event in ("exit", "spawn_failed"):
+            pending.unlink(missing_ok=True)
+    return observe
 
 
 class ProbeError(Exception):
@@ -420,13 +447,15 @@ def run_workload(args: argparse.Namespace,
                            "expected_frames": args.small_count, "frame_bytes": TEXT_BYTES})
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             def run_bulk():
+                process_journal = getattr(args, "owned_process_journal", None)
+                options = {"process_observer": owned_process_observer(process_journal)} if process_journal else {}
                 sample = bulk_runner("bulk", 0, args.bulk_url, args.port, run_start,
                 run_start, deadline, args.bulk_timeout, args.connect_timeout,
                 args.stall_seconds, args.stall_bytes_per_second,
                 args.bulk_max_mib * 1024 * 1024, False, [],
                 args.bulk_expected_bytes, args.bulk_sha256, None,
                 str(args.bulk_request_file) if args.bulk_direction == "upload" else None,
-                args.bulk_upload_bytes if args.bulk_direction == "upload" else None)
+                args.bulk_upload_bytes if args.bulk_direction == "upload" else None, **options)
                 path = getattr(args, "bulk_result_file", None)
                 if path is not None:
                     pending = path.with_name(path.name + ".pending")
@@ -487,6 +516,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", type=Path, required=True, help="fresh JSON file under .skirk-runs")
     parser.add_argument("--sample-journal", type=Path,
                         help="private synced receipt rows retained if later work is interrupted")
+    parser.add_argument("--owned-process-journal", type=Path,
+                        help="private native curl identity journal for verified parent teardown")
     parser.add_argument("--bulk-result-file", type=Path,
                         help="persist completed file proof before later text frames finish")
     parser.add_argument("--small-count", type=int, default=24)
@@ -509,6 +540,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.sample_journal is not None and (args.sample_journal.exists() or
             ".skirk-runs" not in args.sample_journal.resolve().parts):
         parser.error("sample journal must be fresh under .skirk-runs")
+    if args.owned_process_journal is not None and (args.owned_process_journal.exists() or
+            args.owned_process_journal.with_name(args.owned_process_journal.name + ".spawn-pending").exists() or
+            ".skirk-runs" not in args.owned_process_journal.resolve().parts):
+        parser.error("owned process journal must be fresh under .skirk-runs")
     if args.bulk_result_file is not None and (args.bulk_result_file.exists() or
             ".skirk-runs" not in args.bulk_result_file.resolve().parts):
         parser.error("bulk result file must be fresh under .skirk-runs")
