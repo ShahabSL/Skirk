@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,6 +61,9 @@ func newRelayResearchGoogleExchange(client *GoogleHTTPClient, endpoint string, a
 	first, err := appsScriptEchoEndpoint(endpoint, true)
 	if err != nil || client == nil || codec == nil || budget == nil || len(auth) < 32 || len(auth) > 128 {
 		return nil, errRelayResearchBounds
+	}
+	if client.route.Mode != "google_front_pinned" || net.ParseIP(client.route.GoogleIP) == nil {
+		return nil, errRelayResearchConflict
 	}
 	return func(ctx context.Context, wire []byte) ([]byte, error) {
 		if len(wire) > codec.maxWireBytes() {
@@ -135,7 +139,7 @@ func TestRelayClientGoogleCarrierPreservesFrontAndReservesRedirects(t *testing.T
 	wire, _ := codec.seal(relayResearchPacket{Kind: rrPull, Seq: 1})
 	reply, _ := codec.seal(relayResearchPacket{Kind: rrPull | rrResponse, Seq: 1})
 	var calls int
-	client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned"}, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
 		if req.URL.Hostname() != "www.google.com" {
 			t.Error("carrier escaped selected google.com front")
@@ -178,7 +182,7 @@ func TestRelayClientGoogleCarrierRejectsForeignRedirectAndSecretReflection(t *te
 	codec, _ := newRelayResearchCodec(bytes.Repeat([]byte{8}, 32), [16]byte{3}, 128<<10)
 	wire, _ := codec.seal(relayResearchPacket{Kind: rrPull, Seq: 1})
 	for _, foreign := range []bool{false, true} {
-		client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned"}, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			if foreign {
 				response := stringResponse(302, "")
 				response.Header = http.Header{"Location": {"https://owned-relay.example/exchange"}}
@@ -192,6 +196,16 @@ func TestRelayClientGoogleCarrierRejectsForeignRedirectAndSecretReflection(t *te
 		}
 		if _, err = exchange(context.Background(), wire); !errors.Is(err, errRelayResearchConflict) {
 			t.Fatal("foreign redirect/reflected auth accepted", foreign, err)
+		}
+	}
+}
+
+func TestRelayClientGoogleCarrierRejectsUnpinnedOrDirectRoute(t *testing.T) {
+	codec, _ := newRelayResearchCodec(bytes.Repeat([]byte{8}, 32), [16]byte{3}, 128<<10)
+	for _, route := range []RouteConfig{{Mode: "direct"}, {Mode: "google_front"}, {Mode: "google_front_pinned"}, {Mode: "google_front_pinned", GoogleIP: "not-an-ip"}} {
+		client := &GoogleHTTPClient{route: route}
+		if _, err := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, &relayResearchCarrierBudget{}); !errors.Is(err, errRelayResearchConflict) {
+			t.Fatal("unpinned research route accepted", route.Mode, err)
 		}
 	}
 }
