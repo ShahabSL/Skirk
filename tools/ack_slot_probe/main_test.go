@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -163,7 +164,7 @@ func TestRequiresLiveAndPrivateCreateOnlyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path + ".recovery-ids")
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("recovery ledger not private: %v", err)
 	}
 	if err := validateOutputPath(path); err == nil {
@@ -173,7 +174,7 @@ func TestRequiresLiveAndPrivateCreateOnlyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err = os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("report not private: %v", err)
 	}
 	if err := writeReport(path, report{}); err == nil {

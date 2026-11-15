@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,9 @@ func TestValidateSystemdUserRejectsUnsafeValues(t *testing.T) {
 }
 
 func TestValidateServicePathsForUserRejectsRootPrivatePathsForNonRootUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("systemd /root path policy is Unix-specific")
+	}
 	if err := validateServicePathsForUser("/root/.local/bin/skirk", "/home/ubuntu/skirk-kit/exit.json", "ubuntu"); err == nil {
 		t.Fatal("validateServicePathsForUser accepted /root binary for non-root service user")
 	}

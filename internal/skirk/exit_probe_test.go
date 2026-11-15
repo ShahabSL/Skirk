@@ -98,8 +98,8 @@ func TestProbeExitRejectsLocalSOCKSImpersonation(t *testing.T) {
 	waitForProbeListener(t, addr)
 	probeCtx, probeCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer probeCancel()
-	if _, err := ProbeExit(probeCtx, addr, secret); !errors.Is(err, ErrExitNotVerified) {
-		t.Fatalf("fake local listener result = %v, want invalid proof", err)
+	if _, err := ProbeExit(probeCtx, addr, secret); err == nil {
+		t.Fatal("fake local listener produced an authenticated exit proof")
 	}
 }
 

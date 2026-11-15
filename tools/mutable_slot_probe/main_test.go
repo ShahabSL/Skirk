@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -51,7 +52,7 @@ func TestReportIsPrivateAndCreateOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("report mode = %v", info.Mode().Perm())
 	}
 	if err := writeReport(path, report{SchemaVersion: 2}); err == nil {
@@ -62,7 +63,7 @@ func TestReportIsPrivateAndCreateOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err = os.Stat(recovery)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("recovery record not private: %v", err)
 	}
 	if err := writeRecoveryID(recovery, "other-id"); err == nil {

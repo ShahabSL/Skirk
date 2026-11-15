@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestRenewOAuthUpdatesKitCredentialsAndPreservesIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if backupInfo.Mode().Perm() != 0700 {
+	if runtime.GOOS != "windows" && backupInfo.Mode().Perm() != 0700 {
 		t.Fatalf("backup directory mode = %o; want 0700", backupInfo.Mode().Perm())
 	}
 	for _, tc := range []struct {
@@ -96,7 +97,7 @@ func TestRenewOAuthUpdatesKitCredentialsAndPreservesIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 			t.Fatalf("%s mode = %o; want 0600", tc.name, info.Mode().Perm())
 		}
 	}
@@ -135,7 +136,7 @@ func TestRenewOAuthUpdatesKitCredentialsAndPreservesIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if backupInfo.Mode().Perm() != 0600 {
+		if runtime.GOOS != "windows" && backupInfo.Mode().Perm() != 0600 {
 			t.Fatalf("backup %s mode = %o; want 0600", backupPath, backupInfo.Mode().Perm())
 		}
 	}
