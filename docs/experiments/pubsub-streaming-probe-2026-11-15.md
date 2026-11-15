@@ -51,7 +51,7 @@ grant; no main Gmail account should be used.
 ```sh
 go test -race ./internal/skirk -run '^TestStreamingProbe' -count=1
 SKIRK_PUBSUB_STREAM_LIVE=1 \
-SKIRK_PUBSUB_STREAM_ACCOUNT=tekkenchanse3@gmail.com \
+SKIRK_PUBSUB_STREAM_ACCOUNT=isolated-secondary \
 SKIRK_PUBSUB_STREAM_TOKEN_FILE=/absolute/.skirk-runs/secondary-token \
 SKIRK_PUBSUB_STREAM_ROUTE_CONFIG=/absolute/.skirk-runs/personal-test/kit/exit.json \
 SKIRK_PUBSUB_STREAM_OUT=/absolute/.skirk-runs/streaming-new.json \

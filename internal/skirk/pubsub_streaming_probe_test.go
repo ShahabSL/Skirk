@@ -408,7 +408,9 @@ func TestLivePinnedPubSubStreamingPull(t *testing.T) {
 	if os.Getenv("SKIRK_PUBSUB_STREAM_LIVE") != "1" {
 		t.Skip("guarded test-account StreamingPull primitive")
 	}
-	if os.Getenv("SKIRK_PUBSUB_STREAM_ACCOUNT") != "tekkenchanse3@gmail.com" {
+	// This is an operator assertion, not a bearer-token identity check. The
+	// token must be minted with an explicit authorized secondary account.
+	if os.Getenv("SKIRK_PUBSUB_STREAM_ACCOUNT") != "isolated-secondary" {
 		t.Fatal("explicit authorized secondary account required")
 	}
 	tokenPath := os.Getenv("SKIRK_PUBSUB_STREAM_TOKEN_FILE")
