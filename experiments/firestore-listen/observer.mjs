@@ -13,8 +13,13 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   if (createHash('sha256').update(blob).digest('hex') !== blobSHA256) throw new Error('unapproved WebChannel implementation');
   const bridge = new URL(config.bridge_url);
   if (bridge.protocol !== 'http:' || bridge.hostname !== '127.0.0.1' || !bridge.port || bridge.username || bridge.password || !['', '/'].includes(bridge.pathname) || bridge.search || bridge.hash || !/^[a-f0-9]{64}$/.test(config.bridge_auth)) throw new Error('invalid loopback bridge');
-  if (!/^projects\/skirk-p\/databases\/skirk-front-probe-[a-f0-9]{12}$/.test(config.database) || !config.document.startsWith(config.database + '/documents/') || config.document.length > 512 || !/^[\x21-\x7e]{1,16384}$/.test(config.access_token)) throw new Error('invalid owned target');
-  const lifetime = Math.min(Math.max(config.duration_ms || 60000, 1000), 90000);
+  const hybrid = config.hybrid_research === true;
+  const databasePattern = hybrid ? /^projects\/skirk-p\/databases\/skirk-(?:front-probe|hybrid-probe)-[a-f0-9]{12}$/ : /^projects\/skirk-p\/databases\/skirk-front-probe-[a-f0-9]{12}$/;
+  if (!databasePattern.test(config.database) || !config.document.startsWith(config.database + '/documents/') || config.document.length > 512 || !/^[\x21-\x7e]{1,16384}$/.test(config.access_token)) throw new Error('invalid owned target');
+  const lifetime = Math.min(Math.max(config.duration_ms || 60000, 1000), hybrid ? 300000 : 90000);
+  const requestLimit = hybrid ? config.request_limit ?? 256 : 28;
+  const eventLimit = hybrid ? config.event_limit ?? 512 : 64;
+  if (!Number.isSafeInteger(requestLimit) || requestLimit < 1 || requestLimit > (hybrid ? 256 : 28) || !Number.isSafeInteger(eventLimit) || eventLimit < 1 || eventLimit > (hybrid ? 512 : 64)) throw new Error('invalid owned observer bounds');
   const requests = new Set();
   const deliveries = new Set();
   const transportAbort = new AbortController();
@@ -45,6 +50,7 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   let documentCount = 0;
   let targetCount = 0;
   let rejected = 0;
+  let eventCount = 0;
   let failure = '';
   const safeCodes = new Set(['OK', 'CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND', 'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION', 'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS', 'UNAUTHENTICATED']);
   const isSignalAbort = (error, signal) => signal.aborted && (error === signal.reason || error?.name === 'AbortError');
@@ -74,6 +80,7 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   };
   const emit = event => {
     if (closed) return;
+    if (++eventCount > eventLimit) { failure ||= 'EVENT_COUNT_BOUND'; void close(); return; }
     if (deliveries.size >= 64) { failure ||= 'EVENT_QUEUE_BOUND'; void close(); return; }
     // One ordered, bounded local publisher cannot consume all forward slots.
     const task = eventTail.then(() => postLocal('/event', event, eventAbort.signal, 'event'));
@@ -88,7 +95,7 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'firestore.googleapis.com' || parsed.port || parsed.pathname !== listenPath || parsed.searchParams.get('database') !== config.database || parsed.username || parsed.password || parsed.searchParams.has('$httpHeaders') || decodeURIComponent(parsed.search).includes(config.access_token) || !['GET', 'POST'].includes(req.method)) {
       rejected++; failure ||= 'NETWORK_WHITELIST'; throw new Error('logical request outside owned listener');
     }
-    if (++requestCount > 28) { failure ||= 'REQUEST_BOUND'; throw new Error('listener request bound'); }
+    if (++requestCount > requestLimit) { failure ||= 'REQUEST_BOUND'; throw new Error('listener request bound'); }
     const bytes = Buffer.from(await req.arrayBuffer());
     if (bytes.length > 128 * 1024) throw new Error('listener body bound');
     const signal = AbortSignal.any([req.signal, transportAbort.signal]);
@@ -146,7 +153,8 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
       const data = changed.fields?.sealed?.bytesValue;
       if (changed.name !== config.document || typeof data !== 'string' || data.length > 512 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) { failure ||= 'MALFORMED_EVENT'; emit({ kind: 'error', code: failure }); return; }
       documentCount++;
-      emit({ kind: 'document', name: changed.name, wire_base64: data, received_unix_ms: performance.timeOrigin + performance.now() });
+      if ((hybrid && typeof changed.updateTime !== 'string') || (changed.updateTime !== undefined && (typeof changed.updateTime !== 'string' || changed.updateTime.length > 64))) { failure ||= 'MALFORMED_EVENT'; emit({ kind: 'error', code: failure }); return; }
+      emit({ kind: 'document', name: changed.name, wire_base64: data, ...(changed.updateTime ? { update_time: changed.updateTime } : {}), received_unix_ms: performance.timeOrigin + performance.now() });
     } else if (value?.targetChange) {
       targetCount++;
       const target = value.targetChange;
@@ -190,7 +198,7 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   };
   channel.open();
   channel.send({ database: config.database, addTarget: { documents: { documents: [config.document] }, targetId: 2 } });
-  return { close, state: () => ({ request_count: requestCount, document_events: documentCount, target_events: targetCount, target_remove_acknowledged:removeAcknowledged, channel_closed:channelClosed,foreign_requests_rejected: rejected, pending_requests:requests.size,pending_events:deliveries.size,pending_sdk_timers:sdkTimers.size,disposed_sdk_timers:timersCleared,local_errors:diagnostics,error: failure, stopped }) };
+  return { close, state: () => ({ request_count: requestCount, document_events: documentCount, target_events: targetCount, emitted_events:eventCount,target_remove_acknowledged:removeAcknowledged, channel_closed:channelClosed,foreign_requests_rejected: rejected, pending_requests:requests.size,pending_events:deliveries.size,pending_sdk_timers:sdkTimers.size,disposed_sdk_timers:timersCleared,local_errors:diagnostics,error: failure, stopped }) };
 }
 
 async function main() {
