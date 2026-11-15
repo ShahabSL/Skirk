@@ -2915,6 +2915,25 @@
       ],
       "revision_or_binary": "36a598c+cc4e231; all hybrid code confined to_test.go",
       "live_comparable": false
+    },
+    {
+      "id": "R3-005",
+      "candidate": "State-aware after-write immutable upload stall recovery",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Opt-in normal mux immutable generated-ID uploads≥128KiB; after successful full body write and no headers,2s exact commit probe,then≤1same-ID spare",
+      "latency": "No live latency result at catalog revision",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Probe5 estimated units; eachPOST50; duplicate full multipart budget16MiB/min default,128KiB..64MiB configurable per store",
+      "correctness_and_errors": "Independent read-only review: scoped per-request trace generation excludes auth/metadata;401 secondary attempts each reserve bytes; GetBody=nil; strict id/name/size/SHA256 commit proof; global1spare; all probe/loser joins. Implementer reports fullGo/vet,focusedrace,34Python tests pass; no independent rerun claimed.",
+      "cleanup": "Offline only; generated-ID same-object identity and joined loser preserve existing cleanup ownership; no live cleanup proof inferred",
+      "decision": "Narrower alternative to fixed3s hedge; disabled by default; header-recheck-to-launch race is bounded and documented; no speed improvement claimed before live paired results",
+      "source_documents": [
+        "docs/experiments/state-aware-upload-hedge-2026-11-15.md",
+        "internal/skirk/drive_upload_stall_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "b9ca1478e15fd7642643f384cb487c10b778d1c7",
+      "live_comparable": false
     }
   ]
 }
