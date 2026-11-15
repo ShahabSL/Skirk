@@ -1,0 +1,441 @@
+{
+  "date": "2026-11-15",
+  "classification": "live_api_primitive",
+  "scope": "Owned immutable AEAD document create/read/delete, not a full TCP transport or streaming listener",
+  "source": {
+    "source_revision": "9fe438f8e39e8aaecf35f42eae17f51b7e482185",
+    "binary_sha256": "fe03fe79530548be847d5f8e93faf6c7e31c5b89b49532a5e39065f66d7da410",
+    "probe_source_sha256": "a5db4843bf8806ac931240b594441cc85a716df2f97cb9eeb84f3e1c3873c18d",
+    "started_utc": "2026-11-15T19:27:29.629120+00:00",
+    "billing_changes": false
+  },
+  "route": {
+    "route": "google_front_pinned",
+    "front": "www.google.com",
+    "google_ip": "216.239.38.120",
+    "client": "Skirk GoogleHTTPClient RequestSingleAttempt"
+  },
+  "rows": [
+    {
+      "plaintext_bytes": 2048,
+      "plaintext_sha256": "3de51784398cc77fa420f78c7d3e5c8095c84f91ac5abb50b48ce540d32a7b59",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 608.63,
+      "ReadMS": 152.657,
+      "DeleteMS": 2213.977,
+      "record": 1,
+      "create_plus_known_read_ms": 761.287
+    },
+    {
+      "plaintext_bytes": 2048,
+      "plaintext_sha256": "6af29b7150b703ec13ba3fb5b1cb448ed401a12ac8db542645bca62258b75a97",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 180.727,
+      "ReadMS": 149.882,
+      "DeleteMS": 150.592,
+      "record": 2,
+      "create_plus_known_read_ms": 330.609
+    },
+    {
+      "plaintext_bytes": 2048,
+      "plaintext_sha256": "cf15735c03193632ebd0e53aa794d6ddc8b455851ff18fa9ffe57ca1b12989c2",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 166.828,
+      "ReadMS": 178.839,
+      "DeleteMS": 141.076,
+      "record": 3,
+      "create_plus_known_read_ms": 345.667
+    },
+    {
+      "plaintext_bytes": 16384,
+      "plaintext_sha256": "272a05ea57edff70b51ff5ef37dc32cfabaab67ceb0bfa129e78a0c59280d80d",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 228.077,
+      "ReadMS": 141.012,
+      "DeleteMS": 134.579,
+      "record": 4,
+      "create_plus_known_read_ms": 369.089
+    },
+    {
+      "plaintext_bytes": 16384,
+      "plaintext_sha256": "f0373aba4611c85343abb7a1c02678c62a8cc8399363e476d45ac69d28ed8d33",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 266.199,
+      "ReadMS": 134.466,
+      "DeleteMS": 157.94,
+      "record": 5,
+      "create_plus_known_read_ms": 400.665
+    },
+    {
+      "plaintext_bytes": 262144,
+      "plaintext_sha256": "5fab099b9dd02895b0234fb3585f02f31be33b0eb471e94d1538add75e14be9c",
+      "Created": true,
+      "Verified": true,
+      "Deleted": true,
+      "Immediate404": true,
+      "Delayed404": true,
+      "CreateMS": 491.702,
+      "ReadMS": 248.552,
+      "DeleteMS": 208.67,
+      "record": 6,
+      "create_plus_known_read_ms": 740.254
+    }
+  ],
+  "calls": [
+    {
+      "elapsed_ms": 608.63,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:31.970163Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 152.657,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:32.600993Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 2213.977,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:32.766071Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 134.637,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:34.992959Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 180.727,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:35.146127Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 149.882,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:35.340434Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 150.592,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:35.502896Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 132.28,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:35.666202Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 166.828,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:35.8171Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 178.839,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:35.996929Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 141.076,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:36.188096Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 126.716,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:36.341987Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 228.077,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:36.485033Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 141.012,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:36.726206Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 134.579,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:36.881058Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 117.631,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:37.028053Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 266.199,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:37.164371Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 134.466,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:37.444124Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 157.94,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:37.59207Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 112.965,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:37.764111Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 491.702,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "PATCH",
+      "started_utc": "2026-11-15T19:27:37.894967Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 248.552,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:38.401445Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 208.67,
+      "error": false,
+      "expected_status": 200,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "DELETE",
+      "started_utc": "2026-11-15T19:27:38.668397Z",
+      "status": 200
+    },
+    {
+      "elapsed_ms": 120.999,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:27:38.891554Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 141.541,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.029694Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 190.16,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.188147Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 142.077,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.39265Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 117.253,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.549646Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 116.025,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.682793Z",
+      "status": 404
+    },
+    {
+      "elapsed_ms": 95.11,
+      "error": false,
+      "expected_status": 404,
+      "finished": true,
+      "http_version": "HTTP/2.0",
+      "method": "GET",
+      "started_utc": "2026-11-15T19:28:10.813797Z",
+      "status": 404
+    }
+  ],
+  "budgets": {
+    "max_visible_calls": 40,
+    "visible_calls": 30,
+    "conservative_http_attempts_upper": 240,
+    "max_encoded_request_bytes_upper": 16777216,
+    "encoded_request_bytes_upper": 3214960,
+    "max_decompressed_response_bytes": 1048576
+  },
+  "functional_control": {
+    "passed": true,
+    "separate_direct_api_control_calls": 4,
+    "not_a_client_route_fallback": true
+  },
+  "cleanup": {
+    "database_missing_immediate": true,
+    "database_missing_delayed_31s": true,
+    "database_missing_checks": [
+      {
+        "http_status": 404,
+        "google_error_status": "NOT_FOUND",
+        "checked_utc": "2026-11-15T19:36:11.707122+00:00"
+      },
+      {
+        "http_status": 404,
+        "google_error_status": "NOT_FOUND",
+        "checked_utc": "2026-11-15T19:36:43.157047+00:00"
+      }
+    ],
+    "firestore_api_restored_disabled": true,
+    "api_state_verified": "DISABLED",
+    "borrowed_access_token_removed": true,
+    "initial_lro_wait_incomplete_after_seconds": 60,
+    "billing_changes": false
+  },
+  "interpretation": "All six exact cipher/AEAD checks and thirty fronted calls passed; cold first2KiB write608.630ms, two warm2KiB writes180.727/166.828ms. No loaded RTT, steady file-rate, push notification or capacity inference."
+}
