@@ -623,7 +623,19 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 	if !upLost.Load() || !downLost.Load() || uploadSideEffects.Load() != 1 {
 		t.Fatal("faults/side effects not exercised", upLost.Load(), downLost.Load(), uploadSideEffects.Load())
 	}
-	relayClientWait(t, func() bool { s := f.broker.snapshot(); return s.UpBytes == 0 && s.DownBytes == 0 }, "processed ciphertext cleanup incomplete")
+	// Measurement work has finished. Flush already-processed objects through
+	// the mux's existing emergency cleanup path rather than waiting its normal
+	// 10–15 second foreground quiet timer in this loopback correctness test.
+	f.http.CloseIdleConnections()
+	relayClientWait(t, func() bool {
+		s := f.broker.snapshot()
+		if s.UpBytes == 0 && s.DownBytes == 0 {
+			return true
+		}
+		f.cm.requestCleanupKick()
+		f.em.requestCleanupKick()
+		return false
+	}, "processed ciphertext cleanup incomplete")
 	before := f.broker.snapshot()
 	f.close()
 	if f.broker.snapshot().LiveWorkers != 0 || f.client.snapshot()["up_bytes"] != 0 || f.client.snapshot()["down_bytes"] != 0 {
