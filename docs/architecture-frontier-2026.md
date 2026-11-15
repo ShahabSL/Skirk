@@ -368,6 +368,43 @@ this failure, leaving no complete order-balanced comparison or causal
 attribution. Generated session cleanup verified zero remaining slot or mux
 objects. The shadow lane is not a promotion candidate from this run.
 
+### Opt-in slot delivery in the full mux
+
+The next experiment uses a separate authenticated capability and lets the
+fixed slot deliver eligible p0 DATA/FIN through the regular receive worker.
+The sender falls back to the same sealed immutable batch if no processing ACK
+arrives within 1.5 seconds. Both peers must explicitly enable
+`drive.metadata_slot_delivery_v1`; it remains off by default. Local tests cover
+slot-first and immutable-first arrival, late duplicate IDs, cursor advancement,
+ready-stream checks, ambiguous PATCH readback, and exact-ID cleanup. An
+independent review found and helped fix the fallback and duplicate races
+before the live run. See [the delivery design](metadata-slot-delivery-experiment.md).
+
+Two same-binary pinned-front ABBA comparisons each sent twelve new-stream
+small messages alongside one SHA-verified 16 MiB file per arm. All **96/96**
+messages, eight file bodies, and eight authenticated on-demand exit probes
+completed with zero Drive API errors. The four candidate arms processed 83
+slot records and logged 66 sender ACK completions. Pair medians were:
+
+| Direction | Mode | Scheduled small p95 | Request p95 | File goodput | Estimated units, both peers |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Download | Control | 11.163 s | 3.365 s | 15.373 Mb/s | 23,355 |
+| Download | Slot delivery | 11.364 s | 4.552 s | 14.256 Mb/s | 22,043 |
+| Upload | Control | 12.735 s | 3.175 s | 13.299 Mb/s | 25,105 |
+| Upload | Slot delivery | 11.143 s | 4.124 s | 12.234 Mb/s | 22,193 |
+
+Slot delivery reduced estimated units by about 6% on downloads and 12% on
+uploads, but **request p95 and file rate were worse in both comparisons**.
+Scheduled upload p95 improved while the corresponding request p95 worsened;
+different overlap and local scheduling explain why these two metrics should
+not be treated as interchangeable. These short samples do not establish
+causality, but they reject promotion of this implementation as a lower-latency
+default. Raw private logs and summaries are under
+`.skirk-runs/slot-delivery-{download,upload}-20261114-01/`. Immediate exact
+session sweeps removed two control download and one control upload mux objects;
+all candidate mux and slot prefixes were already empty. Delayed exact-session
+rechecks found zero mux or slot objects in all eight sessions.
+
 At 4 Hz polling in both directions, the two known-ID GETs alone would cost
 2,400 units per minute per active pair. Four one-way metadata PATCHes per
 second add 12,000 units per minute before acknowledgements, retries, or other
