@@ -1,7 +1,8 @@
 # Guarded REST Pub/Sub priority / Drive bulk research transport
 
-Status: test-only implementation and offline race/correctness tests. No live
-hybrid speed, latency or capacity result is claimed in this document yet. The
+Status: research only. The first full hybrid failed its download; successful
+text/reverse-upload samples and every failure are retained below. Pub/Sub is
+not a dependency for the requested free Skirk product. The
 standard gRPC method path was rejected through the pinned front in the
 [separate retained experiment](pubsub-streaming-probe-2026-11-15.md); the earlier
 [REST primitive](pubsub-front-2026-11-15.md) delivered messages. This candidate
@@ -54,21 +55,25 @@ three-second Google Date/header interval clock check. A process restart inside
 the original 30-second catch-up can still replay OPEN effects; this test does
 not solve or conceal that existing distributed-systems boundary.
 
-The cache holds at most 32 MiB and 4,096 entries, with at most 64 outstanding ACK
-IDs per entry and 4 MiB retained ACK-ID bytes across the entire receiver. HTTP responses are limited to 4 MiB before JSON decoding; pulls
-request at most eight messages. API calls and request/response bytes share one
-locked global budget across all HTTP pools (2,000 calls, 128 MiB). Thirty-two
-calls and 1 MiB are reserved for cloud cleanup. Each active request atomically
-reserves its bounded maximum response size before HTTP begins; partial/error
-response bytes are counted and unused reservation is released. Cleanup responses
-are capped at 16 KiB, so active response exhaustion cannot consume that reserve. The Drive HTTP transport separately reserves
-units per visible RoundTripper dispatch across independent pools: active requests stop
-at 40,000 reserved units, total cleanup ceiling 50,000, at most 2,000 visible dispatches
-with 32 reserved for cleanup. Internal HTTP/2 retries can occur inside a
-dispatch and are not independently prevented by this wrapper.
-These are conservative experiment guards, not claims about Google project quota.
-Per-peer actual Drive accounting is reported independently. Gate shutdown waits
-for response-body closure before cleanup and rejects later mux calls locally.
+The cache holds at most 32 MiB and 4,096 entries, with at most 64 outstanding
+ACK IDs per entry and 4 MiB retained ACK-ID bytes across the receiver. Exposed
+HTTP response bodies are limited to 4 MiB before JSON decoding; pulls request
+at most eight messages. The latest research guard reserves eight possible
+internal HTTP/2 attempts and eight copies of each outgoing request body before
+transport dispatch. The separate returned-body cap is not labeled exact wire
+traffic. The Pub/Sub budget is 2,000 upper attempts / 128 MiB, including 256
+attempts and 1 MiB reserved for cleanup; cleanup responses are capped at 16 KiB.
+The later conservative-retry section records source/version provenance.
+
+For the next Drive-only control, the approved guard is 240,000 active / 280,000
+total worst-case reserved units and 4,000 upper attempts, including 40,000 units
+and 256 attempts for cleanup. Guard exhaustion cancels active work immediately.
+Older results below retain their original 40,000/50,000 visible-unit guard and
+are not retroactively presented as having used the new bound. These are
+experiment guards, not Google quota or exact billing claims. Visible per-peer
+Drive accounting, upper reservations, local denials and write callbacks are
+reported separately. Gate shutdown waits for response-body closure before
+cleanup and rejects later mux calls locally.
 
 ## Workloads and evidence
 
