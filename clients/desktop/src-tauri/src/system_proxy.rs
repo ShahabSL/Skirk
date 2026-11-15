@@ -54,6 +54,18 @@ impl SystemProxyManager {
             Ok(())
         }
     }
+
+    pub fn restore_pending(paths: &AppPaths) -> bool {
+        #[cfg(windows)]
+        return backup_path(paths).exists();
+        #[cfg(target_os = "macos")]
+        return macos_impl::restore_pending(paths);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = paths;
+            false
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

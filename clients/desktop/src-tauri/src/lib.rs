@@ -124,6 +124,7 @@ struct ConnectionStatus {
     lan_addresses: Vec<String>,
     lan_http_addresses: Vec<String>,
     system_proxy_enabled: bool,
+    system_proxy_restore_pending: bool,
     tunnel_active: bool,
     tunnel_interface_name: Option<String>,
     message: String,
@@ -433,6 +434,7 @@ impl DesktopRuntime {
                 lan_addresses: share_addresses(&client.socks_address),
                 lan_http_addresses: share_addresses(&client.http_address),
                 system_proxy_enabled: client.system_proxy_enabled,
+                system_proxy_restore_pending: false,
                 tunnel_active: state.tunnel.is_some(),
                 tunnel_interface_name: state
                     .tunnel
@@ -452,6 +454,7 @@ impl DesktopRuntime {
                 lan_addresses: Vec::new(),
                 lan_http_addresses: Vec::new(),
                 system_proxy_enabled: false,
+                system_proxy_restore_pending: SystemProxyManager::restore_pending(&self.paths),
                 tunnel_active: false,
                 tunnel_interface_name: None,
                 message: state.message.clone(),
@@ -774,7 +777,10 @@ impl DesktopRuntime {
 
     fn clear_idle_connection_error(&self) -> Result<(), String> {
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
-        if state.client.is_none() && matches!(state.phase, ConnectionPhase::Error) {
+        if state.client.is_none()
+            && matches!(state.phase, ConnectionPhase::Error)
+            && !SystemProxyManager::restore_pending(&self.paths)
+        {
             state.phase = ConnectionPhase::Disconnected;
             state.message = "Profile selected. Connect to test it.".into();
         }
@@ -846,6 +852,11 @@ impl DesktopRuntime {
         }
         if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
             return Err(vpn_unavailable_message());
+        }
+        if SystemProxyManager::restore_pending(&self.paths) {
+            if let Err(error) = SystemProxyManager::cleanup_stale_proxy(&self.paths) {
+                return Err(self.mark_proxy_restore_error(&error));
+            }
         }
         let (socks_address, http_address) = listener_addresses_for_mode(&profile, &mode);
         let route_mode = profile.route_mode.as_str();
@@ -970,6 +981,9 @@ impl DesktopRuntime {
                 }
                 let _ = child.kill();
                 let _ = child.wait();
+                if let Err(restore_error) = SystemProxyManager::cleanup_stale_proxy(&self.paths) {
+                    return Err(self.mark_proxy_restore_error(&restore_error));
+                }
                 return Err(self.mark_connect_error(error, attempt_epoch));
             }
             true
@@ -979,14 +993,22 @@ impl DesktopRuntime {
 
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         if self.connect_epoch.load(Ordering::Acquire) != attempt_epoch {
-            if system_proxy_enabled {
-                let _ = SystemProxyManager::disable(&self.paths);
-            }
+            let restore = if system_proxy_enabled {
+                SystemProxyManager::disable(&self.paths)
+            } else {
+                Ok(())
+            };
             if let Some(mut tunnel) = tunnel {
                 terminate_child(&mut tunnel.child);
                 cleanup_linux_tun_routes();
             }
             terminate_child(&mut child);
+            if let Err(error) = restore {
+                let message = proxy_restore_message(&error);
+                state.phase = ConnectionPhase::Error;
+                state.message = message.clone();
+                return Err(message);
+            }
             return Err("Connection cancelled".into());
         }
         state.client = Some(ManagedClient {
@@ -1022,19 +1044,39 @@ impl DesktopRuntime {
         message
     }
 
+    fn mark_proxy_restore_error(&self, error: &str) -> String {
+        let message = proxy_restore_message(error);
+        if let Ok(mut state) = self.inner.lock() {
+            state.phase = ConnectionPhase::Error;
+            state.message = message.clone();
+        }
+        message
+    }
+
     fn disconnect(&self) -> Result<(), String> {
         self.connect_epoch.fetch_add(1, Ordering::AcqRel);
         let mut state = self.inner.lock().map_err(|_| "runtime lock poisoned")?;
         state.phase = ConnectionPhase::Disconnecting;
-        stop_runtime(&mut state, &self.paths);
-        state.phase = ConnectionPhase::Disconnected;
-        state.message = "Disconnected".into();
-        Ok(())
+        match stop_runtime(&mut state, &self.paths) {
+            Ok(()) => {
+                state.phase = ConnectionPhase::Disconnected;
+                state.message = "Disconnected".into();
+                Ok(())
+            }
+            Err(error) => {
+                let message = proxy_restore_message(&error);
+                state.phase = ConnectionPhase::Error;
+                state.message = message.clone();
+                Err(message)
+            }
+        }
     }
 
     fn cleanup_for_exit(&self) {
         if let Ok(mut state) = self.inner.lock() {
-            stop_runtime(&mut state, &self.paths);
+            if let Err(error) = stop_runtime(&mut state, &self.paths) {
+                eprintln!("Skirk: {}", proxy_restore_message(&error));
+            }
             state.phase = ConnectionPhase::Disconnected;
             state.message = "Disconnected".into();
         }
@@ -1451,25 +1493,42 @@ fn refresh_state(state: &mut RuntimeState, paths: &AppPaths) {
         None
     };
     if let Some(message) = tunnel_died {
-        stop_runtime(state, paths);
+        let restore_error = stop_runtime(state, paths).err();
         state.phase = ConnectionPhase::Error;
-        state.message = message;
+        state.message = append_proxy_restore_error(message, restore_error);
         return;
     }
     match client.child.try_wait() {
         Ok(Some(status)) => {
-            stop_runtime(state, paths);
+            let restore_error = stop_runtime(state, paths).err();
             state.phase = ConnectionPhase::Error;
-            state.message = client_exit_message(status.code(), &status.to_string());
+            state.message = append_proxy_restore_error(
+                client_exit_message(status.code(), &status.to_string()),
+                restore_error,
+            );
         }
         Ok(None) => {
             state.phase = ConnectionPhase::Connected;
         }
         Err(error) => {
-            stop_runtime(state, paths);
+            let restore_error = stop_runtime(state, paths).err();
             state.phase = ConnectionPhase::Error;
-            state.message = format!("Skirk status failed: {error}");
+            state.message =
+                append_proxy_restore_error(format!("Skirk status failed: {error}"), restore_error);
         }
+    }
+}
+
+fn proxy_restore_message(error: &str) -> String {
+    format!(
+        "The system proxy may still point to Skirk's stopped local listener. Select Retry proxy restore or turn off the Skirk localhost proxy in network settings. Detail: {error}"
+    )
+}
+
+fn append_proxy_restore_error(message: String, restore_error: Option<String>) -> String {
+    match restore_error {
+        Some(error) => format!("{message} {}", proxy_restore_message(&error)),
+        None => message,
     }
 }
 
@@ -1480,19 +1539,23 @@ fn client_exit_message(code: Option<i32>, status: &str) -> String {
     format!("Skirk exited: {status}")
 }
 
-fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) {
+fn stop_runtime(state: &mut RuntimeState, paths: &AppPaths) -> Result<(), String> {
     if let Some(mut tunnel) = state.tunnel.take() {
         terminate_child(&mut tunnel.child);
         cleanup_linux_tun_routes();
     }
-    if let Some(mut client) = state.client.take() {
-        if client.system_proxy_enabled {
-            let _ = SystemProxyManager::disable(paths);
-        }
+    let restore = if let Some(mut client) = state.client.take() {
+        let restore = if client.system_proxy_enabled {
+            SystemProxyManager::disable(paths)
+        } else {
+            Ok(())
+        };
         terminate_child(&mut client.child);
+        restore
     } else {
-        let _ = SystemProxyManager::cleanup_stale_proxy(paths);
-    }
+        SystemProxyManager::cleanup_stale_proxy(paths)
+    };
+    restore
 }
 
 fn terminate_child(child: &mut Child) {
@@ -2109,9 +2172,8 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let paths = AppPaths::resolve(&app.handle())?;
-            let _ = SystemProxyManager::cleanup_stale_proxy(&paths);
             let resource_dir = app.path().resource_dir().ok();
-            app.manage(DesktopRuntime::new(paths, resource_dir));
+            app.manage(runtime_with_stale_proxy_cleanup(paths, resource_dir));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2135,6 +2197,18 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+fn runtime_with_stale_proxy_cleanup(
+    paths: AppPaths,
+    resource_dir: Option<PathBuf>,
+) -> DesktopRuntime {
+    let restore_error = SystemProxyManager::cleanup_stale_proxy(&paths).err();
+    let runtime = DesktopRuntime::new(paths, resource_dir);
+    if let Some(error) = restore_error {
+        runtime.mark_proxy_restore_error(&error);
+    }
+    runtime
 }
 
 impl AppPaths {
@@ -2364,6 +2438,60 @@ fn epoch_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stale_mac_proxy_restore_failure_is_visible_and_retryable() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-proxy-restore-error-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::create_dir_all(&dir).expect("create runtime directory");
+        let backup = dir.join("macos-system-proxy-backup.json");
+        let saved = json!({
+            "service": format!("Skirk Missing Service {}", epoch_millis()),
+            "web": {"enabled": false, "server": "", "port": 0, "authenticated": false},
+            "secure_web": {"enabled": false, "server": "", "port": 0, "authenticated": false},
+            "expected_port": 18081
+        });
+        write_private_file(&backup, saved.to_string().as_bytes()).expect("save test backup");
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.clone(),
+            logs_dir: dir.clone(),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        let runtime = runtime_with_stale_proxy_cleanup(paths, None);
+        let snapshot = runtime.snapshot().expect("startup snapshot");
+        assert!(matches!(snapshot.connection.phase, ConnectionPhase::Error));
+        assert!(snapshot
+            .connection
+            .message
+            .contains("system proxy may still point"));
+        assert!(snapshot.connection.system_proxy_restore_pending);
+        assert!(backup.exists(), "failed restoration must keep its backup");
+        runtime.clear_idle_connection_error().unwrap();
+        assert!(matches!(
+            runtime.snapshot().unwrap().connection.phase,
+            ConnectionPhase::Error
+        ));
+
+        let error = runtime
+            .disconnect()
+            .expect_err("retry should still report failure");
+        assert!(error.contains("Retry proxy restore"));
+        assert!(backup.exists(), "retry must retain the backup");
+        assert!(
+            runtime
+                .snapshot()
+                .unwrap()
+                .connection
+                .system_proxy_restore_pending
+        );
+        fs::remove_dir_all(dir).expect("remove test runtime directory");
+    }
 
     #[cfg(unix)]
     #[test]

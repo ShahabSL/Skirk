@@ -86,6 +86,7 @@ export type DesktopSnapshot = {
     lanAddresses: string[];
     lanHttpAddresses: string[];
     systemProxyEnabled: boolean;
+    systemProxyRestorePending: boolean;
     tunnelActive: boolean;
     tunnelInterfaceName: string | null;
     message: string;
@@ -152,6 +153,7 @@ function mockSnapshot(): DesktopSnapshot {
       lanAddresses: mockConnected && profile?.shareLan ? [`192.168.1.20:${profile.socksPort}`] : [],
       lanHttpAddresses: mockConnected && profile?.shareLan ? [`192.168.1.20:${profile.httpPort}`] : [],
       systemProxyEnabled: mockConnected && mockMode === "system",
+      systemProxyRestorePending: false,
       tunnelActive: mockConnected && mockMode === "vpn",
       tunnelInterfaceName: mockConnected && mockMode === "vpn" ? "Skirk Tunnel" : null,
       message: mockConnected ? `Connected in ${modeLabel(mockMode)} mode` : mockGrantExpired ? "Google token refresh failed: invalid_grant" : "Disconnected",
@@ -186,7 +188,7 @@ function mockSnapshot(): DesktopSnapshot {
       : null,
     platform: mockPlatform,
     capabilities: {
-      systemProxySupported: mockPlatform === "windows",
+      systemProxySupported: mockPlatform === "windows" || mockPlatform === "macos",
       vpnModeSupported: mockPlatform === "windows",
       vpnRequiresAdmin: mockPlatform === "windows",
       vpnAdmin: false,
@@ -308,6 +310,9 @@ function browserPreviewPlatform() {
     return "windows";
   }
   const value = new URLSearchParams(window.location.search).get("platform")?.toLowerCase();
+  if (value === "macos") {
+    return "macos";
+  }
   if (value === "linux") {
     return "linux";
   }

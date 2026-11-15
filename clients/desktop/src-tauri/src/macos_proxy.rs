@@ -33,6 +33,10 @@ fn backup_path(paths: &AppPaths) -> std::path::PathBuf {
     paths.runtime_dir.join("macos-system-proxy-backup.json")
 }
 
+pub fn restore_pending(paths: &AppPaths) -> bool {
+    backup_path(paths).exists()
+}
+
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program).args(args).output().map_err(|error| {
         format!(

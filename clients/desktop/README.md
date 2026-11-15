@@ -41,8 +41,11 @@ Select **System proxy** for apps that honor macOS network proxy settings.
 **Connect** sets HTTP and HTTPS on the active network service to Skirk's local
 HTTP listener. **Disconnect** restores the settings saved before connection.
 The app also attempts that restoration when it next starts after an unexpected
-exit. If the service already has an enabled manual, automatic, or authenticated
-proxy, Skirk leaves it alone and asks you to use **Proxy** mode. Apps that ignore
+exit. If restoration fails, the app keeps its backup and shows **Retry proxy
+restore**; use that action or turn off the Skirk localhost proxy in macOS
+Network settings before connecting again. If the service already has an
+enabled manual, automatic, or authenticated proxy, Skirk leaves it alone and
+asks you to use **Proxy** mode. Apps that ignore
 macOS proxy settings are not captured by this mode; it is not a whole-device
 VPN.
 

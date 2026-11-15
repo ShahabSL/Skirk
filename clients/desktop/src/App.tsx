@@ -134,7 +134,8 @@ function App() {
   const connected = snapshot?.connection.phase === "connected";
   const connecting = snapshot?.connection.phase === "connecting";
   const disconnecting = snapshot?.connection.phase === "disconnecting";
-  const disconnectAvailable = connected || connecting || disconnecting;
+  const proxyRestorePending = Boolean(snapshot?.connection.systemProxyRestorePending);
+  const disconnectAvailable = connected || connecting || disconnecting || proxyRestorePending;
   const initialLoading = snapshot === null && error === "";
   const busy = busyAction !== null;
   const runtimeBusy = busy || connecting || disconnecting;
@@ -517,8 +518,8 @@ function App() {
                 disabled={busyAction !== null && busyAction !== "connect"}
                 onClick={() => void run("disconnect", () => desktopApi.disconnect())}
               >
-                {busyAction === "disconnect" || disconnecting ? <Loader2 className="spin" /> : <Power />}
-                {connecting ? "Cancel connection" : "Disconnect"}
+                {busyAction === "disconnect" || disconnecting ? <Loader2 className="spin" /> : proxyRestorePending && !connected ? <RefreshCw /> : <Power />}
+                {proxyRestorePending && !connected && !connecting ? "Retry proxy restore" : connecting ? "Cancel connection" : "Disconnect"}
               </button>
             ) : (
               <button
