@@ -515,12 +515,15 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 1<<20)
 	want := sha256.Sum256(payload)
 	var uploadSideEffects atomic.Int64
+	bulkReached := make(chan string, 4)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/download":
+			bulkReached <- r.URL.Path
 			w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
 			_, _ = w.Write(payload)
 		case "/upload":
+			bulkReached <- r.URL.Path
 			h := sha256.New()
 			n, e := io.Copy(h, io.LimitReader(r.Body, int64(len(payload))+1))
 			if e != nil || n != int64(len(payload)) || !bytes.Equal(h.Sum(nil), want[:]) {
@@ -579,20 +582,38 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 	}
 	for _, path := range []string{"/download", "/upload"} {
 		bulkDone := make(chan error, 1)
+		var finished atomic.Bool
 		go func() {
 			var body []byte
 			if path == "/upload" {
 				body = payload
 			}
-			bulkDone <- request(path, body)
+			err := request(path, body)
+			finished.Store(true)
+			bulkDone <- err
 		}()
+		select {
+		case started := <-bulkReached:
+			if started != path {
+				t.Fatal("wrong bulk phase reached origin")
+			}
+		case <-f.ctx.Done():
+			t.Fatal("bulk never reached origin", path)
+		}
+		completedWhileBulkActive := 0
 		for i := 0; i < 8; i++ {
 			if err := request("/text", nil); err != nil {
 				t.Fatal(path, "mixed text", i, err)
 			}
+			if !finished.Load() {
+				completedWhileBulkActive++
+			}
 		}
 		if err := <-bulkDone; err != nil {
 			t.Fatal(path, err, f.client.snapshot(), f.broker.snapshot())
+		}
+		if completedWhileBulkActive == 0 {
+			t.Fatal("no text completed during active bulk", path)
 		}
 	}
 	if !upLost.Load() || !downLost.Load() || uploadSideEffects.Load() != 1 {
