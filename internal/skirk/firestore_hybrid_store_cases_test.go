@@ -526,3 +526,56 @@ func TestFSHybridStorePageTailRetainedWithoutBlockingActualNormalMuxPoll(t *test
 		t.Fatal("retained tail never advanced to next backend page")
 	}
 }
+
+func TestFSHybridStoreOneReceiptWakesBothEligibleCacheWaiters(t *testing.T) {
+	client, exit, _, base := fsHybridMemoryStores(t)
+	seen := fsHybridReceiveChannel(exit)
+	var firstID, firstName string
+	for i := 0; i < 2; i++ {
+		r := fsHybridTestRecord(t, client.state.outgoing, uint64(i+1), 0, muxFrame{Kind: muxFrameData, StreamID: uint64(i + 1), Seq: 1, Payload: make([]byte, 7<<19)})
+		ids, _ := base.GenerateObjectIDs(context.Background(), 1)
+		info, err := base.PutObjectWithID(context.Background(), ids[0], r.Name, r.Sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exit.mu.Lock()
+		entry, err := exit.state.normalizePhysical(info, r.Sealed, time.Now())
+		exit.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			firstID, firstName = entry.info.ID, entry.info.Name
+		}
+	}
+	for i := 2; i < 4; i++ {
+		r := fsHybridTestRecord(t, client.state.outgoing, uint64(i+1), 0, muxFrame{Kind: muxFrameData, StreamID: uint64(i + 1), Seq: 1, Payload: make([]byte, 1<<20)})
+		ids, _ := base.GenerateObjectIDs(context.Background(), 1)
+		info, err := base.PutObjectWithID(context.Background(), ids[0], r.Name, r.Sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = exit.admitPrefetch(info); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fsHybridEventually(t, func() bool { return exit.Snapshot()["receive_cache_waits"] >= 2 })
+	if len(seen) != 0 {
+		t.Fatal("objects were exposed before cache capacity was available")
+	}
+	if err := exit.NoteMuxProcessed(firstName, firstID); err != nil {
+		t.Fatal(err)
+	}
+	newIDs := make(map[string]bool)
+	for len(newIDs) < 2 {
+		select {
+		case info := <-seen:
+			newIDs[info.ID] = true
+		case <-time.After(time.Second):
+			t.Fatal("one receipt did not wake both eligible cache owners")
+		}
+	}
+	if exit.Snapshot()["processed_receipts"] != 1 {
+		t.Fatal("test advanced credit by processing a newly admitted object")
+	}
+}

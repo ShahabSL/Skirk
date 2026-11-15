@@ -2,11 +2,32 @@ package skirk
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
+	"io"
+	"net/url"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func TestFSHybridTransportPolicyDoesNotTreatURLWrapperAsRetryProof(t *testing.T) {
+	for _, failure := range []error{
+		&url.Error{Op: "POST", URL: "https://public.invalid", Err: errors.New("decoder fixture")},
+		&url.Error{Op: "POST", URL: "https://public.invalid", Err: x509.UnknownAuthorityError{}},
+		errors.Join(io.EOF, &GoogleAPIError{Op: "public_fixture", Status: 403}),
+	} {
+		if fsHybridTransient(failure) {
+			t.Fatal("an unknown/decode/TLS/auth cause was treated as a transport retry")
+		}
+	}
+	for _, failure := range []error{context.DeadlineExceeded, io.EOF, &url.Error{Op: "POST", URL: "https://public.invalid", Err: syscall.ECONNRESET}} {
+		if !fsHybridTransient(failure) {
+			t.Fatal("declared bounded network retry was rejected")
+		}
+	}
+}
 
 type fsHybridCapabilityBase struct {
 	*MemoryStore

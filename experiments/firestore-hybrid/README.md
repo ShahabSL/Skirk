@@ -1,7 +1,8 @@
 # Firestore priority / Drive bulk research design
 
-Status: design approved for an offline, test-only prototype. No hybrid code has
-run and no new Google resources or credentials have been provisioned. Primitive
+Status: an offline, test-only prototype is implemented and component-tested.
+No live Google hybrid transport has run and no new Google resources or
+credentials have been provisioned for it. Primitive
 Firestore write/read and six-state WebChannel results do not establish this
 transport's correctness or performance.
 
@@ -117,6 +118,11 @@ discovery cycle; there is no additional always-running Google polling timer.
 Store close cancels and joins its workers, carrier and base operations; a base
 that ignores cancellation keeps the join pending. It clears payloads only after
 joining, retains finite tombstone metadata until GC, and fences late callbacks.
+The outer fixture owns the actual mux/workload context: it must observe each
+store's `Done()` signal, cancel the whole workload on an epoch failure/expiry,
+and join that observer. Canceling adapter discovery alone is not proof that a
+separately created mux or application stopped. Normal fixture teardown cancels
+the workload before closing either store and records every retained error.
 Provider deletion belongs to the external owned fixture, using exact cleanup
 targets after the join, a global Drive hard guard with reserved cleanup quota,
 and delayed verification. A 30-second context alone is not a quota or cleanup

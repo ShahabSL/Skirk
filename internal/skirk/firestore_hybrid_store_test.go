@@ -112,7 +112,7 @@ func newFSHybridPriorityStore(parent context.Context, base BlobStore, carrier fs
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, cfg.Duration)
-	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{}, 1)}
+	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{})}
 	readCtx, stop := context.WithTimeout(ctx, cfg.OperationTimeout)
 	s.own, err = carrier.ReadOwn(readCtx)
 	stop()
@@ -160,6 +160,11 @@ func (s *fsHybridPriorityStore) fail(err error) {
 	s.signal(s.fallbackWake)
 }
 func (s *fsHybridPriorityStore) Error() error { s.mu.Lock(); defer s.mu.Unlock(); return s.fatal }
+
+// The outer fixture must stop the whole mux/workload when this finite epoch
+// ends, not just its discovery callbacks. The adapter does not own unrelated
+// caller-created mux goroutines or silently rotate their RunID.
+func (s *fsHybridPriorityStore) Done() <-chan struct{} { return s.ctx.Done() }
 func (s *fsHybridPriorityStore) updateReadyLocked() {
 	if !s.readyClosed && s.ownPublished && s.state.peerRevision > 0 && s.state.peerCreditSeq > 0 {
 		close(s.ready)
@@ -338,7 +343,7 @@ func fsHybridTransient(err error) bool {
 		}
 	}
 	var network net.Error
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNREFUSED) || errors.As(err, &network)
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNREFUSED) || errors.As(err, &network) && (network.Timeout() || network.Temporary())
 }
 
 func fsHybridPrecondition(err error) bool {
@@ -596,13 +601,18 @@ func (s *fsHybridPriorityStore) NoteMuxProcessed(name, id string) error {
 		if advanced {
 			s.scheduleACKLocked()
 		}
+		if !wasDone {
+			// A single processing receipt may free enough cache for both
+			// prefetch owners. Wake the generation, not just one waiter.
+			close(s.space)
+			s.space = make(chan struct{})
+		}
 	}
 	s.mu.Unlock()
 	if err != nil {
 		s.fail(err)
 		return err
 	}
-	s.signal(s.space)
 	if advanced {
 		s.signal(s.wake)
 	}

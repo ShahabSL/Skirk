@@ -191,6 +191,10 @@ func (s *fsHybridPriorityStore) prefetchOne(info ObjectInfo) error {
 			}
 			return nil
 		}
+		space := s.space
+		if errors.Is(err, errFSHybridBusy) {
+			s.counters["receive_cache_waits"]++
+		}
 		s.mu.Unlock()
 		if !errors.Is(err, errFSHybridBusy) {
 			return err
@@ -198,7 +202,7 @@ func (s *fsHybridPriorityStore) prefetchOne(info ObjectInfo) error {
 		select {
 		case <-s.ctx.Done():
 			return s.ctx.Err()
-		case <-s.space:
+		case <-space:
 		}
 	}
 }
