@@ -12,7 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 from skirk_live_capacity_compare import (CLIENTS, QuotaGuard, arm_config,
-                                         bulk_window, cleanup_exact, main, serve_origins)
+                                         bulk_window, cleanup_exact, main, serve_origins,
+                                         require_client_namespaces, require_slot_activity)
 
 
 class Running:
@@ -124,7 +125,8 @@ class CapacityCompareTests(unittest.TestCase):
         def run(command, **_):
             commands.append(command)
             delete = "--delete" in command
-            result = {"prefix": prefix, "dry_run": not delete, "pages": 1,
+            actual_prefix = command[command.index("--prefix") + 1]
+            result = {"prefix": actual_prefix, "dry_run": not delete, "pages": 1,
                       "matched": 2 if delete else 0, "deleted": 2 if delete else 0,
                       "failed": 0, "truncated": False}
             return argparse.Namespace(returncode=0, stdout=json.dumps(result).encode())
@@ -132,11 +134,68 @@ class CapacityCompareTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=run), mock.patch("time.sleep"):
             result = cleanup_exact(Path("/private/skirk"), Path("/private/exit.json"), session)
         self.assertTrue(result["ok"])
-        self.assertEqual(len(commands), 3)
-        self.assertEqual(result["estimated_units"], 3 * 100 + 2 * 50)
+        self.assertEqual(len(commands), 6)
+        self.assertEqual(result["estimated_units"], 6 * 100 + 4 * 50)
         for command in commands:
-            self.assertEqual(command[command.index("--prefix") + 1], prefix)
+            self.assertIn(command[command.index("--prefix") + 1], [prefix, prefix.replace("muxv4/", "slotv1/")])
             self.assertNotIn("--all", command)
+
+    def test_async_package_clears_saved_experiments_and_preserves_route(self):
+        original = {"session_id": "old", "route": {"mode": "google_front_pinned", "google_ip": "127.0.0.1"},
+                    "drive": {"metadata_slot_primary_v1": True, "metadata_slot_async_v1": True,
+                              "upload_stall_hedge_delay_ms": 2500, "normal_list_page_size": 100,
+                              "quota_project": "test-project"}, "tunnel": {"interaction_epoch": True}}
+        saved = json.loads(json.dumps(original))
+        baseline = arm_config(original, "baseline", "new")
+        candidate = arm_config(original, "async", "next")
+        self.assertEqual(original, saved)
+        for config in (baseline, candidate):
+            self.assertEqual(config["route"], original["route"])
+            for key in ("metadata_slot_primary_v1", "upload_stall_hedge_delay_ms", "normal_list_page_size", "quota_project"):
+                self.assertNotIn(key, config["drive"])
+        self.assertNotIn("metadata_slot_async_v1", baseline["drive"])
+        self.assertFalse(baseline["tunnel"]["interaction_epoch"])
+        self.assertTrue(candidate["tunnel"]["interaction_epoch"])
+        self.assertTrue(candidate["drive"]["metadata_slot_delivery_v1"])
+        self.assertTrue(candidate["drive"]["metadata_slot_async_v1"])
+        self.assertFalse(candidate["drive"]["metadata_only_priority"])
+
+    def test_runtime_run_id_reuse_rejected_even_when_client_ids_differ(self):
+        logs = [f"skirk client SOCKS5 listening on127.0.0.1 client=c{i} run=reused route=google_front_pinned" for i in range(CLIENTS)]
+        with self.assertRaisesRegex(RuntimeError, "not_unique"):
+            require_client_namespaces(logs)
+        logs = [f"skirk client SOCKS5 listening client=c{i} run=r{i}" for i in range(CLIENTS)]
+        self.assertEqual(len(set(require_client_namespaces(logs))), CLIENTS)
+
+    def test_flag_only_or_prelude_only_async_activity_is_rejected(self):
+        before = ["mux slot delivery active"] * CLIENTS
+        mixed = ["\n".join(("mux slot async handoff", "mux slot async storage_ack",
+                              "mux slot delivery receiver_processed", "mux slot delivery sender_ack"))] * CLIENTS
+        self.assertEqual(len(require_slot_activity("async", before, mixed)), CLIENTS)
+        missing = mixed.copy(); missing[3] = "mux slot async handoff"
+        with self.assertRaisesRegex(RuntimeError, "activity_missing"):
+            require_slot_activity("async", before, missing)
+        with self.assertRaisesRegex(RuntimeError, "unexpected_control"):
+            require_slot_activity("baseline", before, mixed)
+
+    def test_late_slot_object_requires_second_full_visibility_check(self):
+        session = "00112233445566778899aabbccddeeff"
+        calls = {"slot_dry": 0}; delays = []
+        def run(command, **_):
+            prefix = command[command.index("--prefix") + 1]
+            delete = "--delete" in command
+            matched = 0
+            if prefix.startswith("slotv1/") and not delete:
+                calls["slot_dry"] += 1
+                matched = 1 if calls["slot_dry"] == 2 else 0
+            return argparse.Namespace(returncode=0, stdout=json.dumps({"prefix": prefix,
+                "dry_run": not delete, "pages": 1, "matched": matched,
+                "deleted": 0, "failed": 0, "truncated": False}).encode())
+        with mock.patch("subprocess.run", side_effect=run), mock.patch("time.sleep", side_effect=delays.append):
+            result = cleanup_exact(Path("/private/skirk"), Path("/private/exit.json"), session)
+        self.assertTrue(result["ok"])
+        self.assertEqual(delays, [31, 31])
+        self.assertEqual(len(result["delayed_checks"]), 2)
 
     def test_bulk_window_requires_five_simultaneous_verified_files(self):
         reports = []

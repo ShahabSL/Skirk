@@ -13,6 +13,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import signal
 import socket
 import socketserver
@@ -70,12 +71,19 @@ def arm_config(original: dict[str, Any], mode: str, session: str) -> dict[str, A
     tunnel = config.setdefault("tunnel", {})
     drive = config.setdefault("drive", {})
     tunnel["sparse_priority"] = False
-    tunnel["interaction_epoch"] = mode == "epoch"
+    tunnel["interaction_epoch"] = mode in ("epoch", "async")
+    for key in ("metadata_slot_v1", "metadata_slot_delivery_v1", "metadata_slot_async_v1",
+                "metadata_slot_primary_v1", "separate_metadata_slot_pools", "combined_mux_discovery",
+                "adaptive_mux_discovery", "metadata_only_max_bytes", "normal_list_page_size",
+                "upload_stall_hedge_delay_ms", "upload_stall_hedge_budget_bytes", "quota_project", "priority_http3"):
+        drive.pop(key, None)
     drive["metadata_only_priority"] = mode == "epoch"
     drive["inline_small_objects"] = False
     drive["upload_hedge_delay_ms"] = 0
     drive["separate_upload_pool"] = False
     drive["separate_bulk_media_pool"] = False
+    if mode == "async":
+        drive.update(metadata_slot_v1=True, metadata_slot_delivery_v1=True, metadata_slot_async_v1=True)
     return config
 
 
@@ -164,14 +172,17 @@ class QuotaGuard:
 
 
 def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[str, Any]:
-    prefix = f"muxv4/{session}/"
+    if not re.fullmatch(r"[a-f0-9]{32}", session):
+        raise ValueError("exact generated session required")
+    prefixes = [f"{kind}/{session}/" for kind in ("muxv4", "slotv1")]
     result = {"attempts": 0, "matched": 0, "deleted": 0, "remaining": None,
-              "failed": 0, "truncated": False, "estimated_units": 0, "ok": False}
+              "failed": 0, "truncated": False, "estimated_units": 0, "ok": False,
+              "prefixes": prefixes, "delayed_checks": [],
+              "units_note": "minimum from list pages and deleted objects; opaque retry/auth calls omitted"}
 
-    def invoke(delete: bool) -> int:
+    def invoke(prefix: str, delete: bool) -> int:
         command = [str(binary), "cleanup", "--config", str(source_exit_config),
-                   "--prefix", prefix, "--older-than", "1ns", "--concurrency", "2",
-                   "--max-pages", "32"]
+                   "--prefix", prefix, "--older-than", "1ns", "--concurrency", "2", "--max-pages", "32"]
         if delete:
             command.append("--delete")
         completed = subprocess.run(command, capture_output=True, timeout=90, check=False)
@@ -193,21 +204,32 @@ def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[
         if delete:
             result["matched"] += matched
             result["deleted"] += deleted
-        else:
-            result["remaining"] = matched
         if result["truncated"] or result["failed"]:
             raise RuntimeError("exact_session_cleanup_incomplete")
         return matched
 
-    for attempt in range(1, 4):
-        result["attempts"] = attempt
-        invoke(True)
-        if invoke(False) == 0:
-            time.sleep(2)  # Catch late Drive visibility after a completed upload.
-            if invoke(False) == 0:
-                result["ok"] = True
-                return result
-        time.sleep(2)
+    for prefix in prefixes:
+        for attempt in range(1, 4):
+            result["attempts"] = max(result["attempts"], attempt)
+            invoke(prefix, True)
+            if invoke(prefix, False) == 0:
+                break
+        else:
+            raise RuntimeError("exact_session_cleanup_debt")
+    for _ in range(3):
+        time.sleep(31)
+        remaining = {prefix: invoke(prefix, False) for prefix in prefixes}
+        result["delayed_checks"].append(remaining)
+        result["remaining"] = sum(remaining.values())
+        if not result["remaining"]:
+            result["ok"] = True
+            return result
+        # A late commit needs another full visibility interval after deletion.
+        for prefix, count in remaining.items():
+            if count:
+                invoke(prefix, True)
+                if invoke(prefix, False):
+                    raise RuntimeError("late_exact_session_cleanup_debt")
     raise RuntimeError("exact_session_cleanup_debt")
 
 
@@ -252,6 +274,9 @@ def summarize_arm(reports: list[dict[str, Any]], snapshots: list[dict[str, Any]]
             "peak_parallel_bulk": peak, "small_successes": sum(report["small"]["successes"] for report in reports),
             "small_failures": sum(report["small"]["failures"] for report in reports),
             "small_overlap_count": len(overlap),
+            "all_small_body_p95_ms": percentile([sample["total_ms"] for sample in small if sample["ok"] and sample["total_ms"] is not None], 95),
+            "all_small_scheduled_body_p95_ms": percentile([sample["scheduled_total_ms"] for sample in small if sample["ok"] and sample["scheduled_total_ms"] is not None], 95),
+            "small_overlap_scheduled_body_p95_ms": percentile([sample["scheduled_total_ms"] for sample in overlap if sample["ok"] and sample["scheduled_total_ms"] is not None], 95),
             "small_overlap_scheduled_p95_ms": percentile([sample["scheduled_ttfb_ms"] for sample in overlap if sample["ok"] and sample["scheduled_ttfb_ms"] is not None], 95),
             "drive_calls": sum(quota(snapshot, "calls") for snapshot in snapshots),
             "drive_units": sum(quota(snapshot, "units") for snapshot in snapshots),
@@ -334,6 +359,41 @@ def serve_origins(file_sha256: str, file_bytes: int):
     return http_origin, echo_origin, failures
 
 
+def slot_activity(text: str) -> dict[str, int]:
+    return {name: text.count(marker) for name, marker in {
+        "active": "mux slot delivery active", "handoff": "mux slot async handoff",
+        "publication": "mux slot async storage_ack", "processed": "mux slot delivery receiver_processed",
+        "processing_ack": "mux slot delivery sender_ack", "fallback": "mux slot async fallback",
+        "stopped": "mux slot shadow stopped"}.items()}
+
+
+def require_client_namespaces(logs: list[str]) -> list[str]:
+    namespaces = []
+    runs = []
+    for text in logs:
+        line = next((line for line in text.splitlines() if "skirk client SOCKS5 listening" in line), "")
+        client, run = re.search(r"\bclient=([A-Za-z0-9_.-]+)", line), re.search(r"\brun=([A-Za-z0-9_.-]+)", line)
+        if client is None or run is None:
+            raise RuntimeError("client_namespace_proof_missing")
+        runs.append(run.group(1))
+        namespaces.append(client.group(1) + "/" + run.group(1))
+    if len(set(namespaces)) != CLIENTS or len(set(runs)) != CLIENTS:
+        raise RuntimeError("client_namespaces_not_unique")
+    return [hashlib.sha256(value.encode()).hexdigest()[:16] for value in namespaces]
+
+
+def require_slot_activity(mode: str, before: list[str], mixed: list[str]) -> list[dict[str, int]]:
+    counts = [slot_activity(text) for text in mixed]
+    if mode == "async":
+        if any(slot_activity(text)["active"] < 1 for text in before):
+            raise RuntimeError("async_slot_handshake_missing")
+        if any(any(row[key] < 1 for key in ("handoff", "publication", "processed", "processing_ack")) for row in counts):
+            raise RuntimeError("async_slot_mixed_activity_missing")
+    elif any(slot_activity(text)["active"] for text in before + mixed):
+        raise RuntimeError("unexpected_control_slot_activity")
+    return counts
+
+
 def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[dict[str, Any], dict[str, Any]],
             guard: QuotaGuard, file_path: Path, file_sha256: str, http_port: int, echo_port: int,
             origin_failures: list[int]) -> dict[str, Any]:
@@ -341,11 +401,17 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
     run_dir.mkdir(mode=0o700)
     session = uuid.uuid4().hex
     private_text(run_dir / "session-id.txt", session + "\n")
-    client_config = run_dir / "client-config.json"
+    client_configs = [run_dir / f"client-{i}-config.json" for i in range(CLIENTS)]
     exit_config = run_dir / "exit-config.json"
-    private_json(client_config, arm_config(originals[0], mode, session))
+    for client_index, path in enumerate(client_configs):
+        config = arm_config(originals[0], mode, session)
+        config.setdefault("client", {}).update(id=f"capacity-{session[:12]}-{client_index}", run_id=uuid.uuid4().hex)
+        private_json(path, config)
     private_json(exit_config, arm_config(originals[1], mode, session))
+    binary = args.binary if mode != "baseline" else args.control_binary
     row: dict[str, Any] = {"arm": index, "mode": mode, "ok": False,
+                           "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                           "route_mode": "google_front_pinned", "experimental_async": mode == "async",
                            "session_fingerprint": hashlib.sha256(session.encode()).hexdigest()[:12]}
     services: list[subprocess.Popen[bytes]] = []
     benches: list[subprocess.Popen[bytes]] = []
@@ -355,16 +421,16 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
     failures_before = origin_failures[0]
     try:
         with (run_dir / "exit.log").open("xb") as stream:
-            services.append(subprocess.Popen([str(args.binary), "serve-exit", "--config", str(exit_config),
-                                              "--metrics-path", str(paths[0])], stdout=stream,
+            services.append(subprocess.Popen([str(binary), "serve-exit", "--config", str(exit_config),
+                                              "--observe", "--metrics-path", str(paths[0])], stdout=stream,
                                              stderr=subprocess.STDOUT, start_new_session=True))
         launched = True
         for client_index, port in enumerate(ports):
             with (run_dir / f"client-{client_index}.log").open("xb") as stream:
-                services.append(subprocess.Popen([str(args.binary), "serve-client", "--config", str(client_config),
+                services.append(subprocess.Popen([str(binary), "serve-client", "--config", str(client_configs[client_index]),
                                                   "--listen", f"127.0.0.1:{port}",
                                                   "--client-id", f"capacity-{session[:12]}-{client_index}",
-                                                  "--metrics-path", str(paths[client_index + 1])], stdout=stream,
+                                                  "--observe", "--metrics-path", str(paths[client_index + 1])], stdout=stream,
                                                  stderr=subprocess.STDOUT, start_new_session=True))
         wait_for_clients(services, ports)
         wait_for_metrics(paths, services)
@@ -378,9 +444,9 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
                        "--bulk-request-file", str(file_path), "--bulk-expected-bytes", str(len(FILE_ACK)),
                        "--bulk-sha256", hashlib.sha256(FILE_ACK).hexdigest(),
                        "--bulk-max-mib", str(args.file_mib), "--small-count", str(args.text_count),
-                       "--small-interval-ms", str(args.text_interval_ms), "--pipelined",
+                       "--small-interval-ms", str(args.text_interval_ms), "--pipelined", "--bulk-lead-ms", "1000",
                        "--prelude-bytes", str(PRELUDE_BYTES), "--prelude-seed", "skirk-capacity-prelude-v1",
-                       "--overall-timeout", "180", "--prelude-timeout", "75", "--request-timeout", "75",
+                       "--overall-timeout", "240", "--prelude-timeout", "75", "--request-timeout", "75",
                        "--bulk-timeout", "120", "--stall-seconds", str(args.bulk_stall_seconds),
                        "--ready-file", str(run_dir / f"bench-{client_index}.ready"),
                        "--start-signal", str(start_signal), "--out", str(report_path)]
@@ -395,6 +461,11 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
             if time.monotonic() >= ready_deadline:
                 raise RuntimeError("prelude_barrier_timeout")
             time.sleep(1)
+        before_logs = [(run_dir / f"client-{i}.log").read_text(errors="replace") for i in range(CLIENTS)]
+        log_offsets = [(run_dir / f"client-{i}.log").stat().st_size for i in range(CLIENTS)]
+        row["client_namespace_fingerprints"] = require_client_namespaces(before_logs)
+        row["run_id_source"] = "CLI-generated random run IDs, verified unique in actual startup logs"
+        row["barrier_release_utc"] = datetime.now(timezone.utc).isoformat()
         private_text(start_signal, "go\n")
         deadline = time.monotonic() + 130
         while any(process.poll() is None for process in benches):
@@ -411,13 +482,27 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
         reports = [json.loads((run_dir / f"bench-{i}.json").read_text()) for i in range(CLIENTS)]
         row.update(summarize_arm(reports, snapshots, [process.returncode for process in benches],
                                  args.text_count, origin_failures[0] - failures_before))
+        mixed_logs = []
+        for client_index, offset in enumerate(log_offsets):
+            with (run_dir / f"client-{client_index}.log").open("rb") as stream:
+                stream.seek(offset)
+                mixed_logs.append(stream.read().decode(errors="replace"))
+        row["client_mixed_slot_activity"] = require_slot_activity(mode, before_logs, mixed_logs)
+        row["exit_slot_activity"] = slot_activity((run_dir / "exit.log").read_text(errors="replace"))
+        row["roles"] = {"exit" if i == 0 else f"client-{i-1}": snapshot["quota"] for i, snapshot in enumerate(snapshots)}
         if not row["ok"]:
             row["failure"] = "incomplete_verified_capacity_workload"
     except Exception as error:
+        row["ok"] = False
         row["failure"] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
     finally:
         stop_processes(benches)
         stop_processes(services)
+        final_snapshots = [read_metrics_safe(path) for path in paths]
+        row["last_observed_role_quotas"] = {
+            "exit" if i == 0 else f"client-{i-1}": snapshot.get("quota")
+            for i, snapshot in enumerate(final_snapshots)}
+        row["telemetry_complete"] = all("quota" in snapshot for snapshot in final_snapshots)
         if launched:
             try:
                 cleanup = cleanup_exact(args.binary, args.kit_dir / "exit.json", session)
@@ -431,7 +516,8 @@ def run_arm(args: argparse.Namespace, index: int, mode: str, originals: tuple[di
                 row["cleanup"] = {"ok": False}
                 row["ok"] = False
                 row["failure"] = str(error) if isinstance(error, RuntimeError) else type(error).__name__
-        client_config.unlink(missing_ok=True)
+        for path in client_configs:
+            path.unlink(missing_ok=True)
         exit_config.unlink(missing_ok=True)
         if not row.get("cleanup", {}).get("ok", False):
             row["ok"] = False
@@ -449,9 +535,12 @@ def read_metrics_safe(path: Path) -> dict[str, Any]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--control-binary", type=Path, help="baseline binary; defaults to same frozen CLI")
     parser.add_argument("--kit-dir", type=Path, required=True, help="private pinned test kit with client.json and exit.json")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true", help="permit Google Drive calls")
+    parser.add_argument("--account-label", choices=("isolated-secondary",),
+                        help="explicit approved account assertion; token identity is not independently introspected")
     parser.add_argument("--validate-only", action="store_true", help="inspect inputs without starting services or Drive calls")
     parser.add_argument("--order", default="baseline,epoch", help="balanced baseline,epoch or ABBA order")
     parser.add_argument("--file-mib", type=int, default=16)
@@ -473,10 +562,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     order = args.order.split(",")
     if order not in (["baseline", "epoch"], ["epoch", "baseline"],
                      ["baseline", "epoch", "epoch", "baseline"],
-                     ["epoch", "baseline", "baseline", "epoch"]):
-        parser.error("--order must be baseline,epoch or balanced ABBA (either direction)")
+                     ["epoch", "baseline", "baseline", "epoch"],
+                     ["baseline", "async"], ["async", "baseline"],
+                     ["baseline", "async", "async", "baseline"],
+                     ["async", "baseline", "baseline", "async"]):
+        parser.error("--order must compare baseline with epoch or async, balanced AB or ABBA")
     args.order = order
-    if not args.binary.is_file() or not (args.kit_dir / "client.json").is_file() or not (args.kit_dir / "exit.json").is_file():
+    args.control_binary = args.control_binary or args.binary
+    if not args.binary.is_file() or not args.control_binary.is_file() or not (args.kit_dir / "client.json").is_file() or not (args.kit_dir / "exit.json").is_file():
         parser.error("binary and private kit files must exist")
     if ".skirk-runs" not in args.out.resolve().parts or args.out.exists():
         parser.error("--out must be a fresh directory inside .skirk-runs")
@@ -492,6 +585,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("total quota guard must leave room for one arm and cleanup")
     if not args.live and not args.validate_only:
         parser.error("requires --live or --validate-only")
+    if args.live and (args.account_label != "isolated-secondary" or
+                      ".skirk-runs/personal-test/quota-kit" not in str(args.kit_dir.resolve())):
+        parser.error("live capacity requires the approved secondary-account quota kit and explicit account label")
     return args
 
 
@@ -506,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.validate_only:
         print(json.dumps({"ready": True, "clients": CLIENTS, "route": "google_front_pinned",
                           "order": args.order, "binary_sha256": binary_sha256,
+                          "control_binary_sha256": hashlib.sha256(args.control_binary.read_bytes()).hexdigest(),
                           "file_mib_per_client": args.file_mib, "text_count_per_client": args.text_count,
                           "bulk_stall_seconds": args.bulk_stall_seconds,
                           "between_arm_seconds": args.between_arm_seconds,
@@ -523,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
     guard = QuotaGuard(args)
     summary: dict[str, Any] = {"schema_version": 1, "clients": CLIENTS,
                                "route": "google_front_pinned", "binary_sha256": binary_sha256,
+                               "control_binary_sha256": hashlib.sha256(args.control_binary.read_bytes()).hexdigest(),
                                "order": args.order, "file_mib_per_client": args.file_mib,
                                "file_sha256": file_sha256, "text_bytes": TEXT_BYTES,
                                "text_count_per_client": args.text_count, "text_interval_ms": args.text_interval_ms,
