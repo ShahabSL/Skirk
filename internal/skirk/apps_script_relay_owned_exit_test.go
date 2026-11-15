@@ -45,6 +45,9 @@ type relayResearchPrivateSettings struct {
 	DurationSeconds        int         `json:"duration_seconds"`
 	MaxCalls               int64       `json:"max_calls"`
 	MaxEncodedBytes        int64       `json:"max_encoded_bytes"`
+	MaxScriptPosts         int64       `json:"max_script_posts"`
+	MaxHTTPAttemptsUpper   int64       `json:"max_http_attempts_upper"`
+	MaxHTTPEncodedUpper    int64       `json:"max_http_encoded_upper"`
 	BulkBytes              int         `json:"bulk_bytes"`
 	ScriptURL              string      `json:"script_url,omitempty"`
 }
@@ -95,6 +98,9 @@ func rrReadPrivateSettings(dir string) (relayResearchPrivateSettings, []byte, [1
 	}
 	if _, err := s.relayConfig(); err != nil {
 		return s, nil, epoch, err
+	}
+	if s.MaxScriptPosts < 1 || s.MaxScriptPosts > 256 || s.MaxHTTPAttemptsUpper < 1 || s.MaxHTTPAttemptsUpper > 4096 || s.MaxHTTPEncodedUpper < 1 || s.MaxHTTPEncodedUpper > 1<<30 {
+		return s, nil, epoch, errRelayResearchBounds
 	}
 	return s, key, epoch, nil
 }
@@ -351,7 +357,7 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	s := relayResearchPrivateSettings{OuterKeyHex: strings.Repeat("11", 32), EpochHex: strings.Repeat("22", 16), MuxSecretHex: strings.Repeat("33", 32), SessionID: strings.Repeat("44", 16), HTTPAuth: strings.Repeat("55", 32), ScriptAuth: strings.Repeat("66", 32), ClientID: "research-client", RunID: "research-run", Route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, FrameBytes: 128 << 10, ChunkBytes: 4 << 20, DurationSeconds: 5, MaxCalls: 8, MaxEncodedBytes: 4 << 20, BulkBytes: 4096}
+	s := relayResearchPrivateSettings{OuterKeyHex: strings.Repeat("11", 32), EpochHex: strings.Repeat("22", 16), MuxSecretHex: strings.Repeat("33", 32), SessionID: strings.Repeat("44", 16), HTTPAuth: strings.Repeat("55", 32), ScriptAuth: strings.Repeat("66", 32), ClientID: "research-client", RunID: "research-run", Route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, FrameBytes: 128 << 10, ChunkBytes: 4 << 20, DurationSeconds: 5, MaxCalls: 8, MaxEncodedBytes: 4 << 20, MaxScriptPosts: 256, MaxHTTPAttemptsUpper: 4096, MaxHTTPEncodedUpper: 1 << 30, BulkBytes: 4096}
 	if err := rrWritePrivateJSON(dir, "settings.json", s); err != nil {
 		t.Fatal(err)
 	}
@@ -376,6 +382,9 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 		func(v *relayResearchPrivateSettings) { v.OuterKeyHex = v.ScriptAuth },
 		func(v *relayResearchPrivateSettings) { v.MuxSecretHex = v.HTTPAuth },
 		func(v *relayResearchPrivateSettings) { v.MuxSecretHex = v.ScriptAuth },
+		func(v *relayResearchPrivateSettings) { v.MaxScriptPosts = 257 },
+		func(v *relayResearchPrivateSettings) { v.MaxHTTPAttemptsUpper = 4097 },
+		func(v *relayResearchPrivateSettings) { v.MaxHTTPEncodedUpper = 1<<30 + 1 },
 	} {
 		bad := s
 		mutate(&bad)
