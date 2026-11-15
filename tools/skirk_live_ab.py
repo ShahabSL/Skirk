@@ -26,6 +26,7 @@ from skirk_live_capacity_compare import require_slot_activity
 from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, RecoveryCohort, RecoveryRejected
 from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
 from skirk_end_to_end_recovery import EndToEndRecoveryCohort, EndToEndRecoveryStress
+from skirk_end_to_end_recovery_v2 import EndToEndRecoveryStressV2
 from skirk_stress_origin_proof import OriginSideEffects
 from skirk_ab_finalize import ArmFinalizer
 
@@ -281,6 +282,8 @@ def main():
                         help="separate robustness experiment: observe classified Drive GET and normal upload timeouts, shared caps8/arm,4/60s,16/cohort; no harness retries")
     recovery_flags.add_argument("--bounded-end-to-end-recovery-stress", action="store_true",
                         help="separate stress: source-bound PATCH recovery, API-idempotent normal and logically deduped non-idempotent p0 creates; complete byte/echo/origin proof; shared8/arm4/60s16/cohort")
+    recovery_flags.add_argument("--bounded-end-to-end-recovery-stress-v2", action="store_true",
+                        help="separately labelled v2 stress: additionally observe exact bare upload deadlines from two reviewed frozen sources; all proof/caps remain")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -300,6 +303,8 @@ def main():
     parser.add_argument("--tail-seconds", type=int, default=8)
     parser.add_argument("--chunk-size", type=int, default=0, help="Experimental shared peer chunk bound; 0 preserves config")
     args = parser.parse_args()
+    stress_active = args.bounded_end_to_end_recovery_stress or args.bounded_end_to_end_recovery_stress_v2
+    stress_class = EndToEndRecoveryStressV2 if args.bounded_end_to_end_recovery_stress_v2 else EndToEndRecoveryStress
     if not 1 <= args.persistent_overall_timeout <= 900 or not 1 <= args.persistent_bulk_timeout <= 600:
         parser.error("persistent deadlines exceed supported bounds")
     if not 1000 <= args.max_units_per_minute <= 125000:
@@ -308,7 +313,7 @@ def main():
         parser.error("invalid bounded per-arm/cohort quota estimates")
     if args.candidate_async_separate_metadata_slot_pools and args.small_traffic != "persistent":
         parser.error("async slot pool comparison requires persistent traffic")
-    if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts or args.bounded_end_to_end_recovery_stress) and (not args.observe or args.small_traffic != "persistent"):
+    if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts or stress_active) and (not args.observe or args.small_traffic != "persistent"):
         parser.error("bounded recovery requires --observe and persistent traffic")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
@@ -344,9 +349,9 @@ def main():
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
-    if args.bounded_end_to_end_recovery_stress:
+    if stress_active:
         for binary in (args.binary, args.main_binary, args.control_binary):
-            if binary is not None and not EndToEndRecoveryStress.supports_binary(binary_sha256(binary)):
+            if binary is not None and not stress_class.supports_binary(binary_sha256(binary)):
                 parser.error("end-to-end stress requires reviewed source-bound executables")
     if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k or args.candidate_upload_stall_hedge_delay_ms or args.candidate_async_separate_metadata_slot_pools) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
         parser.error("configuration comparison requires the same binary in both arms")
@@ -378,7 +383,7 @@ def main():
     if args.small_traffic == "message":
         message_file.write_bytes(message_body)
         message_file.chmod(0o600)
-    origin_effects = OriginSideEffects() if args.bounded_end_to_end_recovery_stress else None
+    origin_effects = OriginSideEffects() if stress_active else None
 
     class Origin(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -505,7 +510,7 @@ def main():
     summaries = []
     unit_history = []
     completed_units = 0
-    recovery_cohort = (EndToEndRecoveryCohort() if args.bounded_end_to_end_recovery_stress else ReadUploadCohort() if args.bounded_read_upload_timeouts
+    recovery_cohort = (EndToEndRecoveryCohort() if stress_active else ReadUploadCohort() if args.bounded_read_upload_timeouts
                        else RecoveryCohort() if args.bounded_normal_upload_timeouts else None)
     try:
         for index, mode in enumerate(order):
@@ -562,18 +567,20 @@ def main():
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
                    "binary_sha256": None, "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
+            if stress_active:
+                row["recovery_policy_version"] = 2 if args.bounded_end_to_end_recovery_stress_v2 else 1
 
             origin_baseline = origin_effects.snapshot() if origin_effects else None
             recovery = None
 
             def new_recovery():
-                return (EndToEndRecoveryStress(run_dir, recovery_cohort,
+                return (stress_class(run_dir, recovery_cohort,
                         expected_frames=args.small_count,
                         expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
                         expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0,
                         binary_sha256=row["binary_sha256"],
                         side_effects=lambda final: origin_effects.delta(origin_baseline))
-                        if args.bounded_end_to_end_recovery_stress else ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
+                        if stress_active else ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
                         expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
                         expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0,
                         binary_sha256=row["binary_sha256"])
@@ -812,7 +819,7 @@ def main():
                        "downloads": sum(q["ops"].get("download", {}).get("calls", 0) for q in quotas.values())})
                 row["completion_status"] = ("completed_with_permitted_timeouts" if row["errors"] else "completed_clean") if completed else "incomplete"
                 row["clean_api_run"] = completed and row["errors"] == 0
-                if args.bounded_end_to_end_recovery_stress:
+                if stress_active:
                     row["completion_status"] = ("completed_end_to_end_stress_with_observed_timeouts" if row["errors"]
                                                 else "completed_end_to_end_stress_no_observed_timeouts") if completed else "incomplete_end_to_end_stress"
                     row["clean_api_run"] = False
