@@ -3,13 +3,14 @@ module github.com/ShahabSL/Skirk
 go 1.26.0
 
 require (
+	cloud.google.com/go/pubsub/v2 v2.9.0
 	github.com/quic-go/quic-go v0.65.0
 	github.com/refraction-networking/utls v1.8.2
 	golang.org/x/net v0.61.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
-	cloud.google.com/go/pubsub/v2 v2.9.0 // indirect
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
@@ -23,7 +24,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
 
 tool golang.org/x/mobile/cmd/gobind
