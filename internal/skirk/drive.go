@@ -1507,6 +1507,9 @@ func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *Google
 	if ctx.Value(driveUploadCommitProbeKey{}) == true && method == http.MethodGet {
 		label = "upload_commit_probe"
 	}
+	if ctx.Value(driveSlotCleanupRequestKey{}) == true && method == http.MethodGet {
+		label = "slot_cleanup_probe"
+	}
 	started := time.Now()
 	for attempt := 0; attempt < 2; attempt++ {
 		if d.backoff != nil {
@@ -1855,7 +1858,8 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	if durationMS < 0 {
 		durationMS = 0
 	}
-	failed := err != nil || status >= 400 && !(op == "upload_commit_probe" && status == http.StatusNotFound)
+	expectedMissing := status == http.StatusNotFound && (op == "upload_commit_probe" || op == "slot_cleanup_probe")
+	failed := err != nil || status >= 400 && !expectedMissing
 	failedAttempts := attempts - 1 // Every retry follows a failed HTTP attempt.
 	if failed {
 		failedAttempts = attempts

@@ -601,7 +601,8 @@ func (m *driveMux) deleteMuxSlotTargets(store MetadataSlotStore, deleter ObjectI
 			m.logSlotShadowError(err)
 		}
 		for i := 0; i < 2; i++ {
-			_, err := store.GetMetadataSlot(ctx, item.id, item.name)
+			probeCtx := withMetadataSlotCleanupProbe(ctx, item.id, item.name)
+			_, err := store.GetMetadataSlot(probeCtx, item.id, item.name)
 			if isDriveNotFound(err) {
 				confirmed++
 				continue

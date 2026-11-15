@@ -19,6 +19,17 @@ const (
 	driveMetadataSlotFields         = "id,name,description,version,parents,spaces,mimeType,size,ownedByMe,isAppAuthorized"
 )
 
+// Only exact-ID absence checks made after retiring an owned slot may expect
+// a 404. Bind the private marker to both identifiers; ordinary reader polls
+// and a caller reusing this context for another slot retain normal accounting.
+type metadataSlotCleanupProbeKey struct{}
+type metadataSlotCleanupProbe struct{ id, name string }
+type driveSlotCleanupRequestKey struct{}
+
+func withMetadataSlotCleanupProbe(ctx context.Context, id, name string) context.Context {
+	return context.WithValue(ctx, metadataSlotCleanupProbeKey{}, metadataSlotCleanupProbe{id, name})
+}
+
 type driveMetadataSlotResponse struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -129,6 +140,9 @@ func (d *DriveStore) GetMetadataSlot(ctx context.Context, fileID, expectedName s
 	httpClient := d.http
 	if d.slotReadHTTP != nil {
 		httpClient = d.slotReadHTTP
+	}
+	if probe, ok := ctx.Value(metadataSlotCleanupProbeKey{}).(metadataSlotCleanupProbe); ok && probe.id == fileID && probe.name == expectedName {
+		ctx = context.WithValue(ctx, driveSlotCleanupRequestKey{}, true)
 	}
 	result, err := d.requestWithHTTP(ctx, httpClient, http.MethodGet, path, nil, nil)
 	if err != nil {
