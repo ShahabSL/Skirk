@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +16,7 @@ type relayResearchRecord struct {
 	data              []byte
 	total, sent       int
 	complete, deleted bool
+	priority          bool
 }
 type relayResearchReply struct {
 	hash     [32]byte
@@ -32,7 +32,9 @@ type relayResearchChannel struct {
 }
 type relayResearchStats struct {
 	UpBytes, DownBytes                                                                  int64
+	NormalUpBytes, NormalDownBytes                                                      int64
 	UpObjects, DownObjects, Assembling, CachedReplies, LiveWorkers                      int
+	NormalUpObjects, NormalDownObjects                                                  int
 	AcceptedUp, AcceptedDown, DeletedUp, DeletedDown, Requests, Replayed, BusyResponses uint64
 }
 type relayResearchBroker struct {
@@ -119,6 +121,8 @@ func (b *relayResearchBroker) Close() {
 	b.downNames = map[string]string{}
 	b.downOrder = nil
 	b.stats.UpBytes, b.stats.DownBytes = 0, 0
+	b.stats.NormalUpBytes, b.stats.NormalDownBytes = 0, 0
+	b.stats.NormalUpObjects, b.stats.NormalDownObjects = 0, 0
 	for _, ch := range b.channels {
 		ch.replies = map[uint64]*relayResearchReply{}
 	}
@@ -265,17 +269,30 @@ func (b *relayResearchBroker) preflightUp(pieces []relayResearchPiece) error {
 		if b.upNames[p.Name] != "" {
 			return errRelayResearchConflict
 		}
-		if len(b.up) >= b.cfg.MaxObjects || int64(p.Total) > b.cfg.MaxBytes {
-			return errRelayResearchBounds
-		}
-		if b.stats.UpBytes+int64(p.Total) > b.cfg.MaxBytes {
-			return errRelayResearchBusy
+		if err := b.upAdmissionLocked(p); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 func rrRecordMatches(o *relayResearchRecord, p relayResearchPiece) bool {
-	return o.info.Name == p.Name && o.total == p.Total && o.hash == p.Hash
+	return o.info.Name == p.Name && o.total == p.Total && o.hash == p.Hash && o.priority == p.Priority
+}
+
+// Claims remain charged after payload deletion: freeing a ciphertext does not
+// make its deduplication proof disposable. Normal traffic cannot consume the
+// reserved priority bytes or lifetime claims in either direction.
+func (b *relayResearchBroker) upAdmissionLocked(p relayResearchPiece) error {
+	if p.Priority != rrPriorityName(p.Name) {
+		return errRelayResearchConflict
+	}
+	if len(b.up) >= b.cfg.MaxObjects || int64(p.Total) > b.cfg.MaxBytes || !p.Priority && (b.stats.NormalUpObjects >= b.cfg.MaxObjects-b.cfg.PriorityReserveObjects || int64(p.Total) > b.cfg.MaxBytes-b.cfg.PriorityReserveBytes) {
+		return errRelayResearchBounds
+	}
+	if b.stats.UpBytes+int64(p.Total) > b.cfg.MaxBytes || !p.Priority && b.stats.NormalUpBytes+int64(p.Total) > b.cfg.MaxBytes-b.cfg.PriorityReserveBytes {
+		return errRelayResearchBusy
+	}
+	return nil
 }
 func (b *relayResearchBroker) acceptUp(p relayResearchPiece) (bool, error) {
 	for {
@@ -290,22 +307,18 @@ func (b *relayResearchBroker) acceptUp(p relayResearchPiece) (bool, error) {
 				b.mu.Unlock()
 				return false, errRelayResearchConflict
 			}
-			if len(b.up) >= b.cfg.MaxObjects {
+			if err := b.upAdmissionLocked(p); err != nil {
 				b.mu.Unlock()
-				return false, errRelayResearchBounds
+				return false, err
 			}
-			if int64(p.Total) > b.cfg.MaxBytes {
-				b.mu.Unlock()
-				return false, errRelayResearchBounds
-			}
-			if b.stats.UpBytes+int64(p.Total) > b.cfg.MaxBytes {
-				b.mu.Unlock()
-				return false, errRelayResearchBusy
-			}
-			o = &relayResearchRecord{info: ObjectInfo{ID: p.ID, Name: p.Name, Size: int64(p.Total)}, hash: p.Hash, total: p.Total, data: make([]byte, 0, p.Total)}
+			o = &relayResearchRecord{info: ObjectInfo{ID: p.ID, Name: p.Name, Size: int64(p.Total)}, hash: p.Hash, total: p.Total, data: make([]byte, 0, p.Total), priority: p.Priority}
 			b.up[p.ID] = o
 			b.upNames[p.Name] = p.ID
 			b.stats.UpBytes += int64(p.Total)
+			if !p.Priority {
+				b.stats.NormalUpBytes += int64(p.Total)
+				b.stats.NormalUpObjects++
+			}
 		}
 		if !rrRecordMatches(o, p) {
 			b.mu.Unlock()
@@ -380,6 +393,9 @@ func (b *relayResearchBroker) deleteUp(id string) error {
 		_ = b.upStore.DeleteID(b.ctx, id)
 		o.deleted = true
 		b.stats.UpBytes -= int64(o.total)
+		if !o.priority {
+			b.stats.NormalUpBytes -= int64(o.total)
+		}
 		b.stats.DeletedUp++
 		b.signalLocked()
 	}
@@ -403,6 +419,9 @@ func (b *relayResearchBroker) deleteDown(id string) error {
 		o.deleted = true
 		o.data = nil
 		b.stats.DownBytes -= int64(o.total)
+		if !o.priority {
+			b.stats.NormalDownBytes -= int64(o.total)
+		}
 		b.stats.DeletedDown++
 		b.signalLocked()
 	}
@@ -416,8 +435,13 @@ func (b *relayResearchBroker) putDown(ctx context.Context, id, name string, data
 		return ObjectInfo{}, errRelayResearchBounds
 	}
 	hash := sha256.Sum256(data)
+	priority := rrPriorityName(name)
 	for {
 		b.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			b.mu.Unlock()
+			return ObjectInfo{}, err
+		}
 		if b.closed || b.ctx.Err() != nil {
 			b.mu.Unlock()
 			return ObjectInfo{}, errRelayResearchClosed
@@ -435,11 +459,11 @@ func (b *relayResearchBroker) putDown(ctx context.Context, id, name string, data
 			b.mu.Unlock()
 			return ObjectInfo{}, errRelayResearchConflict
 		}
-		if len(b.down) >= b.cfg.MaxObjects || int64(len(data)) > b.cfg.MaxBytes {
+		if len(b.down) >= b.cfg.MaxObjects || int64(len(data)) > b.cfg.MaxBytes || !priority && (b.stats.NormalDownObjects >= b.cfg.MaxObjects-b.cfg.PriorityReserveObjects || int64(len(data)) > b.cfg.MaxBytes-b.cfg.PriorityReserveBytes) {
 			b.mu.Unlock()
 			return ObjectInfo{}, errRelayResearchBounds
 		}
-		if b.stats.DownBytes+int64(len(data)) > b.cfg.MaxBytes {
+		if b.stats.DownBytes+int64(len(data)) > b.cfg.MaxBytes || !priority && b.stats.NormalDownBytes+int64(len(data)) > b.cfg.MaxBytes-b.cfg.PriorityReserveBytes {
 			wake := b.changed
 			b.mu.Unlock()
 			select {
@@ -461,10 +485,14 @@ func (b *relayResearchBroker) putDown(ctx context.Context, id, name string, data
 		b.downStore.mu.Lock()
 		stored := b.downStore.objects[name]
 		b.downStore.mu.Unlock()
-		b.down[id] = &relayResearchRecord{info: info, hash: hash, total: len(data), data: stored, complete: true}
+		b.down[id] = &relayResearchRecord{info: info, hash: hash, total: len(data), data: stored, complete: true, priority: priority}
 		b.downNames[name] = id
 		b.downOrder = append(b.downOrder, id)
 		b.stats.DownBytes += int64(len(data))
+		if !priority {
+			b.stats.NormalDownBytes += int64(len(data))
+			b.stats.NormalDownObjects++
+		}
 		b.stats.AcceptedDown++
 		b.signalLocked()
 		b.mu.Unlock()
@@ -490,7 +518,7 @@ func (b *relayResearchBroker) pull() ([]relayResearchPiece, error) {
 				if o.deleted || o.sent >= o.total {
 					continue
 				}
-				priority := strings.Contains(o.info.Name, "/p0/")
+				priority := o.priority
 				if (priority == wantPriority) == (pass == 0) {
 					chosen = i
 					break
@@ -500,7 +528,7 @@ func (b *relayResearchBroker) pull() ([]relayResearchPiece, error) {
 		if chosen >= 0 {
 			o := b.down[b.downOrder[chosen]]
 			size := min(b.cfg.FrameBytes, o.total-o.sent)
-			priority := strings.Contains(o.info.Name, "/p0/")
+			priority := o.priority
 			p := relayResearchPiece{ID: o.info.ID, Name: o.info.Name, Total: o.total, Offset: o.sent, Hash: o.hash, Data: append([]byte(nil), o.data[o.sent:o.sent+size]...), Priority: priority}
 			o.sent += size
 			b.downCursor = (chosen + 1) % len(b.downOrder)

@@ -26,7 +26,7 @@ func rrFixture(t *testing.T, cfg relayResearchConfig) *relayResearchBroker {
 	return b
 }
 func rrPiece(id, name string, data []byte) relayResearchPiece {
-	return relayResearchPiece{ID: id, Name: name, Total: len(data), Hash: sha256.Sum256(data), Data: data, Priority: false}
+	return relayResearchPiece{ID: id, Name: name, Total: len(data), Hash: sha256.Sum256(data), Data: data, Priority: rrPriorityName(name)}
 }
 func rrCall(t *testing.T, b *relayResearchBroker, p relayResearchPacket) relayResearchPacket {
 	t.Helper()

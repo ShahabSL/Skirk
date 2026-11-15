@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -36,10 +37,12 @@ var (
 
 type relayResearchExchange func(context.Context, []byte) ([]byte, error)
 type relayResearchConfig struct {
-	FrameBytes int
-	MaxObjects int
-	MaxBytes   int64
-	PollWait   time.Duration
+	FrameBytes             int
+	MaxObjects             int
+	MaxBytes               int64
+	PollWait               time.Duration
+	PriorityReserveBytes   int64
+	PriorityReserveObjects int
 }
 
 func (c relayResearchConfig) normalized() (relayResearchConfig, error) {
@@ -58,8 +61,13 @@ func (c relayResearchConfig) normalized() (relayResearchConfig, error) {
 	if c.FrameBytes < 128*1024 || c.FrameBytes > 4*1024*1024 || c.MaxObjects < 1 || c.MaxObjects > 65536 || c.MaxBytes < int64(c.FrameBytes) || c.MaxBytes > 256*1024*1024 || c.PollWait < time.Millisecond || c.PollWait > 20*time.Second {
 		return c, errRelayResearchBounds
 	}
+	if c.PriorityReserveBytes < 0 || c.PriorityReserveBytes >= c.MaxBytes || c.PriorityReserveObjects < 0 || c.PriorityReserveObjects >= c.MaxObjects {
+		return c, errRelayResearchBounds
+	}
 	return c, nil
 }
+
+func rrPriorityName(name string) bool { return strings.Contains(name, "/p0/") }
 
 type relayResearchPiece struct {
 	ID, Name      string
@@ -155,7 +163,7 @@ func (c *relayResearchCodec) encode(p relayResearchPacket) ([]byte, error) {
 	b.WriteByte(byte(len(p.Pieces)))
 	total := 0
 	for _, v := range p.Pieces {
-		if v.Total <= 0 || v.Total > rrMaxObject || v.Offset < 0 || len(v.Data) == 0 || v.Offset > v.Total-len(v.Data) {
+		if v.Total <= 0 || v.Total > rrMaxObject || v.Offset < 0 || len(v.Data) == 0 || v.Offset > v.Total-len(v.Data) || v.Priority != rrPriorityName(v.Name) {
 			return nil, errRelayResearchBounds
 		}
 		total += len(v.Data)
