@@ -216,11 +216,12 @@ localhost sockets and MemoryStore only.
 
 `tunnel.interaction_epoch: true` is a separate experimental policy for a burst
 of text on a long-lived TCP stream. After the initial 64 KiB demotion, a 750 ms
-quiet gap can arm a six-second epoch. During that epoch, frames of at most 4
-KiB can use priority until the stream spends 16 KiB. Grants require no pending
-normal upload, have at least 200 ms between frames on one stream, and share an
-eight-grant burst that refills at four grants per second across the mux. A
-larger frame ends the epoch. Priority FIN remains disabled after demotion.
+quiet gap can arm a six-second budget window. During that window, frames of at
+most 4 KiB can use priority until the stream spends 16 KiB; another quiet gap
+does not reset the byte budget before the window expires. Grants require no
+pending normal upload and at least 200 ms between frames on one stream. They
+share an eight-grant burst that refills at four grants per second across the
+mux. A larger frame ends the epoch. Priority FIN remains disabled after demotion.
 
 This mode and `sparse_priority` are alternatives; if both are set, the
 interaction epoch policy takes precedence. Both remain disabled by default.

@@ -70,14 +70,38 @@ func TestInteractionEpochCapsPayloadAndTotalBytes(t *testing.T) {
 	if stream.claimPriorityPayloadAt(128, start.Add(2250*time.Millisecond)) {
 		t.Fatal("byte budget reset without another idle gap")
 	}
-	if !stream.claimPriorityPayloadAt(128, start.Add(4*time.Second)) {
-		t.Fatal("fresh idle gap did not reset byte budget")
+	if stream.claimPriorityPayloadAt(128, start.Add(4*time.Second)) {
+		t.Fatal("idle gap reset the byte budget inside its six-second window")
 	}
-	if stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload+1, start.Add(4250*time.Millisecond)) {
+	if !stream.claimPriorityPayloadAt(128, start.Add(7*time.Second)) {
+		t.Fatal("byte budget did not restart after its six-second window")
+	}
+	if stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload+1, start.Add(7250*time.Millisecond)) {
 		t.Fatal("oversized payload became priority")
 	}
-	if stream.claimPriorityPayloadAt(128, start.Add(4500*time.Millisecond)) {
+	if stream.claimPriorityPayloadAt(128, start.Add(7500*time.Millisecond)) {
 		t.Fatal("oversized payload failed to terminate interaction epoch")
+	}
+}
+
+func TestInteractionEpochOversizedFrameCannotResetPartialBudget(t *testing.T) {
+	start := time.Unix(100, 0)
+	_, stream := interactionEpochFixture()
+	stream.claimPriorityPayloadAt(muxPriorityStreamBytes+1, start)
+	for i := 0; i < 2; i++ {
+		if !stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload, start.Add(time.Second+time.Duration(i)*250*time.Millisecond)) {
+			t.Fatalf("initial priority chunk %d was denied", i)
+		}
+	}
+	if stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload+1, start.Add(1500*time.Millisecond)) {
+		t.Fatal("oversized frame became priority")
+	}
+	if !stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload, start.Add(2500*time.Millisecond)) ||
+		!stream.claimPriorityPayloadAt(muxSparsePriorityMaxPayload, start.Add(2750*time.Millisecond)) {
+		t.Fatal("remaining byte budget was unavailable after a new idle gap")
+	}
+	if stream.claimPriorityPayloadAt(128, start.Add(4*time.Second)) {
+		t.Fatal("oversized frame reset the six-second byte budget")
 	}
 }
 

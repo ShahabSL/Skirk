@@ -375,31 +375,32 @@ type muxStream struct {
 	once    sync.Once
 	ready   atomic.Bool
 
-	deliverMu         sync.Mutex
-	mu                sync.Mutex
-	localReadDone     bool
-	remoteReadDone    bool
-	openedAt          time.Time
-	targetLog         string
-	targetID          string
-	observeMu         sync.RWMutex
-	firstSendLogged   atomic.Bool
-	firstRecvLogged   atomic.Bool
-	sendSeq           atomic.Uint64
-	sendPayloadBytes  atomic.Int64
-	recvPayloadBytes  atomic.Int64
-	sendClassMu       sync.Mutex
-	prioritySent      int64
-	priorityDemoted   bool
-	lastPayloadAt     time.Time
-	lastSparseAt      time.Time
-	interactionUntil  time.Time
-	interactionBytes  int
-	lastInteractionAt time.Time
-	normalPending     atomic.Int64
-	recvExpected      uint64
-	recvPending       map[uint64]muxFrame
-	recvPendingBytes  int
+	deliverMu              sync.Mutex
+	mu                     sync.Mutex
+	localReadDone          bool
+	remoteReadDone         bool
+	openedAt               time.Time
+	targetLog              string
+	targetID               string
+	observeMu              sync.RWMutex
+	firstSendLogged        atomic.Bool
+	firstRecvLogged        atomic.Bool
+	sendSeq                atomic.Uint64
+	sendPayloadBytes       atomic.Int64
+	recvPayloadBytes       atomic.Int64
+	sendClassMu            sync.Mutex
+	prioritySent           int64
+	priorityDemoted        bool
+	lastPayloadAt          time.Time
+	lastSparseAt           time.Time
+	interactionUntil       time.Time
+	interactionBudgetUntil time.Time
+	interactionBytes       int
+	lastInteractionAt      time.Time
+	normalPending          atomic.Int64
+	recvExpected           uint64
+	recvPending            map[uint64]muxFrame
+	recvPendingBytes       int
 }
 
 func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, error) {
@@ -1148,8 +1149,14 @@ func (s *muxStream) claimInteractionPriorityLocked(n int, now, previous time.Tim
 		if previous.IsZero() || now.Sub(previous) < muxSparsePriorityIdleGap {
 			return false
 		}
-		s.interactionUntil = now.Add(muxInteractionEpochDuration)
-		s.interactionBytes = 0
+		// Ending an active epoch does not reset its six-second byte budget.
+		if s.interactionBudgetUntil.IsZero() || !now.Before(s.interactionBudgetUntil) {
+			s.interactionBudgetUntil = now.Add(muxInteractionEpochDuration)
+			s.interactionBytes = 0
+		} else if s.interactionBytes >= muxInteractionEpochBytes {
+			return false
+		}
+		s.interactionUntil = s.interactionBudgetUntil
 	}
 	if n > muxSparsePriorityMaxPayload || s.interactionBytes+n > muxInteractionEpochBytes {
 		s.interactionUntil = time.Time{}
