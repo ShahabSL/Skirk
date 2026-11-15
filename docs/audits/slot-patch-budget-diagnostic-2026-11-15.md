@@ -41,9 +41,31 @@ and log label in `metadata_slot_shadow.go`. The toolchain is Go 1.26.4 on
 darwin/arm64, matching c47; its dependency versions/checksums and `-trimpath`
 build flags will also be compared against the new diagnostic executable.
 
-The diagnostic CLI will be built once from a clean reviewed source revision,
-with a new binary hash recorded separately from frozen candidate c47 and main
-340. The observer's source-bound read map/retirement whitelist must then add
-that exact reviewed hash in a separate harness commit. Historical generic
-slot-stop runs remain unknown/stopped; this logging improvement cannot recast
-them as healthy.
+The final diagnostic CLI is frozen from clean source
+`6ecd41e92e44df1256c3bb8fb14a81ff6d8e0919`, SHA-256
+`bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f`.
+`go version -m` confirms that source revision and `vcs.modified=false`.
+Its Go version, dependencies/checksums, target, CGO setting, trimpath/compiler/
+build-mode flags all match frozen c47, apart from the expected VCS revision/time.
+The production Go diff SHA-256 is
+`ada839b424b4c0e684aca19ae4fedb9ab6a7dd1eb48296541ac37fc9d4c38f6a`;
+only `metadata_slot_shadow.go` differs.
+
+Build provenance required a correction. The installed Go 1.26.4
+`cmd/go/internal/vcs/vcs.go` recognizes `.git` directories, not linked-worktree
+`.git` files. Two initial worktree builds (auto and explicit buildvcs) omitted
+VCS metadata; both have SHA-256
+`dabfc65ff9a9186dfe735f2ea773c9308bfe07248f8c47d7762c6be220ad0ad2` and
+are retained but excluded. The final build used a private local shared clone
+with a real `.git` directory, detached at the same reviewed clean commit:
+
+```sh
+go build -trimpath -buildvcs=true -o ../skirk-slot-budget-diagnostic-final ./cmd/skirk
+```
+
+Private executable, initial artifacts, test logs, exact build metadata and
+`provenance.json` are retained in the diagnostic worktree under
+`.skirk-runs/slot-budget-diagnostic-20261115/`. No binary is tracked or pushed.
+The observer adds bba4's exact hash/source in a separate harness commit; the
+CLI is not rebuilt for that registry/docs update. Historical generic slot-stop
+runs remain unknown/stopped and are not recast as healthy.
