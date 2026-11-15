@@ -404,6 +404,18 @@ The iOS UI now gives typed recovery steps for its own `invalid_grant`, while
 labeling a local Network Extension connection “VPN active” without claiming
 that the remote exit is reachable.
 
+An on-demand **Test exit** action now checks a nonce and HMAC response from an
+updated exit over the encrypted mux path on Android, iOS, and desktop. It
+reports an unverified result, without diagnosing OAuth expiry, when the proof
+does not arrive. A two-arm live pinned-front smoke on the isolated mailbox
+verified the authenticated proof in **3.108 s** and **3.269 s**. Each arm also
+verified a 1 MiB download and one small message with zero Drive API errors;
+both fresh `muxv4/<session>/` prefixes had zero objects on immediate and
+delayed exact-session sweeps. The raw private result is under
+`.skirk-runs/live-exit-proof-20261114/`. These two samples validate the new
+path on this Mac, not a population latency percentile, physical mobile VPN
+behavior, or sustained remote availability.
+
 ## Promotion gate
 
 Keep the proven default while testing the corrected epoch and metadata-only
