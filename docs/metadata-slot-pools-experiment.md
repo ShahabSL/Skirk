@@ -36,9 +36,47 @@ python3 tools/skirk_live_ab.py \
 The harness stops after a failed arm, caps estimated quota and API errors,
 and writes raw results only under the ignored `.skirk-runs/` directory. The
 operator must still check and clean the exact generated `muxv4/<session>/`
-and `slotv1/<session>/` prefixes after each run. A second upload ABBA and
-repeated larger mixed workloads are necessary before changing any default.
+and `slotv1/<session>/` prefixes after each run.
 
 Local checks passed: full Go tests, vet, focused race tests for slot delivery
-and pool routing, and Python benchmark-harness tests. There is no live Drive
-performance result for this pool split in this document.
+and pool routing, and Python benchmark-harness tests.
+
+## Pinned-front full-app comparison
+
+The 16 MiB download and upload ABBA runs used the same binary and enabled
+slot delivery in both modes. The candidate alone split slot GET/PATCH pools.
+Each direction verified all four file SHA-256 hashes, 48/48 small messages,
+four authenticated exit proofs, two active slot peers and processing/ACK
+activity in each arm, with zero Drive API errors. Values are two-arm medians
+per mode; request p95 starts when the request begins, and scheduled p95 starts
+at the intended send time.
+
+| Direction and mode | Scheduled text p95 | Request p95 | File goodput | Estimated units, both peers |
+| --- | ---: | ---: | ---: | ---: |
+| Download, shared pools | 11.911 s | 4.787 s | 12.362 Mb/s | 22,653 |
+| Download, split pools | 11.375 s | 3.227 s | 10.770 Mb/s | 21,400 |
+| Upload, shared pools | 11.119 s | 2.786 s | 10.342 Mb/s | 24,013 |
+| Upload, split pools | 10.624 s | 2.675 s | 10.543 Mb/s | 21,520 |
+
+The download split lowered request p95 by about 33%, but file goodput fell
+about 13%. The upload difference was small relative to between-arm bulk
+variation. Exact `muxv4/` and `slotv1/` sweeps covered all 16 generated
+session prefixes; immediate and 30-second delayed checks found zero files.
+The raw private summaries and cleanup records are under
+`.skirk-runs/slot-pools-{download,upload}-20261114-01/`. This is a promising
+interactive tradeoff, not a proven joint win or a default recommendation.
+The [final evidence record](experiments/final-engineering-evidence-2026-11-14.md)
+places it alongside the clean-main and other architecture comparisons.
+
+The later **32 MiB download** ABBA used the final-code normal-list page size
+in both arms and otherwise kept the same pool-only treatment. It verified all
+four file hashes, 48/48 messages, four exit proofs, and zero API errors.
+Shared-pool medians were scheduled text p95 14.240 s, request p95 4.997 s,
+file 21.758 Mb/s, and 23,443 estimated units. Split-pool medians were
+10.758 s, 2.788 s, **12.622 Mb/s**, and 25,998 units. The text improvement
+coincided with a 42% file-rate reduction and 11% more estimated units. Both
+control file arms were faster than both split arms. This rejects a default
+pool split under the stated joint text/file objective. Private raw summary:
+`.skirk-runs/slot-pools-download-32m-20261114-01/`. Exact sweeps deleted 19
+residual mux/slot objects; immediate and delayed checks found zero across all
+eight generated prefixes.

@@ -67,5 +67,23 @@ python3 tools/skirk_live_ab.py \
 ```
 
 The four generated `muxv4/<session>/` prefixes still require exact cleanup
-and a delayed zero-file check after the harness exits. No sparse live result
-is claimed by this command alone.
+and a delayed zero-file check after the harness exits.
+
+The same-binary sparse live run completed all four 16 MiB exact-hash file
+transfers, 48/48 small messages, and four authenticated exit proofs with zero
+Drive API errors. Its actual order was 100/1000/1000/100, preserving the
+order-reversed treatment. Two-arm medians were:
+
+| p1 page size | Scheduled small p95 | Request p95 | File goodput | Estimated units, both peers |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 17.767 s | 6.386 s | 10.628 Mb/s | 25,455 |
+| 1000 | 15.976 s | 4.468 s | 11.839 Mb/s | 26,230 |
+
+Page 1000 was not slower in this pair, but individual file arms varied
+8.376–12.880 Mb/s at size 100 and 7.259–16.418 Mb/s at size 1000. That
+variation overwhelms a causal sparse-path conclusion. The run does not
+explain the earlier clean-main/current gap or justify reverting the dense
+mailbox page-size improvement. Private raw summary:
+`.skirk-runs/page-size-sparse-16m-20261114-01/`. Exact cleanup deleted nine
+residual objects; all eight mux/slot prefixes were zero on immediate and
+delayed checks.

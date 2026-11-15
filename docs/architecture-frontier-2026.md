@@ -23,9 +23,9 @@ deliver the later text ahead of those bytes. The mixed workloads below use a
 long-lived text connection alongside a separate file connection, as many
 applications do; this is an assumption that a real app trace must check.
 
-### Exact final default versus `main`
+### Default mux versus `main` before larger normal list pages
 
-A final pinned-front comparison used the exact merged default binary, all
+A pinned-front comparison used the then-current merged default binary, all
 experimental flags off, against clean `main` (`2c52ff85`) in
 main/current/current/main order. Each arm scheduled twelve new-stream small
 messages alongside one SHA-verified 16 MiB download. The first three arms
@@ -41,10 +41,42 @@ verified every byte with zero Drive API errors:
 The second `main` arm hit three 28-second Drive upload timeouts on the exit;
 the error guard stopped the workload. The complete arms vary enough, and the
 reverse-order control is missing, so this is **not** evidence that the final
-default is faster or slower than `main`. Eleven residual mux objects from the
+default is faster or slower than `main`. The larger normal-priority list page
+size was added after this run. Eleven residual mux objects from the
 two latter sessions were deleted by exact generated-session prefix; immediate
 and delayed rechecks found zero objects in all four sessions. Private raw
 evidence is under `.skirk-runs/final-main-abba-16m-20261114/`.
+
+A later **complete** pinned-front main/current/current/main run used the exact
+clean `main` commit and the branch after the larger normal-priority list
+page-size change. All four 16 MiB files and 48/48 new-stream messages
+verified with zero API errors and exact delayed cleanup. Main pair-median
+request p95 was **4.739 s** and file goodput **11.712 Mb/s**; current was
+**7.366 s** and **8.994 Mb/s**. Current used about 11% fewer estimated Drive
+units but lost 55% in request p95 and 23% in file goodput in this pair.
+This is a performance gap, not a causal diagnosis of the page-size change;
+the two binaries also differ in other code. A
+[media diagnostic](experiments/main-current-media-diagnostic-2026-11-14.md)
+locates the observed delay in bulk media GETs while leaving its source
+unresolved. See the
+[final evidence record](experiments/final-engineering-evidence-2026-11-14.md)
+and private `.skirk-runs/main-vs-current-16m-20261114-02/`.
+
+A later reverse-order download ABBA completed with the same binaries: main
+request p95 **3.994 s**, file **11.418 Mb/s**; current **6.329 s** and
+**12.444 Mb/s**. Current request latency remained worse, but file rate
+reversed direction. Neither pair isolates a code cause or establishes a stable
+file-throughput regression. Raw private evidence:
+`.skirk-runs/main-vs-current-download-reverse-16m-20261114-03/`.
+
+A reverse-order 16 MiB **upload** ABBA also completed all four files and
+48/48 messages with zero API errors and exact delayed cleanup. Main
+pair-median request p95 was
+**5.609 s** and file goodput **10.366 Mb/s**; current was **6.709 s** and
+**9.185 Mb/s**, with nearly equal estimated units. Main's two request-p95
+arms varied from 3.719 to 7.500 s. The directionally similar result is not
+proof that one code change caused the gap; see the final record and private
+`.skirk-runs/main-vs-current-upload-16m-20261114-01/`.
 
 ## Workload and measurements
 
@@ -456,17 +488,19 @@ not an additional hard concurrency limit or a measured capacity result.
 ## Platform validation on this branch
 
 Fresh current-branch builds passed the full preflight, Android debug
-sidecar/APK build, iOS Simulator build and three passing UI tests (one
-additional live VPN test skipped), macOS ARM64 Tauri bundle, and Windows x64 GUI/sidecar cross-compile
-with portable-ZIP CRC and final-sidecar hash checks. Logs are under
-`.skirk-runs/platform-build-current-20261114/`. Runtime evidence remains
-narrower: the [bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
+sidecar/APK build, iOS Simulator build with **2 passing and 1 skipped** UI
+tests, and a macOS ARM64 Tauri bundle. Native Windows x64 CI now passes full
+Go tests, 22 Rust command tests, sidecar/package checks, and a 10-second
+portable GUI launch; Windows ARM64 CLI smoke also passes. The
+[bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
 verified an HTTPS page plus exact 8 MiB uploads and downloads on a Pixel
-emulator. iOS Simulator Connect stopped before the packet extension; macOS ran local proxy
-mode, and Windows was not run natively. None of those app builds exercised the
-new opt-in scheduler or fixed-slot probes through a platform UI. Physical
-iPhone packet forwarding, sustained Android browsing/video with concurrent bulk traffic,
-Windows runtime, and signed macOS distribution remain unverified.
+emulator, and a later Pixel run verified the on-demand exit proof plus exact
+1 MiB transfers. iOS Simulator Connect stopped before the packet extension;
+macOS ran local proxy mode. None of these platform UI runs exercised the new
+opt-in scheduler or fixed-slot delivery. Physical iPhone packet forwarding,
+sustained Android browsing/video with concurrent bulk traffic, Windows VPN
+tunnel runtime, and signed macOS distribution remain unverified. See the
+[final evidence record](experiments/final-engineering-evidence-2026-11-14.md).
 The iOS UI now gives typed recovery steps for its own `invalid_grant`, while
 labeling a local Network Extension connection “VPN active” without claiming
 that the remote exit is reachable.
@@ -483,13 +517,17 @@ delayed exact-session sweeps. The raw private result is under
 path on this Mac, not a population latency percentile, physical mobile VPN
 behavior, or sustained remote availability.
 
-## Promotion gate
+## Decision and remaining evidence
 
-Keep the proven default while testing the corrected epoch and metadata-only
-combination against both upload and download. A release decision needs
+Keep default muxv4 as the release transport while investigating the measured
+clean-main/current performance gap. The corrected epoch and metadata-only
+combination helped short 16 MiB pairs but lost bulk rate with five clients
+and did not finish the 100 MiB comparison. Fixed-slot delivery and split
+slot pools likewise lacked a joint text/file win. Further work needs
 repeatable larger mixed transfers, 5–10 clients and quota pressure, cleanup
-under backlog, sustained multi-client operation, restart/reconnect, browser and video behavior, Android VPN on a
-real device, an iPhone packet tunnel, and native Windows execution. The
+under backlog, sustained multi-client operation, restart/reconnect, browser
+and video behavior, Android VPN on a real device, an iPhone packet tunnel,
+and native Windows VPN tunneling. The
 selected Direct or Google-front route must remain the user's choice, with
 `www.google.com` pinned front as the default.
 The emergency storage-pressure sweep now retains `muxv4/` and opt-in
