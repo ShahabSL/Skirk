@@ -57,7 +57,7 @@ func TestFSHybridCodecIncludesOPENAndRejectsInnerOuterIdentityFailures(t *testin
 	for _, change := range []func([]byte) []byte{
 		func(b []byte) []byte { b[len(b)-1] ^= 1; return b },
 		func(b []byte) []byte { return b[:8] },
-		func(b []byte) []byte { return append(b, make([]byte, fsHybridWireMax)... ) },
+		func(b []byte) []byte { return append(b, make([]byte, fsHybridWireMax)...) },
 	} {
 		if _, err := codec.open(change(bytes.Clone(wire))); err == nil {
 			t.Fatal("invalid outer envelope accepted")

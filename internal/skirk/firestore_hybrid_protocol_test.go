@@ -19,13 +19,14 @@ import (
 )
 
 const (
-	fsHybridWireMax   = 64 << 10
-	fsHybridInlineMax = 16 << 10
-	fsHybridNameMax   = 1024
-	fsHybridClaimsMax = 4096
-	fsHybridQueueMax  = 32
-	fsHybridCacheMax  = 8 << 20
-	fsHybridMagic     = "FSH1"
+	fsHybridWireMax     = 64 << 10
+	fsHybridInlineMax   = 16 << 10
+	fsHybridPhysicalMax = (4 << 20) + (64 << 10)
+	fsHybridNameMax     = 1024
+	fsHybridClaimsMax   = 4096
+	fsHybridQueueMax    = 32
+	fsHybridCacheMax    = 8 << 20
+	fsHybridMagic       = "FSH1"
 )
 
 var (
@@ -107,8 +108,12 @@ func newFSHybridCodec(secret string, sid, epoch [16]byte, direction byte, client
 }
 
 func (c *fsHybridCodec) validateMux(name string, sealed []byte) (muxObjectMeta, error) {
+	return c.validateMuxMax(name, sealed, fsHybridInlineMax)
+}
+
+func (c *fsHybridCodec) validateMuxMax(name string, sealed []byte, limit int) (muxObjectMeta, error) {
 	meta, ok := parseMuxObjectInfo(ObjectInfo{Name: name})
-	if !ok || !meta.Priority || meta.MetadataOnly || len(name) > fsHybridNameMax || !strings.HasPrefix(name, muxDirPrefix(c.sid, c.direction, c.clientID, c.runID)) || meta.ClientID != c.clientID || meta.RunID != c.runID || meta.Lane < 0 || meta.Lane >= muxLaneCount || meta.Seq == 0 || len(sealed) == 0 || len(sealed) > fsHybridInlineMax {
+	if !ok || !meta.Priority || meta.MetadataOnly || len(name) > fsHybridNameMax || !strings.HasPrefix(name, muxDirPrefix(c.sid, c.direction, c.clientID, c.runID)) || meta.ClientID != c.clientID || meta.RunID != c.runID || meta.Lane < 0 || meta.Lane >= muxLaneCount || meta.Seq == 0 || len(sealed) == 0 || len(sealed) > limit {
 		return muxObjectMeta{}, errFSHybridIntegrity
 	}
 	key, err := DeriveMuxLaneKeyV4(c.secret, c.sid, c.direction, c.clientID, c.runID, meta.Lane)
