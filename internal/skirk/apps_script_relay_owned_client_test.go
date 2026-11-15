@@ -143,10 +143,12 @@ func TestAppsScriptRelayOwnedClient(t *testing.T) {
 	started := time.Now()
 	snapshot, runErr := rrRunOwnedClient(ctx, dir, s, key, epoch, runtime, exchange, rows)
 	status := "passed"
+	errorSummaryText := ""
 	if runErr != nil {
 		status = "failed"
+		errorSummaryText = errorSummary(runErr)
 	}
-	result := map[string]any{"status": status, "elapsed_ms": float64(time.Since(started).Microseconds()) / 1000, "pack_priority": s.PackPriority, "frame_bytes": s.FrameBytes, "chunk_bytes": s.ChunkBytes, "bulk_bytes": s.BulkBytes, "campaign_id": reservation.CampaignID, "variant_id": reservation.VariantID, "allocation_index": reservation.AllocationIndex, "client": snapshot, "carrier": budget.snapshot(), "route_mode": s.Route.Mode, "client_error": status, "sample_ledger_error": rows.err != nil, "measurement_scope": "owned TLS origin via actual SOCKS/mux and only selected Google front; no direct-origin fallback"}
+	result := map[string]any{"status": status, "elapsed_ms": float64(time.Since(started).Microseconds()) / 1000, "pack_priority": s.PackPriority, "frame_bytes": s.FrameBytes, "chunk_bytes": s.ChunkBytes, "bulk_bytes": s.BulkBytes, "campaign_id": reservation.CampaignID, "variant_id": reservation.VariantID, "allocation_index": reservation.AllocationIndex, "client": snapshot, "carrier": budget.snapshot(), "route_mode": s.Route.Mode, "client_error": errorSummaryText, "sample_ledger_error": rows.err != nil, "measurement_scope": "owned TLS origin via actual SOCKS/mux and only selected Google front; no direct-origin fallback"}
 	if err = rrWritePrivateJSON(dir, "client-result.json", result); err != nil {
 		t.Fatal("cannot persist private client result")
 	}

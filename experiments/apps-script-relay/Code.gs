@@ -8,14 +8,16 @@ const RELAY_EXPIRES_UNIX_MS = 0;
 const RELAY_BODY_LIMIT = 6000000;
 
 function doPost(event) {
-  const reject = () => ContentService.createTextOutput('{"error":"rejected"}')
+  const reject = (code) => ContentService.createTextOutput(JSON.stringify({error: code}))
     .setMimeType(ContentService.MimeType.JSON);
-  if (Date.now() >= RELAY_EXPIRES_UNIX_MS || !event || !event.postData ||
-      event.postData.length > RELAY_BODY_LIMIT) return reject();
+  if (Date.now() >= RELAY_EXPIRES_UNIX_MS) return reject("expired");
+  if (!event || !event.postData || event.postData.length > RELAY_BODY_LIMIT) return reject("request_bound");
   try {
-    const request = JSON.parse(event.postData.contents);
-    if (request.auth !== SCRIPT_SECRET || typeof request.data !== "string" ||
-        request.data.length > RELAY_BODY_LIMIT || !/^[A-Za-z0-9+/]*={0,2}$/.test(request.data)) return reject();
+    let request;
+    try { request = JSON.parse(event.postData.contents); } catch (_) { return reject("request_shape"); }
+    if (!request || request.auth !== SCRIPT_SECRET) return reject("auth");
+    if (typeof request.data !== "string" || request.data.length > RELAY_BODY_LIMIT ||
+        !/^[A-Za-z0-9+/]*={0,2}$/.test(request.data)) return reject("request_shape");
     const response = UrlFetchApp.fetch(RELAY_URL, {
       method: "post", contentType: "application/json",
       headers: {Authorization: "Bearer " + RELAY_HTTP_AUTH},
@@ -23,9 +25,9 @@ function doPost(event) {
       followRedirects: false, muteHttpExceptions: true,
       validateHttpsCertificates: true, timeoutSeconds: 25
     });
-    if (response.getResponseCode() !== 200) return reject();
+    if (response.getResponseCode() !== 200) return reject("relay_http_" + response.getResponseCode());
     const body = response.getContentText();
-    if (body.length > RELAY_BODY_LIMIT) return reject();
+    if (body.length > RELAY_BODY_LIMIT) return reject("response_bound");
     return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
-  } catch (_) { return reject(); }
+  } catch (_) { return reject("fetch_failed"); }
 }
