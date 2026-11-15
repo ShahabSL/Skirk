@@ -103,8 +103,8 @@ func (g *hybridDriveGate) CloseIdleConnections() {
 	}
 }
 
-// The shared budget reserves a conservative unit weight for each physical
-// request. Per-peer observed calls/units come from DriveStore.QuotaSnapshot.
+// The shared budget reserves a unit estimate for each visible transport
+// dispatch; opaque internal retries are not independently charged here. Per-peer observed calls/units come from DriveStore.QuotaSnapshot.
 func hybridGateDrive(store *DriveStore, b *hybridBudget, cleanup bool) []*hybridDriveGate {
 	seen := map[*GoogleHTTPClient]bool{}
 	var gates []*hybridDriveGate
