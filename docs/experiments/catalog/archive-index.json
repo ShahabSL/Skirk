@@ -1675,6 +1675,12 @@
   },
   {
     "worktree": "slot-async-wt",
+    "path": ".skirk-runs/async-vs-main-download100m-sustained-20261115/arms/summary.json",
+    "bytes": 1290,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
     "path": ".skirk-runs/final-async-vs-default-download16m-20261115/arms/summary.json",
     "bytes": 7111,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
@@ -1713,6 +1719,12 @@
     "worktree": "slot-async-wt",
     "path": ".skirk-runs/slot-primary-download16m-20261115-01/arms/summary.json",
     "bytes": 2646,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/xnet-v054-v061-download16m-20261115/arms/summary.json",
+    "bytes": 4565,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {

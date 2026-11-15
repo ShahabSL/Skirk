@@ -1,0 +1,1053 @@
+{
+  "date": "2026-11-15",
+  "status": "Two retained incomplete comparisons; fresh125k scale cohort is separate and not measured here",
+  "comparisons": [
+    {
+      "name": "xnet-v054-v061-download16m-20261115",
+      "arms": [
+        {
+          "run": "0-control",
+          "upload_hedge_delay_ms": 0,
+          "upload_stall_hedge_delay_ms": 0,
+          "upload_stall_hedge_budget_bytes": 0,
+          "ok": true,
+          "chunk_size_override": 0,
+          "small_traffic": "persistent",
+          "bulk_direction": "download",
+          "small_response_bytes": 17,
+          "persistent_pipeline": true,
+          "persistent_bulk_lead_ms": 1000,
+          "sparse_priority": false,
+          "interaction_epoch": false,
+          "separate_upload_pool": false,
+          "metadata_only_priority": false,
+          "metadata_only_max_bytes": 8192,
+          "metadata_slot_v1": false,
+          "metadata_slot_delivery_v1": false,
+          "metadata_slot_async_v1": false,
+          "metadata_slot_primary_v1": false,
+          "separate_metadata_slot_pools": false,
+          "normal_list_page_size": null,
+          "combined_mux_discovery": false,
+          "adaptive_mux_discovery": false,
+          "separate_bulk_media_pool": false,
+          "binary_sha256": "eb49ef7350ca91c3e1b8a7a7893f69a520d88c3e05875f757aaa29ecc86ddbdc",
+          "route_mode": "google_front_pinned",
+          "quota_project_header": false,
+          "exit_probe_round_trip_ms": 3245,
+          "bulk_mbps": 17.182,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "small_stalls": 0,
+          "bulk_stalls": 0,
+          "all_small_scheduled_p95_ms": 8013.996,
+          "all_small_request_p95_ms": 8013.482,
+          "all_small_request_total_p95_ms": 8013.517,
+          "all_small_scheduled_total_p95_ms": 8014.031,
+          "small_overlap_count": 12,
+          "small_overlap_p95_ms": 8013.482,
+          "small_overlap_scheduled_p95_ms": 8013.996,
+          "combined_units_including_warmup_and_tail": 21410,
+          "errors": 0,
+          "downloads": 36,
+          "roles": {
+            "client": {
+              "calls": 102,
+              "units": 10155,
+              "errors": 0,
+              "response_bytes": 16960124,
+              "ops": {
+                "delete": {
+                  "calls": 11,
+                  "units": 550,
+                  "errors": 0,
+                  "total_duration_ms": 2922,
+                  "avg_duration_ms": 265,
+                  "p50_duration_ms": 263,
+                  "p95_duration_ms": 361,
+                  "max_duration_ms": 361
+                },
+                "download": {
+                  "calls": 16,
+                  "units": 3200,
+                  "errors": 0,
+                  "total_duration_ms": 11157,
+                  "avg_duration_ms": 697,
+                  "p50_duration_ms": 630,
+                  "p95_duration_ms": 1275,
+                  "max_duration_ms": 1275
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 142,
+                  "avg_duration_ms": 142,
+                  "p50_duration_ms": 142,
+                  "p95_duration_ms": 142,
+                  "max_duration_ms": 142
+                },
+                "list": {
+                  "calls": 54,
+                  "units": 5400,
+                  "errors": 0,
+                  "total_duration_ms": 9848,
+                  "avg_duration_ms": 182,
+                  "p50_duration_ms": 158,
+                  "p95_duration_ms": 262,
+                  "max_duration_ms": 625
+                },
+                "upload": {
+                  "calls": 20,
+                  "units": 1000,
+                  "errors": 0,
+                  "total_duration_ms": 15949,
+                  "avg_duration_ms": 797,
+                  "p50_duration_ms": 760,
+                  "p95_duration_ms": 1228,
+                  "max_duration_ms": 1228
+                }
+              }
+            },
+            "exit": {
+              "calls": 110,
+              "units": 11255,
+              "errors": 0,
+              "response_bytes": 191421,
+              "ops": {
+                "delete": {
+                  "calls": 17,
+                  "units": 850,
+                  "errors": 0,
+                  "total_duration_ms": 5253,
+                  "avg_duration_ms": 309,
+                  "p50_duration_ms": 275,
+                  "p95_duration_ms": 443,
+                  "max_duration_ms": 443
+                },
+                "download": {
+                  "calls": 20,
+                  "units": 4000,
+                  "errors": 0,
+                  "total_duration_ms": 6043,
+                  "avg_duration_ms": 302,
+                  "p50_duration_ms": 333,
+                  "p95_duration_ms": 397,
+                  "max_duration_ms": 397
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 99,
+                  "avg_duration_ms": 99,
+                  "p50_duration_ms": 99,
+                  "p95_duration_ms": 99,
+                  "max_duration_ms": 99
+                },
+                "list": {
+                  "calls": 56,
+                  "units": 5600,
+                  "errors": 0,
+                  "total_duration_ms": 10253,
+                  "avg_duration_ms": 183,
+                  "p50_duration_ms": 152,
+                  "p95_duration_ms": 321,
+                  "max_duration_ms": 462
+                },
+                "upload": {
+                  "calls": 16,
+                  "units": 800,
+                  "errors": 0,
+                  "total_duration_ms": 21979,
+                  "avg_duration_ms": 1373,
+                  "p50_duration_ms": 1132,
+                  "p95_duration_ms": 3535,
+                  "max_duration_ms": 3535
+                }
+              }
+            }
+          },
+          "complete_workload": {
+            "method": {
+              "bulk_direction": "download",
+              "integrity": {
+                "bulk": {
+                  "expected_bytes": 16777216,
+                  "sha256_checked": true
+                },
+                "prelude": {
+                  "byte_exact": true,
+                  "expected_bytes": 131072
+                },
+                "small": {
+                  "byte_exact": true,
+                  "expected_bytes": 64
+                }
+              },
+              "limits": {
+                "bulk_timeout_s": 100.0,
+                "overall_timeout_s": 180.0,
+                "prelude_timeout_s": 60,
+                "request_timeout_s": 60.0
+              },
+              "mixed_valid": true,
+              "percentiles": "nearest rank on successful requests",
+              "schedule": {
+                "bulk_count": 1,
+                "bulk_lead_ms": 1000,
+                "pipelined": true,
+                "small_count": 12,
+                "small_interval_ms": 250,
+                "small_workers": 1
+              },
+              "scheduled_latency": "delay from intended dispatch time plus echo timing",
+              "small_method": "64-byte length-framed echo",
+              "transport": "one persistent SOCKS5 TCP stream via Skirk",
+              "ttfb": "time from frame send start to first echo header byte; excludes SOCKS setup"
+            },
+            "prelude": {
+              "bytes_each_direction": 131072,
+              "failure": null,
+              "ok": true,
+              "total_ms": 4515.044,
+              "ttfb_ms": 4514.929
+            },
+            "small": {
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 8014.031,
+                  "p50": 4661.752,
+                  "p95": 8014.031,
+                  "p99": 8014.031
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 8013.996,
+                  "p50": 4661.748,
+                  "p95": 8013.996,
+                  "p99": 8013.996
+                },
+                "total_ms": {
+                  "max": 8013.517,
+                  "p50": 4655.873,
+                  "p95": 8013.517,
+                  "p99": 8013.517
+                },
+                "ttfb_ms": {
+                  "max": 8013.482,
+                  "p50": 4655.869,
+                  "p95": 8013.482,
+                  "p99": 8013.482
+                }
+              },
+              "scheduled": 12,
+              "stalls": 0,
+              "successes": 12,
+              "timeouts": 0
+            },
+            "small_during_bulk": {
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 8014.031,
+                  "p50": 4661.752,
+                  "p95": 8014.031,
+                  "p99": 8014.031
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 8013.996,
+                  "p50": 4661.748,
+                  "p95": 8013.996,
+                  "p99": 8013.996
+                },
+                "total_ms": {
+                  "max": 8013.517,
+                  "p50": 4655.873,
+                  "p95": 8013.517,
+                  "p99": 8013.517
+                },
+                "ttfb_ms": {
+                  "max": 8013.482,
+                  "p50": 4655.869,
+                  "p95": 8013.482,
+                  "p99": 8013.482
+                }
+              },
+              "scheduled": 12,
+              "stalls": 0,
+              "successes": 12,
+              "timeouts": 0
+            },
+            "bulk": {
+              "aggregate_goodput_mbps": 17.182,
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 7823.663,
+                  "p50": 7823.663,
+                  "p95": 7823.663,
+                  "p99": 7823.663
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 5710.232,
+                  "p50": 5710.232,
+                  "p95": 5710.232,
+                  "p99": 5710.232
+                },
+                "total_ms": {
+                  "max": 7811.605,
+                  "p50": 7811.605,
+                  "p95": 7811.605,
+                  "p99": 7811.605
+                },
+                "ttfb_ms": {
+                  "max": 5698.174,
+                  "p50": 5698.174,
+                  "p95": 5698.174,
+                  "p99": 5698.174
+                }
+              },
+              "scheduled": 1,
+              "stalls": 0,
+              "successes": 1,
+              "successful_body_bytes": 16777216,
+              "successful_transfer_bytes": 16777216,
+              "timeouts": 0
+            },
+            "started_utc": "2026-11-15T17:36:34.265624+00:00",
+            "probe_started_utc": "2026-11-15T17:36:38.783648+00:00"
+          }
+        },
+        {
+          "run": "1-candidate",
+          "upload_hedge_delay_ms": 0,
+          "upload_stall_hedge_delay_ms": 0,
+          "upload_stall_hedge_budget_bytes": 0,
+          "ok": true,
+          "chunk_size_override": 0,
+          "small_traffic": "persistent",
+          "bulk_direction": "download",
+          "small_response_bytes": 17,
+          "persistent_pipeline": true,
+          "persistent_bulk_lead_ms": 1000,
+          "sparse_priority": false,
+          "interaction_epoch": false,
+          "separate_upload_pool": false,
+          "metadata_only_priority": false,
+          "metadata_only_max_bytes": 8192,
+          "metadata_slot_v1": false,
+          "metadata_slot_delivery_v1": false,
+          "metadata_slot_async_v1": false,
+          "metadata_slot_primary_v1": false,
+          "separate_metadata_slot_pools": false,
+          "normal_list_page_size": null,
+          "combined_mux_discovery": false,
+          "adaptive_mux_discovery": false,
+          "separate_bulk_media_pool": false,
+          "binary_sha256": "c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+          "route_mode": "google_front_pinned",
+          "quota_project_header": false,
+          "exit_probe_round_trip_ms": 3087,
+          "bulk_mbps": 17.535,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "small_stalls": 0,
+          "bulk_stalls": 0,
+          "all_small_scheduled_p95_ms": 6483.269,
+          "all_small_request_p95_ms": 6476.787,
+          "all_small_request_total_p95_ms": 6476.844,
+          "all_small_scheduled_total_p95_ms": 6483.326,
+          "small_overlap_count": 12,
+          "small_overlap_p95_ms": 6476.787,
+          "small_overlap_scheduled_p95_ms": 6483.269,
+          "combined_units_including_warmup_and_tail": 19210,
+          "errors": 0,
+          "downloads": 35,
+          "roles": {
+            "client": {
+              "calls": 88,
+              "units": 9055,
+              "errors": 0,
+              "response_bytes": 17023882,
+              "ops": {
+                "delete": {
+                  "calls": 3,
+                  "units": 150,
+                  "errors": 0,
+                  "total_duration_ms": 1183,
+                  "avg_duration_ms": 394,
+                  "p50_duration_ms": 356,
+                  "p95_duration_ms": 534,
+                  "max_duration_ms": 534
+                },
+                "download": {
+                  "calls": 15,
+                  "units": 3000,
+                  "errors": 0,
+                  "total_duration_ms": 7664,
+                  "avg_duration_ms": 510,
+                  "p50_duration_ms": 463,
+                  "p95_duration_ms": 1070,
+                  "max_duration_ms": 1070
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 100,
+                  "avg_duration_ms": 100,
+                  "p50_duration_ms": 100,
+                  "p95_duration_ms": 100,
+                  "max_duration_ms": 100
+                },
+                "list": {
+                  "calls": 49,
+                  "units": 4900,
+                  "errors": 0,
+                  "total_duration_ms": 8888,
+                  "avg_duration_ms": 181,
+                  "p50_duration_ms": 162,
+                  "p95_duration_ms": 316,
+                  "max_duration_ms": 449
+                },
+                "upload": {
+                  "calls": 20,
+                  "units": 1000,
+                  "errors": 0,
+                  "total_duration_ms": 15375,
+                  "avg_duration_ms": 768,
+                  "p50_duration_ms": 776,
+                  "p95_duration_ms": 1193,
+                  "max_duration_ms": 1193
+                }
+              }
+            },
+            "exit": {
+              "calls": 94,
+              "units": 10155,
+              "errors": 0,
+              "response_bytes": 262582,
+              "ops": {
+                "delete": {
+                  "calls": 7,
+                  "units": 350,
+                  "errors": 0,
+                  "total_duration_ms": 2734,
+                  "avg_duration_ms": 390,
+                  "p50_duration_ms": 381,
+                  "p95_duration_ms": 537,
+                  "max_duration_ms": 537
+                },
+                "download": {
+                  "calls": 20,
+                  "units": 4000,
+                  "errors": 0,
+                  "total_duration_ms": 5592,
+                  "avg_duration_ms": 279,
+                  "p50_duration_ms": 255,
+                  "p95_duration_ms": 395,
+                  "max_duration_ms": 395
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 117,
+                  "avg_duration_ms": 117,
+                  "p50_duration_ms": 117,
+                  "p95_duration_ms": 117,
+                  "max_duration_ms": 117
+                },
+                "list": {
+                  "calls": 50,
+                  "units": 5000,
+                  "errors": 0,
+                  "total_duration_ms": 9639,
+                  "avg_duration_ms": 192,
+                  "p50_duration_ms": 163,
+                  "p95_duration_ms": 343,
+                  "max_duration_ms": 490
+                },
+                "upload": {
+                  "calls": 16,
+                  "units": 800,
+                  "errors": 0,
+                  "total_duration_ms": 21074,
+                  "avg_duration_ms": 1317,
+                  "p50_duration_ms": 1231,
+                  "p95_duration_ms": 3116,
+                  "max_duration_ms": 3116
+                }
+              }
+            }
+          },
+          "complete_workload": {
+            "method": {
+              "bulk_direction": "download",
+              "integrity": {
+                "bulk": {
+                  "expected_bytes": 16777216,
+                  "sha256_checked": true
+                },
+                "prelude": {
+                  "byte_exact": true,
+                  "expected_bytes": 131072
+                },
+                "small": {
+                  "byte_exact": true,
+                  "expected_bytes": 64
+                }
+              },
+              "limits": {
+                "bulk_timeout_s": 100.0,
+                "overall_timeout_s": 180.0,
+                "prelude_timeout_s": 60,
+                "request_timeout_s": 60.0
+              },
+              "mixed_valid": true,
+              "percentiles": "nearest rank on successful requests",
+              "schedule": {
+                "bulk_count": 1,
+                "bulk_lead_ms": 1000,
+                "pipelined": true,
+                "small_count": 12,
+                "small_interval_ms": 250,
+                "small_workers": 1
+              },
+              "scheduled_latency": "delay from intended dispatch time plus echo timing",
+              "small_method": "64-byte length-framed echo",
+              "transport": "one persistent SOCKS5 TCP stream via Skirk",
+              "ttfb": "time from frame send start to first echo header byte; excludes SOCKS setup"
+            },
+            "prelude": {
+              "bytes_each_direction": 131072,
+              "failure": null,
+              "ok": true,
+              "total_ms": 4480.365,
+              "ttfb_ms": 4480.255
+            },
+            "small": {
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 6483.326,
+                  "p50": 5483.426,
+                  "p95": 6483.326,
+                  "p99": 6483.326
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 6483.269,
+                  "p50": 5483.421,
+                  "p95": 6483.269,
+                  "p99": 6483.269
+                },
+                "total_ms": {
+                  "max": 6476.844,
+                  "p50": 5480.563,
+                  "p95": 6476.844,
+                  "p99": 6476.844
+                },
+                "ttfb_ms": {
+                  "max": 6476.787,
+                  "p50": 5480.558,
+                  "p95": 6476.787,
+                  "p99": 6476.787
+                }
+              },
+              "scheduled": 12,
+              "stalls": 0,
+              "successes": 12,
+              "timeouts": 0
+            },
+            "small_during_bulk": {
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 6483.326,
+                  "p50": 5483.426,
+                  "p95": 6483.326,
+                  "p99": 6483.326
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 6483.269,
+                  "p50": 5483.421,
+                  "p95": 6483.269,
+                  "p99": 6483.269
+                },
+                "total_ms": {
+                  "max": 6476.844,
+                  "p50": 5480.563,
+                  "p95": 6476.844,
+                  "p99": 6476.844
+                },
+                "ttfb_ms": {
+                  "max": 6476.787,
+                  "p50": 5480.558,
+                  "p95": 6476.787,
+                  "p99": 6476.787
+                }
+              },
+              "scheduled": 12,
+              "stalls": 0,
+              "successes": 12,
+              "timeouts": 0
+            },
+            "bulk": {
+              "aggregate_goodput_mbps": 17.535,
+              "failures": 0,
+              "metrics": {
+                "scheduled_total_ms": {
+                  "max": 7658.846,
+                  "p50": 7658.846,
+                  "p95": 7658.846,
+                  "p99": 7658.846
+                },
+                "scheduled_ttfb_ms": {
+                  "max": 4436.429,
+                  "p50": 4436.429,
+                  "p95": 4436.429,
+                  "p99": 4436.429
+                },
+                "total_ms": {
+                  "max": 7654.182,
+                  "p50": 7654.182,
+                  "p95": 7654.182,
+                  "p99": 7654.182
+                },
+                "ttfb_ms": {
+                  "max": 4431.765,
+                  "p50": 4431.765,
+                  "p95": 4431.765,
+                  "p99": 4431.765
+                }
+              },
+              "scheduled": 1,
+              "stalls": 0,
+              "successes": 1,
+              "successful_body_bytes": 16777216,
+              "successful_transfer_bytes": 16777216,
+              "timeouts": 0
+            },
+            "started_utc": "2026-11-15T17:37:06.380386+00:00",
+            "probe_started_utc": "2026-11-15T17:37:10.864407+00:00"
+          }
+        },
+        {
+          "run": "2-candidate",
+          "upload_hedge_delay_ms": 0,
+          "upload_stall_hedge_delay_ms": 0,
+          "upload_stall_hedge_budget_bytes": 0,
+          "ok": false,
+          "chunk_size_override": 0,
+          "small_traffic": "persistent",
+          "bulk_direction": "download",
+          "small_response_bytes": 17,
+          "persistent_pipeline": true,
+          "persistent_bulk_lead_ms": 1000,
+          "sparse_priority": false,
+          "interaction_epoch": false,
+          "separate_upload_pool": false,
+          "metadata_only_priority": false,
+          "metadata_only_max_bytes": 8192,
+          "metadata_slot_v1": false,
+          "metadata_slot_delivery_v1": false,
+          "metadata_slot_async_v1": false,
+          "metadata_slot_primary_v1": false,
+          "separate_metadata_slot_pools": false,
+          "normal_list_page_size": null,
+          "combined_mux_discovery": false,
+          "adaptive_mux_discovery": false,
+          "separate_bulk_media_pool": false,
+          "binary_sha256": "c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+          "route_mode": "google_front_pinned",
+          "quota_project_header": false,
+          "exit_probe_round_trip_ms": 2953,
+          "failure": "RuntimeError",
+          "roles": {
+            "client": {
+              "calls": 117,
+              "units": 11155,
+              "errors": 0,
+              "response_bytes": 3333476,
+              "ops": {
+                "delete": {
+                  "calls": 4,
+                  "units": 200,
+                  "errors": 0,
+                  "total_duration_ms": 992,
+                  "avg_duration_ms": 248,
+                  "p50_duration_ms": 250,
+                  "p95_duration_ms": 269,
+                  "max_duration_ms": 269
+                },
+                "download": {
+                  "calls": 7,
+                  "units": 1400,
+                  "errors": 0,
+                  "total_duration_ms": 2268,
+                  "avg_duration_ms": 324,
+                  "p50_duration_ms": 304,
+                  "p95_duration_ms": 605,
+                  "max_duration_ms": 605
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 112,
+                  "avg_duration_ms": 112,
+                  "p50_duration_ms": 112,
+                  "p95_duration_ms": 112,
+                  "max_duration_ms": 112
+                },
+                "list": {
+                  "calls": 86,
+                  "units": 8600,
+                  "errors": 0,
+                  "total_duration_ms": 13578,
+                  "avg_duration_ms": 157,
+                  "p50_duration_ms": 153,
+                  "p95_duration_ms": 197,
+                  "max_duration_ms": 221
+                },
+                "upload": {
+                  "calls": 19,
+                  "units": 950,
+                  "errors": 0,
+                  "total_duration_ms": 12658,
+                  "avg_duration_ms": 666,
+                  "p50_duration_ms": 672,
+                  "p95_duration_ms": 770,
+                  "max_duration_ms": 770
+                }
+              }
+            },
+            "exit": {
+              "calls": 124,
+              "units": 12855,
+              "errors": 1,
+              "last_error_reason": "timeout",
+              "response_bytes": 246121,
+              "ops": {
+                "delete": {
+                  "calls": 19,
+                  "units": 950,
+                  "errors": 0,
+                  "total_duration_ms": 4889,
+                  "avg_duration_ms": 257,
+                  "p50_duration_ms": 246,
+                  "p95_duration_ms": 350,
+                  "max_duration_ms": 350
+                },
+                "download": {
+                  "calls": 19,
+                  "units": 3800,
+                  "errors": 0,
+                  "total_duration_ms": 18830,
+                  "avg_duration_ms": 991,
+                  "p50_duration_ms": 645,
+                  "p95_duration_ms": 3890,
+                  "max_duration_ms": 3890
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 150,
+                  "avg_duration_ms": 150,
+                  "p50_duration_ms": 150,
+                  "p95_duration_ms": 150,
+                  "max_duration_ms": 150
+                },
+                "list": {
+                  "calls": 77,
+                  "units": 7700,
+                  "errors": 0,
+                  "total_duration_ms": 15570,
+                  "avg_duration_ms": 202,
+                  "p50_duration_ms": 151,
+                  "p95_duration_ms": 663,
+                  "max_duration_ms": 1021
+                },
+                "upload": {
+                  "calls": 8,
+                  "units": 400,
+                  "errors": 1,
+                  "last_error_reason": "timeout",
+                  "total_duration_ms": 109324,
+                  "avg_duration_ms": 13665,
+                  "p50_duration_ms": 22493,
+                  "p95_duration_ms": 28000,
+                  "max_duration_ms": 28000
+                }
+              }
+            }
+          }
+        }
+      ],
+      "cleanup": {
+        "residual_deleted": 19,
+        "prefixes": 6,
+        "first_delayed_remaining": 1,
+        "final_delayed_zero": true,
+        "delayed_rounds": 2,
+        "config_copies_remaining": 0
+      },
+      "host": {
+        "started_utc": "2026-11-15T17:36:27Z",
+        "load_before": [
+          5.94677734375,
+          6.13037109375,
+          5.31396484375
+        ],
+        "condition": "Root coordinated no agent compilers/tests during timed arms; ordinary desktop background uncontrolled",
+        "source_base": "42e6742e93d3376a03d4354a4b172236ff1b1fc4",
+        "candidate_binary_sha256": "c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+        "control_binary_sha256": "eb49ef7350ca91c3e1b8a7a7893f69a520d88c3e05875f757aaa29ecc86ddbdc",
+        "difference": "Only x/net replacement0.54 in control versus0.61 in candidate; same frozen runtime code and default config",
+        "trace_enabled_both": true,
+        "harness_source_sha256": "05c50602c0373c70256400d9451e9b1b9cd87c48387e015d45d2cea87aa17009",
+        "load_after": [
+          5.62939453125,
+          5.84033203125,
+          5.32666015625
+        ],
+        "finished_utc": "2026-11-15T17:39:08Z",
+        "wrapper_exit_code": 1
+      },
+      "raw_path": "slot-async-wt/.skirk-runs/xnet-v054-v061-download16m-20261115/"
+    },
+    {
+      "name": "async-vs-main-download100m-sustained-20261115",
+      "arms": [
+        {
+          "run": "0-control",
+          "upload_hedge_delay_ms": 0,
+          "upload_stall_hedge_delay_ms": 0,
+          "upload_stall_hedge_budget_bytes": 0,
+          "ok": false,
+          "chunk_size_override": 0,
+          "small_traffic": "persistent",
+          "bulk_direction": "download",
+          "small_response_bytes": 17,
+          "persistent_pipeline": true,
+          "persistent_bulk_lead_ms": 1000,
+          "persistent_overall_timeout_seconds": 300.0,
+          "persistent_bulk_timeout_seconds": 180.0,
+          "quota_guard_estimated_units_per_60s": 50000,
+          "sparse_priority": false,
+          "interaction_epoch": false,
+          "separate_upload_pool": false,
+          "metadata_only_priority": false,
+          "metadata_only_max_bytes": 8192,
+          "metadata_slot_v1": false,
+          "metadata_slot_delivery_v1": false,
+          "metadata_slot_async_v1": false,
+          "metadata_slot_primary_v1": false,
+          "separate_metadata_slot_pools": false,
+          "normal_list_page_size": null,
+          "combined_mux_discovery": false,
+          "adaptive_mux_discovery": false,
+          "separate_bulk_media_pool": false,
+          "binary_sha256": "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+          "route_mode": "google_front_pinned",
+          "quota_project_header": false,
+          "failure": "RuntimeError",
+          "roles": {
+            "client": {
+              "calls": 252,
+              "units": 26205,
+              "errors": 0,
+              "response_bytes": 105105342,
+              "ops": {
+                "delete": {
+                  "calls": 38,
+                  "units": 1900,
+                  "errors": 0,
+                  "total_duration_ms": 12136,
+                  "avg_duration_ms": 319,
+                  "p50_duration_ms": 271,
+                  "p95_duration_ms": 920,
+                  "max_duration_ms": 989
+                },
+                "download": {
+                  "calls": 51,
+                  "units": 10200,
+                  "errors": 0,
+                  "total_duration_ms": 32458,
+                  "avg_duration_ms": 636,
+                  "p50_duration_ms": 636,
+                  "p95_duration_ms": 1433,
+                  "max_duration_ms": 1650
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 95,
+                  "avg_duration_ms": 95,
+                  "p50_duration_ms": 95,
+                  "p95_duration_ms": 95,
+                  "max_duration_ms": 95
+                },
+                "list": {
+                  "calls": 120,
+                  "units": 12000,
+                  "errors": 0,
+                  "total_duration_ms": 23868,
+                  "avg_duration_ms": 198,
+                  "p50_duration_ms": 166,
+                  "p95_duration_ms": 411,
+                  "max_duration_ms": 989
+                },
+                "upload": {
+                  "calls": 42,
+                  "units": 2100,
+                  "errors": 0,
+                  "total_duration_ms": 30016,
+                  "avg_duration_ms": 714,
+                  "p50_duration_ms": 656,
+                  "p95_duration_ms": 1106,
+                  "max_duration_ms": 1675
+                }
+              }
+            },
+            "exit": {
+              "calls": 252,
+              "units": 24655,
+              "errors": 0,
+              "response_bytes": 412135,
+              "ops": {
+                "delete": {
+                  "calls": 39,
+                  "units": 1950,
+                  "errors": 0,
+                  "total_duration_ms": 12838,
+                  "avg_duration_ms": 329,
+                  "p50_duration_ms": 294,
+                  "p95_duration_ms": 577,
+                  "max_duration_ms": 580
+                },
+                "download": {
+                  "calls": 41,
+                  "units": 8200,
+                  "errors": 0,
+                  "total_duration_ms": 12637,
+                  "avg_duration_ms": 308,
+                  "p50_duration_ms": 313,
+                  "p95_duration_ms": 422,
+                  "max_duration_ms": 459
+                },
+                "generate_ids": {
+                  "calls": 1,
+                  "units": 5,
+                  "errors": 0,
+                  "total_duration_ms": 160,
+                  "avg_duration_ms": 160,
+                  "p50_duration_ms": 160,
+                  "p95_duration_ms": 160,
+                  "max_duration_ms": 160
+                },
+                "list": {
+                  "calls": 119,
+                  "units": 11900,
+                  "errors": 0,
+                  "total_duration_ms": 29600,
+                  "avg_duration_ms": 248,
+                  "p50_duration_ms": 239,
+                  "p95_duration_ms": 462,
+                  "max_duration_ms": 844
+                },
+                "upload": {
+                  "calls": 52,
+                  "units": 2600,
+                  "errors": 0,
+                  "total_duration_ms": 118729,
+                  "avg_duration_ms": 2283,
+                  "p50_duration_ms": 1804,
+                  "p95_duration_ms": 4893,
+                  "max_duration_ms": 5032
+                }
+              }
+            }
+          },
+          "completed_file_checkpoint": {
+            "kind": "bulk",
+            "index": 0,
+            "start_offset_ms": 12.782,
+            "queue_ms": 12.782,
+            "overlapped_bulk_at_dispatch": false,
+            "overlapped_bulk_at_start": false,
+            "ok": true,
+            "failure": null,
+            "http_status": 200,
+            "ttfb_ms": 5576.141,
+            "total_ms": 32132.425,
+            "scheduled_ttfb_ms": 5588.923,
+            "scheduled_total_ms": 32145.207,
+            "body_bytes": 104857600,
+            "uploaded_bytes": 0,
+            "transfer_bytes": 104857600,
+            "goodput_mbps": 26.106,
+            "integrity_checked": true
+          }
+        }
+      ],
+      "cleanup": {
+        "residual_deleted": 14,
+        "prefixes": 2,
+        "first_delayed_remaining": 0,
+        "final_delayed_zero": true,
+        "delayed_rounds": 1,
+        "config_copies_remaining": 0
+      },
+      "host": {
+        "started_utc": "2026-11-15T17:53:14Z",
+        "load_before": [
+          3.04638671875,
+          4.4169921875,
+          5.126953125
+        ],
+        "condition": "Root coordinated no agent compilers/tests during timed arms; ordinary desktop background uncontrolled",
+        "candidate_source_revision": "42e6742e93d3376a03d4354a4b172236ff1b1fc4",
+        "candidate_binary_sha256": "c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+        "control_binary_sha256": "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+        "harness_revision": "723b112",
+        "harness_sha256": "ac22d0c2e04685376b5486a63214c91df7e8a773477a3118e0fc24484b41539d",
+        "persistent_bench_sha256": "5f18d6b7ad84a1cd15eabcf1d8b1b48e8edc58ebcfef38ecc1a05a7314b88187",
+        "trace_enabled_both": false,
+        "schedule": {
+          "frames": 100,
+          "interval_ms": 1250,
+          "bulk_lead_ms": 1000,
+          "overall_timeout_s": 300,
+          "bulk_timeout_s": 180,
+          "stall_progress_s": 60,
+          "rolling_estimated_units_60s": 50000
+        },
+        "bulk_checkpoint": "Atomic completed-file proof emitted before remaining frames complete",
+        "load_after": [
+          3.54931640625,
+          4.21142578125,
+          4.97021484375
+        ],
+        "finished_utc": "2026-11-15T17:54:49Z",
+        "wrapper_exit_code": 1
+      },
+      "raw_path": "slot-async-wt/.skirk-runs/async-vs-main-download100m-sustained-20261115/"
+    }
+  ],
+  "h2_failure_trace": {
+    "multipart_bytes": 1049162,
+    "connection_acquired_ms": 0.016,
+    "reused": true,
+    "full_write_ms": 3661.745,
+    "first_response_byte_observed": false,
+    "deadline_ms": 28001,
+    "inference": "Post-write response tail in this request, not proof of connection-local cause or x/net regression"
+  },
+  "scale_budget_policy": "Initial50k estimated rolling60s cap stopped main control. Subsequent authorized125k cap must apply to all arms in fresh sessions, never replace this result. Counters omit opaqueHTTP2 retries; no mathematical never-exhaust guarantee."
+}

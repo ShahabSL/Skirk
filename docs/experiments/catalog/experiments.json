@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "42e6742 frozen runtime; round3 final matrix plus cddf409 hedge reports; later evidence revisions listed per entry",
+  "research_tip": "Frozen42 runtime; final matrix plus retained H2/50k-scale interruptions; fresh125k cohort pending at snapshot",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -3120,6 +3120,67 @@
       ],
       "revision_or_binary": "42e6742;c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9;main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
       "live_comparable": true
+    },
+    {
+      "id": "R3-015",
+      "candidate": "Dependency-only x/net0.54 versus0.61 pinned HTTP2, interrupted ABBA",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Same frozen42Go product code,16MiB+12persistent64B echoes,128KiB prelude; only x/net replacement differs; trace equalboth; plannedold/new/new/old",
+      "latency": "Completed first-byte request/scheduled p95old8.013/8.014s,new6.477/6.483s; failednew has no mixed report",
+      "throughput_mbps": "Old17.182,new17.535 completed; secondnew incomplete",
+      "estimated_quota_units": "Old21410,new19210;failednew11155client+12855exit=24010 lastobserved",
+      "correctness_and_errors": "2exactfiles24echoes,0errors in completed arms; thirdarmone exit normal1049162B multipart timeout28.001s,body written3.662s then no first response; fourthold notrun",
+      "cleanup": "19residualmux deleted;first31s1late muxdeleted;second31sall6prefix0;configs gone",
+      "decision": "No causal dependency/connection-local verdict; only one complete arm/version; post-write tail retained",
+      "source_documents": [
+        "docs/experiments/h2-dependency-and-scale-2026-11-15.md",
+        "docs/experiments/h2-dependency-and-scale-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/xnet-v054-v061-download16m-20261115/"
+      ],
+      "revision_or_binary": "base42e6742;oldc56451f/eb49ef7350ca91c3e1b8a7a7893f69a520d88c3e05875f757aaa29ecc86ddbdc;newc6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-016",
+      "candidate": "First sustained100MiB/100-frame actual-main control, local50k budget interruption",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Planned4arms main/async/async/main;100MiB+100persistent64B echoes/1250ms,1slead,300soverall180sfile; onlyfirstmain attempted",
+      "latency": "No completed100-frame distribution; file32.132425s verified before remainingtext",
+      "throughput_mbps": "26.106 exactfile checkpoint, not complete mixed-arm success",
+      "estimated_quota_units": "Last observed26205client+24655exit=50860;selectedlocal50krolling60s guard",
+      "correctness_and_errors": "Exact104857600B/SHA file persisted atomically;0APIerrors/backofffalse; local quota guard stopped text schedule and remaining3arms",
+      "cleanup": "14residualmux deleted;both exactmux/slotprefix0immediate31s;configs gone",
+      "decision": "Self-imposed experiment limit, not Google exhaustion/TCP failure. No candidate/lifetime/overlap p95 comparison; subsequent125k cohort must be separate, fixedequalallarms",
+      "source_documents": [
+        "docs/experiments/h2-dependency-and-scale-2026-11-15.md",
+        "docs/experiments/h2-dependency-and-scale-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/async-vs-main-download100m-sustained-20261115/"
+      ],
+      "revision_or_binary": "main2c52ff8/34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3;harness723b112",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-017",
+      "candidate": "Five-client persistent async driver with matched-record carrier proof",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "One ownedexit+5unique actualclient/run namespaces;common prelude barrier;16MiB/client SHA uploads+12distinct64B echoes/client",
+      "latency": "No live capacity result at this snapshot",
+      "throughput_mbps": null,
+      "estimated_quota_units": null,
+      "correctness_and_errors": "13localcapacity tests and9persistent loopback/probe tests pass; commonUP fingerprint acrossclienthandoff/publication/senderACK+exit processing prevents marker stitching;DOWNproof separate;deadleaderPGcleanup",
+      "cleanup": "Exactowned mux+slot prefixes immediate31s,late objects needanother31s;source/test validation only, no livecleanup inferred",
+      "decision": "Ready bounded matched control attempt, not200000-user or payload-isolation proof; distinctclientpreludes but sharedtext/filebytes; globalestimatedquota/error/backoffstop",
+      "source_documents": [
+        "docs/experiments/persistent-async-capacity-2026-11-15.md",
+        "tools/skirk_live_capacity_compare.py"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "6616946+fd4e828;frozenCLI only, no Go product changes",
+      "live_comparable": false
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **154 interpreted experiment records**, **289 recognized raw result files** indexed across local worktrees, and **248 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **157 interpreted experiment records**, **291 recognized raw result files** indexed across local worktrees, and **252 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -221,3 +221,7 @@ The [final16-arm matrix](experiments/final-async-default-main-2026-11-15.md) com
 | R3-012 | Final async package versus actualdefault,16MiBupload | live_full_transport_incomplete | Incomplete comparison retained; no candidate median/win. Failure in unchanged bulk operation does not establish causal slot regression |
 | R3-013 | Final async package versus actualmain,16MiBdownload | live_full_transport | Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main |
 | R3-014 | Final async package versus actualmain,16MiBupload | live_full_transport | Completed text-tail improvement, no universal win; medians of2arm maxima, ordinary desktop background uncontrolled;lower file median and~9%higher estimated units versus clean main |
+
+## Retained dependency and sustained-budget interruptions
+
+R3-015/016 preserve the [incomplete HTTP2 dependency comparison and first100MiB sustained attempt](experiments/h2-dependency-and-scale-2026-11-15.md). The former has two exact files/24echoes and one new-version upload timeout, insufficient for a causal version verdict. The latter preserves a successful100MiB file at26.106Mb/s before our selected50k rolling estimate stopped the remaining frame schedule, with zero API errors; it was not Google quota exhaustion. A fresh125k-budget cohort is separate, with every chosen volume cap explicitly recorded before launch. R3-017 records the reviewed five-client driver, not a live capacity result.
