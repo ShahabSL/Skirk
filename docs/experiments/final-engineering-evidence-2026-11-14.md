@@ -649,9 +649,23 @@ native backend, not visual GUI interaction, arbitrary destinations, sustained
 traffic, or UDP applications; the current tunnel configuration rejects
 non-DNS UDP.
 
+The [native Linux ARM64 live run](linux-native-live-2026-11-15.md) used
+separate disposable client and exit containers with the pinned Google front.
+Its authenticated exit proof took **2.275 s**; exact text GET **3.206 s**;
+SHA-verified 1 MiB GET **3.442 s**; and 1 MiB POST with matching length and
+SHA acknowledgment **4.018 s**. A container-only sing-box TUN route selected
+`skirk-tun0` for the test destination, and unproxied HTTPS returned HTTP 200
+in **5.299 s**. Termination removed the TUN rules and restored the original
+container route without touching the Mac host. Client and exit metrics
+recorded 73/333 Drive calls, 7,005/33,405 estimated units, zero API errors,
+and no backoff. Runtime cleanup left zero exact mux and slot objects on both
+immediate and 35-second delayed checks. This validates a native CLI and
+container-isolated TCP TUN path, not a Linux GUI click or sustained load.
+
 The client checks cover route choice, profile recovery, exit reachability,
-Mac system-proxy traffic, native Windows SOCKS, scoped TUN traffic, and one
-Windows GUI-backend default-route TCP request;
+Mac system-proxy traffic, native Windows and Linux SOCKS, container-isolated
+Linux TUN, scoped Windows TUN, and one Windows GUI-backend default-route TCP
+request;
 there is no comparative usability study behind a “best UI” claim.
 
 The largest archived short live transfers were **74.928 Mb/s** for one
