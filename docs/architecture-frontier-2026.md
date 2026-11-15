@@ -23,6 +23,29 @@ deliver the later text ahead of those bytes. The mixed workloads below use a
 long-lived text connection alongside a separate file connection, as many
 applications do; this is an assumption that a real app trace must check.
 
+### Exact final default versus `main`
+
+A final pinned-front comparison used the exact merged default binary, all
+experimental flags off, against clean `main` (`2c52ff85`) in
+main/current/current/main order. Each arm scheduled twelve new-stream small
+messages alongside one SHA-verified 16 MiB download. The first three arms
+verified every byte with zero Drive API errors:
+
+| Arm | File goodput | Scheduled small p95 | Estimated units, both peers |
+| --- | ---: | ---: | ---: |
+| `main` 1 | 14.494 Mb/s | 14.877 s | 26,955 |
+| Current 1 | 18.749 Mb/s | 12.219 s | 22,405 |
+| Current 2 | 12.915 Mb/s | 15.301 s | 25,605 |
+| `main` 2 | Incomplete | Incomplete | Incomplete |
+
+The second `main` arm hit three 28-second Drive upload timeouts on the exit;
+the error guard stopped the workload. The complete arms vary enough, and the
+reverse-order control is missing, so this is **not** evidence that the final
+default is faster or slower than `main`. Eleven residual mux objects from the
+two latter sessions were deleted by exact generated-session prefix; immediate
+and delayed rechecks found zero objects in all four sessions. Private raw
+evidence is under `.skirk-runs/final-main-abba-16m-20261114/`.
+
 ## Workload and measurements
 
 The newer persistent benchmark first sends and byte-verifies a 128 KiB frame
