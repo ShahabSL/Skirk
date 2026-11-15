@@ -56,7 +56,7 @@
   {
     "worktree": "metadata-16k-response-review-wt",
     "path": ".skirk-runs/metadata-16k-up16m-20261115/arms/summary.json",
-    "bytes": 3148,
+    "bytes": 6296,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
@@ -1671,6 +1671,12 @@
     "worktree": "slot-async-wt",
     "path": ".skirk-runs/slot-async-upload-16m-20261115-01/arms/summary.json",
     "bytes": 6153,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/slot-primary-download16m-20261115-01/arms/summary.json",
+    "bytes": 2646,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {

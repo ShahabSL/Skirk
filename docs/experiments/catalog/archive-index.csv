@@ -8,7 +8,7 @@ fresh-architecture-wt,.skirk-runs/id-train-parallel2-filtered-live-20261115.json
 fresh-architecture-wt,.skirk-runs/id-train-parallel2-live-20261115.json,2454,source-index-only; inspect cited catalog entry or raw file for exact values
 list-page-probe-wt,.skirk-runs/list-page-live-20261114-a.json,15066,source-index-only; inspect cited catalog entry or raw file for exact values
 metadata-16k-response-review-wt,.skirk-runs/metadata-16k-down16m-20261115-02/arms/summary.json,6304,source-index-only; inspect cited catalog entry or raw file for exact values
-metadata-16k-response-review-wt,.skirk-runs/metadata-16k-up16m-20261115/arms/summary.json,3148,source-index-only; inspect cited catalog entry or raw file for exact values
+metadata-16k-response-review-wt,.skirk-runs/metadata-16k-up16m-20261115/arms/summary.json,6296,source-index-only; inspect cited catalog entry or raw file for exact values
 pubsub-streaming-wt,.skirk-runs/pubsub-stream-live-20261115.json,529,source-index-only; inspect cited catalog entry or raw file for exact values
 quota-project-wt,.skirk-runs/quota-write-probe-20261115-02.json,731,source-index-only; inspect cited catalog entry or raw file for exact values
 quota-project-wt,.skirk-runs/quota-write-probe-20261115.json,654,source-index-only; inspect cited catalog entry or raw file for exact values
@@ -278,4 +278,5 @@ repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-coalesce-100mb.json,4514,
 repocomp-indexed-class-20261114,.skirk-runs/indexed-class-pilot/summary.json,2023,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/slot-async-download-16m-20261115-01/arms/summary.json,6161,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/slot-async-upload-16m-20261115-01/arms/summary.json,6153,source-index-only; inspect cited catalog entry or raw file for exact values
+slot-async-wt,.skirk-runs/slot-primary-download16m-20261115-01/arms/summary.json,2646,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-mux-integration,.skirk-runs/slot-shadow-download-20261114-01/summary.json,4114,source-index-only; inspect cited catalog entry or raw file for exact values

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "ac7ff9b (round2 catalog source; live binaries listed per record)",
+  "research_tip": "cc4e231 (round3 catalog source; live binaries and later evidence recorded per entry)",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -10,8 +10,8 @@
     "Failed and incomplete arms stay separate; substrate, API primitive, simulation and full transport results are not pooled.",
     "The 2026-05 archives include external-origin, shared-server and non-hash-verified notes; do not rank them against November local exact-body runs.",
     "Live Google test account credentials and runtime profiles are excluded. Only aggregate fields explicitly whitelisted in the generator are imported.",
-    "Round2 source snapshot includes completed 34+20carriertrials,threeIDtrainattempts,asyncfullTCPA/B,16KiBdownloadandunaryPubSub. StreamingPull/primary/fulldefaultresults remain explicitly unmeasured at this snapshot, not implicitly failed.",
-    "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet."
+    "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet.",
+    "Round3 adds retained standard-gRPC route failure, incomplete primary comparison,16KiB reverse upload, and full-mux hybrid offline proof. Final CPU-quiet default/main comparisons and live hybrid results are not yet measured at this snapshot."
   ],
   "records": [
     {
@@ -2833,6 +2833,87 @@
         ".skirk-runs/scheduler3-observe-live-20260516-155413/"
       ],
       "revision_or_binary": "unrecorded binaries",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-001",
+      "candidate": "Pinned Google front standard gRPC StreamingPull feasibility attempt",
+      "evidence_level": "live_api_primitive_failed",
+      "workload": "Twenty encrypted256B messages planned; none published after initial stream failure",
+      "latency": "No delivery latency: HTTP2 initial standard gRPC path returned HTTP404/non-gRPC content type",
+      "throughput_mbps": null,
+      "estimated_quota_units": "18 unary setup/cleanup calls; one96B request frame",
+      "correctness_and_errors": "0 response frames,0 delivered samples; comparison stopped rather than substituting REST numbers",
+      "cleanup": "Both exact topics and subscriptions404 immediately and31s later; borrowed token and recovery ledger removed",
+      "decision": "This exact standard method path failed on this route; not proof all gRPC paths are impossible; no alternative private path tried",
+      "source_documents": [
+        "docs/experiments/pubsub-streaming-probe-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "pubsub-streaming-wt/.skirk-runs/pubsub-stream-live-20261115.json"
+      ],
+      "revision_or_binary": "f802ade",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-002",
+      "candidate": "Primary cumulative carrier versus async, interrupted16MiB download",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Planned async/primary/primary/async; ran first control then first candidate;128KiB prelude+12 pipelined64B echoes/250ms;1s bulk lead",
+      "latency": "Async control requestp954.008s, scheduled4.009s; primary has no complete-body or12-message summary",
+      "throughput_mbps": "Async control14.179; primary incomplete, not zero-throughput measurement",
+      "estimated_quota_units": "Control22425; primary19725client+18700exit=38425",
+      "correctness_and_errors": "Control exact16MiB+12echoes+prelude+exit proof,0errors; primary stopped on one exit normal4MiB immutable upload30.001s deadline, ~5MiB received; no remaining arms",
+      "cleanup": "11control mux and2candidate slots deleted; first31s candidate mux sweep found2late objects; exact-deleted, second31s sweep all4prefixes zero",
+      "decision": "No primary win or causal regression established: failure was unchanged immutable bulk path; shared-host CPU not isolated. Retain failed arm and stop guard",
+      "source_documents": [
+        "docs/experiments/metadata-slot-primary-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "slot-async-wt/.skirk-runs/slot-primary-download16m-20261115-01/"
+      ],
+      "revision_or_binary": "a6297f2;be47879c1325768b6f45b9f8f1bba0a120ae6dd3b4bd62bf612c83f92dce9519",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-003",
+      "candidate": "Negotiated8KiB versus16KiB metadata cap,16MiB reverse upload",
+      "evidence_level": "live_full_transport",
+      "workload": "Candidate/control/control/candidate;16MiB upload plus12 random12KiB GET responses per arm;2 small workers/250ms;page100;60s equal cooldown",
+      "latency": "Body requestp958KiB5.882→16KiB3.841s; scheduled body18.020→12.017s",
+      "throughput_mbps": "8.609→13.995 median of arm goodputs",
+      "estimated_quota_units": "27480→21155 per arm including warmup/tail",
+      "correctness_and_errors": "4SHA files+48response hashes exact;0APIerrors; candidate large publications11/10,controls0/0; all8 down/up arms96responses8files43large publications",
+      "cleanup": "Upload6mux deleted,8exact prefixes0 immediate+31s; combined down/up22mux deleted16prefixes0; copied configs removed",
+      "decision": "Useful metadata-sized response result and23.0% fewer units; slow5.152Mb/s control prevents causal bulk-win claim; persistent64B RTT is a different workload",
+      "source_documents": [
+        "docs/experiments/metadata-16k-live-2026-11-15.md",
+        "docs/experiments/metadata-16k-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "metadata-16k-response-review-wt/.skirk-runs/metadata-16k-up16m-20261115/"
+      ],
+      "revision_or_binary": "37ad19a;7d20343d5a5b5045c8cfd9f030aaf05f923ec19a1116a2a2be3191d4c11f035b",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-004",
+      "candidate": "PubSub priority plus Drive bulk full SOCKS hybrid, offline correctness",
+      "evidence_level": "memory_simulation_full_mux",
+      "workload": "Actual loopback SOCKS/mux with4MiB exact download+upload,20mixed text, forced broker duplicates; cloud REST separately guarded",
+      "latency": "No live hybrid latency result at source snapshotcc4e231",
+      "throughput_mbps": null,
+      "estimated_quota_units": null,
+      "correctness_and_errors": "Race suite passes; real authenticated OPEN exactly1 destination dial/initial write after closed-map expiry and duplicate delivery; outer+innerAEAD; ACK after real mux processing; bounded queues/ACK memory/global physical budgets;0p0 bulk-store leakage",
+      "cleanup": "Offline only; live setup prewrites exact-resource recovery ledger and reserves32calls+1MiB cleanup budget; no successful live cleanup inferred",
+      "decision": "Safe for a bounded live probe after independent review; no product export, durable process-restart proof or200000-user capacity claim",
+      "source_documents": [
+        "docs/experiments/pubsub-drive-hybrid-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "pubsub-streaming-wt/.skirk-runs/"
+      ],
+      "revision_or_binary": "36a598c+cc4e231; all hybrid code confined to_test.go",
       "live_comparable": false
     }
   ]
