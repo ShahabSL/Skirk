@@ -273,7 +273,10 @@ type muxPriorityRetryKey struct {
 }
 
 type muxPriorityRetryState struct {
-	addedAt       time.Time
+	addedAt time.Time
+	// Poll sequence keeps same-poll retries out of exact-ID verification even
+	// when the platform clock reports identical timestamps for separate polls.
+	addedPoll     uint64
 	lastProbe     time.Time
 	notFoundCount uint8
 }
@@ -341,6 +344,7 @@ type driveMux struct {
 	priorityListPageToken string
 	priorityListPartial   bool
 	priorityRetryObjects  map[muxPriorityRetryKey]muxPriorityRetryState
+	adaptivePollSequence  atomic.Uint64
 	normalListLastPoll    time.Time
 	clientFinalDrainAt    atomic.Int64
 	fatalOnce             sync.Once
@@ -2486,7 +2490,7 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
 	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && m.t.AdaptiveMuxDiscovery {
-		pollStarted := time.Now()
+		pollSequence := m.adaptivePollSequence.Add(1)
 		var firstInfos []ObjectInfo
 		var firstErr error
 		combinedWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive_first", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -2506,7 +2510,7 @@ func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal boo
 				m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
 			})
 			if priorityListOK && !m.hasPriorityListPartial() {
-				m.reconcilePriorityRetries(ctx, prefix, pollStarted)
+				m.reconcilePriorityRetries(ctx, prefix, pollSequence)
 			}
 		}
 		if firstErr == nil && m.hasListFreshPageToken() {
@@ -2913,7 +2917,7 @@ func (m *driveMux) priorityRetryAccepted(key muxPriorityRetryKey) bool {
 	return accepted
 }
 
-func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, pollStarted time.Time) {
+func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, pollSequence uint64) {
 	store, ok := m.t.Data.(MuxObjectMetadataStore)
 	if !ok || ctx.Err() != nil {
 		return
@@ -2926,7 +2930,7 @@ func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, 
 	}
 	eligible := make([]candidate, 0, len(m.priorityRetryObjects))
 	for key, state := range m.priorityRetryObjects {
-		if key.id == "" || !state.addedAt.Before(pollStarted) || (!state.lastProbe.IsZero() && now.Sub(state.lastProbe) < muxPriorityRetryProbeInterval) {
+		if key.id == "" || state.addedPoll >= pollSequence || (!state.lastProbe.IsZero() && now.Sub(state.lastProbe) < muxPriorityRetryProbeInterval) {
 			continue
 		}
 		eligible = append(eligible, candidate{key: key, state: state})
@@ -3091,7 +3095,7 @@ func (m *driveMux) rewindListSinceForMetasLocked(metas []muxObjectMeta, mu *sync
 			if meta.Priority && meta.Name != "" {
 				key := muxPriorityRetryKey{name: meta.Name, id: meta.ID}
 				if _, exists := m.priorityRetryObjects[key]; !exists {
-					m.priorityRetryObjects[key] = muxPriorityRetryState{addedAt: time.Now()}
+					m.priorityRetryObjects[key] = muxPriorityRetryState{addedAt: time.Now(), addedPoll: m.adaptivePollSequence.Load()}
 				}
 			}
 		}

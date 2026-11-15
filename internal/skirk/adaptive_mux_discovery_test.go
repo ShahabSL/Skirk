@@ -503,6 +503,9 @@ func setupAdaptiveFailedPriorityPoll(t *testing.T) (*driveMux, *adaptiveDiscover
 	if !mux.hasPriorityRetryPending() || mux.isKnown(priority.Name) {
 		t.Fatal("failed p0 enqueue did not retain a retry")
 	}
+	if len(store.metadataCalls) != 0 {
+		t.Fatal("retry created during a poll was verified in that same poll")
+	}
 	if got := mux.listFreshSince(); !got.After(timeMustParse(t, older)) {
 		t.Fatalf("broad cursor did not advance past failed older p0: %s", got)
 	}
@@ -631,6 +634,30 @@ func TestAdaptiveMuxDiscoveryExactRetryVerificationIsBoundedPerPoll(t *testing.T
 	mux.pollMuxObjects(context.Background())
 	if len(store.calls) != before+1 {
 		t.Fatalf("cleared retries kept p0 query active: %#v", store.calls[before:])
+	}
+}
+
+func TestAdaptiveMuxDiscoveryRetryEligibilityDoesNotDependOnClockResolution(t *testing.T) {
+	store := &adaptiveDiscoveryStore{MemoryStore: NewMemoryStore()}
+	mux := adaptiveTestMux(t, store)
+	info := ObjectInfo{
+		ID:   "deleted-priority-id",
+		Name: muxObjectNameWithStreamIDs(mux.t.SessionID, DirectionDown, mux.t.ClientID, mux.t.RunID, "old-epoch", 1, nil, 0, 1, 1, 0, 0, 16, true),
+	}
+	meta, ok := parseMuxObjectInfo(info)
+	if !ok {
+		t.Fatal("test priority name did not parse")
+	}
+	mux.rewindReceiveListForMeta(meta)
+	mux.priorityListMu.Lock()
+	for key, state := range mux.priorityRetryObjects {
+		state.addedAt = time.Now().Add(time.Hour) // Simulate a clock that cannot order the two polls.
+		mux.priorityRetryObjects[key] = state
+	}
+	mux.priorityListMu.Unlock()
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 1 || store.metadataCalls[0] != info.ID {
+		t.Fatalf("retry predating this poll was not verified: %v", store.metadataCalls)
 	}
 }
 
