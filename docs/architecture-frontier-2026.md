@@ -252,6 +252,13 @@ round trips, not application message latency. Source and method are in
 `tools/ack_slot_probe/README.md`; raw private summaries are under
 `.skirk-runs/ack-slot-roundtrip-{live,nopause-live}-20261114.json`.
 
+The [DriveStore compatibility probe](metadata-slot-compat-2026.md) then
+verified the runtime adapter's distinct API path: generated-ID metadata-only
+create, independent exact-ID GET, an exact 8,192-byte PATCH/readback, and
+delete with two 404s plus immediate and delayed unique-prefix sweeps. It
+completed with zero unexpected API errors and 375 estimated units. This
+establishes API compatibility for one file, not mux delivery safety.
+
 The next **mixed-substrate** test ran the two-slot probe beside a real,
 hash-verified 16 MiB Skirk upload on the same pinned-front account. Its
 matched control sent 20 pipelined text echoes on a persistent, demoted mux TCP
