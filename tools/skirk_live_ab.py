@@ -11,6 +11,8 @@ import http.server
 import json
 import os
 import socket
+import socketserver
+import struct
 import subprocess
 import sys
 import threading
@@ -23,41 +25,55 @@ from skirk_live_capacity_bench import require_metrics
 
 MAIN_COMPARE_ORDERS = (("main", "current", "current", "main"),
                        ("current", "main", "main", "current"))
+CONTROL_COMPARE_ORDERS = (("control", "candidate", "candidate", "control"),
+                          ("candidate", "control", "control", "candidate"))
 
 
-def validate_arm_order(order: list[str], main_binary: Path | None) -> bool:
-    """Return whether this is a matched main/current comparison."""
+def validate_arm_order(order: list[str], main_binary: Path | None,
+                       control_binary: Path | None = None) -> bool:
+    """Return whether this is a balanced, same-config binary comparison."""
     if not 2 <= len(order) <= 8:
         raise ValueError("--order requires 2..8 arms")
     if any(mode in ("main", "current") for mode in order):
-        if tuple(order) not in MAIN_COMPARE_ORDERS or main_binary is None:
+        if tuple(order) not in MAIN_COMPARE_ORDERS or main_binary is None or control_binary is not None:
             raise ValueError("main comparison requires --main-binary and a balanced ABBA order")
         return True
-    if main_binary is not None or any(mode not in ("baseline", "inline", "hedge", "isolated", "isolated_hedge", "h3", "metadata", "bulk_pool", "bulk_pool_hedge") for mode in order):
-        raise ValueError("experimental order requires only baseline/inline/hedge/isolated/isolated_hedge/h3/metadata/bulk_pool/bulk_pool_hedge")
+    if any(mode in ("control", "candidate") for mode in order):
+        if tuple(order) not in CONTROL_COMPARE_ORDERS or control_binary is None or main_binary is not None:
+            raise ValueError("candidate comparison requires --control-binary and a balanced ABBA order")
+        return True
+    if main_binary is not None or control_binary is not None or any(mode not in ("baseline", "inline", "hedge", "isolated", "isolated_hedge", "h3", "priority_h3", "sparse", "sparse_inline", "epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge", "metadata", "bulk_pool", "bulk_pool_hedge") for mode in order):
+        raise ValueError("experimental order contains an unknown transport mode or a binary comparison flag")
     return False
 
 
-def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, main_compare: bool) -> dict:
+def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, binary_compare: bool) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
     drive = config.setdefault("drive", {})
-    if main_compare:
-        # main does not know this field. Both arms must use OAuth project quota.
+    if binary_compare:
+        # Use one supported config and OAuth quota path for both binaries.
         drive.pop("quota_project", None)
-        for key in ("inline_small_objects", "upload_hedge_delay_ms", "separate_upload_pool", "metadata_only_priority", "separate_bulk_media_pool"):
+        for key in ("inline_small_objects", "upload_hedge_delay_ms", "separate_upload_pool", "metadata_only_priority", "separate_bulk_media_pool", "priority_http3"):
             drive.pop(key, None)
+        config.setdefault("tunnel", {}).pop("sparse_priority", None)
+        config["tunnel"].pop("interaction_epoch", None)
     else:
-        drive["inline_small_objects"] = mode == "inline"
-        drive["upload_hedge_delay_ms"] = 3000 if mode in ("hedge", "isolated_hedge", "bulk_pool_hedge") else 0
+        drive["inline_small_objects"] = mode in ("inline", "sparse_inline", "epoch_inline")
+        drive["upload_hedge_delay_ms"] = 3000 if mode in ("hedge", "isolated_hedge", "bulk_pool_hedge", "epoch_metadata_hedge") else 0
         drive["separate_upload_pool"] = mode in ("isolated", "isolated_hedge")
-        drive["metadata_only_priority"] = mode == "metadata"
+        drive["metadata_only_priority"] = mode in ("metadata", "epoch_metadata", "epoch_metadata_hedge")
         drive["separate_bulk_media_pool"] = mode in ("bulk_pool", "bulk_pool_hedge")
+        if mode == "priority_h3":
+            drive["priority_http3"] = True
         if mode == "h3":
             config.setdefault("route", {})["mode"] = "google_front_h3_pinned"
     if chunk_size:
         config.setdefault("tunnel", {})["chunk_size"] = chunk_size
+    if not binary_compare:
+        config.setdefault("tunnel", {})["sparse_priority"] = mode in ("sparse", "sparse_inline")
+        config["tunnel"]["interaction_epoch"] = mode in ("epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge")
     return config
 
 
@@ -77,6 +93,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--main-binary", type=Path, help="clean Git main binary; use with --order main,current,current,main")
+    parser.add_argument("--control-binary", type=Path, help="current default binary; use with --order control,candidate,candidate,control")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -84,9 +101,14 @@ def main():
     parser.add_argument("--stall-seconds", type=int, default=15)
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
+    parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
     parser.add_argument("--small-count", type=int, default=8)
     parser.add_argument("--small-interval-ms", type=int, default=500)
     parser.add_argument("--small-workers", type=int, default=2)
+    parser.add_argument("--small-traffic", choices=("get", "message", "persistent"), default="get",
+                        help="GET, new-stream POST+ack, or one long-lived demoted text stream")
+    parser.add_argument("--persistent-pipeline", action="store_true",
+                        help="send persistent text frames on schedule without waiting for replies")
     parser.add_argument("--tail-seconds", type=int, default=8)
     parser.add_argument("--chunk-size", type=int, default=0, help="Experimental shared peer chunk bound; 0 preserves config")
     args = parser.parse_args()
@@ -94,10 +116,12 @@ def main():
         parser.error("requires --live and private .skirk-runs output")
     order = args.order.split(",")
     try:
-        main_compare = validate_arm_order(order, args.main_binary)
+        binary_compare = validate_arm_order(order, args.main_binary, args.control_binary)
     except ValueError as error:
         parser.error(str(error))
-    if not args.binary.is_file() or (args.main_binary is not None and not args.main_binary.is_file()):
+    if (not args.binary.is_file() or
+            (args.main_binary is not None and not args.main_binary.is_file()) or
+            (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
@@ -105,11 +129,24 @@ def main():
         parser.error("invalid small schedule or cleanup tail")
     if args.chunk_size != 0 and not 512 <= args.chunk_size <= 16 * 1024 * 1024:
         parser.error("--chunk-size must be 0 or 512..16777216")
+    if args.persistent_pipeline and args.small_traffic != "persistent":
+        parser.error("--persistent-pipeline requires --small-traffic persistent")
     os.umask(0o077)
     args.out.mkdir(parents=True, exist_ok=False)
     config = json.loads(args.config.read_text())
     payload = os.urandom(args.bulk_mib * 1024 * 1024)
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    bulk_ack = b"skirk-audit-upload-ok"
+    upload_file = args.out / "synthetic-upload.bin"
+    if args.bulk_direction == "upload":
+        upload_file.write_bytes(payload)
+        upload_file.chmod(0o600)
     small_payload = b"skirk-audit-small"
+    message_body = b"skirk-message-probe:" + os.urandom(44)
+    message_file = args.out / "synthetic-message.bin"
+    if args.small_traffic == "message":
+        message_file.write_bytes(message_body)
+        message_file.chmod(0o600)
 
     class Origin(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -122,29 +159,102 @@ def main():
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def do_POST(self):
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if self.path == "/bulk-upload" and length == len(payload):
+                digest = hashlib.sha256()
+                remaining = length
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                if remaining or digest.hexdigest() != payload_sha256:
+                    self.send_error(400)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(bulk_ack)))
+                self.end_headers()
+                self.wfile.write(bulk_ack)
+                return
+            if self.path != "/message" or length != len(message_body) or self.rfile.read(length) != message_body:
+                self.send_error(400)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(small_payload)))
+            self.end_headers()
+            try:
+                self.wfile.write(small_payload)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def log_message(self, *_):
             pass
 
     origin = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Origin)
     threading.Thread(target=origin.serve_forever, daemon=True).start()
     origin_port = origin.server_address[1]
+    echo_origin = None
+    if args.small_traffic == "persistent":
+        class Echo(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.settimeout(120)
+
+                def read_exact(count):
+                    data = bytearray()
+                    while len(data) < count:
+                        chunk = self.request.recv(count - len(data))
+                        if not chunk:
+                            return None
+                        data.extend(chunk)
+                    return bytes(data)
+
+                try:
+                    while True:
+                        header = read_exact(4)
+                        if header is None:
+                            return
+                        size = struct.unpack("!I", header)[0]
+                        if not 1 <= size <= 1024 * 1024:
+                            return
+                        body = read_exact(size)
+                        if body is None:
+                            return
+                        self.request.sendall(header + body)
+                except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+                    return
+
+        class EchoServer(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+            daemon_threads = True
+
+        echo_origin = EchoServer(("127.0.0.1", 0), Echo)
+        threading.Thread(target=echo_origin.serve_forever, daemon=True).start()
     summaries = []
     unit_history = []
     completed_units = 0
     try:
         for index, mode in enumerate(order):
-            candidate = mode == "inline"
+            candidate = mode in ("inline", "sparse_inline", "epoch_inline")
             run_dir = args.out / f"{index}-{mode}"
             run_dir.mkdir()
-            cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, main_compare)
+            cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
             procs, logs = [], []
             bench = None
-            binary = args.main_binary if mode == "main" else args.binary
+            binary = args.main_binary if mode == "main" else args.control_binary if mode == "control" else args.binary
             row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"].get("upload_hedge_delay_ms", 0),
                    "ok": False, "session_id": cfg["session_id"], "chunk_size_override": args.chunk_size,
+                   "small_traffic": args.small_traffic, "bulk_direction": args.bulk_direction,
+                   "persistent_pipeline": args.persistent_pipeline,
+                   "sparse_priority": cfg.get("tunnel", {}).get("sparse_priority", False),
+                   "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
                    "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
@@ -202,16 +312,40 @@ def main():
                                 "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{origin_port}/small"],
                                check=True, capture_output=True, timeout=35)
                 report_path = run_dir / "mixed.json"
-                command = [sys.executable, str(Path(__file__).with_name("skirk_live_mix_bench.py")),
-                           "--port", str(port), "--small-url", f"http://127.0.0.1:{origin_port}/small",
-                           "--bulk-url", f"http://127.0.0.1:{origin_port}/bulk", "--bulk-count", "1",
-                           "--bulk-max-mib", str(args.bulk_mib), "--small-count", str(args.small_count),
-                           "--small-interval-ms", str(args.small_interval_ms), "--small-workers", str(args.small_workers),
-                           "--small-expected-bytes", str(len(small_payload)), "--small-sha256", hashlib.sha256(small_payload).hexdigest(),
-                           "--bulk-expected-bytes", str(len(payload)), "--bulk-sha256", hashlib.sha256(payload).hexdigest(),
-                           "--overall-timeout", "100", "--request-timeout", "80", "--label", run_dir.name,
-                           "--stall-seconds", str(args.stall_seconds),
-                           "--out", str(report_path)]
+                bulk_url = f"http://127.0.0.1:{origin_port}/{'bulk-upload' if args.bulk_direction == 'upload' else 'bulk'}"
+                bulk_response = bulk_ack if args.bulk_direction == "upload" else payload
+                if args.small_traffic == "persistent":
+                    command = [sys.executable, str(Path(__file__).with_name("skirk_persistent_text_bench.py")),
+                               "--port", str(port), "--echo-port", str(echo_origin.server_address[1]),
+                               "--bulk-url", bulk_url, "--bulk-direction", args.bulk_direction,
+                               "--bulk-max-mib", str(args.bulk_mib), "--small-count", str(args.small_count),
+                               "--small-interval-ms", str(args.small_interval_ms),
+                               "--bulk-expected-bytes", str(len(bulk_response)),
+                               "--bulk-sha256", hashlib.sha256(bulk_response).hexdigest(),
+                               "--overall-timeout", "180", "--request-timeout", "60" if args.persistent_pipeline else "30",
+                               "--bulk-timeout", "100", "--stall-seconds", str(args.stall_seconds),
+                               "--out", str(report_path)]
+                    if args.bulk_direction == "upload":
+                        command.extend(("--bulk-request-file", str(upload_file)))
+                    if args.persistent_pipeline:
+                        command.append("--pipelined")
+                else:
+                    command = [sys.executable, str(Path(__file__).with_name("skirk_live_mix_bench.py")),
+                               "--port", str(port), "--small-url", f"http://127.0.0.1:{origin_port}/{'message' if args.small_traffic == 'message' else 'small'}",
+                               "--bulk-url", bulk_url, "--bulk-count", "1",
+                               "--bulk-max-mib", str(args.bulk_mib), "--small-count", str(args.small_count),
+                               "--small-interval-ms", str(args.small_interval_ms), "--small-workers", str(args.small_workers),
+                               "--small-expected-bytes", str(len(small_payload)), "--small-sha256", hashlib.sha256(small_payload).hexdigest(),
+                               "--bulk-expected-bytes", str(len(bulk_response)),
+                               "--bulk-sha256", hashlib.sha256(bulk_response).hexdigest(),
+                               "--overall-timeout", "100", "--request-timeout", "80", "--label", run_dir.name,
+                               "--stall-seconds", str(args.stall_seconds),
+                               "--out", str(report_path)]
+                    if args.small_traffic == "message":
+                        command.extend(("--small-request-file", str(message_file)))
+                    if args.bulk_direction == "upload":
+                        command.extend(("--bulk-request-file", str(upload_file),
+                                        "--bulk-expected-upload-bytes", str(len(payload))))
                 with (run_dir / "mixed.stdout").open("w") as stream:
                     bench = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT)
                     while bench.poll() is None:
@@ -265,6 +399,11 @@ def main():
                 (args.out / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
     finally:
         origin.shutdown()
+        if echo_origin is not None:
+            echo_origin.shutdown()
+            echo_origin.server_close()
+        message_file.unlink(missing_ok=True)
+        upload_file.unlink(missing_ok=True)
         (args.out / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
 
 

@@ -183,3 +183,8 @@ Expected gains from those changes are stability and smaller tail latency first,
 then moderate throughput improvements. They should not be described as a
 guaranteed path to an order-of-magnitude speedup under the current Drive-only
 constraint.
+
+The November 2026 [architecture frontier](architecture-frontier-2026.md)
+adds persistent messenger-style text under concurrent upload and download,
+an isolated Drive class-query pilot, corrected bounded priority experiments,
+100 MiB failure evidence, and five/ten-client synthetic stress results.

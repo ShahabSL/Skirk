@@ -125,6 +125,9 @@ def run_one(
     bulk_futures: list[concurrent.futures.Future[dict[str, Any]]],
     expected_bytes: int | None = None,
     expected_sha256: str | None = None,
+    small_request_file: str | None = None,
+    bulk_request_file: str | None = None,
+    expected_upload_bytes: int | None = None,
 ) -> dict[str, Any]:
     started = time.monotonic()
     queue_ms = max(0.0, (started - submitted) * 1000)
@@ -143,8 +146,10 @@ def run_one(
         "scheduled_ttfb_ms": None,
         "scheduled_total_ms": None,
         "body_bytes": 0,
+        "uploaded_bytes": 0,
+        "transfer_bytes": 0,
         "goodput_mbps": None,
-        "integrity_checked": expected_bytes is not None or expected_sha256 is not None,
+        "integrity_checked": expected_bytes is not None or expected_sha256 is not None or expected_upload_bytes is not None,
     }
     allowed = min(request_timeout, deadline - started)
     if allowed <= 0:
@@ -174,8 +179,11 @@ def run_one(
         os.devnull,
         "--write-out",
         "%{json}",
-        url,
     ]
+    request_file = small_request_file if kind == "small" else bulk_request_file
+    if request_file is not None:
+        command.extend(("--request", "POST", "--data-binary", "@" + request_file))
+    command.append(url)
     try:
         proc, integrity_failure = execute_curl(command, allowed + 3, expected_bytes, expected_sha256)
     except subprocess.TimeoutExpired:
@@ -200,13 +208,19 @@ def run_one(
     ttfb_seconds = float(raw.get("time_starttransfer") or 0)
     total_seconds = float(raw.get("time_total") or 0)
     body_bytes = int(float(raw.get("size_download") or 0))
+    uploaded_bytes = int(float(raw.get("size_upload") or 0))
     failure = classify_failure(proc.returncode, proc.stderr, status) or integrity_failure
+    if failure is None and expected_upload_bytes is not None and uploaded_bytes != expected_upload_bytes:
+        failure = "upload_size_mismatch"
+    transfer_bytes = uploaded_bytes if kind == "bulk" and bulk_request_file is not None else body_bytes
     common.update(
         http_status=status,
         ttfb_ms=round(ttfb_seconds * 1000, 3) if ttfb_seconds > 0 else None,
         total_ms=round(total_seconds * 1000, 3) if total_seconds > 0 else None,
         body_bytes=body_bytes,
-        goodput_mbps=round(body_bytes * 8 / total_seconds / 1_000_000, 3)
+        uploaded_bytes=uploaded_bytes,
+        transfer_bytes=transfer_bytes,
+        goodput_mbps=round(transfer_bytes * 8 / total_seconds / 1_000_000, 3)
         if total_seconds > 0 else None,
         failure=failure,
         ok=failure is None,
@@ -240,6 +254,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--small-workers", type=int, default=2)
     parser.add_argument("--bulk-count", type=int, default=1)
     parser.add_argument("--bulk-lead-ms", type=int, default=250)
+    parser.add_argument("--small-request-file", help="Bounded synthetic message body to POST for each small request")
+    parser.add_argument("--bulk-request-file", help="Synthetic file body to POST instead of downloading bulk")
+    parser.add_argument("--bulk-expected-upload-bytes", type=int)
     parser.add_argument("--request-timeout", type=float, default=90)
     parser.add_argument("--overall-timeout", type=float, default=120)
     parser.add_argument("--connect-timeout", type=float, default=20)
@@ -278,6 +295,18 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{kind}-sha256 must be 64 lowercase hexadecimal characters")
     if args.out and Path(args.out).exists():
         parser.error("--out already exists; use a fresh file for each run")
+    if args.small_request_file:
+        request_path = Path(args.small_request_file)
+        if not request_path.is_file() or not 1 <= request_path.stat().st_size <= 8192:
+            parser.error("--small-request-file must be an existing 1..8192 byte file")
+    if args.bulk_request_file:
+        request_path = Path(args.bulk_request_file)
+        if not request_path.is_file() or not 1 <= request_path.stat().st_size <= args.bulk_max_mib * 1024 * 1024:
+            parser.error("--bulk-request-file must be an existing bounded file")
+        if args.bulk_expected_upload_bytes != request_path.stat().st_size:
+            parser.error("--bulk-expected-upload-bytes must match the upload file")
+    elif args.bulk_expected_upload_bytes is not None:
+        parser.error("--bulk-expected-upload-bytes requires --bulk-request-file")
     return args
 
 
@@ -313,6 +342,9 @@ def main() -> int:
             bulk_futures,
             getattr(args, f"{kind}_expected_bytes"),
             getattr(args, f"{kind}_sha256"),
+            args.small_request_file if kind == "small" else None,
+            args.bulk_request_file if kind == "bulk" else None,
+            args.bulk_expected_upload_bytes if kind == "bulk" else None,
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.bulk_count + args.small_workers) as pool:
@@ -335,7 +367,7 @@ def main() -> int:
     bulk = sorted((item for item in results if item["kind"] == "bulk"), key=lambda item: item["index"])
     during_bulk = [item for item in small if item["overlapped_bulk_at_start"]]
     successful_bulk = [item for item in bulk if item["ok"]]
-    total_bulk_bytes = sum(item["body_bytes"] for item in successful_bulk)
+    total_bulk_bytes = sum(item["transfer_bytes"] for item in successful_bulk)
     bulk_window_ms = (
         max(item["start_offset_ms"] + item["total_ms"] for item in successful_bulk)
         - min(item["start_offset_ms"] for item in successful_bulk)
@@ -347,6 +379,8 @@ def main() -> int:
         "duration_s": round(run_end - run_start, 3),
         "method": {
             "transport": "curl SOCKS5 hostname resolution via Skirk",
+            "small_method": "POST" if args.small_request_file else "GET",
+            "bulk_direction": "upload" if args.bulk_request_file else "download",
             "ttfb": "curl time_starttransfer, including SOCKS setup",
             "scheduled_latency": "delay from intended dispatch time plus curl timing",
             "percentiles": "nearest rank on successful requests",
@@ -374,7 +408,8 @@ def main() -> int:
         "small_during_bulk": latency_summary(during_bulk),
         "bulk": {
             **latency_summary(bulk),
-            "successful_body_bytes": total_bulk_bytes,
+            "successful_body_bytes": sum(item["body_bytes"] for item in successful_bulk),
+            "successful_transfer_bytes": total_bulk_bytes,
             "aggregate_goodput_mbps": round(total_bulk_bytes * 8 / (bulk_window_ms / 1000) / 1_000_000, 3)
             if bulk_window_ms > 0 and total_bulk_bytes else None,
         },

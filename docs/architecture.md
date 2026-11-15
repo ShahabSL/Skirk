@@ -84,6 +84,15 @@ The current evidence says muxv4 is the best proven default for the
 when it beats muxv4 on mixed browser and bulk traffic, not just a synthetic
 single-stream download.
 
+Muxv4's initial priority allowance is per TCP stream. A long-lived messenger
+connection that has sent more than 64 KiB stays in the normal class, even for
+later short messages. A bounded interaction-priority and metadata-only
+experiment improved short paired text-plus-file workloads, but some 100 MiB
+file arms stalled. Its per-process priority budget also cannot enforce one
+account-wide budget across devices. These experiments have not changed the
+default; see the [architecture frontier](architecture-frontier-2026.md) for
+the measurements and remaining correctness and quota gates.
+
 See [Transport Research](transport-research.md) for the experiment record and
 promotion gates.
 

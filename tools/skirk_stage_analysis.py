@@ -137,7 +137,7 @@ def arm_summary(root: Path, row: dict, index: int) -> dict:
     if not arm.is_dir():
         raise ValueError("arm directory missing")
     variant = name.split("-", 1)[-1]
-    if variant not in ("main", "current", "baseline", "inline", "hedge", "isolated", "isolated_hedge"):
+    if variant not in ("main", "current", "baseline", "inline", "hedge", "isolated", "isolated_hedge", "sparse", "sparse_inline", "epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge", "metadata", "bulk_pool", "bulk_pool_hedge", "priority_h3", "control", "candidate"):
         variant = "unknown"
     groups = defaultdict(lambda: {"events": 0, "errors": 0, "durations": defaultdict(list)})
     for role in ("client", "exit"):

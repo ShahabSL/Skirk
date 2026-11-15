@@ -44,6 +44,54 @@ class CapacityTelemetryTests(unittest.TestCase):
 
 
 class BodyIntegrityTests(unittest.TestCase):
+    def test_messenger_probe_posts_small_body_and_checks_ack(self):
+        timing = json.dumps({"http_code": 200, "time_starttransfer": 0.2,
+                             "time_total": 0.3, "size_download": 16})
+        result = subprocess.CompletedProcess([], 0, timing, "")
+        commands = []
+
+        def fake_execute(command, *_):
+            commands.append(command)
+            return result, None
+
+        with patch("skirk_live_mix_bench.time.monotonic", return_value=10), \
+             patch("skirk_live_mix_bench.execute_curl", side_effect=fake_execute):
+            sample = run_one("small", 0, "http://127.0.0.1/message", 18080,
+                             9, 8, 20, 5, 2, 1, 1, 1024, True, [],
+                             16, None, "/private/synthetic-message.bin")
+        self.assertTrue(sample["ok"])
+        self.assertEqual(sample["body_bytes"], 16)
+        self.assertEqual(commands[0][commands[0].index("--data-binary") + 1],
+                         "@/private/synthetic-message.bin")
+        self.assertEqual(commands[0][commands[0].index("--request") + 1], "POST")
+
+    def test_bulk_upload_counts_sent_bytes_and_requires_exact_size(self):
+        timing = json.dumps({"http_code": 200, "time_starttransfer": 1,
+                             "time_total": 2, "size_download": 21, "size_upload": 64})
+        result = subprocess.CompletedProcess([], 0, timing, "")
+        commands = []
+
+        def fake_execute(command, *_):
+            commands.append(command)
+            return result, None
+
+        with patch("skirk_live_mix_bench.time.monotonic", return_value=10), \
+             patch("skirk_live_mix_bench.execute_curl", side_effect=fake_execute):
+            sample = run_one("bulk", 0, "http://127.0.0.1/bulk-upload", 18080,
+                             9, 8, 20, 5, 2, 1, 1, 1024, False, [],
+                             21, None, None, "/private/synthetic-upload.bin", 64)
+        self.assertTrue(sample["ok"])
+        self.assertEqual(sample["transfer_bytes"], 64)
+        self.assertEqual(sample["uploaded_bytes"], 64)
+        self.assertEqual(commands[0][commands[0].index("--data-binary") + 1],
+                         "@/private/synthetic-upload.bin")
+        with patch("skirk_live_mix_bench.time.monotonic", return_value=10), \
+             patch("skirk_live_mix_bench.execute_curl", return_value=(result, None)):
+            mismatch = run_one("bulk", 0, "http://127.0.0.1/bulk-upload", 18080,
+                               9, 8, 20, 5, 2, 1, 1, 1024, False, [],
+                               21, None, None, "/private/synthetic-upload.bin", 65)
+        self.assertEqual(mismatch["failure"], "upload_size_mismatch")
+
     def test_exact_length_and_hash_and_private_body_cleanup(self):
         expected = b"correct response"
         for body, want in [(expected, None), (b"corrupt response", "body_hash_mismatch"),
@@ -87,6 +135,44 @@ class BodyIntegrityTests(unittest.TestCase):
 
 
 class MainComparisonSafetyTests(unittest.TestCase):
+    def test_hybrid_priority_http3_keeps_the_user_selected_front(self):
+        original = {"route": {"mode": "google_front_pinned"}, "drive": {"folder_id": "test-folder"}}
+        control = arm_config(original, "baseline", "a", 0, False)
+        hybrid = arm_config(original, "priority_h3", "b", 0, False)
+        self.assertEqual(control["route"], hybrid["route"])
+        self.assertFalse(control["drive"].get("priority_http3", False))
+        self.assertTrue(hybrid["drive"]["priority_http3"])
+
+    def test_sparse_priority_is_opt_in_without_changing_route(self):
+        original = {"route": {"mode": "google_front_pinned"}, "tunnel": {"poll_interval_ms": 1000}}
+        control = arm_config(original, "baseline", "a", 0, False)
+        candidate = arm_config(original, "sparse", "b", 0, False)
+        self.assertEqual(control["route"], candidate["route"])
+        self.assertFalse(control["tunnel"].get("sparse_priority", False))
+        self.assertTrue(candidate["tunnel"]["sparse_priority"])
+
+    def test_interaction_epoch_and_inline_combination_keep_the_front(self):
+        original = {"route": {"mode": "google_front_pinned"}, "drive": {}, "tunnel": {}}
+        control = arm_config(original, "baseline", "a", 0, False)
+        epoch = arm_config(original, "epoch", "b", 0, False)
+        combined = arm_config(original, "epoch_inline", "c", 0, False)
+        metadata = arm_config(original, "epoch_metadata", "d", 0, False)
+        hedged = arm_config(original, "epoch_metadata_hedge", "e", 0, False)
+        self.assertEqual(control["route"], epoch["route"])
+        self.assertEqual(control["route"], combined["route"])
+        self.assertFalse(control["tunnel"]["interaction_epoch"])
+        self.assertTrue(epoch["tunnel"]["interaction_epoch"])
+        self.assertFalse(epoch["drive"]["inline_small_objects"])
+        self.assertTrue(combined["tunnel"]["interaction_epoch"])
+        self.assertTrue(combined["drive"]["inline_small_objects"])
+        self.assertFalse(combined["tunnel"]["sparse_priority"])
+        self.assertTrue(metadata["tunnel"]["interaction_epoch"])
+        self.assertTrue(metadata["drive"]["metadata_only_priority"])
+        self.assertFalse(metadata["drive"]["inline_small_objects"])
+        self.assertEqual(hedged["drive"]["upload_hedge_delay_ms"], 3000)
+        self.assertTrue(hedged["drive"]["metadata_only_priority"])
+        self.assertTrue(hedged["tunnel"]["interaction_epoch"])
+
     def test_only_balanced_main_comparison_is_allowed(self):
         for order in (["main", "current", "current", "main"], ["current", "main", "main", "current"]):
             self.assertTrue(validate_arm_order(order, Path("main-binary")))
@@ -96,19 +182,29 @@ class MainComparisonSafetyTests(unittest.TestCase):
             with self.subTest(order=order), self.assertRaises(ValueError):
                 validate_arm_order(order, main_binary)
 
+    def test_candidate_comparison_requires_balanced_same_config_arms(self):
+        for order in (["control", "candidate", "candidate", "control"],
+                      ["candidate", "control", "control", "candidate"]):
+            self.assertTrue(validate_arm_order(order, None, Path("control-binary")))
+        for order, control_binary in [(["control", "candidate"], Path("control-binary")),
+                                      (["control", "candidate", "candidate", "control"], None)]:
+            with self.subTest(order=order), self.assertRaises(ValueError):
+                validate_arm_order(order, None, control_binary)
+
     def test_matching_config_removes_secondary_project_and_experiments_without_touching_kit(self):
         original = {"secret": "fictional", "session_id": "old", "route": {"mode": "google_front_pinned"},
                     "drive": {"folder_id": "test-folder", "quota_project": "different-project",
                               "inline_small_objects": True, "upload_hedge_delay_ms": 3000,
                               "separate_upload_pool": True, "metadata_only_priority": True,
                               "separate_bulk_media_pool": True},
-                    "tunnel": {"chunk_size": 8388608}}
+                    "tunnel": {"chunk_size": 8388608, "interaction_epoch": True}}
         first = arm_config(original, "main", "fresh-one", 0, True)
         second = arm_config(original, "current", "fresh-two", 0, True)
         self.assertEqual(first["drive"], second["drive"])
         self.assertEqual(first["drive"], {"folder_id": "test-folder"})
         self.assertEqual(first["route"], second["route"])
         self.assertEqual(first["tunnel"], second["tunnel"])
+        self.assertNotIn("interaction_epoch", first["tunnel"])
         self.assertEqual(first["session_id"], "fresh-one")
         self.assertEqual(second["session_id"], "fresh-two")
         self.assertEqual(original["session_id"], "old")
