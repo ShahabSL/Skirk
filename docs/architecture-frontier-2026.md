@@ -208,6 +208,43 @@ immutable metadata-only create/list primitive had a 508 ms median in a
 different nine-file sample, so the two cannot be treated as a matched latency
 comparison.
 
+The next bounded probe used **two** fixed files, one writer each for data and
+cumulative ACKs. It scheduled 20 distinct 64-byte frames every 250 ms without
+waiting for each read, paused the reader for one second after frame ten, and
+retained all unacknowledged frames in every new description snapshot. The
+reader skipped **nine Drive versions** but verified and acknowledged all
+20 frames in order. Scheduled receive p50/p95, including the forced pause,
+was **0.859/1.788 s**. Fifteen data PATCHes, six ACK PATCHes, and 28 GETs
+completed under a conservative **3,240-unit** accounting bound. Both files
+were deleted and confirmed absent twice by ID; no recovery ledger remained.
+The result is private at `.skirk-runs/ack-slot-live-20261114.json`, and the
+probe and version-skip tests are under `tools/ack_slot_probe/`. HMACs on
+synthetic frames establish this probe's integrity; production would use the
+existing AEAD, device ownership and replay defenses. It is a queue
+feasibility result, not a full Skirk, file-mix, or 200,000-user result.
+
+At 4 Hz polling in both directions, the two known-ID GETs alone would cost
+2,400 units per minute per active pair. Four one-way metadata PATCHes per
+second add 12,000 units per minute before acknowledgements, retries, or other
+traffic. A single shared 1,000,000-unit project cannot carry 200,000 such
+active pairs; self-managed projects distribute project quota but add setup and
+account-level limits. A fixed slot should therefore be considered only for
+bounded interactive traffic, alongside immutable media objects for bulk.
+
+## Platform validation on this branch
+
+Fresh current-branch builds passed the full preflight, Android debug
+sidecar/APK build, iOS Simulator build and two UI tests, macOS ARM64 Tauri
+bundle, and Windows x64 GUI/sidecar cross-compile with portable-ZIP CRC and
+contents checks. Logs are under
+`.skirk-runs/platform-build-current-20261114/`. Runtime evidence remains
+narrower: one live HTTPS request through Android VPN on a Pixel emulator, iOS
+Simulator Connect stopped before the packet extension, macOS ran local proxy
+mode, and Windows was not run natively. None of those app builds exercised the
+new opt-in scheduler or fixed-slot probes through a platform UI. Physical
+iPhone packet forwarding, sustained Android browser/video/bulk traffic,
+Windows runtime, and signed macOS distribution remain unverified.
+
 ## Promotion gate
 
 Keep the proven default while testing the corrected epoch and metadata-only
