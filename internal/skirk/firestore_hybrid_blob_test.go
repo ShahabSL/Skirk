@@ -440,6 +440,10 @@ func (s *fsHybridPriorityStore) Close() error {
 
 type fsHybridCleanupTarget struct{ ID, Name string }
 
+// CleanupTargets reports only generated priority fallback IDs and authenticated
+// received priority aliases. Normal p1 objects remain owned by the unchanged
+// mux/base cleanup path; the outer fixture must also scan its exact fresh run
+// prefixes after joining all mux and store owners.
 func (s *fsHybridPriorityStore) CleanupTargets() ([]fsHybridCleanupTarget, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

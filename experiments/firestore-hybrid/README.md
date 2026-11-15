@@ -121,6 +121,10 @@ Provider deletion belongs to the external owned fixture, using exact cleanup
 targets after the join, a global Drive hard guard with reserved cleanup quota,
 and delayed verification. A 30-second context alone is not a quota or cleanup
 proof; Store close makes no unbudgeted provider deletion calls.
+`CleanupTargets` covers generated priority fallback IDs and authenticated
+priority aliases only. The unchanged normal p1 path requires the outer fixture
+to scan both exact fresh run prefixes as well, after every mux/store writer has
+joined, then repeat the bounded absence check after the cleanup delay.
 
 ACK changes can be piggybacked on outbound data; bounded ACK-only scheduling is
 measured explicitly. Receiving an ACK or credit-only snapshot does not itself
