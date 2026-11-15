@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **176 interpreted experiment records**, **302 recognized raw result files** indexed across local worktrees, and **286 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **178 interpreted experiment records**, **304 recognized raw result files** indexed across local worktrees, and **298 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -249,3 +249,7 @@ R3-031 retains six exact encrypted-document trials through the selected Google f
 ## Source-bound recovery and continuation beyond finite slots
 
 R3-033..036 preserve the reviewed observer, exact log-only retirement diagnostic, all four arms of the [new100MiB actual-main comparison](experiments/sustained-read-upload-recovery-2026-11-15.md), and the pending pool-only selector. One candidate and both main controls completed every file/frame; the final candidate stopped on a disallowed mutable PATCH timeout. Six messages beyond both advertised two-minute slot bounds were delivered in the completed candidate. There is no balanced candidate median or winner, and the earlier failed cohorts remain unchanged.
+
+## Firestore Listen: delivery and joined lifecycle are separate evidence
+
+R3-037 and R3-038 retain both six-state encrypted push attempts. The first delivered every state but failed its local observer shutdown; the repaired attempt delivered every state, acknowledged target removal and joined with no pending work. Warm callback medians were 233.385 and 248.227 ms, respectively. These are [push primitive observations](experiments/firestore-listen-front-2026-11-15.md), with separate source/binaries and no full TCP, throughput or capacity claim. Exact temporary document/database absence and API restoration are retained for both.

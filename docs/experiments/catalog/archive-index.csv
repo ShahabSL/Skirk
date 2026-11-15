@@ -119,6 +119,8 @@ repocomp,.skirk-runs/combined-list-upload-16m-20261114-01/summary.json,5161,sour
 repocomp,.skirk-runs/default-perf-final-vs-main-16m-20261115-01/summary.json,5154,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/final-main-abba-16m-20261114/summary.json,3976,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/firebase-feasibility-20261115/probe-result.json,14833,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/firestore-listen-live-20261115/listen-result.json,1225,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/firestore-listen-live-retry-20261115/listen-result.json,1784,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/live-exit-proof-20261114/summary.json,2345,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/main-vs-current-16m-20261114-02/summary.json,4715,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/main-vs-current-download-reverse-16m-20261114-01/summary.json,2132,source-index-only; inspect cited catalog entry or raw file for exact values

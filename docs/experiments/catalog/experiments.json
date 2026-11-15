@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-15",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "All retained Drive strict/recovery cohorts including incomplete bba/main100MiB ABBA, real frontedFirestore/AppsScript primitives and local relay stress; no wall/optimum claim",
+  "research_tip": "Retained successful and failed Drive cohorts, real fronted Firestore Listen including initial failed and repaired joined shutdown, Apps Script primitives and local relay stress; no architecture optimum claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -3557,6 +3557,48 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "678226f;runtime flag already exists in frozen CLI",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-037",
+      "candidate": "Owned Firestore Listen through selected Google front: initial failed teardown",
+      "evidence_level": "live_api_push_primitive",
+      "workload": "6 successive exact AES-GCM2KiB states;official NodeWebChannel via owned local bridge;newfreeTierDB;noDrive grant",
+      "latency": "Cold969.608ms;fivewarmmedian233.385ms;not applicationRTT",
+      "throughput_mbps": null,
+      "estimated_quota_units": "21visibleGoogle dispatches/20completedHTTP2responses/1ownedcancellations;168attemptupper;notDriveunits",
+      "correctness_and_errors": "6/6 exact states,0prior duplicates;OVERALLFAILED localEVENT_DELIVERY/shutdown,REMOVEfalse",
+      "cleanup": "ExactdocumentDELETE+immediate31s404;wholeDB404immediate31s;APIrestoredDISABLED,borrowedtoken+observerconfiggone,billingunchanged",
+      "decision": "Strongpushstateprimitive;firstfailure retained;no fullTCP/file/capacity/restartproof;source/binary differ so not causal latency comparison",
+      "source_documents": [
+        "docs/experiments/firestore-listen-front-2026-11-15.md",
+        "docs/experiments/firestore-listen-front-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/firestore-listen-live-20261115/listen-result.json"
+      ],
+      "revision_or_binary": "577f67a/411e40dcc0e67f96a40a28afeef10aca429f2c9c63e6f9148757d3eedc785c2d",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-038",
+      "candidate": "Owned Firestore Listen through selected Google front: repaired joined observer",
+      "evidence_level": "live_api_push_primitive",
+      "workload": "6 successive exact AES-GCM2KiB states;official NodeWebChannel via owned local bridge;newfreeTierDB;noDrive grant",
+      "latency": "Cold1360.767ms;fivewarmmedian248.227ms;not applicationRTT",
+      "throughput_mbps": null,
+      "estimated_quota_units": "23visibleGoogle dispatches/21completedHTTP2responses/2ownedcancellations;184attemptupper;notDriveunits",
+      "correctness_and_errors": "6/6 exact states,0prior duplicates;OVERALLPASS observerjoined418.681ms,REMOVEtrue,0pendingrequests/events/timers,2expectedownedabortdiagnostics",
+      "cleanup": "ExactdocumentDELETE+immediate31s404;wholeDB404immediate31s;APIrestoredDISABLED,borrowedtoken+observerconfiggone,billingunchanged",
+      "decision": "Strongpushstateprimitive;firstfailure retained;no fullTCP/file/capacity/restartproof;source/binary differ so not causal latency comparison",
+      "source_documents": [
+        "docs/experiments/firestore-listen-front-2026-11-15.md",
+        "docs/experiments/firestore-listen-front-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/firestore-listen-live-retry-20261115/listen-result.json"
+      ],
+      "revision_or_binary": "f60802f/12e411069143e13ffc00d0defa1c5461308a99d7a5cc3e9869662aeddea86d40",
       "live_comparable": false
     }
   ]

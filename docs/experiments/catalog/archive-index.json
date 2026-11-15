@@ -721,6 +721,18 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/firestore-listen-live-20261115/listen-result.json",
+    "bytes": 1225,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/firestore-listen-live-retry-20261115/listen-result.json",
+    "bytes": 1784,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/live-exit-proof-20261114/summary.json",
     "bytes": 2345,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

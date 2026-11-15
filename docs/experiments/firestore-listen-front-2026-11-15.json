@@ -1,0 +1,243 @@
+{
+  "date": "2026-11-15",
+  "classification": "live_api_push_primitive",
+  "measurement_definition": {
+    "plaintext_bytes": 2048,
+    "states_per_attempt": 6,
+    "listen_ms": "Go pre-PATCH wall-clock timestamp to Node document callback; same host, approximately millisecond resolution",
+    "write_ack_ms": "Go pre-PATCH to response; callback can precede response",
+    "cold_sample": "Initial document write, Node startup and listener establishment included",
+    "route": "Selected pinned www.google.com; official Node SDK through owned authenticated local bridge, no direct-route fallback",
+    "scope_limit": "Not full SOCKS/TCP, file throughput, application RTT, restart durability or capacity proof"
+  },
+  "attempts": [
+    {
+      "attempt": "firestore-listen-live-20261115",
+      "passed": false,
+      "failure_class": "local_observer_EVENT_DELIVERY_and_shutdown_validation",
+      "source": {
+        "source_revision": "577f67a",
+        "binary_sha256": "411e40dcc0e67f96a40a28afeef10aca429f2c9c63e6f9148757d3eedc785c2d",
+        "started_utc": "2026-11-15T20:43:18.983359+00:00"
+      },
+      "host": {
+        "local_compilers_tests_emulators": "all stopped before payload launch",
+        "other_network": "external read-only Claude UI audit may receive small background traffic; desktop background uncontrolled"
+      },
+      "samples": [
+        {
+          "sequence": 0,
+          "WriteAckMS": 663.411,
+          "ListenMS": 969.60791015625,
+          "Verified": true
+        },
+        {
+          "sequence": 1,
+          "WriteAckMS": 317.195,
+          "ListenMS": 326.31103515625,
+          "Verified": true
+        },
+        {
+          "sequence": 2,
+          "WriteAckMS": 353.831,
+          "ListenMS": 371.636962890625,
+          "Verified": true
+        },
+        {
+          "sequence": 3,
+          "WriteAckMS": 159.281,
+          "ListenMS": 233.384521484375,
+          "Verified": true
+        },
+        {
+          "sequence": 4,
+          "WriteAckMS": 233.179,
+          "ListenMS": 230.7861328125,
+          "Verified": true
+        },
+        {
+          "sequence": 5,
+          "WriteAckMS": 204.258,
+          "ListenMS": 214.227783203125,
+          "Verified": true
+        }
+      ],
+      "cold_listen_ms": 969.60791015625,
+      "warm_listen_median_ms": 233.384521484375,
+      "duplicate_prior_events": 0,
+      "dispatch": {
+        "active_call_limit": 36,
+        "encoded_request_bytes_upper": 140592,
+        "http_attempts_upper": 168,
+        "response_limit_bytes": 1048576,
+        "total_call_limit_including_cleanup": 40,
+        "visible_calls": 21,
+        "completed_http2_responses": 20,
+        "owned_canceled_dispatches": 1,
+        "observed_transport_error_flags": 0,
+        "completed_status_counts": {
+          "200": 18,
+          "404": 2
+        }
+      },
+      "observer": {
+        "document_events": 6,
+        "foreign_requests_rejected": 0,
+        "request_count": 15,
+        "stopped": true,
+        "target_events": 8,
+        "target_remove_acknowledged": false
+      },
+      "observer_error_nonempty": true,
+      "observer_owned_abort_diagnostics": [],
+      "cleanup": {
+        "initial_firestore_api_enabled": false,
+        "firebase_management_api_enabled": false,
+        "billing_changes": false,
+        "database_created": true,
+        "database_free_eligible": true,
+        "probe_return_code": 1,
+        "database_delete_requested": true,
+        "database_missing_immediate": true,
+        "first_missing_utc": "2026-11-15T20:43:59.879254+00:00",
+        "database_missing_delayed_31s": true,
+        "delayed_missing_utc": "2026-11-15T20:44:31.286203+00:00",
+        "api_state_verified": "DISABLED",
+        "firestore_api_restored_disabled": true,
+        "borrowed_access_token_and_observer_config_removed": true
+      },
+      "document_cleanup": {
+        "delete_ok": true,
+        "immediate_404": true,
+        "delayed_404": true
+      },
+      "raw_directory": "repocomp/.skirk-runs/firestore-listen-live-20261115/"
+    },
+    {
+      "attempt": "firestore-listen-live-retry-20261115",
+      "passed": true,
+      "failure_class": null,
+      "source": {
+        "source_revision": "f60802f",
+        "binary_sha256": "12e411069143e13ffc00d0defa1c5461308a99d7a5cc3e9869662aeddea86d40",
+        "started_utc": "2026-11-15T21:27:42.195783+00:00"
+      },
+      "host": {
+        "local_compilers_tests_emulators": "all stopped before payload launch",
+        "other_network": "external Claude audit stopped at20:44:47UTC; no intentional competing benchmark/build/emulator; ordinary desktop background uncontrolled"
+      },
+      "samples": [
+        {
+          "sequence": 0,
+          "WriteAckMS": 951.438,
+          "ListenMS": 1360.7666015625,
+          "Verified": true
+        },
+        {
+          "sequence": 1,
+          "WriteAckMS": 229.156,
+          "ListenMS": 252.741943359375,
+          "Verified": true
+        },
+        {
+          "sequence": 2,
+          "WriteAckMS": 208.098,
+          "ListenMS": 248.226806640625,
+          "Verified": true
+        },
+        {
+          "sequence": 3,
+          "WriteAckMS": 295.083,
+          "ListenMS": 330.97998046875,
+          "Verified": true
+        },
+        {
+          "sequence": 4,
+          "WriteAckMS": 154.839,
+          "ListenMS": 233.188232421875,
+          "Verified": true
+        },
+        {
+          "sequence": 5,
+          "WriteAckMS": 227.197,
+          "ListenMS": 240.159423828125,
+          "Verified": true
+        }
+      ],
+      "cold_listen_ms": 1360.7666015625,
+      "warm_listen_median_ms": 248.226806640625,
+      "duplicate_prior_events": 0,
+      "dispatch": {
+        "active_call_limit": 36,
+        "encoded_request_bytes_upper": 141752,
+        "http_attempts_upper": 184,
+        "response_limit_bytes": 1048576,
+        "total_call_limit_including_cleanup": 40,
+        "visible_calls": 23,
+        "completed_http2_responses": 21,
+        "owned_canceled_dispatches": 2,
+        "observed_transport_error_flags": 0,
+        "completed_status_counts": {
+          "200": 19,
+          "404": 2
+        }
+      },
+      "observer": {
+        "channel_closed": true,
+        "disposed_sdk_timers": 2,
+        "document_events": 6,
+        "foreign_requests_rejected": 0,
+        "pending_events": 0,
+        "pending_requests": 0,
+        "pending_sdk_timers": 0,
+        "request_count": 14,
+        "stopped": true,
+        "target_events": 10,
+        "target_remove_acknowledged": true
+      },
+      "observer_error_nonempty": false,
+      "observer_owned_abort_diagnostics": [
+        {
+          "closing": true,
+          "owned_shutdown_abort": true,
+          "signal_aborted": true,
+          "status": 0
+        },
+        {
+          "closing": true,
+          "owned_shutdown_abort": true,
+          "signal_aborted": true,
+          "status": 0
+        }
+      ],
+      "cleanup": {
+        "initial_firestore_api_enabled": false,
+        "firebase_management_api_enabled": false,
+        "billing_changes": false,
+        "database_created": true,
+        "database_free_eligible": true,
+        "probe_return_code": 0,
+        "database_delete_requested": true,
+        "database_missing_immediate": true,
+        "first_missing_utc": "2026-11-15T21:28:18.600171+00:00",
+        "database_missing_delayed_31s": true,
+        "delayed_missing_utc": "2026-11-15T21:28:50.168431+00:00",
+        "api_state_verified": "DISABLED",
+        "firestore_api_restored_disabled": true,
+        "borrowed_access_token_and_observer_config_removed": true
+      },
+      "document_cleanup": {
+        "delete_ok": true,
+        "immediate_404": true,
+        "delayed_404": true
+      },
+      "raw_directory": "repocomp/.skirk-runs/firestore-listen-live-retry-20261115/",
+      "observer_exit_code": 0,
+      "observer_forced_termination": false,
+      "observer_joined": true,
+      "observer_kill_failed": false,
+      "observer_started": true,
+      "observer_wait_ms": 418.681
+    }
+  ]
+}
