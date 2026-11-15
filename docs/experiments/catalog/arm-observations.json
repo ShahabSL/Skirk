@@ -10366,5 +10366,21 @@
     "failure": "RecoveryRejected",
     "failure_reason": "unclassified_read_or_upload_failure",
     "verified_small_receipt_count": 9
+  },
+  {
+    "source_worktree": "repocomp",
+    "source_path": ".skirk-runs/sustained-end-to-end-stress-v2-20261115/arms/summary.json",
+    "arm_index": 0,
+    "observation_kind": "live_full_transport_recovery_stress_v2",
+    "run": "0-candidate",
+    "ok": false,
+    "binary_sha256": "2819867970b2f0709efad2e60020eb9363f9d7b21cf94d198ff7bb4537b99b0b",
+    "failure": "RecoveryRejected",
+    "failure_reason": "end_to_end_timeout_60s_cap",
+    "verified_small_receipt_count": 6,
+    "file_completed": false,
+    "last_periodic_estimated_units": 21295,
+    "observed_timeout_events": 5,
+    "permitted_timeout_events": 4
   }
 ]

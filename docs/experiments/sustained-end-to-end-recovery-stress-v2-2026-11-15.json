@@ -1,0 +1,632 @@
+{
+  "date": "2026-11-15",
+  "classification": "live_full_transport_interrupted_first_arm",
+  "recovery_policy_version": 2,
+  "status": "First candidate stopped after fifth timeout exceeded the predeclared four-per60s allowance; other3arms not attempted",
+  "candidate_median": null,
+  "winner": null,
+  "candidate_source": "8c9829dc9ccbe98d62c4357d60ab762e02ac6373",
+  "candidate_binary_sha256": "2819867970b2f0709efad2e60020eb9363f9d7b21cf94d198ff7bb4537b99b0b",
+  "observer_source": "dc81870",
+  "arm": {
+    "run": "0-candidate",
+    "inline": false,
+    "upload_hedge_delay_ms": 0,
+    "upload_stall_hedge_delay_ms": 0,
+    "upload_stall_hedge_budget_bytes": 0,
+    "ok": false,
+    "chunk_size_override": 0,
+    "small_traffic": "persistent",
+    "bulk_direction": "download",
+    "small_response_bytes": 17,
+    "persistent_pipeline": true,
+    "persistent_bulk_lead_ms": 1000,
+    "persistent_overall_timeout_seconds": 300.0,
+    "persistent_bulk_timeout_seconds": 180.0,
+    "quota_guard_estimated_units_per_60s": 125000,
+    "quota_guard_estimated_arm_units": 150000,
+    "quota_guard_estimated_cohort_units": 600000,
+    "sparse_priority": false,
+    "interaction_epoch": true,
+    "separate_upload_pool": false,
+    "metadata_only_priority": false,
+    "metadata_only_max_bytes": 8192,
+    "metadata_slot_v1": true,
+    "metadata_slot_delivery_v1": true,
+    "metadata_slot_async_v1": true,
+    "metadata_slot_primary_v1": false,
+    "separate_metadata_slot_pools": false,
+    "normal_list_page_size": null,
+    "combined_mux_discovery": false,
+    "adaptive_mux_discovery": false,
+    "separate_bulk_media_pool": false,
+    "binary_sha256": "2819867970b2f0709efad2e60020eb9363f9d7b21cf94d198ff7bb4537b99b0b",
+    "route_mode": "google_front_pinned",
+    "quota_project_header": false,
+    "recovery_policy_version": 2,
+    "failure": "RecoveryRejected",
+    "failure_reason": "end_to_end_timeout_60s_cap",
+    "bounded_recovery": {
+      "mode": "bounded_end_to_end_recovery_stress_v2",
+      "arm_timeout_cap": 8,
+      "observed_timeouts_per_60s_cap": 4,
+      "cohort_timeout_cap": 16,
+      "arm_observed_timeout_events": 5,
+      "cohort_observed_timeout_events": 5,
+      "cohort_permitted_timeout_events": 4,
+      "correlation": "one_to_one_role_counts_not_per_request_identity_or_wire_attempts",
+      "roles": {
+        "client": {
+          "drive_timeout_events": 5,
+          "reported_api_errors": 3,
+          "drive_timeout_events_by_operation": {
+            "create": 0,
+            "metadata": 1,
+            "list": 0,
+            "upload": 2,
+            "download": 2,
+            "slot_cleanup_probe": 0,
+            "patch": 0
+          },
+          "reported_api_errors_by_operation": {
+            "create": 0,
+            "metadata": 1,
+            "list": 0,
+            "upload": 0,
+            "download": 2,
+            "slot_cleanup_probe": 0,
+            "patch": 0,
+            "generate_ids": 0,
+            "delete": 0
+          },
+          "mux_read_timeout_events": 2,
+          "paired_read_retry_announcements": 0,
+          "failure_observations": [
+            {
+              "operation": "download",
+              "attempts": 1,
+              "status": "none",
+              "request_shape": "source_inferred_not_observed"
+            },
+            {
+              "operation": "download",
+              "attempts": 1,
+              "status": "none",
+              "request_shape": "source_inferred_not_observed"
+            },
+            {
+              "operation": "metadata",
+              "attempts": 1,
+              "status": "none",
+              "request_shape": "source_inferred_not_observed"
+            },
+            {
+              "operation": "upload",
+              "attempts": 1,
+              "status": "none",
+              "request_shape": "source_inferred_immutable_upload_not_observed"
+            },
+            {
+              "operation": "upload",
+              "attempts": 1,
+              "status": "none",
+              "request_shape": "source_inferred_immutable_upload_not_observed"
+            }
+          ],
+          "slot_patch_budget_retirements": 0,
+          "immutable_mux_timeout_events": 1,
+          "immutable_mux_records": [
+            {
+              "lane": "1",
+              "seq": "10",
+              "priority": "true",
+              "sealed_bytes": "151",
+              "idempotent": "false"
+            }
+          ],
+          "normal_immutable_timeout_events": 0,
+          "priority_immutable_timeout_events": 1,
+          "physical_create_nonidempotent_timeout_events": 1,
+          "metadata_only_json_create_timeout_events": 0,
+          "priority_media_create_timeout_events": 2,
+          "patch_recoveries": {},
+          "patch_fallback_stops": 0,
+          "finite_slot_retirements": [],
+          "fallback_publications": 5
+        },
+        "exit": {
+          "drive_timeout_events": 0,
+          "reported_api_errors": 0,
+          "drive_timeout_events_by_operation": {
+            "create": 0,
+            "metadata": 0,
+            "list": 0,
+            "upload": 0,
+            "download": 0,
+            "slot_cleanup_probe": 0,
+            "patch": 0
+          },
+          "reported_api_errors_by_operation": {
+            "create": 0,
+            "metadata": 0,
+            "list": 0,
+            "upload": 0,
+            "download": 0,
+            "slot_cleanup_probe": 0,
+            "patch": 0,
+            "generate_ids": 0,
+            "delete": 0
+          },
+          "mux_read_timeout_events": 0,
+          "paired_read_retry_announcements": 0,
+          "failure_observations": [],
+          "slot_patch_budget_retirements": 0,
+          "immutable_mux_timeout_events": 0,
+          "immutable_mux_records": [],
+          "normal_immutable_timeout_events": 0,
+          "priority_immutable_timeout_events": 0,
+          "physical_create_nonidempotent_timeout_events": 0,
+          "metadata_only_json_create_timeout_events": 0,
+          "priority_media_create_timeout_events": 0,
+          "patch_recoveries": {},
+          "patch_fallback_stops": 0,
+          "finite_slot_retirements": [],
+          "fallback_publications": 9
+        }
+      },
+      "log_ahead_metrics_max_seconds": 5.25,
+      "bare_read_source_binary_sha256": "2819867970b2f0709efad2e60020eb9363f9d7b21cf94d198ff7bb4537b99b0b",
+      "bare_read_source_revision": "8c9829dc9ccbe98d62c4357d60ab762e02ac6373",
+      "clean_rpc_claim": false,
+      "origin_side_effects": {
+        "get_started": 1,
+        "get_finished": 1,
+        "get_failed": 0,
+        "post_started": 0,
+        "post_finished": 0,
+        "post_failed": 0,
+        "echo_connections": 1,
+        "echo_frames": 13,
+        "unexpected_http": 0,
+        "overflow": 0
+      },
+      "origin_proof_failure": null,
+      "scope": "configured process epoch and observed workload; not restart exactly-once or physical wire accounting",
+      "bare_upload_source_revision": "8c9829dc9ccbe98d62c4357d60ab762e02ac6373",
+      "bare_upload_scope": "source-inferred operation and role/count mux correlation; request shape and physical wire attempts not observed"
+    },
+    "completion_status": "incomplete_end_to_end_stress",
+    "clean_api_run": false,
+    "last_observed_quotas": {
+      "client": {
+        "calls": 119,
+        "units": 7735,
+        "errors": 3,
+        "last_error_reason": "timeout",
+        "response_bytes": 10718915,
+        "ops": {
+          "create": {
+            "calls": 2,
+            "units": 100,
+            "errors": 0,
+            "total_duration_ms": 902,
+            "avg_duration_ms": 451,
+            "p50_duration_ms": 501,
+            "p95_duration_ms": 501,
+            "max_duration_ms": 501
+          },
+          "delete": {
+            "calls": 3,
+            "units": 150,
+            "errors": 0,
+            "total_duration_ms": 906,
+            "avg_duration_ms": 302,
+            "p50_duration_ms": 303,
+            "p95_duration_ms": 335,
+            "max_duration_ms": 335
+          },
+          "download": {
+            "calls": 15,
+            "units": 3000,
+            "errors": 2,
+            "last_error_reason": "timeout",
+            "total_duration_ms": 28989,
+            "avg_duration_ms": 1932,
+            "p50_duration_ms": 1481,
+            "p95_duration_ms": 6000,
+            "max_duration_ms": 6000
+          },
+          "generate_ids": {
+            "calls": 2,
+            "units": 10,
+            "errors": 0,
+            "total_duration_ms": 351,
+            "avg_duration_ms": 175,
+            "p50_duration_ms": 250,
+            "p95_duration_ms": 250,
+            "max_duration_ms": 250
+          },
+          "list": {
+            "calls": 33,
+            "units": 3300,
+            "errors": 0,
+            "total_duration_ms": 10363,
+            "avg_duration_ms": 314,
+            "p50_duration_ms": 174,
+            "p95_duration_ms": 1750,
+            "max_duration_ms": 2763
+          },
+          "metadata": {
+            "calls": 45,
+            "units": 225,
+            "errors": 1,
+            "last_error_reason": "timeout",
+            "total_duration_ms": 18116,
+            "avg_duration_ms": 402,
+            "p50_duration_ms": 156,
+            "p95_duration_ms": 1944,
+            "max_duration_ms": 6000
+          },
+          "patch": {
+            "calls": 9,
+            "units": 450,
+            "errors": 0,
+            "total_duration_ms": 7970,
+            "avg_duration_ms": 885,
+            "p50_duration_ms": 474,
+            "p95_duration_ms": 2765,
+            "max_duration_ms": 2765
+          },
+          "upload": {
+            "calls": 10,
+            "units": 500,
+            "errors": 0,
+            "total_duration_ms": 10865,
+            "avg_duration_ms": 1086,
+            "p50_duration_ms": 742,
+            "p95_duration_ms": 2652,
+            "max_duration_ms": 2652
+          }
+        }
+      },
+      "exit": {
+        "calls": 237,
+        "units": 13560,
+        "errors": 0,
+        "response_bytes": 365388,
+        "ops": {
+          "delete": {
+            "calls": 9,
+            "units": 450,
+            "errors": 0,
+            "total_duration_ms": 3377,
+            "avg_duration_ms": 375,
+            "p50_duration_ms": 381,
+            "p95_duration_ms": 641,
+            "max_duration_ms": 641
+          },
+          "download": {
+            "calls": 15,
+            "units": 3000,
+            "errors": 0,
+            "total_duration_ms": 5923,
+            "avg_duration_ms": 394,
+            "p50_duration_ms": 356,
+            "p95_duration_ms": 736,
+            "max_duration_ms": 736
+          },
+          "generate_ids": {
+            "calls": 1,
+            "units": 5,
+            "errors": 0,
+            "total_duration_ms": 94,
+            "avg_duration_ms": 94,
+            "p50_duration_ms": 94,
+            "p95_duration_ms": 94,
+            "max_duration_ms": 94
+          },
+          "list": {
+            "calls": 72,
+            "units": 7200,
+            "errors": 0,
+            "total_duration_ms": 19070,
+            "avg_duration_ms": 264,
+            "p50_duration_ms": 266,
+            "p95_duration_ms": 425,
+            "max_duration_ms": 547
+          },
+          "metadata": {
+            "calls": 91,
+            "units": 455,
+            "errors": 0,
+            "total_duration_ms": 21614,
+            "avg_duration_ms": 237,
+            "p50_duration_ms": 244,
+            "p95_duration_ms": 381,
+            "max_duration_ms": 514
+          },
+          "patch": {
+            "calls": 16,
+            "units": 800,
+            "errors": 0,
+            "total_duration_ms": 7800,
+            "avg_duration_ms": 487,
+            "p50_duration_ms": 494,
+            "p95_duration_ms": 841,
+            "max_duration_ms": 841
+          },
+          "upload": {
+            "calls": 33,
+            "units": 1650,
+            "errors": 0,
+            "total_duration_ms": 77588,
+            "avg_duration_ms": 2351,
+            "p50_duration_ms": 1459,
+            "p95_duration_ms": 4695,
+            "max_duration_ms": 4696
+          }
+        }
+      }
+    },
+    "post_stop_origin_proof": {
+      "pre_stop": {
+        "get_started": 1,
+        "get_finished": 1,
+        "get_failed": 0,
+        "post_started": 0,
+        "post_finished": 0,
+        "post_failed": 0,
+        "echo_connections": 1,
+        "echo_frames": 13,
+        "unexpected_http": 0,
+        "overflow": 0
+      },
+      "post_stop": {
+        "get_started": 1,
+        "get_finished": 1,
+        "get_failed": 0,
+        "post_started": 0,
+        "post_finished": 0,
+        "post_failed": 0,
+        "echo_connections": 1,
+        "echo_frames": 13,
+        "unexpected_http": 0,
+        "overflow": 0
+      },
+      "boundary": "observed after all registered writers, benchmark and curl children were reaped; not restart exactly-once",
+      "status": "failed",
+      "reasons": [
+        "incomplete_echo_stream"
+      ],
+      "error_type": "RecoveryRejected"
+    },
+    "observer_failures": [
+      {
+        "stage": "post_stop_origin",
+        "error_type": "RecoveryRejected"
+      }
+    ],
+    "teardown": {
+      "writers_stopped": true,
+      "all_stopped": true,
+      "drive_cleanup_allowed": true,
+      "cohort_continuation_allowed": false,
+      "cleanup_failures": [],
+      "primary_outcome_persisted": true
+    },
+    "partial_receipts": [
+      {
+        "kind": "observation_start",
+        "probe_started_utc": "2026-11-15T22:45:03.569451+00:00",
+        "prelude_verified": true,
+        "prelude_bytes_each_direction": 131072,
+        "expected_frames": 100,
+        "frame_bytes": 64
+      },
+      {
+        "kind": "small",
+        "index": 0,
+        "start_offset_ms": 1004.752,
+        "queue_ms": 4.752,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 1361.385,
+        "total_ms": 1361.455,
+        "scheduled_ttfb_ms": 1366.137,
+        "scheduled_total_ms": 1366.207,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      },
+      {
+        "kind": "small",
+        "index": 1,
+        "start_offset_ms": 2251.047,
+        "queue_ms": 1.047,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 1020.94,
+        "total_ms": 1021.009,
+        "scheduled_ttfb_ms": 1021.987,
+        "scheduled_total_ms": 1022.056,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      },
+      {
+        "kind": "small",
+        "index": 2,
+        "start_offset_ms": 3503.253,
+        "queue_ms": 3.253,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 3472.853,
+        "total_ms": 3472.892,
+        "scheduled_ttfb_ms": 3476.106,
+        "scheduled_total_ms": 3476.145,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      },
+      {
+        "kind": "small",
+        "index": 3,
+        "start_offset_ms": 4756.161,
+        "queue_ms": 6.161,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 2369.022,
+        "total_ms": 2369.056,
+        "scheduled_ttfb_ms": 2375.183,
+        "scheduled_total_ms": 2375.217,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      },
+      {
+        "kind": "small",
+        "index": 4,
+        "start_offset_ms": 6005.466,
+        "queue_ms": 5.466,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 4352.289,
+        "total_ms": 4352.324,
+        "scheduled_ttfb_ms": 4357.755,
+        "scheduled_total_ms": 4357.79,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      },
+      {
+        "kind": "small",
+        "index": 5,
+        "start_offset_ms": 7256.079,
+        "queue_ms": 6.079,
+        "overlapped_bulk_at_dispatch": true,
+        "overlapped_bulk_at_start": true,
+        "ok": true,
+        "failure": null,
+        "http_status": null,
+        "ttfb_ms": 3633.521,
+        "total_ms": 3633.57,
+        "scheduled_ttfb_ms": 3639.6,
+        "scheduled_total_ms": 3639.649,
+        "body_bytes": 64,
+        "uploaded_bytes": 64,
+        "transfer_bytes": 64,
+        "goodput_mbps": null,
+        "integrity_checked": true
+      }
+    ],
+    "file_checkpoint": null,
+    "partial_latency_percentile": null
+  },
+  "unattempted_arms": [
+    "main",
+    "main",
+    "candidate"
+  ],
+  "timeout_timeline_utc": [
+    {
+      "at": "2026-11-15T22:45:20Z",
+      "operation": "download",
+      "count": 2,
+      "duration_seconds": 6
+    },
+    {
+      "at": "2026-11-15T22:45:20Z",
+      "operation": "metadata",
+      "count": 1,
+      "duration_seconds": 6
+    },
+    {
+      "at": "2026-11-15T22:45:24Z",
+      "operation": "upload",
+      "count": 1,
+      "duration_seconds": 10
+    },
+    {
+      "at": "2026-11-15T22:45:26Z",
+      "operation": "upload",
+      "count": 1,
+      "duration_seconds": 10
+    }
+  ],
+  "observed_upload_mux_results": [
+    {
+      "role": "client",
+      "lane": "1",
+      "seq": "10",
+      "priority": "true",
+      "sealed_bytes": "151",
+      "idempotent": "false",
+      "error": "timeout"
+    },
+    {
+      "role": "client",
+      "lane": "1",
+      "seq": "11",
+      "priority": "true",
+      "sealed_bytes": "151",
+      "idempotent": "false",
+      "error": "timeout"
+    }
+  ],
+  "accounting": {
+    "observed_timeouts": 5,
+    "permitted_timeouts": 4,
+    "last_periodic_api_errors": 3,
+    "last_periodic_estimated_units": 21295,
+    "quality_budget_was_google_quota": false,
+    "client_file_completed": false,
+    "verified_small_receipts": 6,
+    "origin_text_frames": 12,
+    "origin_preludes": 1,
+    "origin_GET_write_completed": true
+  },
+  "cleanup": {
+    "comparison_exit_code": 1,
+    "writer_proofs": [
+      {
+        "arm": "0-candidate",
+        "writers_stopped": true,
+        "all_stopped": true,
+        "cohort_continuation_allowed": true
+      }
+    ],
+    "delayed_zero": true,
+    "errors": [],
+    "drive_cleanup_allowed": true,
+    "exact_prefix_count": 2,
+    "residual_mux_deleted": 33,
+    "profiles_removed": true
+  },
+  "scope": "No parser failure. No file-throughput or partialp95 claim. Source-inferred bareupload was accepted. Stop answered the configured quality budget, not eventual tunnel recoverability. Futureburst cohort has different predeclared limits and does not reclassify this failure.",
+  "raw_directory": "repocomp/.skirk-runs/sustained-end-to-end-stress-v2-20261115/"
+}

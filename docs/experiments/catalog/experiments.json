@@ -3786,6 +3786,45 @@
       ],
       "revision_or_binary": "candidate8c9829/281986;main2c52ff8/340461;observerd4471c8;rootintegrated200PythonPASS5.128s",
       "live_comparable": false
+    },
+    {
+      "id": "R3-048",
+      "candidate": "Versioned source-inferred bare multipart upload observation",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "SeparateV2class/flag;onlytwofrozenhashes,exactbareuploadattempt1statusnone;oldclassesunchanged",
+      "latency": "No runtime speed change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "All realerrorsretained;shared8arm4/60s16cohortunchanged",
+      "correctness_and_errors": "187PythonPASS3.878s;rootintegration225PASS;actualp0false/sourcepairing/negativeURL/unknownhash/sharedcapcases",
+      "cleanup": "NoGooglecalls in source tests",
+      "decision": "Source inferenceisnotobservedhost/URI/stage/wire/APIidempotency;completeorigin+clientproofstillmandatory",
+      "source_documents": [
+        "docs/experiments/end-to-end-recovery-stress-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "dc81870;runtime8c9829/281986 unchanged",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-049",
+      "candidate": "100MiB end-to-end stress V2: first candidate exceeds quality allowance",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Firstcandidateonly;100MiB+100persistent64Bechoes/1250ms after128KiBprelude;old8/4/16qualitycaps and125k/150k/600kunitbounds",
+      "latency": "6verifiedechoes,12origintexts+prelude,no file;no partialp95",
+      "throughput_mbps": null,
+      "estimated_quota_units": "21295lastestimatedunits;5real timeoutlogs vs3lastperiodicerrors",
+      "correctness_and_errors": "2download+metadata6s at22:45:20UTC;2source-boundp0upload10s at22:45:24/26;fifthtrigger retained,4permitted;notparserfailure",
+      "cleanup": "Allownedwriters/childrenstopped;33muxdeleted,2prefix0immediate31s,profilesgone",
+      "decision": "NoGooglequotaexhaustionorirrecoverabilityclaim;other3armsunattempted;futureburstbudgetseparate",
+      "source_documents": [
+        "docs/experiments/sustained-end-to-end-recovery-stress-v2-2026-11-15.md",
+        "docs/experiments/sustained-end-to-end-recovery-stress-v2-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/sustained-end-to-end-stress-v2-20261115/"
+      ],
+      "revision_or_binary": "runtime8c9829/281986;observerdc81870",
+      "live_comparable": false
     }
   ]
 }

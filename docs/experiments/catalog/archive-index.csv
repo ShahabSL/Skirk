@@ -291,6 +291,7 @@ repocomp,.skirk-runs/slot-pools-download-32m-20261114-01/summary.json,5282,sourc
 repocomp,.skirk-runs/slot-pools-upload-20261114-01/summary.json,5267,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/slot-shadow-download-20261114-01/summary.json,4114,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/sustained-end-to-end-stress-20261115/arms/summary.json,51969,sanitized aggregate rows and exact application/origin/teardown proof in companion report; partial arm retained
+repocomp,.skirk-runs/sustained-end-to-end-stress-v2-20261115/arms/summary.json,14630,first-arm failure and triggering quality-budget event preserved in companion report
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v4-latest-100mb.json,4008,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-100mb.json,4504,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/v6-live-20260514T180938Z/bench-v6-coalesce-100mb.json,4514,source-index-only; inspect cited catalog entry or raw file for exact values
