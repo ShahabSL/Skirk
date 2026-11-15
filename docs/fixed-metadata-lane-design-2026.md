@@ -33,8 +33,11 @@ existing session secret with a distinct slot key and nonce domain. It carries
 the generation, writer direction, strictly increasing slot sequence, the
 highest contiguous ACK for the reverse direction, and **every unacknowledged**
 `{slot sequence, mux object name, mux sealed bytes}` record. Keep the encoded
-description below a conservative cap supported by live tests (at most 8 KiB
-initially). Google Drive's `version` is only a change hint. A reader may skip
+description below a conservative 8 KiB prototype cap. The live ACK probe's
+largest snapshot held eight 64-byte frames, so it has **not** validated the
+8 KiB boundary or established Drive's maximum usable description size. Test
+the exact encoded boundary before enabling a production slot. Google Drive's
+`version` is only a change hint. A reader may skip
 versions and still recover the full unacknowledged suffix from the latest
 snapshot.
 

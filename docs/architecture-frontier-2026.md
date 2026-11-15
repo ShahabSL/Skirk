@@ -227,7 +227,9 @@ reader skipped **nine Drive versions** but verified and acknowledged all
 was **0.859/1.788 s**. Fifteen data PATCHes, six ACK PATCHes, and 28 GETs
 completed under a conservative **3,240-unit** accounting bound. Both files
 were deleted and confirmed absent twice by ID; no recovery ledger remained.
-The result is private at `.skirk-runs/ack-slot-live-20261114.json`, and the
+The largest live snapshot held eight 64-byte frames. It does not validate the
+proposed 8 KiB encoded-description cap; that boundary needs its own readback
+test. The result is private at `.skirk-runs/ack-slot-live-20261114.json`, and the
 probe and version-skip tests are under `tools/ack_slot_probe/`. HMACs on
 synthetic frames establish this probe's integrity; production would use the
 existing AEAD, device ownership and replay defenses. It is a queue
