@@ -45,7 +45,12 @@ and whether the provider's own Google egress avoids VPN routing recursion.
 To use it, generate a profile with `skirk setup init`, tap **Choose client.skirk
 file** in the iOS app (or paste the profile text), review the Google access route,
 and tap Connect. File reads are limited to 256 KiB and valid UTF-8; the selected
-file is not retained after the profile is saved in Keychain. A new import defaults
+file is not retained after the profile is saved in Keychain. Cloud-provider
+coordination and file reads run off the UI actor, with one active read and at
+most one newer pending file. A canceled or replaced selection cannot save a
+late result. Canceling a provider read is cooperative: security-scoped access
+is released when its actual I/O finishes, while the UI immediately allows
+another selection or pasted profile. A new import defaults
 to Google front, which sends TLS SNI to `www.google.com` even if an older
 profile contains a Direct route. "Use profile route" deliberately follows the
 imported config. The explicit Direct Google choice connects to Drive API hosts
@@ -66,3 +71,14 @@ only the nonsecret CLI command; Replace profile accepts the renewed
 `client.skirk` from Files or pasted text into Keychain. Restart the exit after
 renewing its kit. Neither
 the profile nor its refresh token is placed on the clipboard by the copy button.
+
+The isolated macOS test package exercises the shared file-import helper with
+Swift 6 concurrency checking, including blocked provider reads, newer-selection
+ownership, picker cancellation, security-scope lifetime and bounded input:
+
+```sh
+swift test --package-path clients/ios
+```
+
+These focused tests do not replace Simulator UI checks or signed-device tests
+with real Files/iCloud providers.
