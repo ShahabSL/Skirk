@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var errMuxSlotPatchBudgetExhausted = errors.New("metadata slot shadow PATCH budget exhausted")
+
 // A shadow record contains a real sealed mux batch, but the receiver only
 // authenticates it. The ordinary immutable object remains authoritative for
 // application delivery. This bounded probe is never an alternate transport.
@@ -216,7 +218,7 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 	link.mu.Lock()
 	if link.patches >= muxSlotShadowMaxPatches {
 		link.mu.Unlock()
-		return errors.New("metadata slot shadow PATCH budget exhausted")
+		return errMuxSlotPatchBudgetExhausted
 	}
 	last := link.lastPatch
 	link.mu.Unlock()
@@ -522,7 +524,13 @@ func (m *driveMux) forgetSlotDuplicateID(name, id string) {
 
 func (m *driveMux) logSlotShadowError(err error) {
 	if err != nil && m.t != nil && m.t.Logger != nil {
-		m.t.Logger.Printf("mux slot shadow stopped role=%s reason=%s authoritative=immutable", m.role, errorSummary(err))
+		reason := errorSummary(err)
+		// Exact local sentinel only. An unrelated/wrapped/joined error must
+		// not acquire a healthy label merely by sharing text or one cause.
+		if err == errMuxSlotPatchBudgetExhausted {
+			reason = "patch_budget_exhausted"
+		}
+		m.t.Logger.Printf("mux slot shadow stopped role=%s reason=%s authoritative=immutable", m.role, reason)
 	}
 }
 
