@@ -156,8 +156,10 @@ class QuotaGuard:
         self.max_total = max(self.max_total, total)
         if current > self.args.max_arm_units or total + self.args.cleanup_reserve_units > self.args.max_total_units:
             raise RuntimeError("total_quota_guard")
-        if rolling > self.args.max_rolling_units or recent > self.args.max_recent_units_per_minute:
+        if rolling > self.args.max_rolling_units:
             raise RuntimeError("rolling_quota_guard")
+        if recent > self.args.max_recent_units_per_minute:
+            raise RuntimeError("recent_rate_guard")
         return snapshots
 
 
@@ -456,7 +458,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-arm-units", type=int, default=80_000)
     parser.add_argument("--max-total-units", type=int, default=175_000)
     parser.add_argument("--max-rolling-units", type=int, default=100_000)
-    parser.add_argument("--max-recent-units-per-minute", type=int, default=150_000)
+    parser.add_argument("--max-recent-units-per-minute", type=int, default=150_000,
+                        help="early stop on short-window projected rate; actual 60s guard is separate")
     parser.add_argument("--cleanup-reserve-units", type=int, default=20_000)
     args = parser.parse_args(argv)
     order = args.order.split(",")

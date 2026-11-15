@@ -20,10 +20,10 @@ class Running:
         return None
 
 
-def metrics(units=100, errors=0):
+def metrics(units=100, errors=0, recent_units=None):
     return {"updated_at": datetime.now(timezone.utc).isoformat(),
             "quota": {"calls": 1, "units": units, "errors": errors},
-            "recent_quota_per_minute": {"units": units},
+            "recent_quota_per_minute": {"units": units if recent_units is None else recent_units},
             "drive_backoff": {"active": False}}
 
 
@@ -81,6 +81,38 @@ class CapacityCompareTests(unittest.TestCase):
             paths[-1].write_text(json.dumps(metrics(errors=1)))
             with self.assertRaisesRegex(RuntimeError, "drive_error_or_backoff"):
                 guard.check(paths, [Running()])
+
+    def test_recent_projection_does_not_masquerade_as_actual_rolling_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = [root / f"metrics-{i}.json" for i in range(CLIENTS + 1)]
+            actual = (14855, 4555, 3805, 3955, 4755, 4355)
+            projected = (98400, 28200, 18600, 19200, 28800, 22800)
+            for path, units, recent in zip(paths, actual, projected):
+                path.write_text(json.dumps(metrics(units=units, recent_units=recent)))
+            args = argparse.Namespace(max_arm_units=80_000, max_total_units=175_000,
+                                      cleanup_reserve_units=20_000, max_rolling_units=100_000,
+                                      max_recent_units_per_minute=250_000)
+            guard = QuotaGuard(args)
+            guard.check(paths, [Running()])
+            self.assertEqual(guard.max_rolling, 36_280)
+            self.assertEqual(guard.max_recent, 216_000)
+            args.max_recent_units_per_minute = 150_000
+            with self.assertRaisesRegex(RuntimeError, "recent_rate_guard"):
+                guard.check(paths, [Running()])
+
+    def test_actual_rolling_ceiling_has_its_own_abort_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = [root / f"metrics-{i}.json" for i in range(CLIENTS + 1)]
+            for index, path in enumerate(paths):
+                path.write_text(json.dumps(metrics(units=100_001 if index == 0 else 0,
+                                                   recent_units=1)))
+            args = argparse.Namespace(max_arm_units=200_000, max_total_units=250_000,
+                                      cleanup_reserve_units=20_000, max_rolling_units=100_000,
+                                      max_recent_units_per_minute=250_000)
+            with self.assertRaisesRegex(RuntimeError, "rolling_quota_guard"):
+                QuotaGuard(args).check(paths, [Running()])
 
     def test_cleanup_uses_only_exact_session_prefix_and_checks_twice(self):
         session = "00112233445566778899aabbccddeeff"
