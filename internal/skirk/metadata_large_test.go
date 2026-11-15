@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -171,6 +172,41 @@ func TestLargeMetadataFreshListClampsPageAndResponseBytes(t *testing.T) {
 			}
 			if !oversize && e != nil {
 				t.Fatal(e)
+			}
+		})
+	}
+}
+
+func TestLargeMetadataFreshListBoundsInflatedGzipResponse(t *testing.T) {
+	for _, extra := range []int{0, 1} {
+		t.Run(fmt.Sprint(extra), func(t *testing.T) {
+			const prefix, suffix = `{"files":[],"padding":"`, `"}`
+			body := append([]byte(prefix), bytes.Repeat([]byte{'a'}, driveLargeMetadataListMaxBytes-len(prefix)-len(suffix)+extra)...)
+			body = append(body, suffix...)
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			if _, err := writer.Write(body); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if compressed.Len() >= driveLargeMetadataListMaxBytes {
+				t.Fatal("fixture does not exercise decompression expansion")
+			}
+			httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				response := stringResponse(http.StatusOK, "")
+				response.Header.Set("Content-Encoding", "gzip")
+				response.Body = io.NopCloser(bytes.NewReader(compressed.Bytes()))
+				return response, nil
+			})}}
+			store := NewDriveStore(httpClient, "token", DriveConfig{MetadataOnlyPriority: true, MetadataOnlyMaxBytes: 16384})
+			_, err := store.ListFreshContainsPageStatus(context.Background(), []string{"muxv4/test/", "/p0/"}, time.Time{}, "", 1)
+			if extra == 0 && err != nil {
+				t.Fatalf("rejected gzip body at the inflated limit: %v", err)
+			}
+			if extra == 1 && (err == nil || !strings.Contains(err.Error(), "exceeded configured byte limit")) {
+				t.Fatalf("inflated gzip body beyond the limit was not rejected: %v", err)
 			}
 		})
 	}
