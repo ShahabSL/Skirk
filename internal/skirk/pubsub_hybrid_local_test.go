@@ -211,7 +211,7 @@ func TestHybridParallelPullCancellationAndRetryAdmission(t *testing.T) {
 	}
 }
 func TestHybridGlobalBudgetConcurrentAndBoundedHTTP(t *testing.T) {
-	budget := &hybridBudget{MaxCalls: 42, MaxBytes: hybridCleanupByteReserve + 100}
+	budget := &hybridBudget{MaxCalls: 42 * hybridH2AttemptUpper, MaxBytes: hybridCleanupByteReserve + 100}
 	var allowed atomic.Int64
 	var wg sync.WaitGroup
 	for i := 0; i < 40; i++ {
@@ -236,7 +236,7 @@ func TestHybridGlobalBudgetConcurrentAndBoundedHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	transport := &hybridRewriteTransport{target: server.URL, base: http.DefaultTransport}
-	api := &hybridREST{client: &GoogleHTTPClient{client: &http.Client{Transport: transport}}, token: "fictional", budget: &hybridBudget{MaxCalls: 100, MaxBytes: 8 << 20}}
+	api := &hybridREST{client: &GoogleHTTPClient{client: &http.Client{Transport: transport}}, token: "fictional", budget: &hybridBudget{MaxCalls: 100 * hybridH2AttemptUpper, MaxBytes: 8 << 20}}
 	if _, e := api.call(context.Background(), "POST", "/v1/test", map[string]int{"maxMessages": 8}); e == nil {
 		t.Fatal("oversized response accepted")
 	}
@@ -406,7 +406,7 @@ func TestHybridClockGuardRejectsBeforeSubscriptionCreate(t *testing.T) {
 func TestHybridPhysicalDriveGuardAndStopJoin(t *testing.T) {
 	began, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int64
-	g := &hybridDriveGate{budget: &hybridBudget{MaxCalls: 100, MaxBytes: 10200}, base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	g := &hybridDriveGate{budget: &hybridBudget{MaxCalls: 100 * hybridH2AttemptUpper, MaxBytes: hybridDriveCleanupUnitsReserve + 1600}, base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls.Add(1)
 		close(began)
 		<-release
@@ -439,14 +439,14 @@ func TestHybridPhysicalDriveGuardAndStopJoin(t *testing.T) {
 		t.Fatal("late HTTP reached Google transport")
 	}
 	// Exactly one 200-unit media reservation fits before the 10k cleanup reserve.
-	guard := &hybridBudget{MaxCalls: 100, MaxBytes: 10200}
+	guard := &hybridBudget{MaxCalls: 100 * hybridH2AttemptUpper, MaxBytes: hybridDriveCleanupUnitsReserve + 1600}
 	if guard.reserveDrive(200, false) != nil || guard.reserveDrive(5, false) == nil || guard.reserveDrive(50, true) != nil {
 		t.Fatal("Drive cleanup reservation not protected")
 	}
 }
 
 func TestHybridDriveStopWaitsForResponseBody(t *testing.T) {
-	g := &hybridDriveGate{budget: &hybridBudget{MaxCalls: 100, MaxBytes: 10200}, base: roundTripFunc(func(r *http.Request) (*http.Response, error) { return stringResponse(200, "fictional"), nil })}
+	g := &hybridDriveGate{budget: &hybridBudget{MaxCalls: 100 * hybridH2AttemptUpper, MaxBytes: hybridDriveCleanupUnitsReserve + 1600}, base: roundTripFunc(func(r *http.Request) (*http.Response, error) { return stringResponse(200, "fictional"), nil })}
 	req, _ := http.NewRequest("GET", "https://www.google.com/drive/v3/files/own?alt=media", nil)
 	response, e := g.RoundTrip(req)
 	if e != nil {
@@ -468,7 +468,7 @@ func TestHybridDriveStopWaitsForResponseBody(t *testing.T) {
 }
 
 func TestHybridCleanupReservesSurviveActiveExhaustion(t *testing.T) {
-	budget := &hybridBudget{MaxCalls: 40, MaxBytes: hybridCleanupByteReserve + 200}
+	budget := &hybridBudget{MaxCalls: 40 * hybridH2AttemptUpper, MaxBytes: hybridCleanupByteReserve + 200}
 	if e := budget.reserve(0, 200, false); e != nil {
 		t.Fatal(e)
 	}
@@ -485,7 +485,7 @@ func TestHybridCleanupReservesSurviveActiveExhaustion(t *testing.T) {
 		}
 		budget.finishResponse(hybridCleanupResponseMax+1, 128)
 	}
-	calls := &hybridBudget{MaxCalls: 34, MaxBytes: 8 << 20}
+	calls := &hybridBudget{MaxCalls: 34 * hybridH2AttemptUpper, MaxBytes: 8 << 20}
 	for i := 0; i < 2; i++ {
 		if e := calls.reserve(0, 0, false); e != nil {
 			t.Fatal(e)
@@ -499,7 +499,7 @@ func TestHybridCleanupReservesSurviveActiveExhaustion(t *testing.T) {
 			t.Fatal("cloud cleanup call reserve lost")
 		}
 	}
-	drive := &hybridBudget{MaxCalls: 34, MaxBytes: 50000}
+	drive := &hybridBudget{MaxCalls: 34 * hybridH2AttemptUpper, MaxBytes: 5 * hybridDriveCleanupUnitsReserve}
 	if drive.reserveDrive(5, false) != nil || drive.reserveDrive(5, false) != nil || drive.reserveDrive(5, false) == nil || drive.reserveDrive(50, true) != nil || drive.reserveDrive(5, true) != nil {
 		t.Fatal("Drive delete/get call reserve lost")
 	}
@@ -676,7 +676,7 @@ func TestHybridProgressJournalConcurrentRowsAndFailureCancel(t *testing.T) {
 func TestHybridGuardDenialCancelsBeforeTransportDispatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	budget := &hybridBudget{MaxCalls: 32, MaxBytes: 10200}
+	budget := &hybridBudget{MaxCalls: 32, MaxBytes: hybridDriveCleanupUnitsReserve + 1600}
 	var dispatched atomic.Int64
 	gate := &hybridDriveGate{budget: budget, onGuard: cancel, base: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		dispatched.Add(1)
@@ -705,5 +705,25 @@ func TestHybridBoundedLogAndBodyProgress(t *testing.T) {
 	reader := &hybridBodyProgress{base: bytes.NewReader(make([]byte, 2<<20)), next: 1 << 20, emit: func(n int64) { progress = append(progress, n) }}
 	if n, e := io.Copy(io.Discard, reader); e != nil || n != 2<<20 || len(progress) != 2 {
 		t.Fatal("body progress did not preserve exact stream", n, e, len(progress))
+	}
+}
+
+func TestHybridWorstCaseH2ReservationsPrecedeEveryDispatch(t *testing.T) {
+	budget := &hybridBudget{MaxCalls: 34 * hybridH2AttemptUpper, MaxBytes: hybridCleanupByteReserve + 80}
+	if e := budget.reserve(10, 0, false); e != nil {
+		t.Fatal(e)
+	}
+	if budget.reserve(1, 0, false) == nil {
+		t.Fatal("opaque body replay upper bound not reserved before dispatch")
+	}
+	if budget.snapshot()["request_body_bytes"] != 10 || budget.snapshot()["request_body_bytes_upper_bound"] != 80 || budget.snapshot()["attempt_reservations_upper"] != 8 {
+		t.Fatal("visible bytes and upper bound conflated")
+	}
+	driver := &hybridBudget{MaxCalls: 34 * hybridH2AttemptUpper, MaxBytes: hybridDriveCleanupUnitsReserve + 800}
+	if driver.reserveDrive(100, false) != nil || driver.reserveDrive(5, false) == nil || driver.driveSnapshot()["reserved_units_upper"] != 800 {
+		t.Fatal("bodyless GET internal retry quota not reserved")
+	}
+	if driver.reserveDrive(50, true) != nil {
+		t.Fatal("worst-case reservation consumed cleanup")
 	}
 }

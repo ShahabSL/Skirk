@@ -376,6 +376,8 @@ func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore, reco
 
 // Exercise real TCP/SOCKS/mux code. User traffic and external targets are absent.
 func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitData BlobStore, clientHybrid, exitHybrid *hybridStore, bulkBytes int, record func(hybridLiveRow), logger *log.Logger, event func(map[string]any)) ([]hybridLiveRow, error) {
+	ctx, abortScenario := context.WithCancel(ctx)
+	defer abortScenario()
 	payload := make([]byte, bulkBytes)
 	if _, e := rand.Read(payload); e != nil {
 		return nil, e
@@ -492,6 +494,7 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 			rows = append(rows, row)
 			if e != nil {
 				failures = append(failures, e)
+				abortScenario()
 			}
 			mu.Unlock()
 			if record != nil {
@@ -555,6 +558,9 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 		finish(row, nil)
 	}
 	request("warm_text", "/text", nil, 0)
+	if ctx.Err() != nil {
+		return rows, errors.Join(failures...)
+	}
 	for _, direction := range []string{"download", "upload"} {
 		var bulk sync.WaitGroup
 		bulk.Add(1)
@@ -573,7 +579,7 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 			select {
 			case <-ctx.Done():
 				bulk.Wait()
-				return rows, ctx.Err()
+				return rows, errors.Join(append(failures, ctx.Err())...)
 			case <-time.After(150 * time.Millisecond):
 			}
 		}
@@ -705,9 +711,10 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	makeAPI := func(cleanup bool) hybridCall { a := newAPI(cleanup); apis = append(apis, a); return a.call }
 	control := makeAPI(false)
 	cloud := &hybridCloudResources{control: control}
-	// Physical Drive requests are atomically capped at 2,000; active unit
-	// reservations stop at 40,000, keeping 10,000 units for exact cleanup.
-	driveBudget := &hybridBudget{MaxCalls: 2000, MaxBytes: 50000}
+	// Pinned HTTP/2 attempts are conservatively reserved eight per visible
+	// dispatch: <=2,000 attempts, <=240,000 active units and <=280,000 total,
+	// with 256 attempts/40,000 units reserved for cleanup.
+	driveBudget := &hybridBudget{MaxCalls: 2000, MaxBytes: 280000}
 	var stores []*DriveStore
 	var gates []*hybridDriveGate
 	newDrive := func(cleanup bool) *DriveStore {
@@ -773,7 +780,7 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				progress.write(map[string]any{"phase": "heartbeat", "elapsed_ms": time.Since(began).Milliseconds(), "pubsub": budget.snapshot(), "client_published": clientHybrid.published.Load(), "exit_published": exitHybrid.published.Load(), "client_delivered": clientHybrid.delivered.Load(), "exit_delivered": exitHybrid.delivered.Load(), "empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "drive_guard": driveBudget.snapshot(), "client_drive_active": clientDrive.QuotaSnapshot(), "exit_drive_active": exitDrive.QuotaSnapshot()})
+				progress.write(map[string]any{"phase": "heartbeat", "elapsed_ms": time.Since(began).Milliseconds(), "pubsub": budget.snapshot(), "client_published": clientHybrid.published.Load(), "exit_published": exitHybrid.published.Load(), "client_delivered": clientHybrid.delivered.Load(), "exit_delivered": exitHybrid.delivered.Load(), "empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "drive_guard": driveBudget.driveSnapshot(), "client_drive_active": clientDrive.QuotaSnapshot(), "exit_drive_active": exitDrive.QuotaSnapshot()})
 			}
 		}
 	}()
@@ -876,7 +883,7 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 			}
 		}
 	}
-	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "drive_transport_guard": driveBudget.snapshot(), "private_mux_log": boundedLog.stats(), "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
+	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "drive_transport_guard": driveBudget.driveSnapshot(), "private_mux_log": boundedLog.stats(), "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
 	stopHeartbeat()
 	<-heartbeatDone
 	progress.write(map[string]any{"phase": "cleanup_complete", "elapsed_ms": time.Since(began).Milliseconds(), "verified": cleanupOK && cloudCleanup})

@@ -251,3 +251,35 @@ Request-body progress means bytes read by the HTTP transport, not destination
 acceptance; only the origin's length/hash response establishes upload success.
 These diagnostic changes are applied equally to the next Drive/hybrid pair.
 The priority carrier, deadlines, ACK behavior and normal Drive pools stay fixed.
+
+## Free-product boundary and conservative retry guard revision
+
+Skirk's requested product route remains `www.google.com` and must be free to
+use. Pub/Sub's capped free tier is conditional, **not unlimited free transport**:
+10 GiB/month per billing account can be exhausted, and paid usage follows when
+billing is enabled. Test-project billing remains disabled; this candidate is
+optional bounded research, not a dependency or default for the free Skirk
+product. Neither 200,000 free users nor unbounded free Pub/Sub traffic is claimed.
+The separate Drive OAuth grant and Drive-backed product remain the priority.
+
+The diagnostic source guard now accounts conservatively for the pinned
+`golang.org/x/net/http2` v0.61 retry loop's maximum eight internal stream attempts
+per outer RoundTripper dispatch. Before entering the transport, it reserves
+**eight calls and eight copies of request-body bytes**, or eight method-unit
+charges for bodyless Drive GETs as well. These upper reservations are not
+refunded as if unused attempts were proven absent. Visible calls, actual exposed
+body bytes, upper reservations, WroteRequest callbacks and local denials have
+separate counters. Incoming decoded-body memory/exposed-body caps remain separate;
+TLS/headers and opaque transport traffic are not falsely labeled exact wire bytes.
+A dependency/transport change requires re-auditing this bound.
+
+For the next identical 16 MiB Drive control, the parent authorized a routine
+experiment guard of 240,000 active / 280,000 total worst-case reserved Drive
+units, including a 40,000 cleanup reserve. At eightfold reservation this admits
+at most 30,000 visible active unit estimates, rather than silently treating
+40,000 old visible units as a physical bound. The attempt cap is 2,000 with 256
+reserved for cleanup. Run only after a 60-second quiet interval and preserve a
+cap-hit failure without blindly enlarging it. This guard revision changes
+accounting/diagnostic cancellation, not the priority carrier or Drive pools.
+Any failed foreground HTTP measurement now records its sanitized failure row,
+cancels the scenario and proceeds directly to bounded independent cleanup.

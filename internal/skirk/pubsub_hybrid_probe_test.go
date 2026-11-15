@@ -22,6 +22,11 @@ import (
 	"time"
 )
 
+// x/net/http2 v0.61 permits at most eight internal stream attempts per
+// Transport.RoundTrip. Reserve the upper bound before any request is exposed.
+const hybridH2AttemptUpper = int64(8)
+const hybridCleanupAttemptReserve = 32 * hybridH2AttemptUpper
+const hybridDriveCleanupUnitsReserve = int64(40000)
 const hybridSealedMax = 1 << 20
 const hybridResponseMax = 4 << 20
 const hybridCleanupResponseMax = 16 << 10
@@ -31,12 +36,13 @@ const hybridCacheMax = 32 << 20
 const hybridEntriesMax = 4096 // Retained until the bounded experiment ends.
 
 type hybridBudget struct {
-	mu                                  sync.Mutex
-	Calls, BytesOut, BytesIn            int64
-	PendingBytes                        int64
-	Denials, StoppedDenials             int64
-	WriteCallbacks, WriteErrorCallbacks int64
-	MaxCalls, MaxBytes                  int64
+	mu                                    sync.Mutex
+	Calls, BytesOut, BytesIn              int64
+	AttemptReservations, OutboundReserved int64
+	PendingBytes                          int64
+	Denials, StoppedDenials               int64
+	WriteCallbacks, WriteErrorCallbacks   int64
+	MaxCalls, MaxBytes                    int64
 }
 
 func (b *hybridBudget) reserve(n, response int, cleanup bool) error {
@@ -44,15 +50,17 @@ func (b *hybridBudget) reserve(n, response int, cleanup bool) error {
 	defer b.mu.Unlock()
 	callLimit, byteLimit := b.MaxCalls, b.MaxBytes
 	if !cleanup {
-		callLimit -= 32
+		callLimit -= hybridCleanupAttemptReserve
 		byteLimit -= hybridCleanupByteReserve
 	}
-	if b.Calls >= callLimit || b.BytesIn+b.BytesOut+b.PendingBytes+int64(n+response) > byteLimit {
+	if b.AttemptReservations+hybridH2AttemptUpper > callLimit || b.BytesIn+b.OutboundReserved+b.PendingBytes+int64(n)*hybridH2AttemptUpper+int64(response) > byteLimit {
 		b.Denials++
 		return errors.New("hybrid global call/byte guard")
 	}
 	b.Calls++
+	b.AttemptReservations += hybridH2AttemptUpper
 	b.BytesOut += int64(n)
+	b.OutboundReserved += int64(n) * hybridH2AttemptUpper
 	b.PendingBytes += int64(response)
 	return nil
 }
@@ -67,24 +75,32 @@ func (b *hybridBudget) reserveDrive(cost int, cleanup bool) error {
 	defer b.mu.Unlock()
 	limit := b.MaxBytes
 	if !cleanup {
-		limit -= 10000
+		limit -= hybridDriveCleanupUnitsReserve
 	}
 	callLimit := b.MaxCalls
 	if !cleanup {
-		callLimit -= 32
+		callLimit -= hybridCleanupAttemptReserve
 	}
-	if b.Calls >= callLimit || b.BytesOut+int64(cost) > limit {
+	upperCost := int64(cost) * hybridH2AttemptUpper
+	if b.AttemptReservations+hybridH2AttemptUpper > callLimit || b.BytesOut+upperCost > limit {
 		b.Denials++
 		return errors.New("hybrid global Drive request/unit guard")
 	}
 	b.Calls++
-	b.BytesOut += int64(cost)
+	b.AttemptReservations += hybridH2AttemptUpper
+	b.BytesOut += upperCost
 	return nil
 }
 func (b *hybridBudget) snapshot() map[string]int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]int64{"calls": b.Calls, "request_body_bytes": b.BytesOut, "response_body_bytes": b.BytesIn, "reserved_response_bytes": b.PendingBytes, "local_guard_denials": b.Denials, "stopped_gate_denials": b.StoppedDenials, "request_write_callbacks": b.WriteCallbacks, "request_write_error_callbacks": b.WriteErrorCallbacks}
+	return map[string]int64{"calls": b.Calls, "attempt_reservations_upper": b.AttemptReservations, "request_body_bytes_upper_bound": b.OutboundReserved, "request_body_bytes": b.BytesOut, "response_body_bytes": b.BytesIn, "reserved_response_bytes": b.PendingBytes, "local_guard_denials": b.Denials, "stopped_gate_denials": b.StoppedDenials, "request_write_callbacks": b.WriteCallbacks, "request_write_error_callbacks": b.WriteErrorCallbacks}
+}
+
+func (b *hybridBudget) driveSnapshot() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return map[string]int64{"visible_transport_dispatches": b.Calls, "attempt_reservations_upper": b.AttemptReservations, "reserved_units_upper": b.BytesOut, "local_guard_denials": b.Denials, "stopped_gate_denials": b.StoppedDenials, "request_write_callbacks": b.WriteCallbacks, "request_write_error_callbacks": b.WriteErrorCallbacks}
 }
 
 type hybridCall func(context.Context, string, string, any) (*HTTPResult, error)
