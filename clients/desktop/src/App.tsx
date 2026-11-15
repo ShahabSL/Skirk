@@ -188,11 +188,11 @@ function App() {
         : connected && snapshot?.platform === "macos" && selectedMode === "proxy"
           ? "Local proxy ready. Configure your browser or app to use it."
           : snapshot?.connection.message || runtimeMessage(connected, activeProfile));
-  const googleGrantExpired = isGoogleGrantExpired(
+  // Quota metrics and log tails can survive a profile switch. The running
+  // sidecar reports a terminal grant failure in this connection's message.
+  const googleGrantExpired = !connected && isGoogleGrantExpired(
     error,
-    snapshot?.connection.message,
-    snapshot?.metrics?.recentQuotaPerMinute.lastErrorReason,
-    phase === "error" ? snapshot?.logTail : undefined,
+    phase === "error" ? snapshot?.connection.message : undefined,
   );
   const displayPhase = googleGrantExpired && !connected ? "error" : phase;
   const routeSelection = selectedProfile?.routeMode === "direct" || selectedProfile?.routeMode === "real_pinned"
@@ -412,9 +412,9 @@ function App() {
               <p role="alert">The saved Google authorization was rejected. The exit owner needs to renew it.</p>
             </div>
             <ol>
-              <li>If the OAuth app is in <strong>Testing</strong>, its refresh token usually expires after seven days. The owner can open Google Cloud Console → Google Auth Platform → Audience and publish it to <strong>In production</strong> to remove that automatic weekly expiry. Google may require app verification. Tokens can still become invalid after revocation, inactivity, or other account changes.</li>
               <li>On the exit, run <code>skirk setup renew-oauth --kit skirk-kit</code> using your kit folder, then restart the exit.</li>
               <li>Paste the updated <code>client.skirk</code> here and replace this profile. Your ports, route, and performance settings stay saved.</li>
+              <li>If you own the Google Cloud project and its OAuth app is in <strong>Testing</strong>, open Google Auth Platform → Audience and publish it to <strong>In production</strong> to remove the automatic seven-day expiry for new grants. Google may require app verification. Publishing does not revive this grant; tokens can still become invalid later.</li>
             </ol>
             <div className="button-row">
               <button type="button" onClick={() => void copyRenewCommand()}>

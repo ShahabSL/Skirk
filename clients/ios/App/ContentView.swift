@@ -85,7 +85,7 @@ struct ContentView: View {
                             replacingProfile = true
                         }
                             .disabled(!tunnel.canConnect || replacingProfile)
-                        Link("Open Google OAuth audience settings", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
+                        Link("OAuth settings for project owner", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
                     } footer: {
                         Text("Production removes the Testing app's seven-day limit for new grants. It cannot revive this one; the exit owner must renew it first.")
                     }
@@ -158,7 +158,7 @@ struct ContentView: View {
                             Text("2. Restart the exit.")
                             Text("3. Disconnect, then replace this profile with the updated client.skirk.")
                             Text("Use your kit folder name instead of skirk-kit if different.")
-                            Link("Open Google OAuth audience settings", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
+                            Link("OAuth settings for project owner", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
                             Text("Production removes the automatic seven-day Testing expiry. A token can still become invalid and need renewal.")
                         }
                     } else if !tunnel.hasProfile {

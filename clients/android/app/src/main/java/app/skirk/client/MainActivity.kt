@@ -769,8 +769,9 @@ private fun ConnectionPanel(
     onTestExit: () -> Unit,
 ) {
     val uiState = connectionUiState(phase, selected)
-    val googleGrantExpired = isGoogleGrantExpired(message) ||
-        (phase != ConnectionPhase.IDLE && isGoogleGrantExpired(metrics?.lastErrorReason.orEmpty()))
+    // Metrics belong to the last engine run and can outlive a profile switch.
+    // Only a failed connection's own terminal message should trigger recovery.
+    val googleGrantExpired = phase == ConnectionPhase.FAILED && isGoogleGrantExpired(message)
     Panel {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -959,7 +960,7 @@ private fun OAuthRecoveryCard(
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 TextButton(onClick = onCopyRenewalCommand) { Text("Copy exit command") }
-                TextButton(onClick = onOpenOAuthSettings) { Text("Open OAuth settings") }
+                TextButton(onClick = onOpenOAuthSettings) { Text("OAuth settings for project owner") }
             }
             OutlinedButton(onClick = onReplaceProfile, enabled = enabled) {
                 Text("Replace profile with renewed config")
