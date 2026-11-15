@@ -151,7 +151,7 @@ func rrReadPrivateSettings(dir string) (relayResearchPrivateSettings, []byte, [1
 		return s, nil, epoch, errRelayResearchBounds
 	}
 	seed, seedErr := hex.DecodeString(s.PayloadSeedHex)
-	if seedErr != nil || len(seed) != 32 {
+	if seedErr != nil || len(seed) != 32 || bytes.Equal(seed, key) || bytes.Equal(seed, muxSecret) || bytes.Equal(seed, httpAuth) || bytes.Equal(seed, scriptAuth) {
 		return s, nil, epoch, errRelayResearchBounds
 	}
 	return s, key, epoch, nil
@@ -346,11 +346,18 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 	}
 	defer events.Close()
 	var eventsMu sync.Mutex
+	var bulkStarts atomic.Int64
 	origin, err := rrNewOwnedTLSOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/bulk" {
+			phase := r.Header.Get("X-Skirk-Research-Phase")
+			if phase != "download" && phase != "upload" || bulkStarts.Add(1) > 4 {
+				http.Error(w, "owned phase bound", http.StatusBadRequest)
+				cancel()
+				return
+			}
 			eventsMu.Lock()
-			eventErr := json.NewEncoder(events).Encode(map[string]any{"event": "bulk_started", "phase": r.Header.Get("X-Skirk-Research-Phase"), "method": r.Method, "unix_nano": time.Now().UnixNano()})
+			eventErr := json.NewEncoder(events).Encode(map[string]any{"event": "bulk_started", "phase": phase, "method": r.Method, "unix_nano": time.Now().UnixNano()})
 			eventsMu.Unlock()
 			if eventErr != nil {
 				cancel()
@@ -467,6 +474,7 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 		func(v *relayResearchPrivateSettings) { v.MaxScriptPosts = 257 },
 		func(v *relayResearchPrivateSettings) { v.MaxHTTPAttemptsUpper = 4097 },
 		func(v *relayResearchPrivateSettings) { v.MaxHTTPEncodedUpper = 1<<30 + 1 },
+		func(v *relayResearchPrivateSettings) { v.PayloadSeedHex = v.OuterKeyHex },
 	} {
 		bad := s
 		mutate(&bad)
