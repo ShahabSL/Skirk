@@ -603,31 +603,34 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	if os.Getenv("SKIRK_PUBSUB_HYBRID_LIVE") != "1" {
 		t.Skip("guarded isolated Pub/Sub/Drive SOCKS hybrid")
 	}
-	if os.Getenv("SKIRK_PUBSUB_HYBRID_ACCOUNT") != "isolated-secondary" {
-		t.Fatal("explicit isolated secondary-account token assertion required")
-	}
 	mode := os.Getenv("SKIRK_PUBSUB_HYBRID_MODE")
 	if mode != "pools" && mode != "hybrid" && mode != "drive" {
 		t.Fatal("explicit pools/hybrid/drive mode required")
 	}
+	if mode != "drive" && os.Getenv("SKIRK_PUBSUB_HYBRID_ACCOUNT") != "isolated-secondary" {
+		t.Fatal("explicit isolated secondary-account token assertion required")
+	}
 	out := os.Getenv("SKIRK_PUBSUB_HYBRID_OUT")
 	tokenPath := os.Getenv("SKIRK_PUBSUB_HYBRID_TOKEN_FILE")
 	configPath := os.Getenv("SKIRK_PUBSUB_HYBRID_ROUTE_CONFIG")
-	if !strings.Contains(filepath.Clean(out), ".skirk-runs/") || !strings.Contains(filepath.Clean(tokenPath), ".skirk-runs/") || !strings.Contains(filepath.Clean(configPath), ".skirk-runs/personal-test/quota-kit/") {
+	if !strings.Contains(filepath.Clean(out), ".skirk-runs/") || (mode != "drive" && !strings.Contains(filepath.Clean(tokenPath), ".skirk-runs/")) || !strings.Contains(filepath.Clean(configPath), ".skirk-runs/personal-test/quota-kit/") {
 		t.Fatal("isolated private paths required")
 	}
 	if _, e := os.Lstat(out); !os.IsNotExist(e) {
 		t.Fatal("fresh private output required")
 	}
-	info, e := os.Stat(tokenPath)
-	if e != nil || info.Mode().Perm()&0077 != 0 {
-		t.Fatal("private secondary token required")
+	var token []byte
+	if mode != "drive" {
+		info, e := os.Stat(tokenPath)
+		if e != nil || info.Mode().Perm()&0077 != 0 {
+			t.Fatal("private secondary token required")
+		}
+		token, e = os.ReadFile(tokenPath)
+		if e != nil {
+			t.Fatal("token read failed")
+		}
+		defer os.Remove(tokenPath)
 	}
-	token, e := os.ReadFile(tokenPath)
-	if e != nil {
-		t.Fatal("token read failed")
-	}
-	defer os.Remove(tokenPath)
 	cfg, e := LoadConfig(configPath)
 	if e != nil {
 		t.Fatal("isolated config load failed")
@@ -668,7 +671,10 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	}
 	prefix := "muxv4/" + cfg.SessionID + "/"
 	ledger := out + ".recovery-resources"
-	resources := []string{prefix, "projects/skirk-p/topics/" + label + "-up", "projects/skirk-p/topics/" + label + "-down", "projects/skirk-p/subscriptions/" + label + "-up", "projects/skirk-p/subscriptions/" + label + "-down"}
+	resources := []string{prefix}
+	if mode != "drive" {
+		resources = append(resources, "projects/skirk-p/topics/"+label+"-up", "projects/skirk-p/topics/"+label+"-down", "projects/skirk-p/subscriptions/"+label+"-up", "projects/skirk-p/subscriptions/"+label+"-down")
+	}
 	if e = os.MkdirAll(filepath.Dir(out), 0700); e != nil {
 		t.Fatal(e)
 	}
@@ -708,13 +714,22 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 		return a
 	}
 	var apis []*hybridREST
-	makeAPI := func(cleanup bool) hybridCall { a := newAPI(cleanup); apis = append(apis, a); return a.call }
+	makeAPI := func(cleanup bool) hybridCall {
+		if mode == "drive" {
+			return func(context.Context, string, string, any) (*HTTPResult, error) {
+				return nil, errors.New("PubSub disabled in Drive control")
+			}
+		}
+		a := newAPI(cleanup)
+		apis = append(apis, a)
+		return a.call
+	}
 	control := makeAPI(false)
 	cloud := &hybridCloudResources{control: control}
 	// Pinned HTTP/2 attempts are conservatively reserved eight per visible
-	// dispatch: <=2,000 attempts, <=240,000 active units and <=280,000 total,
+	// dispatch: <=4,000 attempts, <=240,000 active units and <=280,000 total,
 	// with 256 attempts/40,000 units reserved for cleanup.
-	driveBudget := &hybridBudget{MaxCalls: 2000, MaxBytes: 280000}
+	driveBudget := &hybridBudget{MaxCalls: 4000, MaxBytes: 280000}
 	var stores []*DriveStore
 	var gates []*hybridDriveGate
 	newDrive := func(cleanup bool) *DriveStore {
@@ -883,12 +898,15 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 			}
 		}
 	}
-	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "drive_transport_guard": driveBudget.driveSnapshot(), "private_mux_log": boundedLog.stats(), "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
+	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "uses_pubsub": mode != "drive", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "drive_transport_guard": driveBudget.driveSnapshot(), "private_mux_log": boundedLog.stats(), "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
 	stopHeartbeat()
 	<-heartbeatDone
 	progress.write(map[string]any{"phase": "cleanup_complete", "elapsed_ms": time.Since(began).Milliseconds(), "verified": cleanupOK && cloudCleanup})
 	if journalErr := progress.error(); journalErr != nil {
 		runErr = errors.Join(runErr, errors.New("private progress journal write failed"))
+	}
+	if mode != "drive" {
+		report["project"] = "skirk-p"
 	}
 	ok := runErr == nil && cleanupOK && cloudCleanup
 	if runErr != nil {

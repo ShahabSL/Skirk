@@ -277,9 +277,16 @@ For the next identical 16 MiB Drive control, the parent authorized a routine
 experiment guard of 240,000 active / 280,000 total worst-case reserved Drive
 units, including a 40,000 cleanup reserve. At eightfold reservation this admits
 at most 30,000 visible active unit estimates, rather than silently treating
-40,000 old visible units as a physical bound. The attempt cap is 2,000 with 256
-reserved for cleanup. Run only after a 60-second quiet interval and preserve a
+40,000 old visible units as a physical bound. The Drive attempt cap is 4,000 with 256
+reserved for cleanup (the separate Pub/Sub research cap remains 2,000). Run only after a 60-second quiet interval and preserve a
 cap-hit failure without blindly enlarging it. This guard revision changes
 accounting/diagnostic cancellation, not the priority carrier or Drive pools.
 Any failed foreground HTTP measurement now records its sanitized failure row,
 cancels the scenario and proceeds directly to bounded independent cleanup.
+
+The `drive` control now requires only the isolated Drive kit and private output
+path: no Cloud token, Cloud account assertion, Pub/Sub HTTP client or Pub/Sub
+resource is created. Its report explicitly has `uses_pubsub=false` and no Cloud
+project field. Accidental calls through a Cloud callback fail locally in this
+mode. The same workload's optional hybrid mode still requires its separate
+authorized secondary-account token and cannot reuse the Drive grant.
