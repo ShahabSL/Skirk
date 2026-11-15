@@ -3747,6 +3747,45 @@
       "raw_archive_paths": [],
       "revision_or_binary": "7614c05+0c4b6bf",
       "live_comparable": false
+    },
+    {
+      "id": "R3-046",
+      "candidate": "End-to-end recovery stress v1 with exact mutable outcome and origin proof",
+      "workload": "Separate opt-in observer; source-pinned reads/normaluploads/logical-dedupe physically non-idempotentp0/JSONcreate/PATCH outcomes;8/4/16 shared permitted caps",
+      "correctness_and_errors": "Final158Python casesPASS3.819s;fullGo199.021s,race4.590s,vetPASS;actualolder-innerAEAD/identityvalidation added after independent finding;clean281986CLI",
+      "decision": "Observe existing recovery without issuing retries or hiding errors;APIidempotency not claimed forp0;source-bound bareupload remains disallowed in v1",
+      "source_documents": [
+        "docs/experiments/end-to-end-recovery-stress-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "Go8c9829/2819867970b2f0709efad2e60020eb9363f9d7b21cf94d198ff7bb4537b99b0b;observerd4471c8",
+      "evidence_level": "code_and_adversarial_tests",
+      "latency": "No independent live claim",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google calls from implementation tests",
+      "cleanup": "Owned-child/origin proof integrated; previous failures unchanged",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-047",
+      "candidate": "100MiB bounded end-to-end stress v1 vs actual main, incomplete ABBA",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Candidate/main/main/candidate;100MiB+100persistent64Bechoes/1250ms after128KiBprelude;300/180/60s,125krolling/150karm/600kcohort estimatedbounds",
+      "latency": "Completecandidate request/scheduledp957.357/7.362s;main14.487/14.492 and14.186/14.193s;finalcandidate10receipts,nopartialp95",
+      "throughput_mbps": "26.007 /19.660 /22.290 /incomplete in arm order",
+      "estimated_quota_units": "132195 /105420 /117970 /24430 lastobserved;4real pre-stop timeoutlogs acrosscohort vs2lastperiodic errors, lag retained",
+      "correctness_and_errors": "3exact100MiBfiles+300completeechoes;completed origins exactly1GET/1echoTCP/101frames beforeandafterstop. Finalbareupload10s v1guardinterrupt,10receipts/15origintexts/nofile;pendingPATCH readback canceled by teardown, not proven irrecoverability",
+      "cleanup": "All4writersandchildren proven stopped;35residualmux/0slots deleted;8prefix0immediate31s;profilesgone",
+      "decision": "Onecandidate completed with1permittedmetadata timeout;twomaincontrols clean;lastcandidate failed. No balanced candidate median/winner;futurev2 classification remainsseparate",
+      "source_documents": [
+        "docs/experiments/sustained-end-to-end-recovery-stress-2026-11-15.md",
+        "docs/experiments/sustained-end-to-end-recovery-stress-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/sustained-end-to-end-stress-20261115/"
+      ],
+      "revision_or_binary": "candidate8c9829/281986;main2c52ff8/340461;observerd4471c8;rootintegrated200PythonPASS5.128s",
+      "live_comparable": false
     }
   ]
 }

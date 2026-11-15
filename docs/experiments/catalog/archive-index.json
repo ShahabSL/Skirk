@@ -1747,6 +1747,12 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/sustained-end-to-end-stress-20261115/arms/summary.json",
+    "bytes": 51969,
+    "extraction": "sanitized aggregate rows and exact application/origin/teardown proof in companion report; partial arm retained"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/v6-live-20260514T180938Z/bench-v4-latest-100mb.json",
     "bytes": 4008,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

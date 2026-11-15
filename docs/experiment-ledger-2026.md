@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **185 interpreted experiment records**, **312 recognized raw result files** indexed across local worktrees, and **410 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **187 interpreted experiment records**, **313 recognized raw result files** indexed across local worktrees, and **414 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -261,3 +261,7 @@ R3-039..042 retain each of four successful cells of an unreplicated packing/fram
 ## Recovery proof and A/B teardown observers
 
 R3-044 and R3-045 record the bounded origin-side-effect counters and the durable A/B finalizer with concurrent native child journals. Their [offline adversarial checks](audits/ab-teardown-evidence-2026-11-15.md) do not add a live performance result or change any historical failure. Exact origin counters and retained workload evidence are required in addition to byte/hash receipts before a future stress cohort can claim completion.
+
+## End-to-end stress v1: three complete arms and one retained interruption
+
+R3-046 records the reviewed outcome/origin observer and R3-047 retains all four arms of its [new100MiB comparison](experiments/sustained-end-to-end-recovery-stress-2026-11-15.md). The complete candidate reached26.007Mb/s with100verifiedechoes and one real metadata timeout; main controls reached19.660/22.290Mb/s withzeroerrors. The finalcandidate stopped at a bare upload deadline that v1 did not allow, after10verifiedechoes. Its pending PATCH readback was then canceled by teardown. Every writer was proven stopped and all exact prefixes were zero after31seconds. There is no balanced candidate median or winner; a later differently labelled observer cannot reclassify this failure.
