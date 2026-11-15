@@ -185,6 +185,9 @@ func (m *driveMux) ensureClientSlot(ctx context.Context) {
 	}
 	m.slots[key] = link
 	m.slotsMu.Unlock()
+	if m.t.Observe && m.t.Logger != nil {
+		m.t.Logger.Printf("mux slot shadow prewarmed role=client authoritative=immutable")
+	}
 	go m.watchSlotAcceptance(ctx, link)
 }
 
@@ -243,6 +246,9 @@ func (m *driveMux) injectSlotOffer(frames []muxFrame) []muxFrame {
 		if err != nil || len(frames) >= muxMaxFrames || encodedBytes > muxMaxBatch {
 			return frames
 		}
+		if m.t.Observe && m.t.Logger != nil {
+			m.t.Logger.Printf("mux slot shadow offer role=client authoritative=immutable")
+		}
 		return append(frames, muxFrame{Kind: muxFrameMetadataCapability, ClientID: key.clientID, RunID: key.runID, StreamID: frame.StreamID, Payload: payload, Priority: true})
 	}
 	return frames
@@ -264,6 +270,9 @@ func (m *driveMux) handleSlotCapability(ctx context.Context, frame muxFrame) {
 	if capability.kind == muxSlotCapabilityAccept && m.role == "client" {
 		link := m.slotLink(key)
 		if link != nil && capability.generation == link.generation && capability.limit == metadataSlotMaxDescription && link.setActive() {
+			if m.t.Observe && m.t.Logger != nil {
+				m.t.Logger.Printf("mux slot shadow acceptance role=client authoritative=immutable")
+			}
 			m.startSlotPoll(ctx, link)
 		}
 		return
@@ -356,6 +365,9 @@ func (m *driveMux) sendSlotAccept(ctx context.Context, link *muxSlotLink, stream
 	case err := <-ack.ch:
 		if err == nil && link.setActive() {
 			accepted = true
+			if m.t.Observe && m.t.Logger != nil {
+				m.t.Logger.Printf("mux slot shadow acceptance role=exit authoritative=immutable")
+			}
 			m.startSlotPoll(ctx, link)
 		}
 	case <-acceptCtx.Done():

@@ -189,7 +189,7 @@ func (m *driveMux) runSlotShadowReader(ctx context.Context, link *muxSlotLink) {
 	}
 	ticker := time.NewTicker(muxSlotMinPatchInterval)
 	defer ticker.Stop()
-	var lastVersion uint64
+	var lastDescription string
 	consecutiveErrors := 0
 	for {
 		if !link.isActive() {
@@ -216,13 +216,15 @@ func (m *driveMux) runSlotShadowReader(ctx context.Context, link *muxSlotLink) {
 			}
 		} else {
 			consecutiveErrors = 0
-			if info.Version > lastVersion && info.Description != "" {
-				lastVersion = info.Version
+			// Drive version is only a hint. A changed encrypted description
+			// must be checked even if a cache returns an unexpected version.
+			if info.Description != "" && info.Description != lastDescription {
 				records, receiveErr := link.peer.receive(info.Description)
 				if receiveErr != nil && !errors.Is(receiveErr, errMetadataSlotReplay) {
 					m.logSlotShadowError(receiveErr)
 					return
 				}
+				lastDescription = info.Description
 				for _, record := range records {
 					if err := m.validateSlotShadow(record, link); err != nil {
 						m.logSlotShadowError(err)
