@@ -96,7 +96,15 @@ func (p *probe) list(ctx context.Context, prefix, fields string) ([]metadata, in
 	if out.Next != "" {
 		return nil, len(r.Body), errors.New("unexpected truncated unique prefix")
 	}
-	return out.Files, len(r.Body), nil
+	// Drive name queries can return token-prefix false matches. Never allow
+	// such a result into exact-session cleanup ownership.
+	matched := out.Files[:0]
+	for _, file := range out.Files {
+		if strings.HasPrefix(file.Name, prefix) {
+			matched = append(matched, file)
+		}
+	}
+	return matched, len(r.Body), nil
 }
 func (p *probe) remove(ctx context.Context, id string) error {
 	r, err := p.call(ctx, "DELETE", "/drive/v3/files/"+url.PathEscape(id), nil, 50)
