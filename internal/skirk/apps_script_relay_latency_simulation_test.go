@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -124,8 +125,11 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 	baseUp, basePull := upCalls.Load(), pullCalls.Load()
 	bulkDone := make(chan error, 1)
 	var bulkFinished atomic.Bool
+	var bulkElapsedUS, bulkFirstByteUS atomic.Int64
 	go func() {
-		req, _ := http.NewRequestWithContext(f.ctx, http.MethodGet, origin.URL, nil)
+		begun := time.Now()
+		trace := &httptrace.ClientTrace{GotFirstResponseByte: func() { bulkFirstByteUS.CompareAndSwap(0, time.Since(begun).Microseconds()) }}
+		req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(f.ctx, trace), http.MethodGet, origin.URL, nil)
 		response, e := f.http.Do(req)
 		if e == nil {
 			h := sha256.New()
@@ -135,6 +139,7 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 				e = fmt.Errorf("exact simulated bulk mismatch: bytes=%d status=%d", n, response.StatusCode)
 			}
 		}
+		bulkElapsedUS.Store(time.Since(begun).Microseconds())
 		bulkFinished.Store(true)
 		bulkDone <- e
 	}()
@@ -202,7 +207,12 @@ func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte)
 	sorted := append([]float64(nil), samples...)
 	sort.Float64s(sorted)
 	snapshot := f.client.snapshot()
-	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, pack_priority=%t,32MiBdirection, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d up_calls=%d pull_calls=%d packed_up_rpcs=%d packed_down_rpcs=%d max_normal_sealed=%d", packed, offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, workUp, workPull, snapshot["packed_up_rpcs"], snapshot["packed_down_rpcs"], largestNormal.Load())
+	bulkMS, firstByteMS := float64(bulkElapsedUS.Load())/1000, float64(bulkFirstByteUS.Load())/1000
+	bulkMbps := float64(len(data)) * 8 / float64(bulkElapsedUS.Load())
+	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, pack_priority=%t,32MiBdirection, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d bulk_ttfb_ms=%.3f bulk_complete_ms=%.3f bulk_mbps=%.6f up_calls=%d pull_calls=%d packed_up_rpcs=%d packed_down_rpcs=%d max_normal_sealed=%d", packed, offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, firstByteMS, bulkMS, bulkMbps, workUp, workPull, snapshot["packed_up_rpcs"], snapshot["packed_down_rpcs"], largestNormal.Load())
+	if firstByteMS <= 0 || bulkMS < firstByteMS {
+		t.Fatal("bulk timing observer missing or inconsistent", firstByteMS, bulkMS)
+	}
 	if whileBulk == 0 || largestNormal.Load() <= 768<<10 {
 		t.Fatal("mixed/fragmented-object conditions not exercised", whileBulk, largestNormal.Load())
 	}
