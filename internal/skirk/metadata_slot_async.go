@@ -68,18 +68,32 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 	timer := time.NewTimer(muxSlotDeliveryACKWait)
 	defer timer.Stop()
 	publicationACK := false
+	acceptProcessingACK := func(err error) bool {
+		if err != nil {
+			return false
+		}
+		if !publicationACK {
+			completeMuxFrameAcks(batch.frames, nil)
+			l.mux.t.markUpload()
+		}
+		if l.mux.t.Observe && l.mux.t.Logger != nil {
+			l.mux.t.Logger.Printf("mux slot delivery sender_ack role=%s record=%s state=peer_processed async=true", l.mux.role, targetFingerprint(batch.name))
+		}
+		return true
+	}
+	processed := func() bool {
+		select {
+		case err := <-done:
+			return acceptProcessingACK(err)
+		default:
+			return false
+		}
+	}
 	waiting := true
 	for waiting {
 		select {
 		case err := <-done:
-			if err == nil {
-				if !publicationACK {
-					completeMuxFrameAcks(batch.frames, nil)
-					l.mux.t.markUpload()
-				}
-				if l.mux.t.Observe && l.mux.t.Logger != nil {
-					l.mux.t.Logger.Printf("mux slot delivery sender_ack role=%s record=%s state=peer_processed async=true", l.mux.role, targetFingerprint(batch.name))
-				}
+			if acceptProcessingACK(err) {
 				return
 			}
 			waiting = false
@@ -112,11 +126,19 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 	// Retry the identical prepared object, never hand it back through slot
 	// routing. Existing stream sequence/digest claims dedupe a late slot copy.
 	for attempt := 1; ; attempt++ {
+		if processed() {
+			return
+		}
 		if l.mux.t.Observe && l.mux.t.Logger != nil {
 			l.mux.t.Logger.Printf("mux slot async fallback role=%s record=%s attempt=%d", l.mux.role, targetFingerprint(batch.name), attempt)
 		}
 		err := l.uploadPreparedImmutableBatchV4(ctx, batch)
 		if err == nil {
+			return
+		}
+		// A fallback response can fail after the peer has already processed
+		// the slot. That positive ACK owns the outcome and prevents a reset.
+		if processed() {
 			return
 		}
 		if ctx.Err() != nil {
@@ -128,12 +150,24 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 			return
 		}
 		timer := time.NewTimer(muxRetryDelay(attempt))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			l.failUploadBatch(ctx, batch.frames, ctx.Err(), attempt)
-			return
-		case <-timer.C:
+		backoff := true
+		for backoff {
+			select {
+			case ackErr := <-done:
+				if acceptProcessingACK(ackErr) {
+					timer.Stop()
+					return
+				}
+			case <-ctx.Done():
+				timer.Stop()
+				if processed() {
+					return
+				}
+				l.failUploadBatch(ctx, batch.frames, ctx.Err(), attempt)
+				return
+			case <-timer.C:
+				backoff = false
+			}
 		}
 	}
 }

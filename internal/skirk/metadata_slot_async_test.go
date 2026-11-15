@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -16,6 +17,20 @@ type asyncBlockedPatchStore struct {
 }
 
 type asyncUncommittedPatchStore struct{ *shadowSlotMemoryStore }
+
+type asyncFailingImmutableStore struct {
+	*shadowSlotMemoryStore
+	calls       atomic.Int64
+	beforeError func()
+}
+
+func (s *asyncFailingImmutableStore) PutObject(context.Context, string, []byte) (ObjectInfo, error) {
+	s.calls.Add(1)
+	if s.beforeError != nil {
+		s.beforeError()
+	}
+	return ObjectInfo{}, errors.New("injected immutable fallback failure")
+}
 
 func (s *asyncUncommittedPatchStore) PatchMetadataSlot(context.Context, string, string, string) (MetadataSlotInfo, error) {
 	return MetadataSlotInfo{}, context.DeadlineExceeded
@@ -260,6 +275,54 @@ func TestSlotAsyncGlobalCapacityRejectsHandoff(t *testing.T) {
 	}
 	if client.slotAsyncCount != muxSlotAsyncMaxPending || len(client.slotAsyncPending) != 0 {
 		t.Fatal("rejected handoff mutated ownership")
+	}
+}
+
+func TestSlotAsyncLateProcessingACKPreventsResetAfterFallbackError(t *testing.T) {
+	for _, duringBackoff := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before-error-return", true: "during-backoff"}[duringBackoff], func(t *testing.T) {
+			store := newShadowSlotMemoryStore()
+			client, _, up, _ := deliverySlotPair(t, store)
+			client.t.MetadataSlotAsyncV1 = true
+			failed := &asyncFailingImmutableStore{shadowSlotMemoryStore: store}
+			client.t.Data = failed
+			ctx, cancel := context.WithCancel(context.Background())
+			defer func() { cancel(); waitAsyncIdle(t, client); client.stopSlotLinks() }()
+			failed.beforeError = func() {
+				up.mu.Lock()
+				done := up.deliveryWaiters[1]
+				up.mu.Unlock()
+				if done == nil {
+					t.Error("fallback began without processing waiter")
+					return
+				}
+				if duringBackoff {
+					go func() { time.Sleep(10 * time.Millisecond); done <- nil }()
+				} else {
+					done <- nil
+				}
+			}
+			go client.runSlotShadowWriter(ctx, up)
+			batch := asyncAckBatch(t, client, 1)
+			if !client.lanes[client.frameLane(batch.frames[0])].handoffSlotDelivery(ctx, batch) {
+				t.Fatal("handoff failed")
+			}
+			waitAsyncIdle(t, client)
+			if got := failed.calls.Load(); got != 1 {
+				t.Fatalf("immutable fallback retried after slot ACK: %d", got)
+			}
+			if client.isClosedStream(batch.frames[0].key()) {
+				t.Fatal("healthy slot-delivered stream reset after fallback error")
+			}
+			select {
+			case err := <-batch.frames[0].Ack.ch:
+				if err != nil {
+					t.Fatalf("publication ACK changed to error: %v", err)
+				}
+			default:
+				t.Fatal("upload ACK missing")
+			}
+		})
 	}
 }
 
