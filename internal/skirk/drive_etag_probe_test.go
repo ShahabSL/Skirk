@@ -62,7 +62,11 @@ func (p *driveETagProbe) persist() error {
 }
 func (p *driveETagProbe) filePath(full bool) string {
 	path := "/drive/v3/files/" + url.PathEscape(p.report.FileID)
-	if !full {
+	if full {
+		// Omitting fields requests Drive's default projection, which does not
+		// include description. A wildcard explicitly requests the full resource.
+		path += "?fields=*"
+	} else {
 		path += "?fields=id,name,description,version"
 	}
 	return path
@@ -227,7 +231,7 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 		tag = r.Header.Get("ETag")
 		full = true
 		p.full = true
-		p.report.Projection = "full_metadata_header_only"
+		p.report.Projection = "fields_star_metadata_header_only"
 	}
 	if tag != "" {
 		r, err = p.call(ctx, "if_none_match_A", http.MethodGet, p.filePath(full), map[string]string{"If-None-Match": tag, "Cache-Control": "no-cache"}, nil, false)

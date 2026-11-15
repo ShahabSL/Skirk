@@ -1,6 +1,7 @@
 # Drive v3 metadata ETag write-fence probe
 
-Status: bounded owned-file primitive prepared; no live result at this checkpoint.
+Status: the first bounded owned-file primitive stopped on a fixture projection
+error and was cleaned; a corrected wildcard-projection probe is prepared.
 This is not a transport or latency benchmark. The question is whether Drive
 metadata PATCH provides a server-enforced description revision fence, which
 could change the design of ambiguous slot-write recovery.
@@ -44,7 +45,9 @@ are not included in the encoded request-body figure.
 
 1. Generate one ID, persist the recovery identity, create description A.
 2. Read exact ID/name/description using the slot-sized projection and record
-   the ETag response header. If absent, try one full metadata response; discard
+   the ETag response header. If absent, try one explicit `fields=*` metadata
+   response; omitting `fields` selects Drive's default fields rather than all
+   fields. Discard
    everything except the exact file identity, description and version.
 3. If an ETag exists, issue a separate If-None-Match GET. A 304 means cache
    validation works; it says nothing by itself about write preconditions.
@@ -85,10 +88,23 @@ without a description fence, absent ETag, full-metadata-only ETag, reserved
 cleanup after active exhaustion, foreign path rejection, cancellation, reporting
 failure, pre-create recovery identity, auth-status preservation and conditional
 header/pinned-authority preservation through the actual Google HTTP client.
-Live execution awaits independent source review and a serialized root lease.
+The first guarded live attempt returned no ETag for the explicit small
+projection, then stopped because the original fallback omitted `fields` and
+its default response omitted description. This is a fixture failure, not
+negative write-CAS evidence. Root retained all ten actual calls and verified
+the exact owned deletion plus two immediate and two delayed 404s; the borrowed
+configuration was removed. A new regression models the omitted default fields,
+requires the wildcard fallback and rejects unprojected owned-file paths.
+Corrected live execution awaits independent source review and a serialized
+root lease.
 
-The final nine top-level offline tests (19 scenario variants) passed the focused
+The original nine top-level offline tests (19 scenario variants) passed the focused
 race run in 1.462 seconds; `go vet ./internal/skirk` passed. The conditional-header
 test uses the actual Google HTTP client with a local RoundTripper and verifies
 both request If-Match and response ETag survive while the selected front and
 authority stay intact. No Google request was made by these tests.
+
+After the projection correction, ten top-level tests (20 scenario variants)
+passed the focused race run in 1.363 seconds; vet passed again. The extra case
+independently checks Drive's omitted-field response shape and the guard's
+rejection of a naked owned-file URL. This is offline fixture proof only.

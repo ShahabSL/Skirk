@@ -85,7 +85,7 @@ func (f *driveETagFake) request(ctx context.Context, method, path string, header
 		result.Status = 404
 		return result, nil
 	}
-	full := u.RawQuery == ""
+	full := u.Query().Get("fields") == "*"
 	if method == http.MethodGet && headers["If-None-Match"] != "" && headers["If-None-Match"] == f.tag(full) {
 		result.Status = 304
 		return result, nil
@@ -109,7 +109,14 @@ func (f *driveETagFake) request(ctx context.Context, method, path string, header
 		return result, nil
 	}
 	result.Header.Set("ETag", f.tag(full))
-	result.Body, _ = json.Marshal(map[string]string{"id": "reserved-public-id", "name": f.probe.report.FileName, "description": f.description, "version": fmt.Sprint(f.revision)})
+	metadata := map[string]string{"id": "reserved-public-id", "name": f.probe.report.FileName, "description": f.description, "version": fmt.Sprint(f.revision)}
+	if u.Query().Get("fields") == "" {
+		// Actual Drive's default projection is not a full resource: this
+		// omission caused the first guarded live probe's readback to stop.
+		delete(metadata, "description")
+		delete(metadata, "version")
+	}
+	result.Body, _ = json.Marshal(metadata)
 	return result, nil
 }
 func newDriveETagFake() (*driveETagProbe, *driveETagFake) {
@@ -174,6 +181,37 @@ func TestDriveETagProbeGuardsOwnedPathsAndReservesCleanup(t *testing.T) {
 	}
 	if err := p.cleanup(context.Background(), 0); err != nil || !p.report.CleanupVerified {
 		t.Fatal("active exhaustion blocked exact cleanup", err)
+	}
+}
+
+func TestDriveETagProbeWildcardFallbackDoesNotUseDefaultProjection(t *testing.T) {
+	p, f := newDriveETagFake()
+	f.fullOnly = true
+	if err := p.run(context.Background()); err != nil || !p.report.WriteCASObserved || !p.full {
+		t.Fatal("explicit wildcard projection did not complete the fence probe", err)
+	}
+	star := p.filePath(true)
+	if !strings.HasSuffix(star, "?fields=*") || p.report.Projection != "fields_star_metadata_header_only" {
+		t.Fatal("fallback projection was not reported explicitly")
+	}
+	for _, path := range f.paths {
+		parsed, err := url.ParseRequestURI(path)
+		if err != nil || parsed.Path == "/drive/v3/files/"+p.report.FileID && parsed.Query().Get("fields") == "" {
+			t.Fatal("owned metadata request silently used default fields")
+		}
+	}
+	before := len(f.paths)
+	if _, err := p.call(context.Background(), "default_projection", http.MethodGet, "/drive/v3/files/"+p.report.FileID, nil, nil, false); err == nil || len(f.paths) != before {
+		t.Fatal("unprojected owned request reached the transport")
+	}
+	// The fake independently models the actual omitted-field response, so
+	// reverting filePath(true) to a naked path fails this test's first readback.
+	r, err := f.request(context.Background(), http.MethodGet, "/drive/v3/files/"+p.report.FileID, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if description, err := p.metadata(r); err != nil || description != "" {
+		t.Fatal("default fixture projection did not omit description", err)
 	}
 }
 
