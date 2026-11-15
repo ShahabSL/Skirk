@@ -104,32 +104,35 @@ The live five-client upload harness then ran five distinct clients against one
 fresh session and exit, with 16 MiB per client and six pipelined 64-byte text
 echoes each. A 128 KiB verified prelude had already demoted every text stream.
 Each arm required all 80 MiB of file bodies, all 30 echoes, simultaneous file
-transfers, zero origin hash failures, and exact-session cleanup. The two arms
-used the same binary and pinned front, with a 65-second quota cooldown between
-them. A 60-second low-speed window was necessary for this buffered POST: with
+transfers, zero origin hash failures, and exact-session cleanup. Two
+order-reversed pairs used the same binary and pinned front, with a 65-second
+quota cooldown between arms. A 60-second low-speed window was necessary for this buffered POST: with
 the initial 25-second window, one file in each mode was canceled at about 32
 seconds, although curl had sent its full body to the local SOCKS proxy and
 Drive uploads were still in flight. This was a genuine 25-second no-response
 UX failure, not evidence of a mux deadlock or a candidate-only failure.
 
-| Live five-client upload, one reversed pair | Default | Corrected epoch+metadata |
+| Live five-client upload | Default | Corrected epoch+metadata |
 | --- | ---: | ---: |
-| Verified file/text transfers | 5 × 16 MiB; 30/30 echoes | 5 × 16 MiB; 30/30 echoes |
-| Overlapping text scheduled p95 | **8.214 s** | **5.211 s** |
-| Aggregate file goodput | **26.421 Mb/s** | **22.293 Mb/s** |
-| Estimated Drive units, both peers | **73,380** | **66,730** |
+| Verified file/text transfers, both pairs | 10 × 16 MiB; 60/60 echoes | 10 × 16 MiB; 60/60 echoes |
+| Overlapping text scheduled p95, pair 1 / pair 2 | **8.214 / 7.320 s** | **5.211 / 4.984 s** |
+| Aggregate file goodput, pair 1 / pair 2 | **26.421 / 23.618 Mb/s** | **22.293 / 18.594 Mb/s** |
+| Estimated Drive units, both peers, pair 1 / pair 2 | **73,380 / 78,630** | **66,730 / 72,280** |
 | Drive API errors / final session objects | 0 / 0 | 0 / 0 |
 
-The candidate improved text p95 by 37% and used 9% fewer estimated units in
-this pair, while aggregate file goodput was 16% lower. All five candidate
-files needed 28–30 seconds; the five default files needed 23–25 seconds. The
-whole test consumed 143,710 estimated units including cleanup; its maximum
-observed 60-second rolling count was 75,080, below the 100,000-unit test
-guard. The project/user published limits are much higher, but this small
-shared-account run cannot establish sustained capacity or how many people the
-service supports. A delayed exact-session sweep found zero objects from both
-arms. Private details are under
-`.skirk-runs/architecture-five-client-longstall-20261114/`.
+Across these two complete pairs, candidate pair-median text p95 was **5.098 s**
+versus **7.767 s** default (34% lower), and estimated units were **69,505**
+versus **76,005** (9% lower). Pair-median aggregate file goodput was
+**20.444 Mb/s** versus **25.020 Mb/s** default (18% lower). This repeated
+tradeoff prevents a default promotion. The observations do not isolate the
+priority scheduler from the metadata-only switch or changing Google response
+times. Both comparisons used below 79,000 estimated units per arm; their
+maximum observed 60-second rolling counts were 75,080 and 78,630, below the
+100,000-unit test guard. The project/user published limits are much higher,
+but this short shared-account run cannot establish sustained capacity or how
+many people the service supports. Delayed exact-session sweeps found zero
+objects from all four arms. Private details are under
+`.skirk-runs/architecture-five-client-longstall{,-reverse}-20261114/`.
 
 ## Drive class discovery pilot
 
@@ -179,18 +182,31 @@ StreamingPull control plane might reduce text polling delay, while keeping
 Drive for bulk, but would be a different product mode: pinned-front reachability,
 billing, OAuth/IAM, and sharded 200,000-user operation are untested.
 
-A more radical, still unmeasured small-control design is a pair of fixed Drive
-files, one writer per direction. Each update would store a bounded cumulative
-encrypted queue of unacknowledged frames in the file description; the peer
-would poll its known file ID with `files.get` metadata (5 units) instead of
-discovering new objects with `files.list` (100 units). The latest snapshot must
-retain every unacknowledged frame, because Drive versions can advance across
-polls. Peer acknowledgements would ride the opposite file; sequencing,
-restart fencing, description size, and read-after-update visibility need live
-validation. Earlier live media-update ring experiments reached 7.85–13.87
-Mb/s with a 74.2-second 16 MiB upload p95, so mutable blob files are not a
-proven bulk replacement. No release architecture should depend on this idea
-until its small-message visibility and correctness are measured.
+A more radical small-control design is a pair of fixed Drive files, one writer
+per direction. Each metadata PATCH would store a bounded cumulative encrypted
+queue of unacknowledged frames in the file description; the peer would poll
+its known file ID with `files.get` metadata (5 units) instead of discovering
+new objects with `files.list` (100 units). The latest snapshot must retain
+every unacknowledged frame, because Drive versions can advance across polls.
+Peer acknowledgements would ride the opposite file. Earlier live **media**
+update-ring experiments reached only 7.85–13.87 Mb/s with a 74.2-second
+16 MiB upload p95; whole-file updates are not a proven bulk replacement.
+
+A separate fixed-**metadata** primitive probe on the pinned front created one
+test-owned file, performed 16 sequential 64-byte synthetic description
+updates, and read each from an independent HTTP pool before starting the next.
+All 16 exact values and versions were observed, with zero stale reads or API
+errors; exact-ID deletion and two 404 checks succeeded. Median PATCH time was
+297 ms (p95 428 ms), and median publish-to-observed time was **447 ms** (p95
+**966 ms**). It used 16 PATCH and 19 GET calls, plus setup/cleanup, under a
+conservative **1,945-unit** accounting bound. The private result is
+`.skirk-runs/mutable-slot-live-20261114.json`. These are API primitive timings,
+not messenger end-to-end latency. The sequential probe cannot detect skipped
+versions or verify ACK/replay; a cumulative-log pause/restart and mixed-traffic
+test are required before implementing the runtime architecture. The earlier
+immutable metadata-only create/list primitive had a 508 ms median in a
+different nine-file sample, so the two cannot be treated as a matched latency
+comparison.
 
 ## Promotion gate
 
