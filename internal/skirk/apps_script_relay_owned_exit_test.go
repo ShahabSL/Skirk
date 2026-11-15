@@ -82,14 +82,14 @@ func rrReadPrivateSettings(dir string) (relayResearchPrivateSettings, []byte, [1
 	muxSecret, muxErr := hex.DecodeString(s.MuxSecretHex)
 	httpAuth, httpErr := hex.DecodeString(s.HTTPAuth)
 	scriptAuth, scriptErr := hex.DecodeString(s.ScriptAuth)
-	if err != nil || epochErr != nil || muxErr != nil || httpErr != nil || scriptErr != nil || len(key) != 32 || len(epochBytes) != 16 || len(muxSecret) != 32 || bytes.Equal(key, muxSecret) || bytes.Equal(httpAuth, scriptAuth) || len(httpAuth) != 32 || len(scriptAuth) != 32 {
+	if err != nil || epochErr != nil || muxErr != nil || httpErr != nil || scriptErr != nil || len(key) != 32 || len(epochBytes) != 16 || len(muxSecret) != 32 || bytes.Equal(key, muxSecret) || bytes.Equal(httpAuth, scriptAuth) || bytes.Equal(key, httpAuth) || bytes.Equal(key, scriptAuth) || bytes.Equal(muxSecret, httpAuth) || bytes.Equal(muxSecret, scriptAuth) || len(httpAuth) != 32 || len(scriptAuth) != 32 {
 		return s, nil, epoch, errRelayResearchBounds
 	}
 	copy(epoch[:], epochBytes)
 	if _, err := ParseSessionID(s.SessionID); err != nil {
 		return s, nil, epoch, errRelayResearchBounds
 	}
-	if s.ClientID == "" || len(s.ClientID) > 64 || s.RunID == "" || len(s.RunID) > 64 || s.Route.Mode != "google_front_pinned" || net.ParseIP(s.Route.GoogleIP) == nil || s.Route.Proxy != "" || s.DurationSeconds < 1 || s.DurationSeconds > 7200 || s.MaxCalls < 1 || s.MaxCalls > 1024 || s.MaxEncodedBytes < 1 || s.MaxEncodedBytes > 128<<20 || s.ChunkBytes < 64<<10 || s.ChunkBytes > 4<<20 || s.BulkBytes < 1 || s.BulkBytes > 16<<20 {
+	if !isSafeObjectSegment(s.ClientID) || len(s.ClientID) > 64 || !isSafeObjectSegment(s.RunID) || len(s.RunID) > 64 || s.Route.Mode != "google_front_pinned" || net.ParseIP(s.Route.GoogleIP) == nil || s.Route.Proxy != "" || s.DurationSeconds < 1 || s.DurationSeconds > 7200 || s.MaxCalls < 1 || s.MaxCalls > 1024 || s.MaxEncodedBytes < 1 || s.MaxEncodedBytes > 128<<20 || s.ChunkBytes < 64<<10 || s.ChunkBytes > 4<<20 || s.BulkBytes < 1 || s.BulkBytes > 16<<20 {
 		return s, nil, epoch, errRelayResearchBounds
 	}
 	if _, err := s.relayConfig(); err != nil {
