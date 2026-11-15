@@ -302,6 +302,16 @@ func (c *GoogleHTTPClient) RequestNoRateLimitRetry(ctx context.Context, method, 
 	return c.request(ctx, method, host, path, headers, body, false)
 }
 
+// RequestSingleAttempt is used by mutable protocol records. An uncertain
+// PATCH must not be transparently replayed after a transport timeout.
+func (c *GoogleHTTPClient) RequestSingleAttempt(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	result, err := c.requestOnce(ctx, method, host, path, headers, body)
+	if result != nil {
+		result.Attempts = 1
+	}
+	return result, err
+}
+
 func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
 	var lastErr error
 	var lastResult *HTTPResult

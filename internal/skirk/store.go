@@ -20,6 +20,26 @@ type MetadataOnlyPriorityStore interface {
 	PutMetadataOnlyObject(ctx context.Context, name string, sealed []byte) (ObjectInfo, error)
 }
 
+// MetadataSlotInfo is the exact file metadata needed by an authenticated
+// fixed-slot protocol. Version is only a change hint, not a delivery sequence.
+type MetadataSlotInfo struct {
+	ID          string
+	Name        string
+	Description string
+	Version     uint64
+	Parents     []string
+	Spaces      []string
+}
+
+// MetadataSlotStore is an opt-in Drive primitive. The protocol owns single-
+// writer PATCH serialization, readback after ambiguous writes, and cleanup.
+type MetadataSlotStore interface {
+	MetadataSlotEnabled() bool
+	CreateMetadataSlot(ctx context.Context, generatedID, name string) (MetadataSlotInfo, error)
+	GetMetadataSlot(ctx context.Context, fileID, expectedName string) (MetadataSlotInfo, error)
+	PatchMetadataSlot(ctx context.Context, fileID, expectedName, description string) (MetadataSlotInfo, error)
+}
+
 type ObjectListInfo struct {
 	Objects       []ObjectInfo
 	Truncated     bool

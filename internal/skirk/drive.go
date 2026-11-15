@@ -31,12 +31,15 @@ type DriveStore struct {
 	quotaProject           string
 	inlineSmallObjects     bool
 	metadataOnlyPriority   bool
+	metadataSlotV1         bool
 	indexedClassProperties bool
 	uploadHedgeDelay       time.Duration
 	uploadHedgeSlots       chan struct{}
 	newHedgeHTTPClient     func() *GoogleHTTPClient
 	quota                  *driveQuotaStats
 	backoff                *driveQuotaBackoff
+	metadataSlotMu         sync.Mutex
+	metadataSlotNames      map[string]string
 	Logger                 *log.Logger
 }
 
@@ -106,7 +109,7 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 			normalDownloadHTTP = normalUploadHTTP
 		}
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
@@ -915,6 +918,7 @@ func (d *DriveStore) DeleteID(ctx context.Context, fileID string) error {
 		return err
 	}
 	if result.Status == http.StatusNoContent || result.Status == http.StatusOK || result.Status == http.StatusNotFound {
+		d.forgetMetadataSlot(fileID)
 		return nil
 	}
 	return require2xx(result, "drive delete id")
@@ -1304,6 +1308,14 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 }
 
 func (d *DriveStore) requestWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return d.requestWithHTTPMode(ctx, httpClient, method, path, headers, body, false)
+}
+
+func (d *DriveStore) requestSlotPatch(ctx context.Context, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return d.requestWithHTTPMode(ctx, d.http, http.MethodPatch, path, headers, body, true)
+}
+
+func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte, singleAttempt bool) (*HTTPResult, error) {
 	if httpClient == nil {
 		return nil, errors.New("drive http client is nil")
 	}
@@ -1334,7 +1346,12 @@ func (d *DriveStore) requestWithHTTP(ctx context.Context, httpClient *GoogleHTTP
 		if d.quotaProject != "" {
 			merged["X-Goog-User-Project"] = d.quotaProject
 		}
-		result, err := httpClient.RequestNoRateLimitRetry(ctx, method, "www.googleapis.com", path, merged, body)
+		var result *HTTPResult
+		if singleAttempt {
+			result, err = httpClient.RequestSingleAttempt(ctx, method, "www.googleapis.com", path, merged, body)
+		} else {
+			result, err = httpClient.RequestNoRateLimitRetry(ctx, method, "www.googleapis.com", path, merged, body)
+		}
 		if err != nil {
 			d.logDriveRequest(label, httpAttemptCount(result, err), 0, nil, time.Since(started), err)
 			return nil, err
