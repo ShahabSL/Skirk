@@ -14,8 +14,9 @@ the selected front but has only 10 GiB/month free throughput per billing
 account, then published usage charges. Billing remains disabled for these
 bounded probes; Pub/Sub is not a required dependency or a promoted free-product
 transport. The primary work remains Drive within its free API/account limits.
-Apps Script is being considered within its separate consumer free quotas, with
-front and redirect compatibility still requiring a live test.
+The temporary Apps Script echo passed the same pinned front on both its POST
+and response redirect. A reliable full relay is now an isolated test-only
+implementation; the echo alone is not a full transport result.
 
 ## What the evidence supports
 
@@ -63,6 +64,7 @@ nearest-rank p95 values are descriptive samples, not population percentiles.
 | Fronted Pub/Sub REST primitive | Prestarted-pull median 396 ms across four records; last two warm samples 101/72 ms | Eight AEAD records verified; one-way primitive, not app RTT. [Report](pubsub-front-2026-11-15.md). |
 | Fronted Pub/Sub pull-pool experiment | Eighteen verified records; most later records 170–836 ms, restart tails 30.756–30.930 s | Worker-count medians conceal tails. Canceled pulls retaining a broker lease are an inference, not a proven cause. [All samples](pubsub-drive-hybrid-2026-11-15.md). |
 | Fronted Pub/Sub priority + Drive bulk, full SOCKS | Twenty text responses verified; download-phase median 443 ms/max 1.664 s; upload-phase median 705 ms/max 1.333 s; 16 MiB upload 23.469 s | Download timed out at 180 s after 10,485,358 of 16,777,216 bytes. Seventeen Drive upload timeouts; visible transport reservations 25,570 units, below the local 40,000 active guard. An outer RoundTrip wrapper does not count hidden HTTP/2 retries or prove billed wire units. Failed full transport, despite fast text. Detailed raw report is retained in the hybrid worktree. |
+| Fronted Apps Script opaque echo | Five warm 64-byte round trips: median 625 ms, range 529–914 ms; two 1 MiB echoes: 1.077/1.061 s | Twelve of twelve authenticated payloads verified through the pinned `www.google.com` front on both hops. No external fetch or TCP node was involved. This is an unloaded carrier primitive, not mixed messenger latency or sustained file throughput. [Exact report](apps-script-front-echo-live-2026-11-15.md). |
 | Historical throughput envelope | November single 128 MiB 74.928 Mb/s; ten × 32 MiB 78.244 Mb/s aggregate | Short, different workloads. May notes around 90 Mb/s aggregate are weaker historical evidence. These are neither the final mixed candidate's speed nor 200,000-user capacity. |
 
 The frozen async-versus-default upload ABBA was interrupted in its fourth
@@ -134,8 +136,38 @@ An independent [source audit of MasterHttpRelayVPN-RUST](master-http-relay-sourc
 found a real opaque Apps Script/TCP-node path, event-driven long polling and
 adaptive batching. Its own client warns that a lost batch response can lose
 already-drained bytes. We retain the architectural ideas without copying that
-reliability flaw. A minimal owned Apps Script echo remains a separate
-feasibility experiment, not a measured alternative in the table above.
+reliability flaw. The owned echo is now measured separately in the table above.
+Its deployment was archived, its project moved to recoverable Trash, and a final
+secret-authenticated POST through the same front returned 404 before private
+settings were removed.
+
+The test-only reliable relay uses separate upload and pull sequences, exact
+cached replies after ambiguous exchanges, immutable object identity and
+processing-based payload deletion. A request receipt can free an RPC reply;
+it cannot discard ciphertext before mux processing. Bounded lifetime
+tombstones prevent an old OPEN from dialing again after the mux's own closed
+marker expires. A consumed-session marker prevents restarting an in-memory
+epoch after a crash. These are finite-session properties, not durable
+exactly-once destination effects across arbitrary restarts.
+
+Real loopback HTTP/SOCKS tests completed exact incompressible 16 MiB GET and
+POST bodies with concurrent text and injected lost committed responses. A
+separate scalar simulation with 600 ms per carrier exchange exposed a queue
+bottleneck: twelve texts offered every 250 ms grew from about 1.5 to 6.0 s
+RTT during a file transfer. Those numbers are simulated, not Google latency.
+An opt-in priority-batching variant is being tested against that same scalar
+baseline before any live full-relay claim. Both remain outside the product
+binary and default transport.
+
+Google currently documents 20,000 URL Fetch calls/day per consumer account,
+30 simultaneous executions/user and six minutes/execution. These limits are
+per user, not multiplied by publishing more deployments. A fixed 15-second
+idle pull would alone consume up to 5,760 fetches/day per continuously
+connected client, before response overhead; adaptive idle polling must be
+measured rather than assuming an unlimited central relay. Each fresh live
+campaign separately reserves its actual POST allowance and conservative
+HTTP replay upper bounds before launch. No billing is enabled.
+[Official quotas](https://developers.google.com/apps-script/guides/services/quotas).
 
 ## Independent reasoning and practical product boundaries
 
@@ -169,6 +201,18 @@ accessibility—remain on this branch. Publishing an OAuth app removes Google's
 Testing-specific seven-day refresh-token expiry, not every possible revocation.
 A normal shared-app user needs no domain; personal OAuth remains an advanced
 per-operator setup. Product profiles contain no Pub/Sub owner credential.
+
+The new client lifecycle audit fixed Android failure ownership when switching
+profiles and desktop stale asynchronous snapshots after user actions. Android
+and iOS file imports now run bounded background reads with picker/target
+ownership, cooperative cancellation and stale-result fences. The Android
+emulator verified A-failed → B-Connect → A-renewal presentation without a Google
+request; it did not validate a live grant. Five controlled desktop promise
+tests, three Android Gradle/JUnit regressions and six Swift tests with ten
+parameterized cases passed. Full Android, desktop and iOS Simulator builds
+also passed. Actual unresponsive cloud-provider behavior remains a device
+test gap. [Client audit](../audits/client-state-ownership-2026-11-15.md),
+[iOS import audit](../audits/ios-file-import-2026-11-15.md).
 
 Two hundred thousand installations and two hundred thousand simultaneous active
 users are different targets. Ten clients is the largest measured live
