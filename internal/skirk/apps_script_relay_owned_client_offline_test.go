@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -54,6 +55,9 @@ func TestRelayOwnedTerminalCarrierFailureAbortsApplicationWait(t *testing.T) {
 }
 
 func TestRelayOwnedClientOfflineVerifiedTLSAndExactMixedWorkload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir := filepath.Join(t.TempDir(), ".skirk-runs", "private")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -194,6 +198,9 @@ func TestRelayOwnedClientOfflineVerifiedTLSAndExactMixedWorkload(t *testing.T) {
 }
 
 func TestRelayOwnedCampaignReservationMustMatchFreshAllocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir := filepath.Join(t.TempDir(), ".skirk-runs", "private")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)

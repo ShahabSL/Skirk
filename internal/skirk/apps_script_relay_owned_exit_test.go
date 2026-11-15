@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -442,6 +443,11 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 }
 
 func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// This temporary research fixture requires POSIX group/other mode
+		// checks. Go's os.Chmod on Windows only changes the read-only bit.
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir := filepath.Join(t.TempDir(), ".skirk-runs", "private")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
