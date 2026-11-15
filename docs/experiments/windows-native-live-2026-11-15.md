@@ -85,3 +85,47 @@ This proves one native Windows TUN data path for a single pinned IP and HTTPS
 endpoint. It does not prove whole-device VPN mode, default-route capture, the
 Tauri GUI's connect flow, a separate physical exit host, or sustained mixed
 traffic.
+
+## GUI backend default-route TCP check
+
+A further disposable [Windows 2022 run](https://github.com/ShahabSL/Skirk/actions/runs/43689331948)
+at `f3aed4a` called the same Rust `DesktopRuntime::connect()` backend used by
+the GUI's Connect command. It imported a fresh-session client profile,
+selected VPN mode, started the native Go sidecar and product sing-box 1.13.12
+configuration, and ran an authenticated exit check. The exit and client were
+co-located on the hosted runner; the exit process used the `skirk.exe` name
+already covered by the product's direct process rule. No test-only tunnel
+routing exception was added.
+
+Before Connect, the runner saved its default and selected routes and
+registered an independent SYSTEM scheduled task to kill the disposable tunnel
+and remove remaining adapter routes after three minutes. That task was a
+fallback; the app's own Disconnect restored the routes and removed the adapter.
+With the VPN active, Windows selected `Skirk Tunnel` for `1.1.1.1` and
+`curl.exe`, with proxies explicitly disabled, fetched the pinned HTTPS
+endpoint through the tunnel. The SHA-pinned sing-box download, native Rust
+test build, route recovery, and exact Drive cleanup all passed.
+
+| Check | Observed result |
+| --- | ---: |
+| Authenticated exit proof | 2.570 s, verified |
+| Selected route to `1.1.1.1` | `Skirk Tunnel` (two matching route entries) |
+| Unproxied HTTPS request | HTTP 200, 206 bytes, 11.408 s |
+| Client Drive upload change during request | +11 calls |
+| Native Disconnect | Previous default and selected routes restored; adapter removed |
+| Exact session cleanup | 3 mux objects deleted, 0 slot; both prefixes empty immediately and after 30 s |
+
+The temporary encrypted Actions secret was removed immediately after the
+Prepare step and verified absent. The disposable workflow and harness remain
+only on the isolated test branch; this evidence paragraph is the sole change
+intended for the draft PR. An earlier
+[run](https://github.com/ShahabSL/Skirk/actions/runs/43688912687) reached
+the same VPN route and exit proof but stopped on a test assertion that expected
+one selected route entry; Windows returned two identical `Skirk Tunnel`
+entries. That run also restored routes and cleaned its exact session. The
+assertion was corrected for the passing run.
+
+This is one default-route **TCP** request through the real GUI backend, not a
+visual GUI click, arbitrary destinations, sustained traffic, a separate exit
+host, or complete Windows app compatibility. The current product tunnel
+configuration rejects non-DNS UDP, so this result does not verify UDP apps.
