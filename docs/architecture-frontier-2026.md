@@ -227,15 +227,30 @@ reader skipped **nine Drive versions** but verified and acknowledged all
 was **0.859/1.788 s**. Fifteen data PATCHes, six ACK PATCHes, and 28 GETs
 completed under a conservative **3,240-unit** accounting bound. Both files
 were deleted and confirmed absent twice by ID; no recovery ledger remained.
-The largest live snapshot held eight 64-byte frames. It does not validate the
-proposed 8 KiB encoded-description cap; that boundary needs its own readback
-test. The result is private at `.skirk-runs/ack-slot-live-20261114.json`, and the
+The largest snapshot in this first live run held eight 64-byte frames. A later
+bidirectional probe read back an exactly 8,192-byte description twice, but did
+not fill the encrypted queue to that boundary. The first result is private at
+`.skirk-runs/ack-slot-live-20261114.json`, and the
 probe and version-skip tests are under `tools/ack_slot_probe/`. HMACs on
 synthetic frames establish this probe's integrity; production would use the
 existing AEAD, device ownership and replay defenses. It is a queue
 feasibility result, not a full Skirk, file-mix, or 200,000-user result. The
 proposed [opt-in lane design](fixed-metadata-lane-design-2026.md) specifies
 bootstrap, ACK, fallback, and cleanup gates before any mux integration.
+
+A second bounded two-slot probe sent 20 independently scheduled 64-byte
+requests and generated an echo only after each request arrived. It verified
+20/20 replies and authenticated ACKs in both directions in two runs. With a
+forced one-second server-reader pause, scheduled request/reply p50/p95 was
+**1.299/2.145 s**; without that pause it was **1.044/1.265 s**. The readers
+skipped five and two Drive versions respectively without loss. Each run first
+PATCHed and read back an exact 8,192-byte description; both exact slot IDs
+were deleted and twice confirmed absent, with zero API errors. Conservative
+complete-arm units were 3,780 and 3,950. The probe uses synthetic metadata
+records and no Skirk TCP stream or bulk transfer, so these are Drive substrate
+round trips, not application message latency. Source and method are in
+`tools/ack_slot_probe/README.md`; raw private summaries are under
+`.skirk-runs/ack-slot-roundtrip-{live,nopause-live}-20261114.json`.
 
 The next **mixed-substrate** test ran the two-slot probe beside a real,
 hash-verified 16 MiB Skirk upload on the same pinned-front account. Its
