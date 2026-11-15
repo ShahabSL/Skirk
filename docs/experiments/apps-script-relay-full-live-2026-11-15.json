@@ -1,0 +1,2071 @@
+{
+  "date": "2026-11-15",
+  "classification": "live_full_SOCKS_TLS_HTTP_transport_unreplicated_2x2",
+  "source": {
+    "revision": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0",
+    "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f"
+  },
+  "design": {
+    "order": [
+      "scalar-a-g4",
+      "packed-a",
+      "packed-b",
+      "scalar-b"
+    ],
+    "replicates_per_cell": 1,
+    "not_ABBA": true,
+    "first_two_frame_bytes": 786432,
+    "last_two_frame_bytes": 2097152,
+    "chunk_bytes_all_arms": 4194304,
+    "large_frame_selected_before_arm3_server_and_client_start": true,
+    "hypothesis": "Priority packing and larger binary exchange frames may reduce relay exchange count under mixed traffic",
+    "limits": {
+      "script_posts_per_arm": 256,
+      "script_posts_campaign": 1024,
+      "http_attempt_upper_per_arm": 4096,
+      "encoded_request_plus_response_upper_bytes_per_arm": 1073741824,
+      "owned_relay_calls_per_arm": 1024,
+      "owned_relay_encoded_bytes_per_arm": 134217728,
+      "global_expiry_utc": "2026-11-15T21:51:21.651372+00:00"
+    },
+    "workload": {
+      "bulk_bytes_each_direction": 16777216,
+      "echo_bytes": 64,
+      "warm_echoes": 1,
+      "mixed_echoes_each_direction": 12,
+      "mixed_offer_interval_ms": 250,
+      "persistent_echo_connection": true,
+      "demotion_prelude": false,
+      "download_then_upload": true
+    },
+    "limitations": [
+      "One observation per packing/frame cell, temporal order and backend variability uncontrolled",
+      "No same-cohort Drive baseline or main comparison",
+      "No multi-client, restart, long-session or capacity proof",
+      "Ordinary desktop background uncontrolled; no intentional competing payload benchmark/build/emulator"
+    ]
+  },
+  "arms": [
+    {
+      "arm": "scalar-a-g4",
+      "status": "passed",
+      "frame_bytes": 786432,
+      "chunk_bytes": 4194304,
+      "pack_priority": false,
+      "elapsed_ms": 146698.655,
+      "client_error_nonempty": false,
+      "sample_ledger_error": false,
+      "carrier_raw": {
+        "attempts_upper": 2440,
+        "dispatches": 305,
+        "http2_responses": 304,
+        "http_status_200": 152,
+        "http_status_302": 152,
+        "pending_response_bytes": 0,
+        "request_body_bytes_upper": 179754504,
+        "response_body_bytes_upper": 333454365,
+        "returned_response_body_bytes": 22460308,
+        "script_posts": 153,
+        "transport_errors": 1,
+        "urlfetch_attempts_upper": 1224
+      },
+      "client_raw": {
+        "deleted": 38,
+        "down_bytes": 0,
+        "down_objects": 38,
+        "down_waits": 0,
+        "normal_down_bytes": 0,
+        "normal_down_objects": 17,
+        "normal_up_bytes": 0,
+        "normal_up_objects": 10,
+        "packed_down_rpcs": 0,
+        "packed_up_rpcs": 0,
+        "published": 39,
+        "received": 38,
+        "requests": 153,
+        "retries": 0,
+        "up_bytes": 0,
+        "up_objects": 39,
+        "up_waits": 0
+      },
+      "closing_trace_observation": {
+        "op": "post",
+        "duration": "4.011s",
+        "status": "0",
+        "canceled": "true"
+      },
+      "closing_counter_interpretation": "Raw transport_errors=1 retained; last observed status0,canceledtrue is owned closing request in frozen pre-cancellation-separation binary; not reclassified to zero",
+      "exit": {
+        "active_streams_after_close": 0,
+        "broker_before_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 39,
+          "DownObjects": 38,
+          "Assembling": 0,
+          "CachedReplies": 2,
+          "LiveWorkers": 1,
+          "NormalUpObjects": 10,
+          "NormalDownObjects": 17,
+          "AcceptedUp": 39,
+          "AcceptedDown": 38,
+          "DeletedUp": 39,
+          "DeletedDown": 38,
+          "Requests": 153,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "broker_after_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 0,
+          "DownObjects": 0,
+          "Assembling": 0,
+          "CachedReplies": 0,
+          "LiveWorkers": 0,
+          "NormalUpObjects": 0,
+          "NormalDownObjects": 0,
+          "AcceptedUp": 39,
+          "AcceptedDown": 38,
+          "DeletedUp": 39,
+          "DeletedDown": 38,
+          "Requests": 153,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "budget": {
+          "admitted_http_calls": 154,
+          "budget_rejections": 0,
+          "encoded_body_bytes": 44929657,
+          "http_calls": 154
+        },
+        "origin_echoes": 25,
+        "origin_gets": 1,
+        "origin_posted_bytes": 16777216,
+        "origin_posts": 1,
+        "stopped_utc": "2026-11-15T21:39:46.351477Z"
+      },
+      "controller": {
+        "all_owned_children_returned_zero": true,
+        "owned_child_count": 2,
+        "tunnel_ingress_restored_404": true,
+        "stopped_utc": "2026-11-15T21:39:47.009318+00:00"
+      },
+      "origin_event_counts": {
+        "bulk_start_total": 2,
+        "get_download_starts": 1,
+        "post_upload_starts": 1
+      },
+      "samples": [
+        {
+          "elapsed_ms": 2165.832,
+          "kind": "tls_handshake",
+          "phase": "cold",
+          "timing_scope": "local SOCKS connect and end-to-end TLS handshake",
+          "verified": true
+        },
+        {
+          "first_body_ms": 1298.69,
+          "index": 0,
+          "kind": "text",
+          "phase": "warm",
+          "request_ms": 1298.692,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2152.856,
+          "index": 0,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2152.857,
+          "scheduled_ms": 2152.867,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2757.938,
+          "index": 1,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2757.939,
+          "scheduled_ms": 2758.47,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 3405.977,
+          "index": 2,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 3405.978,
+          "scheduled_ms": 3406.733,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 4231.991,
+          "index": 3,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 4231.993,
+          "scheduled_ms": 4232.739,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 4856.752,
+          "index": 4,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 4856.752,
+          "scheduled_ms": 4857.293,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5447.834,
+          "index": 5,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 5447.835,
+          "scheduled_ms": 5448.076,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 6402.839,
+          "index": 6,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 6402.84,
+          "scheduled_ms": 6403.365,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 7236.708,
+          "index": 7,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 7236.71,
+          "scheduled_ms": 7236.979,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 8867.246,
+          "index": 8,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 8867.246,
+          "scheduled_ms": 8868.1,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 9715.092,
+          "index": 9,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 9715.093,
+          "scheduled_ms": 9715.647,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 12322.763,
+          "index": 10,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 12322.765,
+          "scheduled_ms": 12323.517,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 14396.986,
+          "index": 11,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 14396.987,
+          "scheduled_ms": 14397.515,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 12005.165,
+          "full_ms": 59598.67,
+          "kind": "bulk",
+          "local_request_written_ms": 1261.703,
+          "mbps": 2.2520255301933063,
+          "phase": "download",
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2446.793,
+          "index": 0,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 2446.794,
+          "scheduled_ms": 2446.816,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 4056.57,
+          "index": 1,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 4056.57,
+          "scheduled_ms": 4058.649,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 23099.112,
+          "index": 2,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 23099.113,
+          "scheduled_ms": 23100.61,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 22857.307,
+          "index": 3,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 22857.308,
+          "scheduled_ms": 22858.403,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 22610.689,
+          "index": 4,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 22610.69,
+          "scheduled_ms": 22612.381,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 22365.914,
+          "index": 5,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 22365.915,
+          "scheduled_ms": 22366.283,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 22119.785,
+          "index": 6,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 22119.785,
+          "scheduled_ms": 22121.515,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 21873.502,
+          "index": 7,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 21873.502,
+          "scheduled_ms": 21875.434,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 21627.777,
+          "index": 8,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 21627.778,
+          "scheduled_ms": 21629.471,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 21381.469,
+          "index": 9,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 21381.469,
+          "scheduled_ms": 21383.375,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 21135.785,
+          "index": 10,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 21135.786,
+          "scheduled_ms": 21137.474,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 20889.394,
+          "index": 11,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 20889.395,
+          "scheduled_ms": 20891.315,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 75269.679,
+          "full_ms": 75269.711,
+          "kind": "bulk",
+          "local_request_written_ms": 16.199,
+          "mbps": 1.7831571920456408,
+          "phase": "upload",
+          "success": true
+        }
+      ],
+      "phases": {
+        "download": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 12005.165,
+            "full_ms": 59598.67,
+            "kind": "bulk",
+            "local_request_written_ms": 1261.703,
+            "mbps": 2.2520255301933063,
+            "phase": "download",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 5925.3375,
+            "max_ms": 14396.987,
+            "p95_nearest_rank_ms": 14396.987
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 5925.336499999999,
+            "max_ms": 14396.986,
+            "p95_nearest_rank_ms": 14396.986
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 5925.720499999999,
+            "max_ms": 14397.515,
+            "p95_nearest_rank_ms": 14397.515
+          },
+          "text_completed_during_bulk": 12
+        },
+        "upload": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 75269.679,
+            "full_ms": 75269.711,
+            "kind": "bulk",
+            "local_request_written_ms": 16.199,
+            "mbps": 1.7831571920456408,
+            "phase": "upload",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 21750.64,
+            "max_ms": 23099.113,
+            "p95_nearest_rank_ms": 23099.113
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 21750.639499999997,
+            "max_ms": 23099.112,
+            "p95_nearest_rank_ms": 23099.112
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 21752.4525,
+            "max_ms": 23100.61,
+            "p95_nearest_rank_ms": 23100.61
+          },
+          "text_completed_during_bulk": 12
+        }
+      },
+      "raw_directory": "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/",
+      "configured_duration_seconds": 842,
+      "effective_client_timeout_seconds": 480
+    },
+    {
+      "arm": "packed-a",
+      "status": "passed",
+      "frame_bytes": 786432,
+      "chunk_bytes": 4194304,
+      "pack_priority": true,
+      "elapsed_ms": 130613.427,
+      "client_error_nonempty": false,
+      "sample_ledger_error": false,
+      "carrier_raw": {
+        "attempts_upper": 1976,
+        "dispatches": 247,
+        "http2_responses": 246,
+        "http_status_200": 123,
+        "http_status_302": 123,
+        "pending_response_bytes": 0,
+        "request_body_bytes_upper": 179711136,
+        "response_body_bytes_upper": 270043371,
+        "returned_response_body_bytes": 22453316,
+        "script_posts": 124,
+        "transport_errors": 1,
+        "urlfetch_attempts_upper": 992
+      },
+      "client_raw": {
+        "deleted": 32,
+        "down_bytes": 0,
+        "down_objects": 32,
+        "down_waits": 0,
+        "normal_down_bytes": 0,
+        "normal_down_objects": 18,
+        "normal_up_bytes": 0,
+        "normal_up_objects": 10,
+        "packed_down_rpcs": 1,
+        "packed_up_rpcs": 10,
+        "published": 40,
+        "received": 32,
+        "requests": 124,
+        "retries": 0,
+        "up_bytes": 0,
+        "up_objects": 40,
+        "up_waits": 0
+      },
+      "closing_trace_observation": {
+        "op": "post",
+        "duration": "4.832s",
+        "status": "0",
+        "canceled": "true"
+      },
+      "closing_counter_interpretation": "Raw transport_errors=1 retained; last observed status0,canceledtrue is owned closing request in frozen pre-cancellation-separation binary; not reclassified to zero",
+      "exit": {
+        "active_streams_after_close": 0,
+        "broker_before_close": {
+          "UpBytes": 9460939,
+          "DownBytes": 0,
+          "NormalUpBytes": 9460704,
+          "NormalDownBytes": 0,
+          "UpObjects": 40,
+          "DownObjects": 32,
+          "Assembling": 0,
+          "CachedReplies": 2,
+          "LiveWorkers": 1,
+          "NormalUpObjects": 10,
+          "NormalDownObjects": 18,
+          "AcceptedUp": 40,
+          "AcceptedDown": 32,
+          "DeletedUp": 34,
+          "DeletedDown": 32,
+          "Requests": 124,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "broker_after_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 0,
+          "DownObjects": 0,
+          "Assembling": 0,
+          "CachedReplies": 0,
+          "LiveWorkers": 0,
+          "NormalUpObjects": 0,
+          "NormalDownObjects": 0,
+          "AcceptedUp": 40,
+          "AcceptedDown": 32,
+          "DeletedUp": 34,
+          "DeletedDown": 32,
+          "Requests": 124,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "budget": {
+          "admitted_http_calls": 125,
+          "budget_rejections": 0,
+          "encoded_body_bytes": 44917244,
+          "http_calls": 125
+        },
+        "origin_echoes": 25,
+        "origin_gets": 1,
+        "origin_posted_bytes": 16777216,
+        "origin_posts": 1,
+        "stopped_utc": "2026-11-15T21:44:01.735909Z"
+      },
+      "controller": {
+        "all_owned_children_returned_zero": true,
+        "owned_child_count": 2,
+        "tunnel_ingress_restored_404": true,
+        "stopped_utc": "2026-11-15T21:44:02.165291+00:00"
+      },
+      "origin_event_counts": {
+        "bulk_start_total": 2,
+        "get_download_starts": 1,
+        "post_upload_starts": 1
+      },
+      "samples": [
+        {
+          "elapsed_ms": 1412.451,
+          "kind": "tls_handshake",
+          "phase": "cold",
+          "timing_scope": "local SOCKS connect and end-to-end TLS handshake",
+          "verified": true
+        },
+        {
+          "first_body_ms": 1218.901,
+          "index": 0,
+          "kind": "text",
+          "phase": "warm",
+          "request_ms": 1218.903,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2169.324,
+          "index": 0,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2169.324,
+          "scheduled_ms": 2169.346,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1925.078,
+          "index": 1,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1925.078,
+          "scheduled_ms": 1926.371,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2594.925,
+          "index": 2,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2594.926,
+          "scheduled_ms": 2596.278,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2349.125,
+          "index": 3,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2349.125,
+          "scheduled_ms": 2350.376,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2105.47,
+          "index": 4,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2105.471,
+          "scheduled_ms": 2106.095,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1859.069,
+          "index": 5,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1859.07,
+          "scheduled_ms": 1860.311,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2630.587,
+          "index": 6,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2630.588,
+          "scheduled_ms": 2631.964,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2384.217,
+          "index": 7,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2384.218,
+          "scheduled_ms": 2385.466,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 3017.212,
+          "index": 8,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 3017.213,
+          "scheduled_ms": 3017.469,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2770.262,
+          "index": 9,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2770.263,
+          "scheduled_ms": 2771.502,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2523.801,
+          "index": 10,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2523.802,
+          "scheduled_ms": 2525.256,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2278.783,
+          "index": 11,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2278.785,
+          "scheduled_ms": 2279.363,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 33108.573,
+          "full_ms": 51861.439,
+          "kind": "bulk",
+          "local_request_written_ms": 1151.167,
+          "mbps": 2.5880062282535956,
+          "phase": "download",
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1475.082,
+          "index": 0,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1475.082,
+          "scheduled_ms": 1475.099,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1235.957,
+          "index": 1,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1235.958,
+          "scheduled_ms": 1236.168,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2204.581,
+          "index": 2,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 2204.581,
+          "scheduled_ms": 2205.479,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1961.735,
+          "index": 3,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1961.735,
+          "scheduled_ms": 1961.946,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5303.335,
+          "index": 4,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5303.337,
+          "scheduled_ms": 5303.415,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5056.873,
+          "index": 5,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5056.874,
+          "scheduled_ms": 5057.077,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 11237.83,
+          "index": 6,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 11237.831,
+          "scheduled_ms": 11237.915,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10993.6,
+          "index": 7,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10993.601,
+          "scheduled_ms": 10994.091,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10747.592,
+          "index": 8,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10747.592,
+          "scheduled_ms": 10748.03,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10501.292,
+          "index": 9,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10501.293,
+          "scheduled_ms": 10501.719,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10256.736,
+          "index": 10,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10256.737,
+          "scheduled_ms": 10256.922,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10010.538,
+          "index": 11,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10010.538,
+          "scheduled_ms": 10010.816,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 68363.895,
+          "full_ms": 68363.93,
+          "kind": "bulk",
+          "local_request_written_ms": 20.659,
+          "mbps": 1.9632827965579955,
+          "phase": "upload",
+          "success": true
+        }
+      ],
+      "phases": {
+        "download": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 33108.573,
+            "full_ms": 51861.439,
+            "kind": "bulk",
+            "local_request_written_ms": 1151.167,
+            "mbps": 2.5880062282535956,
+            "phase": "download",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 2366.6715,
+            "max_ms": 3017.213,
+            "p95_nearest_rank_ms": 3017.213
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 2366.6710000000003,
+            "max_ms": 3017.212,
+            "p95_nearest_rank_ms": 3017.212
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 2367.9210000000003,
+            "max_ms": 3017.469,
+            "p95_nearest_rank_ms": 3017.469
+          },
+          "text_completed_during_bulk": 12
+        },
+        "upload": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 68363.895,
+            "full_ms": 68363.93,
+            "kind": "bulk",
+            "local_request_written_ms": 20.659,
+            "mbps": 1.9632827965579955,
+            "phase": "upload",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 7656.9375,
+            "max_ms": 11237.831,
+            "p95_nearest_rank_ms": 11237.831
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 7656.9365,
+            "max_ms": 11237.83,
+            "p95_nearest_rank_ms": 11237.83
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 7657.1155,
+            "max_ms": 11237.915,
+            "p95_nearest_rank_ms": 11237.915
+          },
+          "text_completed_during_bulk": 12
+        }
+      },
+      "raw_directory": "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-a/",
+      "configured_duration_seconds": 570,
+      "effective_client_timeout_seconds": 480
+    },
+    {
+      "arm": "packed-b",
+      "status": "passed",
+      "frame_bytes": 2097152,
+      "chunk_bytes": 4194304,
+      "pack_priority": true,
+      "elapsed_ms": 92980.035,
+      "client_error_nonempty": false,
+      "sample_ledger_error": false,
+      "carrier_raw": {
+        "attempts_upper": 1432,
+        "dispatches": 179,
+        "http2_responses": 178,
+        "http_status_200": 89,
+        "http_status_302": 89,
+        "pending_response_bytes": 0,
+        "request_body_bytes_upper": 179619312,
+        "response_body_bytes_upper": 508524859,
+        "returned_response_body_bytes": 22443388,
+        "script_posts": 90,
+        "transport_errors": 1,
+        "urlfetch_attempts_upper": 720
+      },
+      "client_raw": {
+        "deleted": 31,
+        "down_bytes": 0,
+        "down_objects": 31,
+        "down_waits": 0,
+        "normal_down_bytes": 0,
+        "normal_down_objects": 18,
+        "normal_up_bytes": 0,
+        "normal_up_objects": 10,
+        "packed_down_rpcs": 2,
+        "packed_up_rpcs": 8,
+        "published": 40,
+        "received": 31,
+        "requests": 90,
+        "retries": 0,
+        "up_bytes": 0,
+        "up_objects": 40,
+        "up_waits": 0
+      },
+      "closing_trace_observation": {
+        "op": "post",
+        "duration": "5.312s",
+        "status": "0",
+        "canceled": "true"
+      },
+      "closing_counter_interpretation": "Raw transport_errors=1 retained; last observed status0,canceledtrue is owned closing request in frozen pre-cancellation-separation binary; not reclassified to zero",
+      "exit": {
+        "active_streams_after_close": 0,
+        "broker_before_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 40,
+          "DownObjects": 31,
+          "Assembling": 0,
+          "CachedReplies": 2,
+          "LiveWorkers": 1,
+          "NormalUpObjects": 10,
+          "NormalDownObjects": 18,
+          "AcceptedUp": 40,
+          "AcceptedDown": 31,
+          "DeletedUp": 40,
+          "DeletedDown": 31,
+          "Requests": 90,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "broker_after_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 0,
+          "DownObjects": 0,
+          "Assembling": 0,
+          "CachedReplies": 0,
+          "LiveWorkers": 0,
+          "NormalUpObjects": 0,
+          "NormalDownObjects": 0,
+          "AcceptedUp": 40,
+          "AcceptedDown": 31,
+          "DeletedUp": 40,
+          "DeletedDown": 31,
+          "Requests": 90,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "budget": {
+          "admitted_http_calls": 91,
+          "budget_rejections": 0,
+          "encoded_body_bytes": 44895838,
+          "http_calls": 91
+        },
+        "origin_echoes": 25,
+        "origin_gets": 1,
+        "origin_posted_bytes": 16777216,
+        "origin_posts": 1,
+        "stopped_utc": "2026-11-15T21:47:16.204412Z"
+      },
+      "controller": {
+        "all_owned_children_returned_zero": true,
+        "owned_child_count": 2,
+        "tunnel_ingress_restored_404": true,
+        "stopped_utc": "2026-11-15T21:47:16.569185+00:00"
+      },
+      "origin_event_counts": {
+        "bulk_start_total": 2,
+        "get_download_starts": 1,
+        "post_upload_starts": 1
+      },
+      "samples": [
+        {
+          "elapsed_ms": 1715.013,
+          "kind": "tls_handshake",
+          "phase": "cold",
+          "timing_scope": "local SOCKS connect and end-to-end TLS handshake",
+          "verified": true
+        },
+        {
+          "first_body_ms": 1292.171,
+          "index": 0,
+          "kind": "text",
+          "phase": "warm",
+          "request_ms": 1292.172,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2611.857,
+          "index": 0,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2611.858,
+          "scheduled_ms": 2611.885,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2366.448,
+          "index": 1,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2366.449,
+          "scheduled_ms": 2366.653,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2120.544,
+          "index": 2,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2120.545,
+          "scheduled_ms": 2120.723,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1874.06,
+          "index": 3,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1874.061,
+          "scheduled_ms": 1874.729,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1628.17,
+          "index": 4,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1628.17,
+          "scheduled_ms": 1628.827,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1381.972,
+          "index": 5,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1381.973,
+          "scheduled_ms": 1382.53,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1847.85,
+          "index": 6,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1847.852,
+          "scheduled_ms": 1848.222,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1602.485,
+          "index": 7,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1602.485,
+          "scheduled_ms": 1602.712,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1356.524,
+          "index": 8,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1356.524,
+          "scheduled_ms": 1356.695,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2363.665,
+          "index": 9,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2363.666,
+          "scheduled_ms": 2364.038,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2117.356,
+          "index": 10,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2117.356,
+          "scheduled_ms": 2117.721,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1871.422,
+          "index": 11,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 1871.423,
+          "scheduled_ms": 1871.514,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 8262.878,
+          "full_ms": 32607.515,
+          "kind": "bulk",
+          "local_request_written_ms": 1191.073,
+          "mbps": 4.116159357743146,
+          "phase": "download",
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2228.339,
+          "index": 0,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 2228.341,
+          "scheduled_ms": 2228.365,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1983.051,
+          "index": 1,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1983.052,
+          "scheduled_ms": 1983.845,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1739.076,
+          "index": 2,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1739.076,
+          "scheduled_ms": 1739.841,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 1493.79,
+          "index": 3,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 1493.791,
+          "scheduled_ms": 1494.648,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 6177.7,
+          "index": 4,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 6177.7,
+          "scheduled_ms": 6178.445,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5933.525,
+          "index": 5,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5933.525,
+          "scheduled_ms": 5934.705,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5688.649,
+          "index": 6,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5688.65,
+          "scheduled_ms": 5688.8,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5441.876,
+          "index": 7,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5441.876,
+          "scheduled_ms": 5442.718,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10168.906,
+          "index": 8,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 10168.907,
+          "scheduled_ms": 10169.118,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 9922.736,
+          "index": 9,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 9922.737,
+          "scheduled_ms": 9923.853,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 9676.842,
+          "index": 10,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 9676.843,
+          "scheduled_ms": 9677.792,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 9431.299,
+          "index": 11,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 9431.3,
+          "scheduled_ms": 9431.558,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 49701.184,
+          "full_ms": 49701.214,
+          "kind": "bulk",
+          "local_request_written_ms": 11.984,
+          "mbps": 2.7004919074767852,
+          "phase": "upload",
+          "success": true
+        }
+      ],
+      "phases": {
+        "download": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 8262.878,
+            "full_ms": 32607.515,
+            "kind": "bulk",
+            "local_request_written_ms": 1191.073,
+            "mbps": 4.116159357743146,
+            "phase": "download",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 1872.742,
+            "max_ms": 2611.858,
+            "p95_nearest_rank_ms": 2611.858
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 1872.741,
+            "max_ms": 2611.857,
+            "p95_nearest_rank_ms": 2611.857
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 1873.1215,
+            "max_ms": 2611.885,
+            "p95_nearest_rank_ms": 2611.885
+          },
+          "text_completed_during_bulk": 12
+        },
+        "upload": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 49701.184,
+            "full_ms": 49701.214,
+            "kind": "bulk",
+            "local_request_written_ms": 11.984,
+            "mbps": 2.7004919074767852,
+            "phase": "upload",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 5811.0875,
+            "max_ms": 10168.907,
+            "p95_nearest_rank_ms": 10168.907
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 5811.0869999999995,
+            "max_ms": 10168.906,
+            "p95_nearest_rank_ms": 10168.906
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 5811.7525000000005,
+            "max_ms": 10169.118,
+            "p95_nearest_rank_ms": 10169.118
+          },
+          "text_completed_during_bulk": 12
+        }
+      },
+      "raw_directory": "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-b/",
+      "variant_plan": {
+        "selected_before_any_server_or_client_start": true,
+        "selected_utc": "2026-11-15T21:45:07.305202+00:00",
+        "frame_bytes": 2097152,
+        "design": "Unreplicated2x2frame/packing matrix; finalpair2MiB replaces unstarted768KiBrepeats. NoABBAmedian oroptimum claim."
+      },
+      "configured_duration_seconds": 338,
+      "effective_client_timeout_seconds": 338
+    },
+    {
+      "arm": "scalar-b",
+      "status": "passed",
+      "frame_bytes": 2097152,
+      "chunk_bytes": 4194304,
+      "pack_priority": false,
+      "elapsed_ms": 121886.016,
+      "client_error_nonempty": false,
+      "sample_ledger_error": false,
+      "carrier_raw": {
+        "attempts_upper": 2280,
+        "dispatches": 285,
+        "http2_responses": 284,
+        "http_status_200": 142,
+        "http_status_302": 142,
+        "pending_response_bytes": 0,
+        "request_body_bytes_upper": 179709400,
+        "response_body_bytes_upper": 809662485,
+        "returned_response_body_bytes": 22459812,
+        "script_posts": 143,
+        "transport_errors": 1,
+        "urlfetch_attempts_upper": 1144
+      },
+      "client_raw": {
+        "deleted": 48,
+        "down_bytes": 0,
+        "down_objects": 48,
+        "down_waits": 0,
+        "normal_down_bytes": 0,
+        "normal_down_objects": 18,
+        "normal_up_bytes": 0,
+        "normal_up_objects": 10,
+        "packed_down_rpcs": 0,
+        "packed_up_rpcs": 0,
+        "published": 40,
+        "received": 48,
+        "requests": 143,
+        "retries": 0,
+        "up_bytes": 0,
+        "up_objects": 40,
+        "up_waits": 0
+      },
+      "closing_trace_observation": {
+        "op": "post",
+        "duration": "10.016s",
+        "status": "0",
+        "canceled": "true"
+      },
+      "closing_counter_interpretation": "Raw transport_errors=1 retained; last observed status0,canceledtrue is owned closing request in frozen pre-cancellation-separation binary; not reclassified to zero",
+      "exit": {
+        "active_streams_after_close": 0,
+        "broker_before_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 40,
+          "DownObjects": 48,
+          "Assembling": 0,
+          "CachedReplies": 2,
+          "LiveWorkers": 1,
+          "NormalUpObjects": 10,
+          "NormalDownObjects": 18,
+          "AcceptedUp": 40,
+          "AcceptedDown": 48,
+          "DeletedUp": 40,
+          "DeletedDown": 48,
+          "Requests": 143,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "broker_after_close": {
+          "UpBytes": 0,
+          "DownBytes": 0,
+          "NormalUpBytes": 0,
+          "NormalDownBytes": 0,
+          "UpObjects": 0,
+          "DownObjects": 0,
+          "Assembling": 0,
+          "CachedReplies": 0,
+          "LiveWorkers": 0,
+          "NormalUpObjects": 0,
+          "NormalDownObjects": 0,
+          "AcceptedUp": 40,
+          "AcceptedDown": 48,
+          "DeletedUp": 40,
+          "DeletedDown": 48,
+          "Requests": 143,
+          "Replayed": 0,
+          "BusyResponses": 0
+        },
+        "budget": {
+          "admitted_http_calls": 144,
+          "budget_rejections": 0,
+          "encoded_body_bytes": 44923523,
+          "http_calls": 144
+        },
+        "origin_echoes": 25,
+        "origin_gets": 1,
+        "origin_posted_bytes": 16777216,
+        "origin_posts": 1,
+        "stopped_utc": "2026-11-15T21:50:03.957632Z"
+      },
+      "controller": {
+        "all_owned_children_returned_zero": true,
+        "owned_child_count": 2,
+        "tunnel_ingress_restored_404": true,
+        "stopped_utc": "2026-11-15T21:50:04.269045+00:00"
+      },
+      "origin_event_counts": {
+        "bulk_start_total": 2,
+        "get_download_starts": 1,
+        "post_upload_starts": 1
+      },
+      "samples": [
+        {
+          "elapsed_ms": 1393.791,
+          "kind": "tls_handshake",
+          "phase": "cold",
+          "timing_scope": "local SOCKS connect and end-to-end TLS handshake",
+          "verified": true
+        },
+        {
+          "first_body_ms": 1398.546,
+          "index": 0,
+          "kind": "text",
+          "phase": "warm",
+          "request_ms": 1398.549,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2033.12,
+          "index": 0,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2033.123,
+          "scheduled_ms": 2033.134,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2643.287,
+          "index": 1,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 2643.289,
+          "scheduled_ms": 2643.653,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 3136.627,
+          "index": 2,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 3136.628,
+          "scheduled_ms": 3137.16,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 3725.827,
+          "index": 3,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 3725.828,
+          "scheduled_ms": 3726.126,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 4298.523,
+          "index": 4,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 4298.524,
+          "scheduled_ms": 4298.728,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5110.811,
+          "index": 5,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 5110.812,
+          "scheduled_ms": 5111.249,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5606.275,
+          "index": 6,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 5606.277,
+          "scheduled_ms": 5606.508,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 6194.584,
+          "index": 7,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 6194.584,
+          "scheduled_ms": 6194.795,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 8706.448,
+          "index": 8,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 8706.454,
+          "scheduled_ms": 8706.86,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 9248.906,
+          "index": 9,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 9248.907,
+          "scheduled_ms": 9249.113,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10037.339,
+          "index": 10,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 10037.34,
+          "scheduled_ms": 10037.906,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 10572.865,
+          "index": 11,
+          "kind": "text",
+          "phase": "download",
+          "request_ms": 10572.866,
+          "scheduled_ms": 10572.968,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 2784.512,
+          "full_ms": 38373.106,
+          "kind": "bulk",
+          "local_request_written_ms": 1129.619,
+          "mbps": 3.497702917053585,
+          "phase": "download",
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 2270.626,
+          "index": 0,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 2270.627,
+          "scheduled_ms": 2270.645,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 3792.026,
+          "index": 1,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 3792.027,
+          "scheduled_ms": 3794.129,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 5462.719,
+          "index": 2,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 5462.72,
+          "scheduled_ms": 5464.057,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 6757.04,
+          "index": 3,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 6757.041,
+          "scheduled_ms": 6758.085,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 11624.067,
+          "index": 4,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 11624.068,
+          "scheduled_ms": 11625.573,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 13502.688,
+          "index": 5,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 13502.689,
+          "scheduled_ms": 13504.406,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 14954.646,
+          "index": 6,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 14954.646,
+          "scheduled_ms": 14956.365,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 16542.305,
+          "index": 7,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 16542.306,
+          "scheduled_ms": 16543.993,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 21540.823,
+          "index": 8,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 21540.825,
+          "scheduled_ms": 21542.861,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 23094.447,
+          "index": 9,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 23094.447,
+          "scheduled_ms": 23096.203,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 26467.555,
+          "index": 10,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 26467.557,
+          "scheduled_ms": 26469.306,
+          "success": true
+        },
+        {
+          "bytes": 64,
+          "completed_during_bulk": true,
+          "first_body_ms": 27276.147,
+          "index": 11,
+          "kind": "text",
+          "phase": "upload",
+          "request_ms": 27276.148,
+          "scheduled_ms": 27278.257,
+          "success": true
+        },
+        {
+          "bytes": 16777216,
+          "first_body_ms": 67087.436,
+          "full_ms": 67087.462,
+          "kind": "bulk",
+          "local_request_written_ms": 15.036,
+          "mbps": 2.0006380215987414,
+          "phase": "upload",
+          "success": true
+        }
+      ],
+      "phases": {
+        "download": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 2784.512,
+            "full_ms": 38373.106,
+            "kind": "bulk",
+            "local_request_written_ms": 1129.619,
+            "mbps": 3.497702917053585,
+            "phase": "download",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 5358.5445,
+            "max_ms": 10572.866,
+            "p95_nearest_rank_ms": 10572.866
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 5358.543,
+            "max_ms": 10572.865,
+            "p95_nearest_rank_ms": 10572.865
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 5358.8785,
+            "max_ms": 10572.968,
+            "p95_nearest_rank_ms": 10572.968
+          },
+          "text_completed_during_bulk": 12
+        },
+        "upload": {
+          "bulk": {
+            "bytes": 16777216,
+            "first_body_ms": 67087.436,
+            "full_ms": 67087.462,
+            "kind": "bulk",
+            "local_request_written_ms": 15.036,
+            "mbps": 2.0006380215987414,
+            "phase": "upload",
+            "success": true
+          },
+          "text_request_full": {
+            "count": 12,
+            "median_ms": 14228.6675,
+            "max_ms": 27276.148,
+            "p95_nearest_rank_ms": 27276.148
+          },
+          "text_request_first_body": {
+            "count": 12,
+            "median_ms": 14228.667000000001,
+            "max_ms": 27276.147,
+            "p95_nearest_rank_ms": 27276.147
+          },
+          "text_scheduled_full": {
+            "count": 12,
+            "median_ms": 14230.3855,
+            "max_ms": 27278.257,
+            "p95_nearest_rank_ms": 27278.257
+          },
+          "text_completed_during_bulk": 12
+        }
+      },
+      "raw_directory": "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-b/",
+      "variant_plan": {
+        "selected_before_any_server_or_client_start": true,
+        "selected_utc": "2026-11-15T21:47:35.569904+00:00",
+        "frame_bytes": 2097152,
+        "design": "Unreplicated2x2frame/packing matrix; finalpair2MiB replaces unstarted768KiBrepeats. NoABBAmedian oroptimum claim."
+      },
+      "configured_duration_seconds": 199,
+      "effective_client_timeout_seconds": 199
+    }
+  ],
+  "setup_failures": [
+    {
+      "generation": "scalar-a",
+      "classification": "setup_failure_before_measured_workload",
+      "reason": "Owned-origin setup returned OAuth401",
+      "protocol_failure": false
+    },
+    {
+      "generation": "scalar-a-g2",
+      "classification": "setup_failure_before_measured_workload",
+      "reason": "Cloudflare rejected Python User-Agent with1010",
+      "protocol_failure": false
+    },
+    {
+      "generation": "scalar-a-g3",
+      "classification": "setup_failure_before_client_consumption_marker",
+      "reason": "Strict reservation rejected extra field",
+      "protocol_failure": false
+    }
+  ],
+  "publication_cleanup_status": "Complete: ownedchildrenjoined;tunnel/DNSremoved;Scriptarchived/projectrecoverablytrashed;frontedinactive404;exacttemporarygrantrevoked;copiedprivatefilesremoved",
+  "totals": {
+    "exact_bulk_bytes": 134217728,
+    "exact_files": 8,
+    "exact_echoes": 100,
+    "mixed_echoes_completed_during_bulk": 96,
+    "script_posts": 510,
+    "visible_dispatches": 1016,
+    "completed_http2_responses": 1012,
+    "raw_transport_error_counter_sum": 4,
+    "client_retries": 0,
+    "separate_inactive_cleanup_posts": 1,
+    "observed_payload_plus_inactive_cleanup_posts": 511
+  },
+  "publication_cleanup": {
+    "cloudflare": {
+      "tunnel_deleted": true,
+      "verified_utc": "2026-11-15T21:50:39.935516+00:00",
+      "all_recorded_children_joined": true,
+      "dns_cleanup_still_required": false,
+      "dns_deleted_ui_verified": true,
+      "dns_verified_utc": "2026-11-15T21:53:51.910670+00:00"
+    },
+    "apps_script": {
+      "deployment_archived": true,
+      "project_recoverably_trashed": true,
+      "scope_grant_revoked": true,
+      "research_tabs_closed": true
+    },
+    "inactive_check": {
+      "status": 404,
+      "http_version": "2",
+      "total_seconds": 0.458567,
+      "response_bytes": 7913,
+      "return_code": 0,
+      "checked_utc": "2026-11-15T21:55:01.343620+00:00"
+    },
+    "scope_grant_revocation": "Observed exact temporary app grant removed; unrelated grants untouched",
+    "copied_campaign_keys_settings_and_code_removal": "Observed complete; original Drivekit and unrelated grants preserved",
+    "proof_paths": [
+      "repocomp/.skirk-runs/named-research-exit-20261115/final-cleanup-proof.json",
+      "repocomp/.skirk-runs/apps-script-stage2-20261115/google-ui-cleanup.json",
+      "repocomp/.skirk-runs/apps-script-stage2-20261115/disabled-check-proof.json",
+      "repocomp/.skirk-runs/apps-script-stage2-20261115/local-private-cleanup-proof.json"
+    ],
+    "local_private_copies": {
+      "removed_utc": "2026-11-15T21:57:12.237594+00:00",
+      "copied_settings_remaining": 0,
+      "copied_runtime_configs_remaining": 0,
+      "campaign_private_keys_absent": true,
+      "private_script_code_absent": true,
+      "deployment_endpoint_copy_absent": true,
+      "owned_temporary_connector_token_absent": true,
+      "removed_private_deployment_endpoint_screenshot": true,
+      "removed_file_count": 20
+    }
+  }
+}

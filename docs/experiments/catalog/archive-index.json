@@ -187,6 +187,30 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "bytes": 1282,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "bytes": 1277,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "bytes": 1283,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "bytes": 1284,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/architecture-five-client-live-20261114/summary.json",
     "bytes": 955,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"

@@ -3600,6 +3600,113 @@
       ],
       "revision_or_binary": "f60802f/12e411069143e13ffc00d0defa1c5461308a99d7a5cc3e9869662aeddea86d40",
       "live_comparable": false
+    },
+    {
+      "id": "R3-039",
+      "candidate": "Real AppsScript owned relay: scalar priority,786432Bframe",
+      "evidence_level": "live_full_transport_single_factorial_cell",
+      "workload": "ActualSOCKS+end-to-endTLS;exact16MiBGETthen16MiBPOST;onewarm+12mixed64Bechoes/direction onpersistentconnection,250msoffers;4MiBchunklimit;no128KiBdemotionprelude",
+      "latency": "Downloadchatrequestmedian/max5925.337/14396.987ms,GETfirstbyte12005.165ms;uploadchat21750.640/23099.113ms;rawscheduled/first/fullretained",
+      "throughput_mbps": "GET2.252026;POST1.783157",
+      "estimated_quota_units": "153ScriptPOST,305visibleGoogle dispatch,304completedH2;conservativeattempt/bodyboundsraw;notDriveunits",
+      "correctness_and_errors": "All2files+25echoesexact;12/12mixedresponsescompletedunderactivebulkeachdirection;0clientretries;rawtransport_errors1retained,lasttraceownedcanceltrue/status0",
+      "cleanup": "Owned server/connector joined; ingress404; streams/broker payload/cache/workers zero. Exact CF tunnel/DNS removed; Script archived/project recoverably trashed; inactive H2 check404; exact temporary grant revoked;20copiedprivatefiles removed,0settings/runtimecopies. One cleanup POST separate from510payloadPOSTs.",
+      "decision": "Retained positivefulltransport;unreplicated2x2,notABBA/universalwinner;packingchatbetterbutGETfirstbodyworseatbothframesizes;largerframechangedsecondpairbeforestart",
+      "source_documents": [
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.md",
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json"
+      ],
+      "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-040",
+      "candidate": "Real AppsScript owned relay: packed priority,786432Bframe",
+      "evidence_level": "live_full_transport_single_factorial_cell",
+      "workload": "ActualSOCKS+end-to-endTLS;exact16MiBGETthen16MiBPOST;onewarm+12mixed64Bechoes/direction onpersistentconnection,250msoffers;4MiBchunklimit;no128KiBdemotionprelude",
+      "latency": "Downloadchatrequestmedian/max2366.671/3017.213ms,GETfirstbyte33108.573ms;uploadchat7656.938/11237.831ms;rawscheduled/first/fullretained",
+      "throughput_mbps": "GET2.588006;POST1.963283",
+      "estimated_quota_units": "124ScriptPOST,247visibleGoogle dispatch,246completedH2;conservativeattempt/bodyboundsraw;notDriveunits",
+      "correctness_and_errors": "All2files+25echoesexact;12/12mixedresponsescompletedunderactivebulkeachdirection;0clientretries;rawtransport_errors1retained,lasttraceownedcanceltrue/status0",
+      "cleanup": "Owned server/connector joined; ingress404; streams/broker payload/cache/workers zero. Exact CF tunnel/DNS removed; Script archived/project recoverably trashed; inactive H2 check404; exact temporary grant revoked;20copiedprivatefiles removed,0settings/runtimecopies. One cleanup POST separate from510payloadPOSTs.",
+      "decision": "Retained positivefulltransport;unreplicated2x2,notABBA/universalwinner;packingchatbetterbutGETfirstbodyworseatbothframesizes;largerframechangedsecondpairbeforestart",
+      "source_documents": [
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.md",
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json"
+      ],
+      "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-041",
+      "candidate": "Real AppsScript owned relay: packed priority,2097152Bframe",
+      "evidence_level": "live_full_transport_single_factorial_cell",
+      "workload": "ActualSOCKS+end-to-endTLS;exact16MiBGETthen16MiBPOST;onewarm+12mixed64Bechoes/direction onpersistentconnection,250msoffers;4MiBchunklimit;no128KiBdemotionprelude",
+      "latency": "Downloadchatrequestmedian/max1872.742/2611.858ms,GETfirstbyte8262.878ms;uploadchat5811.087/10168.907ms;rawscheduled/first/fullretained",
+      "throughput_mbps": "GET4.116159;POST2.700492",
+      "estimated_quota_units": "90ScriptPOST,179visibleGoogle dispatch,178completedH2;conservativeattempt/bodyboundsraw;notDriveunits",
+      "correctness_and_errors": "All2files+25echoesexact;12/12mixedresponsescompletedunderactivebulkeachdirection;0clientretries;rawtransport_errors1retained,lasttraceownedcanceltrue/status0",
+      "cleanup": "Owned server/connector joined; ingress404; streams/broker payload/cache/workers zero. Exact CF tunnel/DNS removed; Script archived/project recoverably trashed; inactive H2 check404; exact temporary grant revoked;20copiedprivatefiles removed,0settings/runtimecopies. One cleanup POST separate from510payloadPOSTs.",
+      "decision": "Retained positivefulltransport;unreplicated2x2,notABBA/universalwinner;packingchatbetterbutGETfirstbodyworseatbothframesizes;largerframechangedsecondpairbeforestart",
+      "source_documents": [
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.md",
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json"
+      ],
+      "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-042",
+      "candidate": "Real AppsScript owned relay: scalar priority,2097152Bframe",
+      "evidence_level": "live_full_transport_single_factorial_cell",
+      "workload": "ActualSOCKS+end-to-endTLS;exact16MiBGETthen16MiBPOST;onewarm+12mixed64Bechoes/direction onpersistentconnection,250msoffers;4MiBchunklimit;no128KiBdemotionprelude",
+      "latency": "Downloadchatrequestmedian/max5358.544/10572.866ms,GETfirstbyte2784.512ms;uploadchat14228.667/27276.148ms;rawscheduled/first/fullretained",
+      "throughput_mbps": "GET3.497703;POST2.000638",
+      "estimated_quota_units": "143ScriptPOST,285visibleGoogle dispatch,284completedH2;conservativeattempt/bodyboundsraw;notDriveunits",
+      "correctness_and_errors": "All2files+25echoesexact;12/12mixedresponsescompletedunderactivebulkeachdirection;0clientretries;rawtransport_errors1retained,lasttraceownedcanceltrue/status0",
+      "cleanup": "Owned server/connector joined; ingress404; streams/broker payload/cache/workers zero. Exact CF tunnel/DNS removed; Script archived/project recoverably trashed; inactive H2 check404; exact temporary grant revoked;20copiedprivatefiles removed,0settings/runtimecopies. One cleanup POST separate from510payloadPOSTs.",
+      "decision": "Retained positivefulltransport;unreplicated2x2,notABBA/universalwinner;packingchatbetterbutGETfirstbodyworseatbothframesizes;largerframechangedsecondpairbeforestart",
+      "source_documents": [
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.md",
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json"
+      ],
+      "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-043",
+      "candidate": "Real AppsScript relay setup generations before measured arm",
+      "evidence_level": "setup_failures_not_protocol_experiments",
+      "workload": "Firstownedrelaylaunch generations before successfulscalar-a-g4",
+      "latency": null,
+      "throughput_mbps": null,
+      "estimated_quota_units": "No fabricated measured workload;boundedsetupcallsnotfulltunnelmetrics",
+      "correctness_and_errors": "g1OAuth401,g2CloudflarePythonUserAgent1010,g3strictreservationextrafieldrejectedbeforeclientconsumptionmarker",
+      "cleanup": "Owned server/connector joined; ingress404; streams/broker payload/cache/workers zero. Exact CF tunnel/DNS removed; Script archived/project recoverably trashed; inactive H2 check404; exact temporary grant revoked;20copiedprivatefiles removed,0settings/runtimecopies. One cleanup POST separate from510payloadPOSTs.",
+      "decision": "Retainsetupfailures;do notinflateprotocolfailurecountoromitsetupcost",
+      "source_documents": [
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.md",
+        "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a/",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g2/",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g3/"
+      ],
+      "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
     }
   ]
 }
