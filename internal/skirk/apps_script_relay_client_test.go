@@ -70,6 +70,9 @@ type relayResearchClient struct {
 }
 
 func newRelayResearchClient(ctx context.Context, key []byte, epoch [16]byte, cfg relayResearchConfig, exchange relayResearchExchange) (*relayResearchClient, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var err error
 	if cfg, err = cfg.normalized(); err != nil || exchange == nil {
 		return nil, errRelayResearchBounds
@@ -177,6 +180,10 @@ func (s *relayResearchClient) PutObject(ctx context.Context, name string, data [
 	var v *relayResearchUpload
 	for {
 		s.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			s.mu.Unlock()
+			return ObjectInfo{}, err
+		}
 		if s.err != nil {
 			err := s.err
 			s.mu.Unlock()
@@ -285,6 +292,10 @@ func (s *relayResearchClient) DeleteID(ctx context.Context, id string) error {
 		return ctx.Err()
 	}
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if s.err != nil {
 		err := s.err
 		s.mu.Unlock()
@@ -581,6 +592,10 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 	var v *relayResearchDownload
 	for {
 		s.mu.Lock()
+		if s.ctx != nil && s.ctx.Err() != nil {
+			s.mu.Unlock()
+			return s.ctx.Err()
+		}
 		if s.err != nil {
 			err := s.err
 			s.mu.Unlock()
