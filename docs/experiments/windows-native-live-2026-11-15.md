@@ -116,9 +116,9 @@ test build, route recovery, and exact Drive cleanup all passed.
 | Exact session cleanup | 3 mux objects deleted, 0 slot; both prefixes empty immediately and after 30 s |
 
 The temporary encrypted Actions secret was removed immediately after the
-Prepare step and verified absent. The disposable workflow and harness remain
-only on the isolated test branch; this evidence paragraph is the sole change
-intended for the draft PR. An earlier
+Prepare step and verified absent. The disposable workflow and harness were
+removed from the isolated test branch after the run; they are not part of the
+draft PR. An earlier
 [run](https://github.com/ShahabSL/Skirk/actions/runs/43688912687) reached
 the same VPN route and exit proof but stopped on a test assertion that expected
 one selected route entry; Windows returned two identical `Skirk Tunnel`
