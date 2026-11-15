@@ -59,6 +59,9 @@ func TestMetadataSlotSupportsConfiguredDottedClientAndRunIDs(t *testing.T) {
 	if _, err := peer.enqueue(name, []byte("sealed")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := newMetadataSlotPeer("slot-test-secret", sid, DirectionUp, " client.one", "run.two", metadataSlotTestGeneration(), metadataSlotLimits{}); err == nil {
+		t.Fatal("slot accepted an ID that muxDirPrefix would trim")
+	}
 }
 
 func TestMetadataSlotVersionSkipAndAckLoss(t *testing.T) {

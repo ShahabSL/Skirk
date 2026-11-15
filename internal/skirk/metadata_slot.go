@@ -128,7 +128,7 @@ func newMetadataSlotCodec(secret string, sid [16]byte, direction byte, clientID,
 }
 
 func metadataSlotLabelValid(s string) bool {
-	return isSafeObjectSegment(s)
+	return s == strings.TrimSpace(s) && isSafeObjectSegment(s)
 }
 
 func (c *metadataSlotCodec) validateRecord(r metadataSlotRecord) error {
