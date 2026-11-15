@@ -32,6 +32,34 @@ SKIRK_HTTP_TRACE=1 python3 tools/skirk_live_ab.py \
 ```
 
 `SKIRK_HTTP_TRACE=1` logs safe timings for slow Google requests without URLs,
-headers, payloads, or credentials. The opt-in flag's latency, throughput, and
-quota are unmeasured until a live comparison completes; it must not be
-promoted from a unit test or a single arm.
+headers, payloads, or credentials.
+
+## Pinned-front live results
+
+The isolated `shahabpre` account ran 16 MiB bulk transfers with 12 scheduled
+new-stream messages per arm. Download used candidate/control/control/candidate;
+upload reversed the order. The same binary hash was used in every arm of each
+comparison. Every bulk SHA-256 and all 48 message bodies per direction passed;
+each arm's on-demand authenticated exit proof passed; Drive API errors were
+zero. Medians below summarize **two arms per mode**, not population percentiles.
+
+| Direction | Discovery | Scheduled message p95 | Request message p95 | File goodput | Est. Drive units/arm |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Download | Split default | 13.240 s | 7.065 s | 14.050 Mb/s | 24,480 |
+| Download | Combined | 14.939 s | 4.233 s | 12.693 Mb/s | 22,755 |
+| Upload | Split default | 18.530 s | 8.326 s | 9.428 Mb/s | 24,030 |
+| Upload | Combined | 15.074 s | 5.217 s | 11.777 Mb/s | 24,455 |
+
+The download result trades better request timing for worse scheduled timing
+and file goodput. Upload favors combined in this pair, but individual file
+arms ranged from 7.806 to 15.724 Mb/s. A broad combined list requests at
+most 16 pages of 100 objects per poll and retains a continuation token.
+An older priority object behind a large, newer p1 backlog can therefore be
+delayed while pagination advances. The split default queries p0 separately.
+These results do not justify changing the default without a backlog-safe
+priority fallback and a larger mixed workload.
+
+Raw results and exact cleanup reports are in the ignored
+`.skirk-runs/combined-list-{down,upload}-16m-20261114-01/` directories.
+Each run's eight exact mux/slot prefixes had zero immediate and delayed
+matches after cleanup; 28 and 17 residual objects were deleted respectively.
