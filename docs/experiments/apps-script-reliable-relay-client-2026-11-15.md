@@ -91,7 +91,10 @@ These are local test durations, not Google throughput or latency results.
 
 The priority-reserve variant and its saturation tests subsequently passed in
 the unified targeted run (4.711 seconds including both full-mux subcases).
-Race and vet results remain pending below.
+The finalized scalar source `443bdbd` passed all 28 top-level relay tests and
+three full-mux subcases under the race detector in 63.763 seconds; package vet
+passed. Its retained ordinary test binary SHA-256 is
+`a227a021b419489a126390795ee9bf8f93ea882e73e189c30b362d2655d678f0`.
 
 The 4 MiB mux configuration first completed its files but failed the requirement
 that a text reply finish before its very fast loopback upload. A separately
@@ -127,6 +130,47 @@ an entire 600 ms RPC at a 4-message/second offered rate. Memory headroom does
 not solve the service-rate limit. A bounded multi-object priority-packing
 variant should be compared against this retained scalar baseline before any
 latency claim. No timing here measures Google's service or a regional route.
+
+## Priority packing variant, source pending execution
+
+`PackPriority` is an explicit research setting, default false. It packs at most
+eight complete small priority objects into at most half one RPC frame or
+128 KiB, whichever is smaller. Normal fragments travel in separate RPCs, so
+normal admission pressure cannot reject an otherwise admissible priority
+batch. Delete-only RPCs retain precedence. UP gives a waiting normal fragment
+a turn after four priority objects; PULL counts eight objects before its normal
+turn. A group counts its objects rather than spending only one fairness turn.
+
+The broker checks every grouped identity, name, total, offset, ciphertext hash,
+aggregate admission bound and new object's inner authentication before any
+payload publication or DOWN deletion. Wire ciphertext identity and expected
+sequence are checked before consuming the previous RPC's receipt. The previous
+result receipt is separate from asynchronous object validation; this design
+does not claim all inner validation precedes RPC bookkeeping.
+
+The client requires the exact set of final committed IDs before freeing any
+caller's upload. Grouped DOWN replies are checked for complete priority shape,
+unique names/IDs, hashes, inner authentication and whole-group capacity before
+exposure. The prepared path does not run inner validation a second time after
+part of a group becomes visible. Existing incomplete scalar assemblies cannot
+become complete grouped objects. Unsupported scalar peers reject grouped
+requests or responses instead of silently losing payload.
+
+The new same-binary comparison keeps the scalar mode's original burst
+accounting, uses one shared incompressible payload, fixes 32 MiB/direction and
+1 MiB/16 reserves on both modes, and changes only `PackPriority`. Its tests and
+results remain pending. Five client packing fault tests and broker atomicity,
+replay and normal-progress tests accompany the new full SOCKS case.
+
+Live research limits are separate quantities: at most 256 visible execution
+POSTs per variant, each conservatively reserving eight internal HTTP/2
+attempts; at most 4,096 total HTTP attempts upper and 1 GiB encoded bodies upper
+on the client; at most 1,024 admitted RPCs and 128 MiB actual encoded bodies at
+the owned server. ContentService GETs do not consume the execution-POST count.
+The parent reserves each variant's entire POST slice in its private campaign
+ledger before starting any process; four 256-POST slices reserve at most 8,192
+possible URL Fetch executions. These conservative reservations do not measure
+actual Google executions and do not grant access or consume quota by themselves.
 
 - Lost committed UP reply: exact retry, one publication, deletion followed by a
   fresh-RPC duplicate, and rejection of a receipted old RPC.

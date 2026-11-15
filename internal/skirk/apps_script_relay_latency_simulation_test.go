@@ -21,8 +21,22 @@ import (
 // Fixed application-level delay is a simulated service budget, not a measured
 // Google RTT. Twelve messages are offered at4/s without waiting for echoes.
 func TestRelayClientSimulated600msRPCOfferedTextWith4MiBMuxLimit(t *testing.T) {
+	data := make([]byte, 16<<20)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	for _, packed := range []bool{false, true} {
+		name := "scalar"
+		if packed {
+			name = "packed-priority"
+		}
+		t.Run(name, func(t *testing.T) { relayClientSimulatedOfferedWorkload(t, packed, data) })
+	}
+}
+
+func relayClientSimulatedOfferedWorkload(t *testing.T, packed bool, data []byte) {
 	var largestNormal, upCalls, pullCalls atomic.Int64
-	f := relayClientSOCKSFixture(t, relayResearchConfig{FrameBytes: 768 << 10, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16}, 4<<20, func(b *relayResearchBroker) relayResearchExchange {
+	f := relayClientSOCKSFixture(t, relayResearchConfig{FrameBytes: 768 << 10, MaxBytes: 32 << 20, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16, PackPriority: packed}, 4<<20, func(b *relayResearchBroker) relayResearchExchange {
 		x := relayClientHTTPExchange(t, b)
 		return func(ctx context.Context, wire []byte) ([]byte, error) {
 			p, err := b.codec.open(wire)
@@ -69,10 +83,6 @@ func TestRelayClientSimulated600msRPCOfferedTextWith4MiBMuxLimit(t *testing.T) {
 			return raw, nil
 		}
 	})
-	data := make([]byte, 16<<20)
-	if _, err := rand.Read(data); err != nil {
-		t.Fatal(err)
-	}
 	want := sha256.Sum256(data)
 	bulkReached := make(chan struct{}, 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,9 +201,13 @@ func TestRelayClientSimulated600msRPCOfferedTextWith4MiBMuxLimit(t *testing.T) {
 	timesMu.Unlock()
 	sorted := append([]float64(nil), samples...)
 	sort.Float64s(sorted)
-	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d up_calls=%d pull_calls=%d max_normal_sealed=%d", offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, workUp, workPull, largestNormal.Load())
+	snapshot := f.client.snapshot()
+	t.Logf("SIMULATED600ms RPC, oneUP+onePULL, pack_priority=%t,32MiBdirection, 12x64B offered250ms; span=%s echo_rtt_ms=%v median=%.3f max=%.3f first_to_last_growth_ms=%.3f text_finished_during_bulk=%d up_calls=%d pull_calls=%d packed_up_rpcs=%d packed_down_rpcs=%d max_normal_sealed=%d", packed, offerSpan, samples, (sorted[5]+sorted[6])/2, sorted[len(sorted)-1], samples[len(samples)-1]-samples[0], whileBulk, workUp, workPull, snapshot["packed_up_rpcs"], snapshot["packed_down_rpcs"], largestNormal.Load())
 	if whileBulk == 0 || largestNormal.Load() <= 768<<10 {
 		t.Fatal("mixed/fragmented-object conditions not exercised", whileBulk, largestNormal.Load())
+	}
+	if packed && snapshot["packed_up_rpcs"]+snapshot["packed_down_rpcs"] == 0 {
+		t.Fatal("offered load did not exercise priority packing")
 	}
 	// Cleanup remains a separate phase; the simulated wire also slows deletion.
 	echo.Close()

@@ -593,6 +593,9 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 	t.Run("reserved-4m-objects-20ms-simulated-rpc", func(t *testing.T) {
 		relayClientSOCKSExercise(t, relayResearchConfig{FrameBytes: 768 << 10, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16}, 4<<20, 20*time.Millisecond)
 	})
+	t.Run("packed-priority-4m-objects-20ms-simulated-rpc", func(t *testing.T) {
+		relayClientSOCKSExercise(t, relayResearchConfig{FrameBytes: 768 << 10, MaxBytes: 32 << 20, PollWait: 10 * time.Millisecond, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16, PackPriority: true}, 4<<20, 20*time.Millisecond)
+	})
 }
 
 func relayClientDelay(ctx context.Context, delay time.Duration) error {

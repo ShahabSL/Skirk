@@ -25,17 +25,21 @@ func (e *relayResearchRetryAfter) Error() string { return "relay Google HTTP tem
 // these are not a claim to observe Google's accepted or billed request count.
 type relayResearchCarrierBudget struct {
 	mu                                                                                                        sync.Mutex
-	MaxAttempts, MaxBodyBytes                                                                                 int64
+	MaxAttempts, MaxBodyBytes, MaxPosts                                                                       int64
+	Posts                                                                                                     int64
 	Dispatches, AttemptUpper, RequestBodyUpper, ResponseBodyUpper, ExposedResponseBytes, PendingResponseBytes int64
 }
 
-func (b *relayResearchCarrierBudget) reserve(request, response int) error {
+func (b *relayResearchCarrierBudget) reserve(request, response int, scriptPost bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.AttemptUpper+8 > b.MaxAttempts || b.RequestBodyUpper+b.ResponseBodyUpper+8*int64(request)+int64(response) > b.MaxBodyBytes {
+	if scriptPost && (b.MaxPosts <= 0 || b.Posts >= b.MaxPosts) || b.AttemptUpper+8 > b.MaxAttempts || b.RequestBodyUpper+b.ResponseBodyUpper+8*int64(request)+int64(response) > b.MaxBodyBytes {
 		return errRelayResearchBounds
 	}
 	b.Dispatches++
+	if scriptPost {
+		b.Posts++
+	}
 	b.AttemptUpper += 8
 	b.RequestBodyUpper += 8 * int64(request)
 	b.ResponseBodyUpper += int64(response)
@@ -51,7 +55,7 @@ func (b *relayResearchCarrierBudget) finish(reserved, received int) {
 func (b *relayResearchCarrierBudget) snapshot() map[string]int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]int64{"dispatches": b.Dispatches, "attempts_upper": b.AttemptUpper, "request_body_bytes_upper": b.RequestBodyUpper, "response_body_bytes_upper": b.ResponseBodyUpper, "returned_response_body_bytes": b.ExposedResponseBytes, "pending_response_bytes": b.PendingResponseBytes}
+	return map[string]int64{"dispatches": b.Dispatches, "script_posts": b.Posts, "urlfetch_attempts_upper": b.Posts * 8, "attempts_upper": b.AttemptUpper, "request_body_bytes_upper": b.RequestBodyUpper, "response_body_bytes_upper": b.ResponseBodyUpper, "returned_response_body_bytes": b.ExposedResponseBytes, "pending_response_bytes": b.PendingResponseBytes}
 }
 
 // The relay's Google-facing exchange uses only the selected Google route.
@@ -76,7 +80,7 @@ func newRelayResearchGoogleExchange(client *GoogleHTTPClient, endpoint string, a
 		limit := base64.StdEncoding.EncodedLen(codec.maxWireBytes()) + 1024
 		current, method, body := first, http.MethodPost, request
 		for hop := 0; hop < 6; hop++ {
-			if err = budget.reserve(len(body), limit+1); err != nil {
+			if err = budget.reserve(len(body), limit+1, method == http.MethodPost && current.Hostname() == "script.google.com"); err != nil {
 				return nil, err
 			}
 			result, callErr := client.RequestSingleAttempt(withGoogleResponseLimit(ctx, int64(limit)), method, current.Hostname(), current.RequestURI(), map[string]string{"Content-Type": "application/json", "Accept-Encoding": "identity"}, body)
@@ -164,17 +168,37 @@ func TestRelayClientGoogleCarrierPreservesFrontAndReservesRedirects(t *testing.T
 		raw, _ := json.Marshal(relayResearchHTTPEnvelope{Data: base64.StdEncoding.EncodeToString(reply)})
 		return stringResponse(200, string(raw)), nil
 	}), CheckRedirect: keepGoogleHTTPRedirectResponse}}
-	budget := &relayResearchCarrierBudget{MaxAttempts: 16, MaxBodyBytes: 16 << 20}
+	budget := &relayResearchCarrierBudget{MaxAttempts: 16, MaxBodyBytes: 16 << 20, MaxPosts: 1}
 	exchange, err := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := exchange(context.Background(), wire)
-	if err != nil || !bytes.Equal(got, reply) || calls != 2 || budget.snapshot()["attempts_upper"] != 16 || budget.snapshot()["pending_response_bytes"] != 0 {
+	if err != nil || !bytes.Equal(got, reply) || calls != 2 || budget.snapshot()["attempts_upper"] != 16 || budget.snapshot()["pending_response_bytes"] != 0 || budget.snapshot()["script_posts"] != 1 || budget.snapshot()["urlfetch_attempts_upper"] != 8 {
 		t.Fatal("fronted redirect exchange failed", err, calls, budget.snapshot())
 	}
 	if _, err = exchange(context.Background(), wire); !errors.Is(err, errRelayResearchBounds) || calls != 2 {
 		t.Fatal("guard permitted excess dispatch", err, calls)
+	}
+}
+
+func TestRelayClientGoogleCarrierReservesRepostedScriptBeforeDispatch(t *testing.T) {
+	codec, _ := newRelayResearchCodec(bytes.Repeat([]byte{8}, 32), [16]byte{3}, 128<<10)
+	wire, _ := codec.seal(relayResearchPacket{Kind: rrPull, Seq: 1})
+	var calls int
+	client := &GoogleHTTPClient{route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"}, client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		response := stringResponse(307, "")
+		response.Header = http.Header{"Location": {"https://script.google.com/macros/s/test/exec"}}
+		return response, nil
+	}), CheckRedirect: keepGoogleHTTPRedirectResponse}}
+	budget := &relayResearchCarrierBudget{MaxAttempts: 64, MaxBodyBytes: 16 << 20, MaxPosts: 1}
+	exchange, err := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = exchange(context.Background(), wire); !errors.Is(err, errRelayResearchBounds) || calls != 1 || budget.snapshot()["script_posts"] != 1 || budget.snapshot()["urlfetch_attempts_upper"] != 8 {
+		t.Fatal("script rePOST bypassed campaign slice", err, calls, budget.snapshot())
 	}
 }
 
@@ -190,7 +214,7 @@ func TestRelayClientGoogleCarrierRejectsForeignRedirectAndSecretReflection(t *te
 			}
 			return stringResponse(200, `{"auth":"synthetic-reflection","data":"YQ=="}`), nil
 		}), CheckRedirect: keepGoogleHTTPRedirectResponse}}
-		exchange, err := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, &relayResearchCarrierBudget{MaxAttempts: 16, MaxBodyBytes: 16 << 20})
+		exchange, err := newRelayResearchGoogleExchange(client, "https://script.google.com/macros/s/test/exec", strings.Repeat("a", 32), codec, &relayResearchCarrierBudget{MaxAttempts: 16, MaxBodyBytes: 16 << 20, MaxPosts: 1})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -71,6 +71,7 @@ type relayResearchClient struct {
 	notify                                          func(ObjectInfo) bool
 	requests, retries, published, received, deleted uint64
 	upWaits, downWaits                              uint64
+	packedUp, packedDown                            uint64
 }
 
 func newRelayResearchClient(ctx context.Context, key []byte, epoch [16]byte, cfg relayResearchConfig, exchange relayResearchExchange) (*relayResearchClient, error) {
@@ -166,7 +167,7 @@ func (s *relayResearchClient) snapshot() map[string]int64 {
 	return map[string]int64{"up_objects": int64(len(s.up)), "down_objects": int64(len(s.down)),
 		"up_bytes": s.upBytes, "down_bytes": s.downBytes, "requests": int64(s.requests),
 		"retries": int64(s.retries), "published": int64(s.published), "received": int64(s.received), "deleted": int64(s.deleted), "up_waits": int64(s.upWaits), "down_waits": int64(s.downWaits),
-		"normal_up_bytes": s.normalUpBytes, "normal_down_bytes": s.normalDownBytes, "normal_up_objects": int64(s.normalUpObjects), "normal_down_objects": int64(s.normalDownObjects)}
+		"normal_up_bytes": s.normalUpBytes, "normal_down_bytes": s.normalDownBytes, "normal_up_objects": int64(s.normalUpObjects), "normal_down_objects": int64(s.normalDownObjects), "packed_up_rpcs": int64(s.packedUp), "packed_down_rpcs": int64(s.packedDown)}
 }
 
 func (s *relayResearchClient) Put(ctx context.Context, name string, data []byte) error {
@@ -414,40 +415,17 @@ func (s *relayResearchClient) upPump() {
 			}
 		}
 		sort.Strings(p.Deletes)
-		var pri, normal *relayResearchUpload
-		for _, v := range s.upQueue {
-			if v.finished {
-				continue
-			}
-			if v.priority && pri == nil {
-				pri = v
-			}
-			if !v.priority && normal == nil {
-				normal = v
-			}
-		}
-		v := pri
-		if v == nil || priorityBurst >= 4 && normal != nil {
-			v = normal
-			priorityBurst = 0
-		} else {
-			priorityBurst++
-		}
-		// Processing receipts must remain independent of outbound payload pressure.
-		// A delete-only request can always release DOWN while a new UP is busy.
-		if len(p.Deletes) > 0 {
-			v = nil
-		}
-		if v != nil {
+		selected := s.selectUpLocked(&priorityBurst, len(p.Deletes) == 0)
+		for _, v := range selected {
 			n := len(v.data) - v.offset
 			if n > s.cfg.FrameBytes {
 				n = s.cfg.FrameBytes
 			}
-			p.Pieces = []relayResearchPiece{{ID: v.info.ID, Name: v.info.Name, Total: len(v.data), Offset: v.offset, Hash: v.hash,
-				Priority: v.priority, Data: v.data[v.offset : v.offset+n]}}
+			p.Pieces = append(p.Pieces, relayResearchPiece{ID: v.info.ID, Name: v.info.Name, Total: len(v.data), Offset: v.offset, Hash: v.hash,
+				Priority: v.priority, Data: v.data[v.offset : v.offset+n]})
 		}
 		s.mu.Unlock()
-		if v == nil && len(p.Deletes) == 0 {
+		if len(selected) == 0 && len(p.Deletes) == 0 {
 			select {
 			case <-s.ctx.Done():
 				s.fail(s.ctx.Err())
@@ -464,12 +442,8 @@ func (s *relayResearchClient) upPump() {
 			}
 			receipt, seq = seq, seq+1
 			s.mu.Lock()
-			for i, queued := range s.upQueue {
-				if queued == v {
-					s.upQueue = append(s.upQueue[:i], s.upQueue[i+1:]...)
-					s.upQueue = append(s.upQueue, v)
-					break
-				}
+			for _, v := range selected {
+				s.rotateUpLocked(v, true)
 			}
 			s.mu.Unlock()
 			select {
@@ -482,7 +456,7 @@ func (s *relayResearchClient) upPump() {
 			continue
 		}
 		if err == nil {
-			err = s.acceptUpReply(p, r, v)
+			err = s.acceptUpReply(p, r, selected)
 		}
 		if err != nil {
 			s.fail(err)
@@ -492,7 +466,83 @@ func (s *relayResearchClient) upPump() {
 	}
 }
 
-func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayResearchUpload) error {
+func (s *relayResearchClient) selectUpLocked(priorityBurst *int, allowPayload bool) []*relayResearchUpload {
+	var pri, normal *relayResearchUpload
+	for _, v := range s.upQueue {
+		if v.finished {
+			continue
+		}
+		if v.priority && pri == nil {
+			pri = v
+		}
+		if !v.priority && normal == nil {
+			normal = v
+		}
+	}
+	if !s.cfg.PackPriority {
+		// Retain the scalar baseline's burst accounting, including its idle
+		// and delete-only iterations, for the controlled profile comparison.
+		v := pri
+		if v == nil || *priorityBurst >= 4 && normal != nil {
+			v = normal
+			*priorityBurst = 0
+		} else {
+			*priorityBurst++
+		}
+		if v == nil || !allowPayload {
+			return nil
+		}
+		return []*relayResearchUpload{v}
+	}
+	if !allowPayload {
+		return nil
+	}
+	if pri == nil || *priorityBurst >= 4 && normal != nil {
+		if normal != nil {
+			*priorityBurst = 0
+			return []*relayResearchUpload{normal}
+		}
+		return nil
+	}
+	selected := []*relayResearchUpload{pri}
+	limit := rrPriorityPackLimit(s.cfg)
+	if s.cfg.PackPriority && pri.offset == 0 && len(pri.data) <= limit {
+		maxPieces := rrPriorityPackMaxObjects
+		if normal != nil {
+			maxPieces = min(maxPieces, 4-*priorityBurst)
+		}
+		total := len(pri.data)
+		for _, v := range s.upQueue {
+			if v == pri || v.finished || !v.priority || v.offset != 0 {
+				continue
+			}
+			if len(selected) >= maxPieces {
+				break
+			}
+			if total+len(v.data) > limit {
+				continue
+			}
+			selected = append(selected, v)
+			total += len(v.data)
+		}
+	}
+	*priorityBurst += len(selected)
+	return selected
+}
+
+func (s *relayResearchClient) rotateUpLocked(v *relayResearchUpload, keep bool) {
+	for i, queued := range s.upQueue {
+		if queued == v {
+			s.upQueue = append(s.upQueue[:i], s.upQueue[i+1:]...)
+			if keep {
+				s.upQueue = append(s.upQueue, v)
+			}
+			return
+		}
+	}
+}
+
+func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, selected []*relayResearchUpload) error {
 	if len(r.Pieces) != 0 {
 		return errRelayResearchConflict
 	}
@@ -517,12 +567,24 @@ func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayRe
 			return errRelayResearchConflict
 		}
 	}
-	if v == nil && len(commits) != 0 {
+	if len(selected) != len(p.Pieces) {
 		return errRelayResearchConflict
 	}
-	if v != nil {
-		final := p.Pieces[0].Offset+len(p.Pieces[0].Data) == p.Pieces[0].Total
-		if len(commits) != 0 && (!final || len(commits) != 1 || !commits[v.info.ID]) || final && !commits[v.info.ID] {
+	expected := map[string]bool{}
+	for i, v := range selected {
+		piece := p.Pieces[i]
+		if piece.ID != v.info.ID {
+			return errRelayResearchConflict
+		}
+		if piece.Offset+len(piece.Data) == piece.Total {
+			expected[v.info.ID] = true
+		}
+	}
+	if len(commits) != len(expected) {
+		return errRelayResearchConflict
+	}
+	for id := range expected {
+		if !commits[id] {
 			return errRelayResearchConflict
 		}
 	}
@@ -545,15 +607,13 @@ func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayRe
 			close(d.done)
 		}
 	}
-	if v != nil && !v.finished {
-		v.offset += len(p.Pieces[0].Data)
-		// Rotate after every fragment so an older large object cannot monopolize UP.
-		for i, queued := range s.upQueue {
-			if queued == v {
-				s.upQueue = append(s.upQueue[:i], s.upQueue[i+1:]...)
-				break
-			}
+	for i, v := range selected {
+		if v.finished {
+			continue
 		}
+		v.offset += len(p.Pieces[i].Data)
+		// Rotate after every fragment so an older large object cannot monopolize UP.
+		s.rotateUpLocked(v, false)
 		if commits[v.info.ID] {
 			v.finished = true
 			s.upBytes -= int64(len(v.data))
@@ -566,6 +626,9 @@ func (s *relayResearchClient) acceptUpReply(p, r relayResearchPacket, v *relayRe
 		} else {
 			s.upQueue = append(s.upQueue, v)
 		}
+	}
+	if len(selected) > 1 {
+		s.packedUp++
 	}
 	s.changedLocked()
 	return nil
@@ -582,14 +645,22 @@ func (s *relayResearchClient) pullPump() {
 		if err == nil && (len(r.Committed) != 0 || len(r.Deleted) != 0) {
 			err = errRelayResearchConflict
 		}
+		if err == nil && len(r.Pieces) > 1 {
+			err = s.preflightDownGroup(r.Pieces)
+		}
 		for _, p := range r.Pieces {
 			if err == nil {
-				err = s.acceptDownPiece(p)
+				err = s.acceptDownPiecePrepared(p, len(r.Pieces) > 1)
 			}
 		}
 		if err != nil {
 			s.fail(err)
 			return
+		}
+		if len(r.Pieces) > 1 {
+			s.mu.Lock()
+			s.packedDown++
+			s.mu.Unlock()
 		}
 		s.announce()
 		receipt, seq = seq, seq+1
@@ -604,7 +675,83 @@ func (s *relayResearchClient) pullPump() {
 	}
 }
 
+func (s *relayResearchClient) preflightDownGroup(pieces []relayResearchPiece) error {
+	if !s.cfg.PackPriority || len(pieces) > rrPriorityPackMaxObjects {
+		return errRelayResearchConflict
+	}
+	ids, names := map[string]bool{}, map[string]bool{}
+	total := 0
+	for _, p := range pieces {
+		if p.ID == "" || p.Name == "" || !p.Priority || !rrPriorityName(p.Name) || p.Offset != 0 || p.Total != len(p.Data) || p.Total <= 0 || sha256.Sum256(p.Data) != p.Hash || ids[p.ID] || names[p.Name] {
+			return errRelayResearchConflict
+		}
+		ids[p.ID], names[p.Name] = true, true
+		total += p.Total
+	}
+	if total > rrPriorityPackLimit(s.cfg) {
+		return errRelayResearchBounds
+	}
+	for {
+		s.mu.Lock()
+		if s.err != nil {
+			err := s.err
+			s.mu.Unlock()
+			return err
+		}
+		if s.ctx.Err() != nil {
+			s.mu.Unlock()
+			return s.ctx.Err()
+		}
+		newObjects := 0
+		var newBytes int64
+		for _, p := range pieces {
+			if old := s.down[p.ID]; old != nil {
+				if old.info.Name != p.Name || old.info.Size != int64(p.Total) || old.hash != p.Hash || !old.priority || !old.ready && !old.done {
+					s.mu.Unlock()
+					return errRelayResearchConflict
+				}
+				continue
+			}
+			if oldID := s.downNames[p.Name]; oldID != "" && oldID != p.ID {
+				s.mu.Unlock()
+				return errRelayResearchConflict
+			}
+			newObjects++
+			newBytes += int64(p.Total)
+		}
+		if len(s.down)+newObjects > s.cfg.MaxObjects || newBytes > s.cfg.MaxBytes {
+			s.mu.Unlock()
+			return errRelayResearchBounds
+		}
+		if s.downBytes+newBytes > s.cfg.MaxBytes {
+			changed := s.changed
+			s.downWaits++
+			s.mu.Unlock()
+			select {
+			case <-s.ctx.Done():
+				return s.ctx.Err()
+			case <-changed:
+			}
+			continue
+		}
+		validate := s.validate
+		s.mu.Unlock()
+		if validate != nil {
+			for _, p := range pieces {
+				if err := validate(ObjectInfo{ID: p.ID, Name: p.Name, Size: int64(p.Total)}, p.Data); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+}
+
 func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
+	return s.acceptDownPiecePrepared(p, false)
+}
+
+func (s *relayResearchClient) acceptDownPiecePrepared(p relayResearchPiece, innerValidated bool) error {
 	if p.ID == "" || p.Name == "" || p.Total <= 0 || p.Total > rrMaxObject || int64(p.Total) > s.cfg.MaxBytes || p.Offset < 0 || len(p.Data) == 0 || p.Offset > p.Total-len(p.Data) {
 		return errRelayResearchBounds
 	}
@@ -694,7 +841,7 @@ func (s *relayResearchClient) acceptDownPiece(p relayResearchPiece) error {
 	}
 	validate, info, data := s.validate, v.info, v.data
 	s.mu.Unlock()
-	if validate != nil {
+	if validate != nil && !innerValidated {
 		if err := validate(info, data); err != nil {
 			return err
 		}
