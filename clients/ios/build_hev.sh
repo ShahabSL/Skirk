@@ -14,6 +14,11 @@ rsync -a --delete \
   --exclude '/apple_xcframework/' --exclude '/HevSocks5Tunnel.xcframework/' \
   "$source_dir/" "$work_dir/"
 
+# The vendored tree can contain ignored nested third-part/*.a outputs from
+# another SDK. The device slice builds first, so clear those before make can
+# treat them as up to date and merge incompatible objects into its archive.
+make -C "$work_dir" clean
+
 build_slice() {
   local sdk="$1" architecture="$2" min_version="$3" destination="$4"
   (
