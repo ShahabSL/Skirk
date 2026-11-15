@@ -1,0 +1,183 @@
+{
+  "source_revision": "42e6742",
+  "binary_sha256": "c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9",
+  "route_mode": "google_front_pinned",
+  "front": "www.google.com",
+  "configured_chunk_bytes": 8388608,
+  "bulk_bytes": 16777216,
+  "text_bytes": 64,
+  "text_count_per_arm": 12,
+  "text_spacing_ms": 250,
+  "text_pipelined": true,
+  "text_bulk_lead_ms": 1000,
+  "fixed_hedge_ms": 0,
+  "candidate_after_write_delay_ms": 2500,
+  "duplicate_budget_per_store_per_minute": 16777216,
+  "directions": {
+    "download": {
+      "attempted_arms": 4,
+      "completed_arms": 4,
+      "comparison_exit_code": 0,
+      "arms": [
+        {
+          "run": "0-control",
+          "ok": true,
+          "upload_stall_hedge_delay_ms": 0,
+          "bulk_mbps": 13.799,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "all_small_request_total_p95_ms": 5758.839,
+          "all_small_scheduled_total_p95_ms": 5765.846,
+          "combined_units_including_warmup_and_tail": 19860,
+          "errors": 0,
+          "upload_commit_probe_calls": 0,
+          "upload_stall_commit_proven_count": 0,
+          "upload_stall_secondary_launch_count": 0,
+          "upload_stall_duplicate_reserved_attempts": 0,
+          "upload_stall_duplicate_reserved_body_bytes": 0,
+          "upload_stall_duplicate_budget_denied_count": 0,
+          "exit_probe_round_trip_ms": 2104
+        },
+        {
+          "run": "1-candidate",
+          "ok": true,
+          "upload_stall_hedge_delay_ms": 2500,
+          "bulk_mbps": 13.598,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "all_small_request_total_p95_ms": 7379.024,
+          "all_small_scheduled_total_p95_ms": 7382.174,
+          "combined_units_including_warmup_and_tail": 21810,
+          "errors": 0,
+          "upload_commit_probe_calls": 0,
+          "upload_stall_commit_proven_count": 0,
+          "upload_stall_secondary_launch_count": 0,
+          "upload_stall_duplicate_reserved_attempts": 0,
+          "upload_stall_duplicate_reserved_body_bytes": 0,
+          "upload_stall_duplicate_budget_denied_count": 0,
+          "exit_probe_round_trip_ms": 3052
+        },
+        {
+          "run": "2-candidate",
+          "ok": true,
+          "upload_stall_hedge_delay_ms": 2500,
+          "bulk_mbps": 11.4,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "all_small_request_total_p95_ms": 8944.211,
+          "all_small_scheduled_total_p95_ms": 8950.269,
+          "combined_units_including_warmup_and_tail": 25010,
+          "errors": 0,
+          "upload_commit_probe_calls": 0,
+          "upload_stall_commit_proven_count": 0,
+          "upload_stall_secondary_launch_count": 0,
+          "upload_stall_duplicate_reserved_attempts": 0,
+          "upload_stall_duplicate_reserved_body_bytes": 0,
+          "upload_stall_duplicate_budget_denied_count": 0,
+          "exit_probe_round_trip_ms": 4722
+        },
+        {
+          "run": "3-control",
+          "ok": true,
+          "upload_stall_hedge_delay_ms": 0,
+          "bulk_mbps": 12.237,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "all_small_request_total_p95_ms": 7575.075,
+          "all_small_scheduled_total_p95_ms": 7575.952,
+          "combined_units_including_warmup_and_tail": 20760,
+          "errors": 0,
+          "upload_commit_probe_calls": 0,
+          "upload_stall_commit_proven_count": 0,
+          "upload_stall_secondary_launch_count": 0,
+          "upload_stall_duplicate_reserved_attempts": 0,
+          "upload_stall_duplicate_reserved_body_bytes": 0,
+          "upload_stall_duplicate_budget_denied_count": 0,
+          "exit_probe_round_trip_ms": 2271
+        }
+      ],
+      "cleanup": {
+        "prefix_count": 8,
+        "deleted": 16,
+        "immediate_zero": true,
+        "delayed_zero": true,
+        "configs_remaining": 0,
+        "error": null
+      },
+      "http_trace": false,
+      "descriptive_medians": {
+        "control": {
+          "bulk_mbps": 13.018,
+          "all_small_request_total_p95_ms": 6666.957,
+          "all_small_scheduled_total_p95_ms": 6670.898999999999,
+          "combined_units_including_warmup_and_tail": 20310.0
+        },
+        "candidate": {
+          "bulk_mbps": 12.499,
+          "all_small_request_total_p95_ms": 8161.6175,
+          "all_small_scheduled_total_p95_ms": 8166.2215,
+          "combined_units_including_warmup_and_tail": 23410.0
+        }
+      }
+    },
+    "upload": {
+      "attempted_arms": 2,
+      "completed_arms": 1,
+      "comparison_exit_code": 1,
+      "arms": [
+        {
+          "run": "0-candidate",
+          "ok": true,
+          "upload_stall_hedge_delay_ms": 2500,
+          "bulk_mbps": 12.463,
+          "small_successes": 12,
+          "small_failures": 0,
+          "bulk_successes": 1,
+          "all_small_request_total_p95_ms": 8780.26,
+          "all_small_scheduled_total_p95_ms": 8784.486,
+          "combined_units_including_warmup_and_tail": 18110,
+          "errors": 0,
+          "upload_commit_probe_calls": 0,
+          "upload_stall_commit_proven_count": 0,
+          "upload_stall_secondary_launch_count": 0,
+          "upload_stall_duplicate_reserved_attempts": 0,
+          "upload_stall_duplicate_reserved_body_bytes": 0,
+          "upload_stall_duplicate_budget_denied_count": 0,
+          "exit_probe_round_trip_ms": 3319
+        },
+        {
+          "run": "1-control",
+          "ok": false,
+          "upload_stall_hedge_delay_ms": 0,
+          "failure": "RuntimeError",
+          "exit_probe_round_trip_ms": 3155
+        }
+      ],
+      "cleanup": {
+        "prefix_count": 4,
+        "deleted": 13,
+        "immediate_zero": true,
+        "delayed_zero": true,
+        "configs_remaining": 0,
+        "error": null
+      },
+      "http_trace": true
+    }
+  },
+  "failed_control_evidence": {
+    "stage": "small control upload before mixed result",
+    "multipart_body_bytes": 736,
+    "http_acquired_ms": 0.023,
+    "http_wrote_ms": 0.087,
+    "first_response_byte_observed": false,
+    "duration_ms": 10001,
+    "quota_errors": 1,
+    "quota_error_reason": "timeout",
+    "mixed_report_produced": false,
+    "applicability": "Below128KiB hedge eligibility; no claim that this hedge would recover it."
+  }
+}
