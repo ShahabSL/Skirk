@@ -2,7 +2,8 @@
 // Keep the private URL/secret/expiry out of tracked source. This service
 // requires a separately approved script.external_request authorization.
 const RELAY_URL = "https://REPLACE_WITH_OWNED_ENDPOINT/exchange";
-const RELAY_SECRET = "REPLACE_IN_PRIVATE_COPY";
+const SCRIPT_SECRET = "REPLACE_IN_PRIVATE_COPY";
+const RELAY_HTTP_AUTH = "REPLACE_WITH_DISTINCT_PRIVATE_SECRET";
 const RELAY_EXPIRES_UNIX_MS = 0;
 const RELAY_BODY_LIMIT = 6000000;
 
@@ -13,10 +14,12 @@ function doPost(event) {
       event.postData.length > RELAY_BODY_LIMIT) return reject();
   try {
     const request = JSON.parse(event.postData.contents);
-    if (request.auth !== RELAY_SECRET || typeof request.data !== "string" ||
+    if (request.auth !== SCRIPT_SECRET || typeof request.data !== "string" ||
         request.data.length > RELAY_BODY_LIMIT || !/^[A-Za-z0-9+/]*={0,2}$/.test(request.data)) return reject();
     const response = UrlFetchApp.fetch(RELAY_URL, {
-      method: "post", contentType: "application/json", payload: event.postData.contents,
+      method: "post", contentType: "application/json",
+      headers: {Authorization: "Bearer " + RELAY_HTTP_AUTH},
+      payload: JSON.stringify({auth: RELAY_HTTP_AUTH, data: request.data}),
       followRedirects: false, muteHttpExceptions: true,
       validateHttpsCertificates: true, timeoutSeconds: 25
     });
