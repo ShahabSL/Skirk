@@ -282,7 +282,15 @@ new arrivals, idle continuation, and rejected-token recovery
 runs after up to three continuation pages, so its real interactive-latency
 effect under backlog is unmeasured. This fixes the specific deterministic
 starvation case without proving delivery under arbitrary concurrent Drive
-index churn, persistent API errors, or a live dense mailbox. Adaptive
+index churn or persistent API errors. A subsequent
+[bounded live Drive test](dense-p1-live-2026-11-14.md) used 402 real p1
+objects with the supported 100-object page setting: the older target was
+absent after four pages, then appeared on poll two through the saved token.
+The fresh-head check also ran, and all 402 objects were deleted and verified
+missing by ID, with the prefix empty immediately and 30 seconds later. The
+run took 520.37 seconds and an estimated 43,515 Drive units. This tests the runtime
+list method under one steady mailbox, not the default 1,000-object page size
+or a full app file transfer. Adaptive
 discovery had continuation first, but it no longer has a
 unique correctness path through this tested backlog case.
 
@@ -457,7 +465,10 @@ its first device slice. Commit `944e588` cleans the copied build tree before
 that slice; generic iPhoneOS and Simulator builds then passed, along with Go
 engine race tests. A signed physical iPhone packet-tunnel run remains
 unverified; the available iPhone was not connected for this test. Private UI
-result: `.skirk-runs/ios-ui-integrated-final-20261114.xcresult`. The macOS
+result: `.skirk-runs/ios-ui-integrated-final-20261114.xcresult`. The exact
+final code at `0942237` also rebuilt and repeated the Simulator UI suite
+with **2 passed, 1 skipped, 0 failed**; the private result is under the
+isolated `ios-final-ui-wt/.skirk-runs/` worktree. The macOS
 ARM64 Tauri app bundle built locally and its 23 Rust command tests passed.
 An isolated synthetic native GUI smoke at `dc6db7f` verified Google front as
 the default, explicit Direct choice across restart, and renewal-style profile
@@ -500,8 +511,12 @@ exact metadata GET. Their same-poll eligibility depended on wall-clock
 `addedAt.Before(pollStarted)`. Commit `5c8739a` replaces that ordering with
 an atomic poll sequence; local tests cover both withholding a new retry in
 its creation poll and probing an older retry when the clock is simulated in
-the future. Integrated Go race tests pass. Native Windows CI for the exact
-`944e588` tip is pending, so the fix has no native Windows pass yet.
+the future. Integrated Go race tests pass. The final code at `0942237` passed
+[native Smoke run 43681029045](https://github.com/ShahabSL/Skirk/actions/runs/43681029045)
+with all 14 jobs, including Windows x64 and ARM64 CLI and the native desktop
+package matrix; [CI run 43681029059](https://github.com/ShahabSL/Skirk/actions/runs/43681029059)
+passed all three jobs. The later `9bc514f` commit adds only a guarded live
+test and evidence document; its exact-tip CI is reported separately.
 The client checks cover route choice, profile recovery, and exit reachability;
 there is no comparative usability study behind a “best UI” claim.
 
@@ -519,8 +534,9 @@ external side effects. See [outage analysis](../architecture-frontier-2026.md#ex
 
 **Decision rule:** keep the default and user route choice for this research
 branch. The new bounded p1 continuation removes the demonstrated deterministic
-starvation case; dense live Drive behavior and arbitrary concurrent index
-churn remain unverified. Treat page size 1,000 as a bounded discovery
+starvation case and reached the older target in one steady live Drive mailbox
+at page size 100; the default page size 1,000 and arbitrary concurrent index
+churn remain unverified live. Treat page size 1,000 as a bounded discovery
 improvement with rollback. Keep fixed slots and pool splitting opt-in until
 repeated, larger full-app mixed workloads show both interactive and file
 benefit, verified cleanup, and acceptable quota. The first adaptive version's

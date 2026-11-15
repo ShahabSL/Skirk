@@ -89,9 +89,14 @@ after normal streams go idle. On completion it replays new head arrivals from
 the saved watermark; a rejected token restarts the scan. Deterministic tests
 cover repeated newer inserts, a burst larger than the head page, idle
 continuation, and rejected-token recovery. This repairs that bounded
-starvation case. The fresh-head check comes after up to three older pages,
-so interactive latency under backlog is unmeasured. There is no live
-dense-mailbox result or guarantee under arbitrary Drive index churn. See the
+starvation case. A
+[bounded live Drive check](experiments/dense-p1-live-2026-11-14.md) at page
+size 100 created 402 p1 objects: the older target was absent after the first
+four pages and reached on poll two through a continuation page. Exact cleanup
+verified all 402 IDs missing and the prefix empty immediately and after 30
+seconds. The fresh-head check comes after up to three older pages, so its
+interactive latency under backlog is unmeasured. The live run used a steady
+mailbox and does not guarantee delivery under arbitrary Drive index churn. See the
 [final evidence record](experiments/final-engineering-evidence-2026-11-14.md).
 
 ## Workload and measurements
@@ -551,7 +556,7 @@ behavior, or sustained remote availability.
 
 Keep default muxv4 as the release transport while investigating the measured
 clean-main/current performance gap. Its normal-list continuation now resolves
-the deterministic deep-backlog starvation case; live dense Drive behavior and
+the deterministic deep-backlog starvation case; live default-page-size behavior and
 arbitrary index churn remain unverified. The corrected epoch and metadata-only
 combination helped short 16 MiB pairs but lost bulk rate with five clients
 and did not finish the 100 MiB comparison. Fixed-slot delivery and split
