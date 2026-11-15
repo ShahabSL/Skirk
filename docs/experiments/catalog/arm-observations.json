@@ -7465,5 +7465,137 @@
     "metadata_slot_primary_v1": false,
     "binary_sha256": "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
     "failure": "RuntimeError"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 0,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": true,
+    "round_trip_ms": 1077.703,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 1,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": false,
+    "round_trip_ms": 624.779,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 2,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": false,
+    "round_trip_ms": 913.552,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 3,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": false,
+    "round_trip_ms": 650.347,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 4,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": false,
+    "round_trip_ms": 529.33,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 5,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 64,
+    "new_client": false,
+    "round_trip_ms": 577.365,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 6,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 16384,
+    "new_client": false,
+    "round_trip_ms": 623.176,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 7,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 16384,
+    "new_client": false,
+    "round_trip_ms": 635.255,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 8,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 262144,
+    "new_client": false,
+    "round_trip_ms": 804.882,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 9,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 262144,
+    "new_client": false,
+    "round_trip_ms": 814.141,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 10,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 1048576,
+    "new_client": false,
+    "round_trip_ms": 1077.115,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
+  },
+  {
+    "source_worktree": "state-aware-hedge-wt",
+    "source_path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "arm_index": 11,
+    "observation_kind": "live_api_primitive_exchange",
+    "plain_bytes": 1048576,
+    "new_client": false,
+    "round_trip_ms": 1061.15,
+    "verified": true,
+    "binary_sha256": "e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325"
   }
 ]

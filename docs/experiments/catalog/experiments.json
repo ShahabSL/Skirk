@@ -3242,6 +3242,45 @@
       "raw_archive_paths": [],
       "revision_or_binary": "4d91f160fcbac50546d373951cc7b4a3f9ef5a58;combined63532c8/c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f",
       "live_comparable": false
+    },
+    {
+      "id": "R3-021",
+      "candidate": "Apps Script opaque AEAD echo through pinned Google front",
+      "evidence_level": "live_api_primitive",
+      "workload": "12 random-data request/reply exchanges: cold64B1,warm64B5,16KiB2,256KiB2,1MiB2; POST302plusContentServiceGET200, samefrontallhops",
+      "latency": "Warm64Bmedian624.779ms;16KiB629.216ms;256KiB809.512ms;1MiB1069.133ms;cold64B1077.703ms",
+      "throughput_mbps": "OneMiBecho~7.85Mb/s per direction forentiretransaction, notsteadyfile",
+      "estimated_quota_units": "12scriptPOSTexecutions+12GETs,0URLFetch;plus1cleanupvalidationPOST",
+      "correctness_and_errors": "12/12nonces/tags/decryptedbytesexact;24measuredHTTP2operations,1physicalattempteach; no arbitraryTCPbridge/mixedworkloadtested",
+      "cleanup": "Deploymentarchived,projectrecoverablyremoved,secret-authenticatedfrontPOST404396.667ms; endpoint/settings/secretsremovedafterproof",
+      "decision": "GenuinefreeGooglefrontcarrierfeasibility; do notcompareunloadedmedianwithloadedDrivep95 orclaimfulltransport; AppsScriptbridgeaddsfetchhop/authorization/quota",
+      "source_documents": [
+        "docs/experiments/apps-script-front-echo-live-2026-11-15.md",
+        "docs/experiments/apps-script-front-echo-live-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "state-aware-hedge-wt/.skirk-runs/apps-script-stage1/measurements.json"
+      ],
+      "revision_or_binary": "probe dbc52b9fff891c9243a53b5a8b054d4934caab66;e7927ee0b0bf14da490ffa33832314f830d882f6b31f0554ec38cfd5c163e325",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-022",
+      "candidate": "MasterHttpRelay full-tunnel architecture source review",
+      "evidence_level": "source_only_hypothesis",
+      "workload": "Read-only externalsourceb32f65f: synchronousfrontPOST→AppsScriptURLFetch→ownedpersistentTCPnode→retainedresponsecandidate",
+      "latency": "No measurement in source review",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Documentedper-userfetchlimits,account-awareadmissionneeded; deploymentsdonotmultiplyquota",
+      "correctness_and_errors": "Source response-drain-before-delivery and unboundedmuxqueue are reliability traps; propose cumulativeACK/write-offsetdedupe/boundedretention/faulttests",
+      "cleanup": "No build,thirdpartyrelaytraffic,certificateinstallationorresourcescreated",
+      "decision": "Materiallydifferentcriticalpathworthtesting; reachesfurtherthanDriveAPIoptimization butaddsownedHTTPSexitandfiniteURLFetchquotas; notwinningprotocol",
+      "source_documents": [
+        "docs/experiments/master-http-relay-source-audit-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "therealaleph/MasterHttpRelayVPN-RUST b32f65f0cdec0602c9ffe4db0ed24b81d974cd6f;review09c26ee",
+      "live_comparable": false
     }
   ]
 }

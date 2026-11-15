@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **160 interpreted experiment records**, **293 recognized raw result files** indexed across local worktrees, and **255 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **162 interpreted experiment records**, **294 recognized raw result files** indexed across local worktrees, and **267 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -229,3 +229,7 @@ R3-015/016 preserve the [incomplete HTTP2 dependency comparison and first100MiB 
 ## Sustained strict cohorts and cleanup-accounting fix
 
 R3-018/019 retain the [two later strict100MiB cohorts](experiments/sustained-strict-attempts-2026-11-15.md). The125k cohort preserves main23.986Mb/s and async26.182Mb/s exactfilecheckpoints, but its candidate stopped on the independently reproduced expected-cleanup404 accounting bug. R3-020 records the narrowly scoped correction without rewriting that historical arm. A fresh strictcohort then stopped in its first maincontrol on four ordinary immutable upload timeouts;19 exactecho receipts survive, no fullfile/p95 is invented, and no candidate ran. Bounded recovery must be separately labeled with allerrorsretained.
+
+## Alternative synchronous Google-front carrier
+
+R3-021 preserves all twelve successful owned Apps Script opaque AEAD echo exchanges, including the 624.779 ms warm64Bmedian and1MiB1069.133msmedian, both redirecthops pinned through the selected Googlefront. This is an unloaded APIprimitive, not a full TCP/mixedworkload result. R3-022 preserves the external full-tunnel source audit and its response-loss/unboundedqueue traps; retained-responseACKs and write-offset dedupe must precede promotion. The ephemeral echo deployment was archived and its disabled state verified through the same front.

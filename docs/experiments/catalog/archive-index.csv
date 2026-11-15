@@ -290,5 +290,6 @@ slot-async-wt,.skirk-runs/slot-async-upload-16m-20261115-01/arms/summary.json,61
 slot-async-wt,.skirk-runs/slot-primary-download16m-20261115-01/arms/summary.json,2646,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-async-wt,.skirk-runs/xnet-v054-v061-download16m-20261115/arms/summary.json,4565,source-index-only; inspect cited catalog entry or raw file for exact values
 slot-mux-integration,.skirk-runs/slot-shadow-download-20261114-01/summary.json,4114,source-index-only; inspect cited catalog entry or raw file for exact values
+state-aware-hedge-wt,.skirk-runs/apps-script-stage1/measurements.json,8098,source-index-only; inspect cited catalog entry or raw file for exact values
 state-aware-hedge-wt,.skirk-runs/stall-hedge-live-20261115/download/arms/summary.json,7919,source-index-only; inspect cited catalog entry or raw file for exact values
 state-aware-hedge-wt,.skirk-runs/stall-hedge-live-20261115/upload/arms/summary.json,3166,source-index-only; inspect cited catalog entry or raw file for exact values

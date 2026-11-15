@@ -1747,6 +1747,12 @@
   },
   {
     "worktree": "state-aware-hedge-wt",
+    "path": ".skirk-runs/apps-script-stage1/measurements.json",
+    "bytes": 8098,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "state-aware-hedge-wt",
     "path": ".skirk-runs/stall-hedge-live-20261115/download/arms/summary.json",
     "bytes": 7919,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
