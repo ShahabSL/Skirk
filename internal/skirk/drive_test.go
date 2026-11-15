@@ -1440,6 +1440,9 @@ func TestDriveQuotaStatsReportsEstimatedUnits(t *testing.T) {
 	if driveQuotaUnits("generate_ids") != 5 {
 		t.Fatalf("generate_ids quota units = %d, want 5", driveQuotaUnits("generate_ids"))
 	}
+	if driveQuotaUnits("patch") != 50 || driveQuotaUnits("update") != 50 {
+		t.Fatal("Drive file edits must count 50 quota units")
+	}
 	snapshot := stats.Snapshot()
 	if snapshot.Calls != 2 || snapshot.Units != 250 || snapshot.Errors != 1 || snapshot.ResponseBytes != 30 {
 		t.Fatalf("snapshot = %+v, want lifetime totals after window reset", snapshot)

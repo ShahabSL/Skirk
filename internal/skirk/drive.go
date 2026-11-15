@@ -1957,7 +1957,7 @@ func driveQuotaUnits(op string) int {
 		return 100
 	case "download":
 		return 200
-	case "upload", "delete", "create":
+	case "upload", "delete", "create", "patch", "update":
 		return 50
 	default:
 		return 5
