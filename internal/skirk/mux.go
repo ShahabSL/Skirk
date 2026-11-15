@@ -2007,9 +2007,16 @@ func (m *driveMux) runStoragePressureCleanup(ctx context.Context, store driveCle
 	cleanupCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
 	defer cancel()
 	for _, prefix := range []string{"muxv4/", "bench-drive/"} {
+		olderThan := 10 * time.Minute
+		if prefix == "muxv4/" {
+			// An unprocessed mux object can still belong to a live stream after
+			// ten minutes. Match the mailbox janitor's retention window instead
+			// of deleting data from another active client under storage pressure.
+			olderThan = 24 * time.Hour
+		}
 		result, err := store.Cleanup(cleanupCtx, DriveCleanupOptions{
 			Prefix:            prefix,
-			OlderThan:         10 * time.Minute,
+			OlderThan:         olderThan,
 			DeleteConcurrency: 2,
 			MaxDeletes:        cleanupEmergencyDeleteBatch,
 			DeleteDelay:       25 * time.Millisecond,

@@ -3145,8 +3145,12 @@ func TestMuxUploadStorageQuotaRunsEmergencyStaleCleanup(t *testing.T) {
 		if opts[i].Prefix != wantPrefix {
 			t.Fatalf("cleanup prefix[%d] = %q, want %q", i, opts[i].Prefix, wantPrefix)
 		}
-		if opts[i].OlderThan != 10*time.Minute {
-			t.Fatalf("cleanup older-than[%d] = %s, want 10m", i, opts[i].OlderThan)
+		wantAge := 10 * time.Minute
+		if wantPrefix == "muxv4/" {
+			wantAge = 24 * time.Hour
+		}
+		if opts[i].OlderThan != wantAge {
+			t.Fatalf("cleanup older-than[%d] = %s, want %s", i, opts[i].OlderThan, wantAge)
 		}
 		if opts[i].DeleteConcurrency != 2 || opts[i].MaxDeletes != cleanupEmergencyDeleteBatch || opts[i].DeleteDelay != 25*time.Millisecond || opts[i].MaxPages != 20000 {
 			t.Fatalf("cleanup options[%d] = %+v, want conservative emergency limits", i, opts[i])
