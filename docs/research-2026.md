@@ -271,10 +271,10 @@ without the header and one with a separate test project's header using the
 same isolated grant. It logs only HTTP status, a sanitized machine-readable
 error reason. If Drive reports the second project's API as
 disabled when the header is present, that would be a stronger activation and
-quota-project signal under Google's guide. Two successful calls alone do not
-establish quota attribution; compare Drive API usage telemetry for both
-projects after propagation, or ask Google Workspace support for the Drive
-specific rule. Even if the override works, every user-owned quota project
+quota-project signal under Google's guide. Two successful calls alone would
+not establish quota attribution; the follow-up below compares Drive API
+usage telemetry for both projects after propagation. Even if the override
+works, every user-owned quota project
 would require project creation, Drive API activation, and the grant holder's
 Service Usage permission. That setup is too heavy for the default client flow;
 it could be an optional advanced capacity path if measured and supported.
@@ -290,10 +290,9 @@ and with the header. This is a direct compatibility result for one shared
 OAuth client and user-owned quota project. Google's quota-project
 guide says the activation-checked project is the rate-quota project, so quota
 movement is a reasonable *inference*, not independently measured usage
-attribution. A project quota chart or Google Workspace support confirmation
-is still needed before treating it as a scaling design. The API metrics pages
-for both test projects showed no request data at this initial check, despite
-the successful live requests, so they did not settle attribution.
+attribution at that point. The API metrics pages for both test projects showed
+no request data at this initial check, despite the successful live requests.
+The time-series follow-up below provides a separate request-count observation.
 
 A November 15 follow-up found populated Cloud Console Drive method tables for
 both projects. Using the same isolated `shahabpre` OAuth grant, a bounded burst
@@ -303,19 +302,43 @@ responses and no API error between **06:04:08 and 06:05:17 UTC**. These calls
 represented about **10,000 estimated Drive units** and created no files.
 The status-only private summary is
 `.skirk-runs/quota-attribution-header-burst-20261115.json`.
-The second project's six-hour `files.list` table read **6,744** shortly after
-the burst and **6,752** about five minutes later; the OAuth project's table
+The planned Windows Drive test was held for this quiet window. After
+propagation, Cloud
+Console's **one-hour Drive traffic by HTTP response code** chart showed these
+minute-bucket HTTP 200 rates (Console local time, UTC−6):
+
+| Minute | Header-selected project (requests/s) | OAuth-client project |
+| --- | ---: | --- |
+| 00:04 | 0.058 | No point |
+| 00:05 | 0.878 | No point |
+| 00:06 | 0.675 | No point |
+| 00:07 | 0.056 | No point |
+
+The displayed rates total **about 100.02 requests** after multiplying each
+one-minute bucket by 60; the 0.02 difference reflects chart rounding. These
+are Console aggregates, not a per-request trace, and their displayed bins can
+straddle the probe's actual 06:04–06:05 UTC run. They nevertheless match the
+100 successful header-bearing calls while the OAuth project's chart has no
+corresponding points. This is bounded, direct evidence that Google **recorded
+Drive request count on the header-selected project**, separate from the
+OAuth-client project. It does not directly measure consumed quota units,
+billing, sustained rate limits, or the capacity of 200,000 active users.
+
+The second project's rolling six-hour `files.list` total read **6,744** shortly
+after the burst and **6,752** about five minutes later; the OAuth project's
 read **14,794** at both observations. The second project's rolling one-hour
 total fell from **444** before the burst to **382** afterward as older traffic
-left the interval. None of these aggregate readings isolates the burst or
-shows a conclusive 100-request movement. Google's
+left the interval. Those rolling totals alone would have been misleading.
+Google's
 [`serviceruntime` metric reference](https://docs.cloud.google.com/monitoring/api/metrics_gcp_p_z)
 says `api/request_count` is sampled every 60 seconds and can remain invisible
-for up to 180 seconds after sampling; the Console method table can have
-additional aggregation or caching behavior. Successful requests and these
-rolling totals therefore still do **not** independently prove Drive quota
-attribution. A stronger follow-up would use a fixed time-series interval and
-unique uncached requests, or obtain a Drive-specific confirmation from Google.
+for up to 180 seconds after sampling. Google's
+[quota-project guide](https://docs.cloud.google.com/docs/quotas/quota-project)
+states that the project checked for API activation is also checked for rate
+quota; the disabled-API control and this project-specific request metric
+support using a separate quota project for bounded operations. A sustained
+rate-limit test, quota-unit telemetry, or Drive-specific Google confirmation
+would still be needed before promising independent capacity at scale.
 
 The Go Drive transport now accepts optional `drive.quota_project` in a kit
 profile. It validates the standard Google Cloud project ID form and adds the
@@ -419,10 +442,10 @@ new zero-stream pause removes that particular steady client cost once streams
 close. If all 200,000 users also ran separate quiet exits on the same project,
 their exit discovery alone would still be about 1.2 billion units/min.
 Installed users who have stopped Skirk generate no polling calls. Per-user
-quota projects could distribute project-level load only if Google confirms
-attribution and the deployment can support the Cloud and OAuth setup for that
-many users. The published per-user quota and real Drive behavior still
-constrain each active user.
+quota projects can distribute the measured request count, but scaling that
+design to 200,000 active users remains untested and depends on Cloud setup,
+rate quotas, publisher grant limits, and Drive's actual behavior. The
+published per-user quota still constrains each active user.
 
 ## OAuth lifetime and user experience
 

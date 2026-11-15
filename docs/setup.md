@@ -255,9 +255,11 @@ IDs and Google permission or disabled-API errors fail explicitly; Skirk does
 not silently fall back to another project's quota. The bounded
 [research probe](research-2026.md) observed HTTP 403 `SERVICE_DISABLED` for a
 second project while its Drive API was off, then HTTP 200 after enablement.
-Successful quota attribution and high-user scaling still need project usage
-telemetry or Google support confirmation. Leave this flag unset for the usual
-personal OAuth setup.
+A later 100-call read-only burst appeared as about 100 Drive HTTP 200 requests
+in that project's minute-level Console chart, with no corresponding points
+in the OAuth-client project's chart. This measures bounded request-count
+attribution; sustained quota-unit capacity and high-user scaling are still
+unproven. Leave this flag unset for the usual personal OAuth setup.
 
 ## Generated Files
 
