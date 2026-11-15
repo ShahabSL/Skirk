@@ -207,6 +207,9 @@ android {
             jniLibs.srcDir(generatedSkirkJniLibs)
             jniLibs.srcDir(generatedHevJniLibs)
         }
+        getByName("test") {
+            java.srcDir(layout.projectDirectory.dir("../tests"))
+        }
     }
 
     packaging {
@@ -230,4 +233,5 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

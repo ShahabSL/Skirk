@@ -1,6 +1,6 @@
 package app.skirk.client
 
-fun main() {
+fun assertProfileImportGenerations() {
     val imports = ProfileImportGeneration()
     val applied = mutableListOf<String>()
     fun completion(request: ProfileImportGeneration.Request, target: String, value: String) = {

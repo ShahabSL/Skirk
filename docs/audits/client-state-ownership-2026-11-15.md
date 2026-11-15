@@ -142,3 +142,11 @@ Slow-provider IO lifecycle/device cancellation still has the explicit provider
 reproplan above; the actual reader compiled, while its request/target/caller-thread
 state regressions ran on the host. No live packet-tunnel or OAuth expiry test is
 invented from these offline UI checks.
+
+
+The Android host regressions now also have a standard Gradle/JUnit4 entry point:
+`:app:testDebugUnitTest`. The test source set reuses the same pure Kotlin test
+functions and production models; no assumed runner-installed kotlinc or skip
+logic is needed. `HostClientStateTests.kt` keeps one standalone main for cached
+host-compiler execution. The JUnit task source is ready for the next offline
+validation window; its result will be recorded after it actually runs.

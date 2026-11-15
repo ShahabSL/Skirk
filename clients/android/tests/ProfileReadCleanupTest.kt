@@ -4,7 +4,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-fun main() {
+fun assertProfileReadCleanupBounds() {
     val caller = Thread.currentThread()
     val wrongThread = AtomicBoolean(false)
     val started = CountDownLatch(2)

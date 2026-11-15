@@ -1,7 +1,7 @@
 package app.skirk.client
 
 // Host-JVM regression test. The production model has no Android SDK dependency.
-fun main() {
+fun assertConnectionStateOwnership() {
     val connectingA = ConnectionState(true, ConnectionPhase.CONNECTING, "vpn", "A", "Connecting", 1L)
     val failedA = connectingA.failed("Google access needs renewal (invalid_grant)", 2L)
     check(!failedA.running && failedA.phase == ConnectionPhase.FAILED)
