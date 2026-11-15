@@ -30,9 +30,39 @@
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
+    "worktree": "fresh-architecture-wt",
+    "path": ".skirk-runs/id-train-parallel2-filtered-live-20261115.json",
+    "bytes": 6514,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "fresh-architecture-wt",
+    "path": ".skirk-runs/id-train-parallel2-live-20261115.json",
+    "bytes": 2454,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
     "worktree": "list-page-probe-wt",
     "path": ".skirk-runs/list-page-live-20261114-a.json",
     "bytes": 15066,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "metadata-16k-response-review-wt",
+    "path": ".skirk-runs/metadata-16k-down16m-20261115-02/arms/summary.json",
+    "bytes": 6304,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "metadata-16k-response-review-wt",
+    "path": ".skirk-runs/metadata-16k-up16m-20261115/arms/summary.json",
+    "bytes": 3148,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "pubsub-streaming-wt",
+    "path": ".skirk-runs/pubsub-stream-live-20261115.json",
+    "bytes": 529,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
@@ -1629,6 +1659,18 @@
     "worktree": "repocomp-indexed-class-20261114",
     "path": ".skirk-runs/indexed-class-pilot/summary.json",
     "bytes": 2023,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/slot-async-download-16m-20261115-01/arms/summary.json",
+    "bytes": 6161,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-async-wt",
+    "path": ".skirk-runs/slot-async-upload-16m-20261115-01/arms/summary.json",
+    "bytes": 6153,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
