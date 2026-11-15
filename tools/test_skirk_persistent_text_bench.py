@@ -212,6 +212,34 @@ class PersistentTextTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(reports[0]["small"]["successes"], 4)
 
+    def test_synced_receipts_exist_before_the_remaining_schedule(self):
+        with tempfile.TemporaryDirectory() as directory, LocalSocksEcho() as proxy:
+            private = Path(directory) / ".skirk-runs"
+            private.mkdir()
+            args = arguments(proxy)
+            args.small_count = 4
+            args.small_interval_ms = 300
+            args.sample_journal = private / "receipts.jsonl"
+            reports = []
+            worker = threading.Thread(target=lambda: reports.append(run_workload(args, successful_bulk)), daemon=True)
+            worker.start()
+            deadline = time.monotonic() + 2
+            rows = []
+            while time.monotonic() < deadline:
+                if args.sample_journal.exists():
+                    rows = [json.loads(line) for line in args.sample_journal.read_text().splitlines()]
+                if len(rows) >= 2:
+                    break
+                time.sleep(0.01)
+            self.assertTrue(worker.is_alive())
+            self.assertEqual(rows[0]["kind"], "observation_start")
+            self.assertEqual(rows[1]["index"], 0)
+            self.assertTrue(rows[1]["ok"])
+            worker.join(timeout=3)
+            rows = [json.loads(line) for line in args.sample_journal.read_text().splitlines()]
+            self.assertEqual(len(rows), 5)
+            self.assertEqual([row["index"] for row in rows[1:]], [0, 1, 2, 3])
+
     def test_one_demoted_stream_carries_prelude_and_text_during_bulk(self):
         with LocalSocksEcho() as proxy:
             report = run_workload(arguments(proxy), successful_bulk)

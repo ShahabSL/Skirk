@@ -189,7 +189,8 @@ def receive_exact_polled(sock: socket.socket, count: int, deadline: float) -> tu
 
 def pipelined_text_samples(sock: socket.socket, args: argparse.Namespace,
                            run_start: float, deadline: float,
-                           bulk_future: concurrent.futures.Future) -> list[dict[str, Any]]:
+                           bulk_future: concurrent.futures.Future,
+                           on_sample: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
     """Schedule writes independently of replies on one ordered TCP connection."""
     condition = threading.Condition()
     records: list[tuple[float, float, bool, str | None] | None] = [None] * args.small_count
@@ -226,6 +227,12 @@ def pipelined_text_samples(sock: socket.socket, args: argparse.Namespace,
     thread = threading.Thread(target=writer, daemon=True)
     thread.start()
     samples: list[dict[str, Any]] = []
+
+    def append_sample(sample):
+        samples.append(sample)
+        if on_sample is not None:
+            on_sample(sample)
+
     stream_healthy = True
     try:
         for index in range(args.small_count):
@@ -234,7 +241,7 @@ def pipelined_text_samples(sock: socket.socket, args: argparse.Namespace,
                     condition.wait(timeout=min(0.5, max(0.001, deadline - time.monotonic())))
                 record = records[index]
             if record is None:
-                samples.append(empty_small_sample(index, run_start, run_start, False,
+                append_sample(empty_small_sample(index, run_start, run_start, False,
                                                   "stream_closed" if writer_done else "overall_deadline"))
                 continue
             scheduled, started, overlap, send_error = record
@@ -244,12 +251,12 @@ def pipelined_text_samples(sock: socket.socket, args: argparse.Namespace,
             sample["start_offset_ms"] = round((started - run_start) * 1000, 3)
             sample["queue_ms"] = round(max(0.0, started - scheduled) * 1000, 3)
             if send_error is not None:
-                samples.append(sample)
+                append_sample(sample)
                 stream_healthy = False
                 continue
             if not stream_healthy:
                 sample["failure"] = "stream_closed"
-                samples.append(sample)
+                append_sample(sample)
                 continue
             try:
                 echo_deadline = min(deadline, started + args.request_timeout)
@@ -275,7 +282,7 @@ def pipelined_text_samples(sock: socket.socket, args: argparse.Namespace,
                 sample["total_ms"] = round((time.monotonic() - started) * 1000, 3)
                 sample["scheduled_total_ms"] = round(sample["queue_ms"] + sample["total_ms"], 3)
                 stream_healthy = False
-            samples.append(sample)
+            append_sample(sample)
     finally:
         if not stream_healthy:
             try:
@@ -395,7 +402,22 @@ def run_workload(args: argparse.Namespace,
             time.sleep(0.05)
     run_start = time.monotonic()
     probe_started_utc = datetime.now(timezone.utc).isoformat()
+    journal = None
+
+    def record_sample(sample):
+        if journal is not None:
+            journal.write(json.dumps(sample) + "\n")
+            journal.flush()
+            os.fsync(journal.fileno())
+
     try:
+        journal_path = getattr(args, "sample_journal", None)
+        if journal_path is not None:
+            descriptor = os.open(journal_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            journal = os.fdopen(descriptor, "w")
+            record_sample({"kind": "observation_start", "probe_started_utc": probe_started_utc,
+                           "prelude_verified": True, "prelude_bytes_each_direction": args.prelude_bytes,
+                           "expected_frames": args.small_count, "frame_bytes": TEXT_BYTES})
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             def run_bulk():
                 sample = bulk_runner("bulk", 0, args.bulk_url, args.port, run_start,
@@ -419,7 +441,7 @@ def run_workload(args: argparse.Namespace,
                 return sample
             bulk_future = pool.submit(run_bulk)
             if args.pipelined:
-                samples.extend(pipelined_text_samples(sock, args, run_start, deadline, bulk_future))
+                samples.extend(pipelined_text_samples(sock, args, run_start, deadline, bulk_future, record_sample))
             else:
                 stream_healthy = True
                 for index in range(args.small_count):
@@ -440,12 +462,15 @@ def run_workload(args: argparse.Namespace,
                             stream_healthy = False
                             sock.close()
                     samples.append(sample)
+                    record_sample(sample)
             try:
                 samples.append(bulk_future.result(timeout=max(0.1, deadline - time.monotonic() + 3)))
             except Exception:
                 samples.append(synthetic_bulk_failure(run_start, "bulk_worker_error"))
     finally:
         sock.close()
+        if journal is not None:
+            journal.close()
     return summarize(samples, prelude, args, started_utc, time.monotonic() - started,
                      probe_started_utc)
 
@@ -460,6 +485,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bulk-expected-bytes", type=int, required=True, help="exact HTTP response bytes")
     parser.add_argument("--bulk-sha256", required=True, help="exact HTTP response SHA-256")
     parser.add_argument("--out", type=Path, required=True, help="fresh JSON file under .skirk-runs")
+    parser.add_argument("--sample-journal", type=Path,
+                        help="private synced receipt rows retained if later work is interrupted")
     parser.add_argument("--bulk-result-file", type=Path,
                         help="persist completed file proof before later text frames finish")
     parser.add_argument("--small-count", type=int, default=24)
@@ -479,6 +506,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stall-bytes-per-second", type=int, default=1024)
     parser.add_argument("--bulk-max-mib", type=int, default=128)
     args = parser.parse_args(argv)
+    if args.sample_journal is not None and (args.sample_journal.exists() or
+            ".skirk-runs" not in args.sample_journal.resolve().parts):
+        parser.error("sample journal must be fresh under .skirk-runs")
     if args.bulk_result_file is not None and (args.bulk_result_file.exists() or
             ".skirk-runs" not in args.bulk_result_file.resolve().parts):
         parser.error("bulk result file must be fresh under .skirk-runs")

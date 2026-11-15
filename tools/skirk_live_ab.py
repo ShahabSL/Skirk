@@ -512,6 +512,7 @@ def main():
                                "--overall-timeout", str(args.persistent_overall_timeout), "--request-timeout", "60" if args.persistent_pipeline else "30",
                                "--bulk-timeout", str(args.persistent_bulk_timeout), "--stall-seconds", str(args.stall_seconds),
                                "--bulk-result-file", str(run_dir / "bulk-completion.json"),
+                               "--sample-journal", str(run_dir / "frame-receipts.jsonl"),
                                "--out", str(report_path)]
                     if args.bulk_direction == "upload":
                         command.extend(("--bulk-request-file", str(upload_file)))
