@@ -774,11 +774,6 @@ private fun ConnectionPanel(
                 enabled = selected != null && !running,
             )
         }
-        DriveUsageSummary(
-            metrics = metrics,
-            performance = selected?.performance ?: PerformanceSettings.recommended(),
-            onOpenAdvanced = onOpenAdvanced,
-        )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.CloudQueue, "Google access route", googleRouteLabel(selected?.routeMode))
         Row(
@@ -848,6 +843,12 @@ private fun ConnectionPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        DriveUsageSummary(
+            metrics = metrics,
+            performance = selected?.performance ?: PerformanceSettings.recommended(),
+            onOpenAdvanced = onOpenAdvanced,
+        )
     }
 }
 
