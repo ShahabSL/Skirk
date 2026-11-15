@@ -28,6 +28,9 @@ func TestSlotPatchBudgetStopDiagnosticRequiresActualLocalRetirement(t *testing.T
 	if !errors.Is(err, errMuxSlotPatchBudgetExhausted) {
 		t.Fatalf("budget refusal lost its typed identity: %v", err)
 	}
+	if err.Error() != "metadata slot shadow PATCH budget exhausted" {
+		t.Fatalf("diagnostic change altered the original error text: %v", err)
+	}
 	if errors.Is(err, errMetadataSlotClosed) {
 		t.Fatal("diagnostic change altered the existing budget error's closed semantics")
 	}

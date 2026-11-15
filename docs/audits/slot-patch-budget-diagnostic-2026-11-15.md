@@ -27,10 +27,19 @@ The regression tests exercise the actual local cap without issuing another
 PATCH, typed-error/text/closed semantics, genuine AEAD tampering and same-text
 spoofs, writer join/owner wakeup with the reader still active, and byte-identical
 immutable fallback through actual mux frame delivery. A larger preliminary
-draft passed the targeted race run before the Listen measurement lease; the
-final minimal source is awaiting its own quiet-window checks and independent
-review. It must not claim that preliminary result as validation of the final
-snapshot.
+draft passed an earlier targeted race run; that evidence is not reused for the
+final minimal source. The final snapshot, including an explicit original-error-
+text assertion, passed `go test ./...`, `go vet ./...`, and the targeted race
+suite in 6.625 seconds. The race selection includes the new budget diagnostics
+and actual fallback tests plus existing writer/async and slot identity tests.
+Independent read review found no blocker in the minimal production delta.
+
+Runtime provenance: production Go sources (excluding test files), `go.mod`, and
+`go.sum` have no differences between frozen source `63532c8` and this worktree's
+base `287354a`. The only subsequent production Go difference is the sentinel
+and log label in `metadata_slot_shadow.go`. The toolchain is Go 1.26.4 on
+darwin/arm64, matching c47; its dependency versions/checksums and `-trimpath`
+build flags will also be compared against the new diagnostic executable.
 
 The diagnostic CLI will be built once from a clean reviewed source revision,
 with a new binary hash recorded separately from frozen candidate c47 and main
