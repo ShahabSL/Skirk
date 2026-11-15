@@ -85,6 +85,7 @@ type report struct {
 	TextScheduledP50MS   float64 `json:"text_scheduled_p50_ms,omitempty"`
 	TextScheduledP95MS   float64 `json:"text_scheduled_p95_ms,omitempty"`
 	TextScheduledMaxMS   float64 `json:"text_scheduled_max_ms,omitempty"`
+	WorkloadCompletedUTC  string  `json:"workload_completed_utc,omitempty"`
 	CleanupVerified      bool    `json:"cleanup_verified"`
 	CleanupDeletes       int     `json:"cleanup_deletes"`
 	CleanupGets          int     `json:"cleanup_gets"`
@@ -698,6 +699,7 @@ func (p *probe) run() (result report) {
 	if result.Failure == "" && ctx.Err() != nil {
 		result.Failure = "workload_deadline"
 	}
+	result.WorkloadCompletedUTC = time.Now().UTC().Format(time.RFC3339Nano)
 	return
 }
 
