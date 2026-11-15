@@ -78,6 +78,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -108,15 +109,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
 import org.json.JSONObject
 
 private val LightColors = lightColorScheme(
@@ -210,6 +209,46 @@ fun ConfigScreen() {
     var exitProbeRunning by remember { mutableStateOf(false) }
     var exitProbeGeneration by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+    val profileImports = remember { ProfileImportGeneration() }
+    var profileReadJob by remember { mutableStateOf<Job?>(null) }
+    var profileReadTarget by remember { mutableStateOf<String?>(null) }
+
+    fun cancelProfileRead() {
+        profileImports.cancel()
+        profileReadJob?.cancel()
+        profileReadJob = null
+        profileReadTarget = null
+    }
+    DisposableEffect(Unit) {
+        onDispose { cancelProfileRead() }
+    }
+    fun readPickedProfile(uri: Uri, target: String) {
+        cancelProfileRead()
+        val request = profileImports.begin(target)
+        profileReadTarget = target
+        profileReadJob = coroutineScope.launch {
+            try {
+                val text = readProfileDocument(context.applicationContext, uri)
+                val currentTarget = if (target == "new") "new" else replacingProfileId?.let { "replace:$it" }.orEmpty()
+                if (profileImports.owns(request, currentTarget) && !connectionStore.read().running) {
+                    if (target == "new") { rawConfig = text; importError = "" }
+                    else { replacementConfig = text; replacementError = "" }
+                }
+            } catch (_: CancellationException) {
+                // Replaced or destroyed imports never update the next target.
+            } catch (error: Exception) {
+                val currentTarget = if (target == "new") "new" else replacingProfileId?.let { "replace:$it" }.orEmpty()
+                if (profileImports.owns(request, currentTarget) && !connectionStore.read().running) {
+                    val detail = if (error is IllegalArgumentException) error.message else null
+                    val failure = detail ?: "Could not read the selected file. Choose it again."
+                    if (target == "new") importError = failure else replacementError = failure
+                }
+            } finally {
+                if (profileImports.owns(request, target)) { profileReadTarget = null; profileReadJob = null }
+            }
+        }
+    }
+
 
     LaunchedEffect(connectionState.running, connectionState.profileId) {
         exitProbeGeneration += 1
@@ -260,32 +299,12 @@ fun ConfigScreen() {
             message = "VPN permission was not granted"
         }
     }
-    val replacementFilePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
-    ) { uri ->
-        if (uri != null && replacingProfileId != null) {
-            runCatching { readProfileFile(context, uri) }
-                .onSuccess {
-                    replacementConfig = it
-                    replacementError = ""
-                }
-                .onFailure { replacementError = it.message ?: "Could not read the selected file" }
-        }
+    val replacementFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val target = replacingProfileId
+        if (uri != null && target != null && !connectionStore.read().running) readPickedProfile(uri, "replace:$target")
     }
-    val newProfileFilePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
-    ) { uri ->
-        if (uri != null && !connectionStore.read().running) {
-            runCatching { readProfileFile(context, uri) }
-                .onSuccess {
-                    rawConfig = it
-                    importError = ""
-                }
-                .onFailure {
-                    rawConfig = ""
-                    importError = it.message ?: "Could not read the selected file"
-                }
-        }
+    val newProfileFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null && !connectionStore.read().running) readPickedProfile(uri, "new")
     }
 
     fun refresh() {
@@ -301,6 +320,7 @@ fun ConfigScreen() {
     }
 
     fun startProfile(profile: ClientProfile, mode: String, shareLan: Boolean) {
+        cancelProfileRead()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !notificationPermissionResolved &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -398,12 +418,14 @@ fun ConfigScreen() {
         }
     }
     fun pasteProfileFromClipboard() {
+        cancelProfileRead()
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
         importError = ""
     }
 
     fun importProfile() {
+        cancelProfileRead()
         if (running) {
             importError = "Disconnect before importing another profile."
             return
@@ -442,6 +464,7 @@ fun ConfigScreen() {
     }
 
     fun replaceProfile() {
+        cancelProfileRead()
         try {
             val original = profiles.firstOrNull { it.id == replacingProfileId }
                 ?: error("Profile no longer exists. Select it again to replace it.")
@@ -463,6 +486,7 @@ fun ConfigScreen() {
     }
 
     fun openReplacement(profile: ClientProfile) {
+        cancelProfileRead()
         replacingProfileId = profile.id
         replacementConfig = ""
         replacementError = ""
@@ -600,11 +624,14 @@ fun ConfigScreen() {
                         onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
                         onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
                         onRawConfigChange = {
+                            cancelProfileRead()
                             rawConfig = it
                             importError = ""
                         },
                         onPaste = ::pasteProfileFromClipboard,
-                        onChooseFile = { newProfileFilePicker.launch("*/*") },
+                        onChooseFile = { cancelProfileRead(); newProfileFilePicker.launch("*/*") },
+                        readingFile = profileReadTarget == "new",
+                        onCancelFile = ::cancelProfileRead,
                         onImport = ::importProfile,
                     )
                 }
@@ -639,11 +666,14 @@ fun ConfigScreen() {
                             onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
                             onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
                             onRawConfigChange = {
+                                cancelProfileRead()
                                 rawConfig = it
                                 importError = ""
                             },
                             onPaste = ::pasteProfileFromClipboard,
-                            onChooseFile = { newProfileFilePicker.launch("*/*") },
+                            onChooseFile = { cancelProfileRead(); newProfileFilePicker.launch("*/*") },
+                        readingFile = profileReadTarget == "new",
+                        onCancelFile = ::cancelProfileRead,
                             onImport = ::importProfile,
                         )
                     } else {
@@ -696,18 +726,23 @@ fun ConfigScreen() {
                 rawConfig = replacementConfig,
                 error = replacementError,
                 onRawConfigChange = {
+                    cancelProfileRead()
                     replacementConfig = it
                     replacementError = ""
                 },
                 onPaste = {
+                    cancelProfileRead()
                     val clipboardService = context.getSystemService(ClipboardManager::class.java)
                     replacementConfig = clipboardService.primaryClip?.getItemAt(0)
                         ?.coerceToText(context)?.toString().orEmpty()
                     replacementError = ""
                 },
-                onChooseFile = { replacementFilePicker.launch("*/*") },
+                onChooseFile = { cancelProfileRead(); replacementFilePicker.launch("*/*") },
+                readingFile = profileReadTarget == "replace:$replacingProfileId",
+                onCancelFile = ::cancelProfileRead,
                 onReplace = ::replaceProfile,
                 onDismiss = {
+                    cancelProfileRead()
                     replacingProfileId = null
                     replacementConfig = ""
                     replacementError = ""
@@ -736,30 +771,6 @@ fun ConfigScreen() {
     }
 }
 
-private fun readProfileFile(context: Context, uri: Uri): String {
-    val content = context.contentResolver.openInputStream(uri)?.use { input ->
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(4096)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            require(output.size() + count <= MAX_PROFILE_FILE_BYTES) {
-                "Profile file is too large (maximum 256 KiB)."
-            }
-            output.write(buffer, 0, count)
-        }
-        try {
-            Charsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(output.toByteArray())).toString()
-        } catch (_: CharacterCodingException) {
-            throw IllegalArgumentException("Profile file must be valid UTF-8.")
-        }
-    } ?: error("Could not open the selected file")
-    require(content.isNotBlank()) { "The selected profile file is empty." }
-    return content
-}
 
 @Composable
 private fun ConnectionPanel(
@@ -1003,6 +1014,8 @@ private fun ReplaceProfileDialog(
     onRawConfigChange: (String) -> Unit,
     onPaste: () -> Unit,
     onChooseFile: () -> Unit,
+    readingFile: Boolean,
+    onCancelFile: () -> Unit,
     onReplace: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1027,6 +1040,10 @@ private fun ReplaceProfileDialog(
                     isError = error.isNotBlank(),
                     supportingText = if (error.isNotBlank()) ({ Text(error) }) else null,
                 )
+                if (readingFile) {
+                    Text("Reading profile file…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    TextButton(onClick = onCancelFile) { Text("Cancel file import") }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onPaste) {
                         Icon(Icons.Rounded.ContentPaste, contentDescription = null)
@@ -1040,7 +1057,7 @@ private fun ReplaceProfileDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onReplace, enabled = rawConfig.isNotBlank()) {
+            TextButton(onClick = onReplace, enabled = !readingFile && rawConfig.isNotBlank()) {
                 Text("Replace")
             }
         },
@@ -1584,12 +1601,18 @@ private fun ImportPanel(
     onRawConfigChange: (String) -> Unit,
     onPaste: () -> Unit,
     onChooseFile: () -> Unit,
+    readingFile: Boolean,
+    onCancelFile: () -> Unit,
     onImport: () -> Unit,
 ) {
     Panel {
         SectionHeader(Icons.Rounded.Add, "Import profile", "File or one-line config")
         OutlinedButton(onClick = onChooseFile, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
             Text("Choose client.skirk file")
+        }
+        if (readingFile) {
+            Text("Reading profile file…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            TextButton(onClick = onCancelFile) { Text("Cancel file import") }
         }
         OutlinedTextField(
             value = rawConfig,
@@ -1610,7 +1633,7 @@ private fun ImportPanel(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onImport,
-                enabled = enabled && rawConfig.isNotBlank(),
+                enabled = enabled && !readingFile && rawConfig.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -2157,7 +2180,6 @@ private fun performancePresetDetail(performance: PerformanceSettings): String =
         if (performance.burstPoll) " · burst" else ""
 
 private const val SERVICE_STATE_GRACE_MS = 3_000L
-private const val MAX_PROFILE_FILE_BYTES = 256 * 1024
 private const val DRIVE_USER_UNITS_PER_MINUTE = 325_000.0
 
 private fun File.readTail(maxBytes: Int, maxLines: Int): String {

@@ -73,3 +73,34 @@ cannot publish someone else's OAuth app or restart an external exit.
 The audit does not prove real iPhone packet-tunnel operation, Windows runtime
 system-proxy restoration, screen-reader behavior on hardware, long-running VPN
 reconnects or 200,000-user performance. Backend/device tests remain necessary.
+
+
+## Android document import follow-up (source ready)
+
+Content-provider opens/reads now run on Dispatchers.IO behind a two-reader
+semaphore. Cancellation signals an in-progress provider open and closes the
+owned asset/input descriptors; an older read retains its permit until its
+blocking operation actually returns. The existing 256 KiB/strictUTF-8/nonempty
+checks remain. No profile text is logged. The composition owns the job and a
+request/target generation. Choosing B, pasting/typing, changing replacement target,
+starting a connection, canceling or disposing invalidates A before its result can
+update UI. New imports and replacement both expose a cancelable reading state;
+confirm/import is disabled until the current read completes.
+
+`ProfileImportGenerationTest.kt` deterministically releases a slow A completion
+after B, checks a replacement result cannot enter another profile target, and
+checks disposal/cancellation invalidates pending work. It uses the exact
+production generation model. Host command (after the benchmark quiet window):
+
+```sh
+kotlinc clients/android/app/src/main/java/app/skirk/client/ProfileImportGeneration.kt   clients/android/tests/ProfileImportGenerationTest.kt -include-runtime -d /tmp/skirk-import-test.jar
+java -jar /tmp/skirk-import-test.jar
+```
+
+Device falsification still required: a test ContentProvider should hold its
+open/read, allow a newer file selection and then release A; only B may fill the
+field. Cancel/rotate/destroy during the held read must leave no saved profile or
+late field update, close the canceled descriptor, and retain at most two provider
+reads. A cloud-provider cancellation is cooperative; an unresponsive provider
+cannot create an unbounded number of IO operations. These device checks are
+listed honestly as pending until executed; no live Google account is involved.
