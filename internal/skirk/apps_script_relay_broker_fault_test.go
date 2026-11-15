@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -316,5 +318,59 @@ func TestRelayResearchHTTPConcurrencyAndCloseJoinBodyCancellation(t *testing.T) 
 	}
 	if len(b.httpSlots) != 0 {
 		t.Fatal("HTTP slot leaked")
+	}
+}
+
+type rrBlockedWriter struct {
+	header                  http.Header
+	entered, deadline       chan struct{}
+	enterOnce, deadlineOnce sync.Once
+}
+
+func (w *rrBlockedWriter) Header() http.Header { return w.header }
+func (w *rrBlockedWriter) WriteHeader(int)     {}
+func (w *rrBlockedWriter) Write(p []byte) (int, error) {
+	w.enterOnce.Do(func() { close(w.entered) })
+	<-w.deadline
+	return 0, context.DeadlineExceeded
+}
+func (w *rrBlockedWriter) SetReadDeadline(time.Time) error { return nil }
+func (w *rrBlockedWriter) SetWriteDeadline(t time.Time) error {
+	if !t.IsZero() && !t.After(time.Now()) {
+		w.deadlineOnce.Do(func() { close(w.deadline) })
+	}
+	return nil
+}
+
+func TestRelayResearchCloseInterruptsAndJoinsSlowHTTPResponseWriter(t *testing.T) {
+	b := rrFixture(t, relayResearchConfig{FrameBytes: 128 * 1024})
+	auth := "synthetic-auth-secret-at-least-32-characters"
+	wire, _ := b.codec.seal(relayResearchPacket{Kind: rrUp, Seq: 1, Pieces: []relayResearchPiece{rrPiece("up", "up", []byte("synthetic"))}})
+	body, _ := json.Marshal(relayResearchHTTPEnvelope{Auth: auth, Data: base64.StdEncoding.EncodeToString(wire)})
+	w := &rrBlockedWriter{header: http.Header{}, entered: make(chan struct{}), deadline: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		b.handler(auth).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/exchange", bytes.NewReader(body)))
+		close(done)
+	}()
+	select {
+	case <-w.entered:
+	case <-time.After(time.Second):
+		t.Fatal("response writer never blocked")
+	}
+	closed := make(chan struct{})
+	go func() { b.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not interrupt response writing")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("Close returned before response handler joined")
+	}
+	if len(b.httpSlots) != 0 {
+		t.Fatal("slow writer retained HTTP slot")
 	}
 }

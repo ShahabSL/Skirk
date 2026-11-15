@@ -30,7 +30,13 @@ func (b *relayResearchBroker) handler(auth string) http.Handler {
 			http.Error(w, "relay HTTP concurrency bound", http.StatusTooManyRequests)
 			return
 		}
-		defer func() { <-b.httpSlots }()
+		registered := false
+		defer func() {
+			<-b.httpSlots
+			if registered {
+				b.httpWG.Done()
+			}
+		}()
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()
@@ -38,13 +44,20 @@ func (b *relayResearchBroker) handler(auth string) http.Handler {
 			return
 		}
 		b.httpWG.Add(1)
+		registered = true
 		b.mu.Unlock()
-		defer b.httpWG.Done()
 		controller := http.NewResponseController(w)
 		_ = controller.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_ = controller.SetWriteDeadline(time.Now().Add(b.cfg.PollWait + 20*time.Second))
 		defer controller.SetReadDeadline(time.Time{})
+		defer controller.SetWriteDeadline(time.Time{})
 		readClosed := make(chan struct{})
-		stop := context.AfterFunc(b.ctx, func() { defer close(readClosed); _ = r.Body.Close() })
+		stop := context.AfterFunc(b.ctx, func() {
+			defer close(readClosed)
+			_ = controller.SetReadDeadline(time.Now())
+			_ = controller.SetWriteDeadline(time.Now())
+			_ = r.Body.Close()
+		})
 		defer func() {
 			if !stop() {
 				<-readClosed
