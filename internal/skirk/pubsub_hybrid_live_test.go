@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,9 @@ import (
 	"time"
 )
 
-// Gate every physical Drive attempt, including retries and independent pools.
+// Gate visible Drive RoundTripper dispatches across all independent pools.
+// Lower transports can retry internally; WroteRequest callbacks expose completed
+// write attempts, not Google acceptance or an exact billable request count.
 // Stopping acquires the write lock after in-flight HTTP calls finish. Future
 // mux goroutines fail locally; they cannot race cleanup with a late upload.
 type hybridDriveGate struct {
@@ -31,12 +34,16 @@ type hybridDriveGate struct {
 	base    http.RoundTripper
 	budget  *hybridBudget
 	cleanup bool
+	onGuard func()
 }
 
 func (g *hybridDriveGate) RoundTrip(r *http.Request) (*http.Response, error) {
 	g.mu.RLock()
 	if g.stopped {
 		g.mu.RUnlock()
+		g.budget.mu.Lock()
+		g.budget.StoppedDenials++
+		g.budget.mu.Unlock()
 		return nil, context.Canceled
 	}
 	cost := 5
@@ -51,8 +58,20 @@ func (g *hybridDriveGate) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	if e := g.budget.reserveDrive(cost, g.cleanup); e != nil {
 		g.mu.RUnlock()
+		if g.onGuard != nil {
+			g.onGuard()
+		}
 		return nil, e
 	}
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		g.budget.mu.Lock()
+		g.budget.WriteCallbacks++
+		if info.Err != nil {
+			g.budget.WriteErrorCallbacks++
+		}
+		g.budget.mu.Unlock()
+	}}
+	r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
 	response, err := g.base.RoundTrip(r)
 	if err != nil || response == nil || response.Body == nil {
 		g.mu.RUnlock()
@@ -102,16 +121,76 @@ func hybridGateDrive(store *DriveStore, b *hybridBudget, cleanup bool) []*hybrid
 }
 
 type hybridLiveRow struct {
-	Kind      string  `json:"kind"`
-	Pool      int     `json:"pool,omitempty"`
-	Sequence  int     `json:"sequence,omitempty"`
-	Bytes     int64   `json:"bytes"`
-	PublishMS float64 `json:"publish_response_ms,omitempty"`
-	TTFBMS    float64 `json:"ttfb_ms,omitempty"`
-	TotalMS   float64 `json:"total_ms"`
-	SHA256    string  `json:"sha256"`
-	OK        bool    `json:"ok"`
+	Kind         string  `json:"kind"`
+	Pool         int     `json:"pool,omitempty"`
+	Sequence     int     `json:"sequence,omitempty"`
+	Bytes        int64   `json:"bytes"`
+	PublishMS    float64 `json:"publish_response_ms,omitempty"`
+	TTFBMS       float64 `json:"ttfb_ms,omitempty"`
+	TotalMS      float64 `json:"total_ms"`
+	SHA256       string  `json:"sha256"`
+	OK           bool    `json:"ok"`
+	Failure      string  `json:"failure_category,omitempty"`
+	RequestBytes int64   `json:"request_bytes,omitempty"`
 }
+type hybridBoundedLog struct {
+	mu                      sync.Mutex
+	writer                  io.Writer
+	limit, written, dropped int64
+}
+
+func (b *hybridBoundedLog) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := len(data)
+	allowed := int64(n)
+	if b.written+allowed > b.limit {
+		allowed = b.limit - b.written
+	}
+	if allowed > 0 {
+		got, e := b.writer.Write(data[:allowed])
+		b.written += int64(got)
+		if e != nil {
+			return got, e
+		}
+	}
+	b.dropped += int64(n) - allowed
+	return n, nil
+}
+func (b *hybridBoundedLog) stats() map[string]int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return map[string]int64{"written_bytes": b.written, "dropped_bytes": b.dropped}
+}
+
+type hybridBodyProgress struct {
+	base        io.Reader
+	bytes, next int64
+	emit        func(int64)
+}
+
+func (p *hybridBodyProgress) Read(data []byte) (int, error) {
+	n, e := p.base.Read(data)
+	p.bytes += int64(n)
+	if p.bytes >= p.next {
+		p.next = (p.bytes/(1<<20) + 1) * (1 << 20)
+		if p.emit != nil {
+			p.emit(p.bytes)
+		}
+	}
+	return n, e
+}
+func hybridHTTPFailure(e error) string {
+	if errors.Is(e, context.Canceled) {
+		return "cancelled"
+	}
+	var timeout net.Error
+	if errors.Is(e, context.DeadlineExceeded) || (errors.As(e, &timeout) && timeout.Timeout()) {
+		return "http_timeout"
+	}
+	return "http_error"
+}
+
 type hybridProgress struct {
 	mu     sync.Mutex
 	file   *os.File
@@ -296,7 +375,7 @@ func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore, reco
 }
 
 // Exercise real TCP/SOCKS/mux code. User traffic and external targets are absent.
-func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitData BlobStore, clientHybrid, exitHybrid *hybridStore, bulkBytes int, record func(hybridLiveRow)) ([]hybridLiveRow, error) {
+func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitData BlobStore, clientHybrid, exitHybrid *hybridStore, bulkBytes int, record func(hybridLiveRow), logger *log.Logger, event func(map[string]any)) ([]hybridLiveRow, error) {
 	payload := make([]byte, bulkBytes)
 	if _, e := rand.Read(payload); e != nil {
 		return nil, e
@@ -331,7 +410,10 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 	if e != nil {
 		return nil, e
 	}
-	client.Logger = log.New(io.Discard, "", 0)
+	client.Logger = logger
+	if client.Logger == nil {
+		client.Logger = log.New(io.Discard, "", 0)
+	}
 	exit.Logger = client.Logger
 	client.setRole("client")
 	exit.setRole("exit")
@@ -405,22 +487,46 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 		if body != nil {
 			method = "POST"
 		}
-		req, e := http.NewRequestWithContext(ctx, method, origin.URL+path, bytes.NewReader(body))
-		if e != nil {
+		finish := func(row hybridLiveRow, e error) {
 			mu.Lock()
-			failures = append(failures, e)
+			rows = append(rows, row)
+			if e != nil {
+				failures = append(failures, e)
+			}
 			mu.Unlock()
+			if record != nil {
+				record(row)
+			}
+		}
+		emit := func(direction string, n int64) {
+			if event != nil {
+				event(map[string]any{"phase": "bulk_progress", "kind": kind, "sequence": sequence, "direction": direction, "bytes": n})
+			}
+		}
+		var requestBody io.Reader = bytes.NewReader(body)
+		if len(body) > 0 && strings.HasPrefix(kind, "bulk_") {
+			requestBody = &hybridBodyProgress{base: requestBody, next: 1 << 20, emit: func(n int64) { emit("request_body_read_by_http_transport", n) }}
+		}
+		req, e := http.NewRequestWithContext(ctx, method, origin.URL+path, requestBody)
+		if e != nil {
+			finish(hybridLiveRow{Kind: kind, Sequence: sequence, RequestBytes: int64(len(body)), TotalMS: float64(time.Since(start).Microseconds()) / 1000, Failure: "request_build"}, errors.New("hybrid HTTP request build failed"))
 			return
+		}
+		if body != nil {
+			req.ContentLength = int64(len(body))
 		}
 		response, e := httpClient.Do(req)
 		ttfb := time.Since(start)
 		if e != nil {
-			mu.Lock()
-			failures = append(failures, e)
-			mu.Unlock()
+			category := hybridHTTPFailure(e)
+			finish(hybridLiveRow{Kind: kind, Sequence: sequence, RequestBytes: int64(len(body)), TotalMS: float64(ttfb.Microseconds()) / 1000, Failure: category}, fmt.Errorf("hybrid HTTP %s", category))
 			return
 		}
-		data, e := io.ReadAll(io.LimitReader(response.Body, int64(bulkBytes)+1))
+		var responseBody io.Reader = response.Body
+		if strings.HasPrefix(kind, "bulk_") {
+			responseBody = &hybridBodyProgress{base: responseBody, next: 1 << 20, emit: func(n int64) { emit("response_body_read_by_application", n) }}
+		}
+		data, e := io.ReadAll(io.LimitReader(responseBody, int64(bulkBytes)+1))
 		response.Body.Close()
 		elapsed := time.Since(start)
 		expected := payload
@@ -432,19 +538,21 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 		}
 		ok := e == nil && response.StatusCode == 200 && bytes.Equal(data, expected)
 		h := sha256.Sum256(data)
-		row := hybridLiveRow{Kind: kind, Sequence: sequence, Bytes: int64(len(data)), TTFBMS: float64(ttfb.Microseconds()) / 1000, TotalMS: float64(elapsed.Microseconds()) / 1000, SHA256: hex.EncodeToString(h[:]), OK: ok}
-		if path == "/upload" {
+		row := hybridLiveRow{Kind: kind, Sequence: sequence, Bytes: int64(len(data)), RequestBytes: int64(len(body)), TTFBMS: float64(ttfb.Microseconds()) / 1000, TotalMS: float64(elapsed.Microseconds()) / 1000, SHA256: hex.EncodeToString(h[:]), OK: ok}
+		if path == "/upload" && ok {
 			row.Bytes = int64(len(body))
 		}
-		mu.Lock()
-		rows = append(rows, row)
 		if !ok {
-			failures = append(failures, errors.New("hybrid HTTP response status/bytes/hash mismatch"))
+			row.Failure = "body_mismatch"
+			if e != nil {
+				row.Failure = "body_" + hybridHTTPFailure(e)
+			} else if response.StatusCode != 200 {
+				row.Failure = "response_status"
+			}
+			finish(row, fmt.Errorf("hybrid HTTP %s", row.Failure))
+			return
 		}
-		mu.Unlock()
-		if record != nil {
-			record(row)
-		}
+		finish(row, nil)
 	}
 	request("warm_text", "/text", nil, 0)
 	for _, direction := range []string{"download", "upload"} {
@@ -572,9 +680,26 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	}
 	route := cfg.Route
 	route.TimeoutSeconds = 30
+	logFile, logErr := os.OpenFile(out+".mux.log", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if logErr != nil {
+		t.Fatal("fresh private mux log required")
+	}
+	defer logFile.Close()
+	boundedLog := &hybridBoundedLog{writer: logFile, limit: 8 << 20}
+	privateLogger := log.New(boundedLog, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	cfg.Tunnel.Observe = true
+	var abortActive func(string)
 	budget := &hybridBudget{MaxCalls: 2000, MaxBytes: 128 << 20}
 	newAPI := func(cleanup bool) *hybridREST {
-		return &hybridREST{client: NewGoogleHTTPClient(route), token: strings.TrimSpace(string(token)), budget: budget, cleanup: cleanup}
+		a := &hybridREST{client: NewGoogleHTTPClient(route), token: strings.TrimSpace(string(token)), budget: budget, cleanup: cleanup}
+		if !cleanup {
+			a.onGuard = func() {
+				if abortActive != nil {
+					abortActive("pubsub_guard")
+				}
+			}
+		}
+		return a
 	}
 	var apis []*hybridREST
 	makeAPI := func(cleanup bool) hybridCall { a := newAPI(cleanup); apis = append(apis, a); return a.call }
@@ -587,9 +712,19 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	var gates []*hybridDriveGate
 	newDrive := func(cleanup bool) *DriveStore {
 		store := NewDriveStoreWithTokenSource(NewGoogleHTTPClient(cfg.Route), NewAccessTokenSource(cfg.Auth, cfg.Route), cfg.Drive)
-		store.Logger = log.New(io.Discard, "", 0)
+		store.Logger = privateLogger
 		stores = append(stores, store)
-		gates = append(gates, hybridGateDrive(store, driveBudget, cleanup)...)
+		newGates := hybridGateDrive(store, driveBudget, cleanup)
+		if !cleanup {
+			for _, gate := range newGates {
+				gate.onGuard = func() {
+					if abortActive != nil {
+						abortActive("drive_guard")
+					}
+				}
+			}
+		}
+		gates = append(gates, newGates...)
 		return store
 	}
 	clientDrive, exitDrive := newDrive(false), newDrive(false)
@@ -612,6 +747,10 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	defer journalFile.Close()
 	progress := &hybridProgress{file: journalFile, cancel: cancel}
 	began := time.Now()
+	abortActive = func(kind string) {
+		progress.write(map[string]any{"phase": "guard_abort", "kind": kind, "elapsed_ms": time.Since(began).Milliseconds()})
+		cancel()
+	}
 	progress.write(map[string]any{"phase": "setup", "mode": mode, "elapsed_ms": 0})
 	clientHybrid.event = func(kind string) {
 		progress.write(map[string]any{"phase": "operation", "receiver": "client", "kind": kind, "elapsed_ms": time.Since(began).Milliseconds()})
@@ -634,12 +773,16 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				progress.write(map[string]any{"phase": "heartbeat", "elapsed_ms": time.Since(began).Milliseconds(), "pubsub": budget.snapshot(), "client_published": clientHybrid.published.Load(), "exit_published": exitHybrid.published.Load(), "client_delivered": clientHybrid.delivered.Load(), "exit_delivered": exitHybrid.delivered.Load(), "empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load()})
+				progress.write(map[string]any{"phase": "heartbeat", "elapsed_ms": time.Since(began).Milliseconds(), "pubsub": budget.snapshot(), "client_published": clientHybrid.published.Load(), "exit_published": exitHybrid.published.Load(), "client_delivered": clientHybrid.delivered.Load(), "exit_delivered": exitHybrid.delivered.Load(), "empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "drive_guard": driveBudget.snapshot(), "client_drive_active": clientDrive.QuotaSnapshot(), "exit_drive_active": exitDrive.QuotaSnapshot()})
 			}
 		}
 	}()
 	defer func() { stopHeartbeat(); <-heartbeatDone }()
 
+	event := func(value map[string]any) {
+		value["elapsed_ms"] = time.Since(began).Milliseconds()
+		progress.write(value)
+	}
 	if mode != "drive" {
 		runErr = cloud.create(ctx, label)
 		clientHybrid.topic = cloud.topics[0]
@@ -651,9 +794,9 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 		if mode == "pools" {
 			rows, runErr = hybridPoolMeasurements(ctx, clientHybrid, exitHybrid, record)
 		} else if mode == "hybrid" {
-			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientHybrid, exitHybrid, clientHybrid, exitHybrid, 16<<20, record)
+			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientHybrid, exitHybrid, clientHybrid, exitHybrid, 16<<20, record, privateLogger, event)
 		} else {
-			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientDrive, exitDrive, nil, nil, 16<<20, record)
+			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientDrive, exitDrive, nil, nil, 16<<20, record, privateLogger, event)
 		}
 	}
 	progress.write(map[string]any{"phase": "active_complete", "elapsed_ms": time.Since(began).Milliseconds(), "rows": len(rows)})
@@ -733,7 +876,7 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 			}
 		}
 	}
-	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
+	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "drive_transport_guard": driveBudget.snapshot(), "private_mux_log": boundedLog.stats(), "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
 	stopHeartbeat()
 	<-heartbeatDone
 	progress.write(map[string]any{"phase": "cleanup_complete", "elapsed_ms": time.Since(began).Milliseconds(), "verified": cleanupOK && cloudCleanup})
@@ -745,6 +888,11 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 		report["failure"] = runErr.Error()
 	}
 	report["ok"] = ok
+	if e := logFile.Sync(); e != nil {
+		report["log_sync_failed"] = true
+		report["ok"] = false
+		ok = false
+	}
 	raw, _ := json.MarshalIndent(report, "", "  ")
 	if e = os.WriteFile(out, append(raw, '\n'), 0600); e != nil {
 		t.Fatal(e)

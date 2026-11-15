@@ -31,10 +31,12 @@ const hybridCacheMax = 32 << 20
 const hybridEntriesMax = 4096 // Retained until the bounded experiment ends.
 
 type hybridBudget struct {
-	mu                       sync.Mutex
-	Calls, BytesOut, BytesIn int64
-	PendingBytes             int64
-	MaxCalls, MaxBytes       int64
+	mu                                  sync.Mutex
+	Calls, BytesOut, BytesIn            int64
+	PendingBytes                        int64
+	Denials, StoppedDenials             int64
+	WriteCallbacks, WriteErrorCallbacks int64
+	MaxCalls, MaxBytes                  int64
 }
 
 func (b *hybridBudget) reserve(n, response int, cleanup bool) error {
@@ -46,6 +48,7 @@ func (b *hybridBudget) reserve(n, response int, cleanup bool) error {
 		byteLimit -= hybridCleanupByteReserve
 	}
 	if b.Calls >= callLimit || b.BytesIn+b.BytesOut+b.PendingBytes+int64(n+response) > byteLimit {
+		b.Denials++
 		return errors.New("hybrid global call/byte guard")
 	}
 	b.Calls++
@@ -71,6 +74,7 @@ func (b *hybridBudget) reserveDrive(cost int, cleanup bool) error {
 		callLimit -= 32
 	}
 	if b.Calls >= callLimit || b.BytesOut+int64(cost) > limit {
+		b.Denials++
 		return errors.New("hybrid global Drive request/unit guard")
 	}
 	b.Calls++
@@ -80,7 +84,7 @@ func (b *hybridBudget) reserveDrive(cost int, cleanup bool) error {
 func (b *hybridBudget) snapshot() map[string]int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]int64{"calls": b.Calls, "request_body_bytes": b.BytesOut, "response_body_bytes": b.BytesIn}
+	return map[string]int64{"calls": b.Calls, "request_body_bytes": b.BytesOut, "response_body_bytes": b.BytesIn, "reserved_response_bytes": b.PendingBytes, "local_guard_denials": b.Denials, "stopped_gate_denials": b.StoppedDenials, "request_write_callbacks": b.WriteCallbacks, "request_write_error_callbacks": b.WriteErrorCallbacks}
 }
 
 type hybridCall func(context.Context, string, string, any) (*HTTPResult, error)
@@ -89,6 +93,7 @@ type hybridREST struct {
 	token   string
 	budget  *hybridBudget
 	cleanup bool
+	onGuard func()
 }
 
 func (a *hybridREST) call(ctx context.Context, method, path string, body any) (*HTTPResult, error) {
@@ -106,6 +111,9 @@ func (a *hybridREST) call(ctx context.Context, method, path string, body any) (*
 	}
 	reserved := responseCap + 1
 	if e = a.budget.reserve(len(raw), reserved, a.cleanup); e != nil {
+		if a.onGuard != nil {
+			a.onGuard()
+		}
 		return nil, e
 	}
 	actualReceived := 0

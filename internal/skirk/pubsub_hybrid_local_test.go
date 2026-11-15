@@ -372,7 +372,7 @@ func TestHybridFullSOCKSMixedBytesAndDuplicateCarrier(t *testing.T) {
 	bind(exit, down, up)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	rows, e := hybridSOCKSMeasurements(ctx, cfg, client, exit, client, exit, 4<<20, nil)
+	rows, e := hybridSOCKSMeasurements(ctx, cfg, client, exit, client, exit, 4<<20, nil, nil, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -670,5 +670,40 @@ func TestHybridProgressJournalConcurrentRowsAndFailureCancel(t *testing.T) {
 	progress.write(map[string]any{"phase": "failure"})
 	if progress.error() == nil || ctx.Err() == nil {
 		t.Fatal("journal failure did not cancel bounded active work")
+	}
+}
+
+func TestHybridGuardDenialCancelsBeforeTransportDispatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	budget := &hybridBudget{MaxCalls: 32, MaxBytes: 10200}
+	var dispatched atomic.Int64
+	gate := &hybridDriveGate{budget: budget, onGuard: cancel, base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		dispatched.Add(1)
+		return stringResponse(200, "unexpected"), nil
+	})}
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://www.google.com/drive/v3/files", nil)
+	if _, e := gate.RoundTrip(req); e == nil || ctx.Err() == nil || dispatched.Load() != 0 || budget.snapshot()["local_guard_denials"] != 1 {
+		t.Fatal("Drive guard did not abort before transport dispatch")
+	}
+	api := &hybridREST{budget: &hybridBudget{MaxCalls: 32, MaxBytes: 8 << 20}, onGuard: cancel}
+	if _, e := api.call(context.Background(), "POST", "/v1/test", nil); e == nil {
+		t.Fatal("PubSub guard did not stop before transport")
+	}
+}
+func TestHybridBoundedLogAndBodyProgress(t *testing.T) {
+	var output bytes.Buffer
+	bounded := &hybridBoundedLog{writer: &output, limit: 5}
+	if n, e := bounded.Write([]byte("12345678")); e != nil || n != 8 {
+		t.Fatal("bounded log writer contract")
+	}
+	bounded.Write([]byte("abc"))
+	if output.String() != "12345" || bounded.stats()["dropped_bytes"] != 6 {
+		t.Fatal("private log exceeded bound")
+	}
+	var progress []int64
+	reader := &hybridBodyProgress{base: bytes.NewReader(make([]byte, 2<<20)), next: 1 << 20, emit: func(n int64) { progress = append(progress, n) }}
+	if n, e := io.Copy(io.Discard, reader); e != nil || n != 2<<20 || len(progress) != 2 {
+		t.Fatal("body progress did not preserve exact stream", n, e, len(progress))
 	}
 }

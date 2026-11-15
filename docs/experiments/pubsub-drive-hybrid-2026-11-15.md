@@ -62,9 +62,10 @@ calls and 1 MiB are reserved for cloud cleanup. Each active request atomically
 reserves its bounded maximum response size before HTTP begins; partial/error
 response bytes are counted and unused reservation is released. Cleanup responses
 are capped at 16 KiB, so active response exhaustion cannot consume that reserve. The Drive HTTP transport separately reserves
-per-attempt units, including independent pools and retries: active requests stop
-at 40,000 reserved units, total cleanup ceiling 50,000, at most 2,000 attempts
-with 32 attempts reserved for cleanup.
+units per visible RoundTripper dispatch across independent pools: active requests stop
+at 40,000 reserved units, total cleanup ceiling 50,000, at most 2,000 visible dispatches
+with 32 reserved for cleanup. Internal HTTP/2 retries can occur inside a
+dispatch and are not independently prevented by this wrapper.
 These are conservative experiment guards, not claims about Google project quota.
 Per-peer actual Drive accounting is reported independently. Gate shutdown waits
 for response-body closure before cleanup and rejects later mux calls locally.
@@ -198,3 +199,55 @@ The [IAM reference](https://docs.cloud.google.com/pubsub/docs/access-control)
 supports resource-level publish and consume permissions; future setup must give
 a client only its own topic/subscription rights. A user's separate Drive OAuth
 grant does not supply these rights. Cloud owner credentials remain test-only.
+
+## First full hybrid: failed download, retained positives
+
+The unchanged stable-two-worker full test used source `75bab64`, binary SHA-256
+`5ba77dfe0866c93246b0da512babb6b6e0ca74c4bddb00e5246ceec7fed0f29d`.
+It failed after 248.28 s. This is **not a working full transport or a promotion
+result**, despite the successful text and reverse-direction measurements:
+
+| Workload | Result |
+| --- | --- |
+| Fresh warm-up text | Exact 64 B in 3517.922 ms |
+| Ten texts during download | 10/10 exact; median 443.381 ms, maximum 1664.068 ms |
+| 16 MiB download | Failed after 180003.689 ms; only 10,485,358 of 16,777,216 B; first byte 58846.156 ms |
+| Ten texts during upload | 10/10 exact; median 704.592 ms, maximum 1332.820 ms |
+| 16 MiB upload | Exact length/SHA-256 accepted by origin; 23468.691 ms, about 0.682 MiB/s including setup |
+
+Pub/Sub carried 46/46 priority publications/deliveries with zero duplicates,
+197 API calls, 50,025 request-body bytes, 55,425 response-body bytes, 45 observed
+ACK IDs and 36 empty pulls. The journal observed no pull-deadline or worker-error
+event. This does not prove reconnect safety or absence of every possible tail.
+
+The exit's ordinary Drive upload path recorded 23 upload calls and **17 timeouts**
+(roughly 28–30 seconds each); its complete active accounting was 117 calls,
+10,905 estimated units. The client's active accounting was 143 calls,
+14,255 estimated units and zero errors. Visible transport reservations totaled
+25,570 units including cleanup, below the 40,000 active guard. Local guard
+exhaustion therefore does not explain this attempt. Opaque retries inside the
+HTTP/2 transport are not independently counted by this older guard or the
+DriveStore counters; these are visible request/estimated-unit statistics, not
+exact Google wire acceptance/billing measurements. The test kept the saved
+`auto` profile and 8 MiB chunk configuration while enabling separate upload/bulk
+pools. An identical same-binary ordinary Drive control is needed before
+attributing those upload stalls to the hybrid architecture.
+
+All four Cloud resources were deleted and returned 404 immediately and after
+31 seconds. Both Drive prefix scans were empty; two residual exact own IDs were
+deleted and their absence checked. The recovery ledger and borrowed token were
+removed. The private report and synced progress journal remain at
+`.skirk-runs/hybrid-full-75bab64-20261115.json` and its `.progress.jsonl` suffix.
+The failed partial download is never converted into a successful throughput
+number, and none of the successful text samples are discarded.
+
+Follow-up instrumentation adds immediate global cancellation on local guard
+denial, visible dispatch/denial counts and standard Go `WroteRequest` callback
+counts (including internal write attempts/errors, without claiming server
+acceptance). Heartbeats include per-peer Drive accounting and the guard state.
+A private 8 MiB bounded mux/Drive log, sanitized failed-request sample rows and
+per-MiB plaintext application/request-body progress identify the failing phase.
+Request-body progress means bytes read by the HTTP transport, not destination
+acceptance; only the origin's length/hash response establishes upload success.
+These diagnostic changes are applied equally to the next Drive/hybrid pair.
+The priority carrier, deadlines, ACK behavior and normal Drive pools stay fixed.
