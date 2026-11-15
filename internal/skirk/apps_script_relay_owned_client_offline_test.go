@@ -3,7 +3,9 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,9 +13,45 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestRelayOwnedTerminalCarrierFailureAbortsApplicationWait(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".skirk-runs", "private")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s := relayResearchPrivateSettings{MuxSecretHex: strings.Repeat("33", 32), SessionID: strings.Repeat("44", 16), PayloadSeedHex: strings.Repeat("77", 32), ClientID: "failure-client", RunID: "failure-run", FrameBytes: 128 << 10, ChunkBytes: 4 << 20, MaxBytes: 32 << 20, PriorityReserveBytes: 1 << 20, PriorityReserveObjects: 16, PackPriority: true, BulkBytes: 4096}
+	var originCalls, exchangeCalls atomic.Int64
+	origin, err := rrNewOwnedTLSOrigin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { originCalls.Add(1) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer origin.Close()
+	payload, err := rrCampaignPayload(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(payload)
+	runtime := relayResearchOwnedRuntime{OriginURL: origin.URL, OriginTarget: origin.Listener.Addr().String(), OriginCertificateBase64: base64.StdEncoding.EncodeToString(origin.Certificate().Raw), DownloadSHA256: hex.EncodeToString(hash[:]), BulkBytes: len(payload)}
+	f, err := os.OpenFile(filepath.Join(dir, "failure-rows.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = rrRunOwnedClient(ctx, dir, s, bytes.Repeat([]byte{1}, 32), [16]byte{2}, runtime, func(context.Context, []byte) ([]byte, error) {
+		exchangeCalls.Add(1)
+		return nil, errRelayResearchConflict
+	}, &relayResearchRows{file: f})
+	if err == nil || exchangeCalls.Load() == 0 || originCalls.Load() != 0 || time.Since(start) > 2*time.Second {
+		t.Fatal("terminal carrier did not abort before application deadline", err, exchangeCalls.Load(), originCalls.Load(), time.Since(start))
+	}
+}
 
 func TestRelayOwnedClientOfflineVerifiedTLSAndExactMixedWorkload(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".skirk-runs", "private")
