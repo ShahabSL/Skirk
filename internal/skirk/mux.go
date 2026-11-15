@@ -62,6 +62,7 @@ const (
 	muxListLookback              = 8 * time.Second
 	muxRepairListLookback        = 30 * time.Second
 	muxFreshClassListPages       = 4
+	muxAdaptiveCombinedListPages = 4
 	muxTargetedGapRepairPages    = 16
 	muxClosedStreamTTL           = 2 * time.Minute
 	muxRetryDelayMax             = 5 * time.Second
@@ -316,10 +317,12 @@ type driveMux struct {
 	listMu        sync.Mutex
 	listSince     time.Time
 	listPageToken string
+	listPartial   bool
 
 	priorityListMu        sync.Mutex
 	priorityListSince     time.Time
 	priorityListPageToken string
+	priorityListPartial   bool
 	normalListLastPoll    time.Time
 	clientFinalDrainAt    atomic.Int64
 	fatalOnce             sync.Once
@@ -2464,6 +2467,22 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 
 func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
+	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && m.t.AdaptiveMuxDiscovery {
+		combinedWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive", m.listRecvMuxObjectsAdaptive, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
+		priorityWork := false
+		if m.hasListFreshPartial() || m.hasPriorityListPartial() {
+			priorityWork = m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority_fallback", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+				return m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
+			}, parseMuxObjectInfo, func() bool {
+				return m.hasListFreshPageTokenFor(&m.priorityListMu, &m.priorityListPageToken)
+			}, func(metas []muxObjectMeta) {
+				m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
+			})
+		}
+		receiveGapWork := m.maintainReceiveGaps(ctx)
+		pendingOpenWork := m.maintainPendingOpens(ctx)
+		return combinedWork || priorityWork || receiveGapWork || pendingOpenWork
+	}
 	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && !m.t.CombinedMuxDiscovery {
 		priorityWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 			return m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
@@ -2585,30 +2604,9 @@ func (m *driveMux) normalActivePollInterval() time.Duration {
 
 func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	if store, ok := m.t.Data.(FreshListPageStatusStore); ok {
-		since, pageToken := m.listFreshCursor()
-		result, err := store.ListFreshPageStatus(ctx, prefix, since, pageToken)
-		if err != nil && pageToken != "" && isDrivePageTokenRejected(err) {
-			m.setListFreshPageToken("")
-			if m.t != nil && m.t.Logger != nil {
-				m.t.Logger.Printf("mux list page token rejected role=%s direction=%s prefix=%s error=%s", m.role, directionName(m.recvDir), muxShortName(prefix), errorSummary(err))
-			}
-			result, err = store.ListFreshPageStatus(ctx, prefix, since, "")
-		}
-		if err == nil && result.Truncated && result.NextPageToken != "" {
-			m.setListFreshPageToken(result.NextPageToken)
-			if m.t != nil && m.t.Logger != nil {
-				m.t.Logger.Printf("mux list fresh truncated role=%s direction=%s prefix=%s infos=%d since=%s next_page=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.NextPageToken != "")
-			}
-		} else if err == nil && (result.Truncated || result.Incomplete) {
-			m.setListFreshPageToken("")
-			if m.t != nil && m.t.Logger != nil {
-				m.t.Logger.Printf("mux list fresh partial role=%s direction=%s prefix=%s infos=%d since=%s truncated=%t incomplete=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.Truncated, result.Incomplete)
-			}
-		} else if err == nil {
-			m.setListFreshPageToken("")
-			m.advanceListSince(result.Objects)
-		}
-		return result.Objects, err
+		return m.listRecvMuxObjectsFresh(ctx, prefix, func(ctx context.Context, since time.Time, pageToken string) (ObjectListInfo, error) {
+			return store.ListFreshPageStatus(ctx, prefix, since, pageToken)
+		})
 	}
 	if store, ok := m.t.Data.(FreshListStatusStore); ok {
 		result, err := store.ListFreshStatus(ctx, prefix, m.listFreshSince())
@@ -2628,6 +2626,56 @@ func (m *driveMux) listRecvMuxObjects(ctx context.Context, prefix string) ([]Obj
 		return infos, err
 	}
 	return m.listMuxObjectsByPrefix(ctx, prefix)
+}
+
+func (m *driveMux) listRecvMuxObjectsAdaptive(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+	store := m.t.Data.(FreshListContainsPageStatusStore)
+	return m.listRecvMuxObjectsFresh(ctx, prefix, func(ctx context.Context, since time.Time, pageToken string) (ObjectListInfo, error) {
+		result, err := store.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, muxAdaptiveCombinedListPages)
+		if err != nil {
+			return result, err
+		}
+		// Drive's "name contains" is broader than a prefix. Match the legacy
+		// ListFreshPageStatus filter before advancing the shared cursor.
+		filtered := result.Objects[:0]
+		for _, object := range result.Objects {
+			if strings.HasPrefix(object.Name, prefix) {
+				filtered = append(filtered, object)
+			}
+		}
+		result.Objects = filtered
+		return result, nil
+	})
+}
+
+func (m *driveMux) listRecvMuxObjectsFresh(ctx context.Context, prefix string, listFn func(context.Context, time.Time, string) (ObjectListInfo, error)) ([]ObjectInfo, error) {
+	since, pageToken := m.listFreshCursor()
+	result, err := listFn(ctx, since, pageToken)
+	if err != nil && pageToken != "" && isDrivePageTokenRejected(err) {
+		m.setListFreshPageToken("")
+		if m.t != nil && m.t.Logger != nil {
+			m.t.Logger.Printf("mux list page token rejected role=%s direction=%s prefix=%s error=%s", m.role, directionName(m.recvDir), muxShortName(prefix), errorSummary(err))
+		}
+		result, err = listFn(ctx, since, "")
+	}
+	if err == nil {
+		m.setListFreshPartial(result.Truncated || result.Incomplete)
+	}
+	if err == nil && result.Truncated && result.NextPageToken != "" {
+		m.setListFreshPageToken(result.NextPageToken)
+		if m.t != nil && m.t.Logger != nil {
+			m.t.Logger.Printf("mux list fresh truncated role=%s direction=%s prefix=%s infos=%d since=%s next_page=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.NextPageToken != "")
+		}
+	} else if err == nil && (result.Truncated || result.Incomplete) {
+		m.setListFreshPageToken("")
+		if m.t != nil && m.t.Logger != nil {
+			m.t.Logger.Printf("mux list fresh partial role=%s direction=%s prefix=%s infos=%d since=%s truncated=%t incomplete=%t", m.role, directionName(m.recvDir), muxShortName(prefix), len(result.Objects), since.Format(time.RFC3339Nano), result.Truncated, result.Incomplete)
+		}
+	} else if err == nil {
+		m.setListFreshPageToken("")
+		m.advanceListSince(result.Objects)
+	}
+	return result.Objects, err
 }
 
 func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classNeedle string, mu *sync.Mutex, since *time.Time, pageToken *string, sliding bool) ([]ObjectInfo, error) {
@@ -2650,6 +2698,11 @@ func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classN
 			m.t.Logger.Printf("mux list page token rejected role=%s direction=%s class=%s prefix=%s error=%s", m.role, directionName(m.recvDir), strings.Trim(classNeedle, "/"), muxShortName(prefix), errorSummary(err))
 		}
 		result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix, classNeedle}, cursor, "", muxFreshClassListPages)
+	}
+	if mu == &m.priorityListMu && err == nil {
+		m.priorityListMu.Lock()
+		m.priorityListPartial = result.Truncated || result.Incomplete
+		m.priorityListMu.Unlock()
 	}
 	switch {
 	case err != nil:
@@ -2745,6 +2798,33 @@ func (m *driveMux) hasListFreshPageToken() bool {
 	m.listMu.Lock()
 	defer m.listMu.Unlock()
 	return strings.TrimSpace(m.listPageToken) != ""
+}
+
+func (m *driveMux) setListFreshPartial(partial bool) {
+	if m == nil {
+		return
+	}
+	m.listMu.Lock()
+	m.listPartial = partial
+	m.listMu.Unlock()
+}
+
+func (m *driveMux) hasListFreshPartial() bool {
+	if m == nil {
+		return false
+	}
+	m.listMu.Lock()
+	defer m.listMu.Unlock()
+	return m.listPartial
+}
+
+func (m *driveMux) hasPriorityListPartial() bool {
+	if m == nil {
+		return false
+	}
+	m.priorityListMu.Lock()
+	defer m.priorityListMu.Unlock()
+	return m.priorityListPartial
 }
 
 func (m *driveMux) hasListFreshPageTokenFor(mu *sync.Mutex, pageToken *string) bool {

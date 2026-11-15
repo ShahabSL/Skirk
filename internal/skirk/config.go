@@ -115,6 +115,8 @@ type DriveConfig struct {
 	SeparateMetadataSlotPools bool   `json:"separate_metadata_slot_pools,omitempty"`
 	// CombinedMuxDiscovery uses one legacy prefix list for both mux classes.
 	CombinedMuxDiscovery bool `json:"combined_mux_discovery,omitempty"`
+	// AdaptiveMuxDiscovery uses one bounded prefix list, adding a p0 list only when it is partial.
+	AdaptiveMuxDiscovery bool `json:"adaptive_mux_discovery,omitempty"`
 	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
 	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
 	// NormalListPageSize applies only to the broad mux p1 discovery query.

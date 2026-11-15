@@ -326,6 +326,22 @@ class MainComparisonSafetyTests(unittest.TestCase):
                 live_ab_main()
             self.assertFalse(output.exists())
 
+    def test_adaptive_discovery_comparison_changes_only_discovery_and_session(self):
+        original = {"session_id": "old", "drive": {"folder_id": "test-folder",
+                    "adaptive_mux_discovery": True, "combined_mux_discovery": True,
+                    "normal_list_page_size": 100}, "route": {"mode": "google_front_pinned"}}
+        control = arm_config(original, "control", "one", 0, True, False, False, False, False, False, True)
+        candidate = arm_config(original, "candidate", "two", 0, True, False, False, False, False, False, True)
+        self.assertNotIn("adaptive_mux_discovery", control["drive"])
+        self.assertNotIn("combined_mux_discovery", control["drive"])
+        self.assertTrue(candidate["drive"]["adaptive_mux_discovery"])
+        self.assertNotIn("combined_mux_discovery", candidate["drive"])
+        self.assertEqual(control["drive"]["normal_list_page_size"], 1000)
+        self.assertEqual(candidate["drive"]["normal_list_page_size"], 1000)
+        candidate["drive"].pop("adaptive_mux_discovery")
+        self.assertEqual({k: v for k, v in control.items() if k != "session_id"},
+                         {k: v for k, v in candidate.items() if k != "session_id"})
+
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}
         self.assertFalse(arm_config(original, "baseline", "a", 0, False)["drive"]["separate_bulk_media_pool"])
