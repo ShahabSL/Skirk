@@ -2,9 +2,9 @@
 
 This change is benchmark tooling only. Its initial 14 focused tests passed on
 this Mac at source `492c253` in the authorized offline window (0.014 seconds
-reported by unittest). The peer-reviewed hardening adds malformed-token,
-unknown-argv, and stale-native-errno regressions. It does not change the transport
-or make Google requests.
+reported by unittest). The peer-reviewed hardening `5d87324` passed all 17
+tests in 0.013 seconds, adding malformed-token, unknown-argv, and stale-native-
+errno regressions. It does not change the transport or make Google requests.
 
 ## Failure addressed
 
@@ -85,14 +85,15 @@ not claim an atomic Darwin process handle or ownership of unknown descendants.
 
 ## Validation
 
-`cd tools && python3 -m unittest -v test_skirk_owned_processes` passed all 14
-tests, including actual Darwin native capture and termination of one recorded
+`cd tools && python3 -m unittest -v test_skirk_owned_processes` passed all 17
+tests at `5d87324`, including actual Darwin native capture and termination of one recorded
 Python sleeper while the unrecorded sleeper remained alive. Both children were
 reaped in `finally`. The focused suite covers SDK layout, argv/environment separation, Linux empty
 arguments and process names, capture races, private manifest rejection,
 malformed/reused/changed identities, original-child fallback, EPERM without
 skipping other records, global timeout bounds, and a real recorded sleeper
-while leaving an unrecorded sleeper untouched. The real case starts only public
+while leaving an unrecorded sleeper untouched. A later independent read review
+found no blocker in the hardened ownership checks. The real case starts only public
 Python sleepers and cleans both up in `finally`; it performs no network I/O.
 
 Linux parser behavior was tested with synthetic fixtures; the actual child test
@@ -101,3 +102,7 @@ must separately prove durable workload-failure retention,
 always-stop-all behavior, unresolved-writer cleanup blocking, profile removal,
 and accounting despite teardown failure. A successful local test does not
 explain why the earlier macOS group signal returned EPERM.
+
+A reused PID with different arguments can conservatively remain unknown before
+its creation token is compared; it is never signaled. That may block a cohort
+even when the original process has actually gone, rather than invent exit proof.
