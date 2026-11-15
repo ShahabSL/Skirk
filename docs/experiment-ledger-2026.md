@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **183 interpreted experiment records**, **308 recognized raw result files** indexed across local worktrees, and **410 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **185 interpreted experiment records**, **308 recognized raw result files** indexed across local worktrees, and **410 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -257,3 +257,7 @@ R3-037 and R3-038 retain both six-state encrypted push attempts. The first deliv
 ## Real Apps Script relay: full mixed SOCKS/TLS workload
 
 R3-039..042 retain each of four successful cells of an unreplicated packing/frame-size matrix: eight exact16MiBfiles and100exactechoes in total. Packed2MiB reached4.116Mb/sGET and2.700Mb/sPOST, with lower observed chat delays than the scalar cell; packing also worsened GET first-body latency at both frame sizes. All96 mixed echoes completed while bulk remained active. Raw owned-cancellation counters remain unchanged. R3-043 separately retains three setup failures before the successful first measured arm. See the [full live relay report](experiments/apps-script-relay-full-live-2026-11-15.md) for all samples and limits; no ABBA median, capacity claim or universal winner is inferred.
+
+## Recovery proof and A/B teardown observers
+
+R3-044 and R3-045 record the bounded origin-side-effect counters and the durable A/B finalizer with concurrent native child journals. Their [offline adversarial checks](audits/ab-teardown-evidence-2026-11-15.md) do not add a live performance result or change any historical failure. Exact origin counters and retained workload evidence are required in addition to byte/hash receipts before a future stress cohort can claim completion.
