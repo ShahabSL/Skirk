@@ -15,6 +15,11 @@ fun main() {
     val replaceA = imports.begin("replace:A")
     completion(replaceA, "replace:B", "wrong target")()
     check(applied == listOf("B"))
+    val pickerA = imports.begin("replace:A")
+    imports.cancel() // Dialog target changed while the external picker was open.
+    imports.begin("replace:B")
+    check(!imports.owns(pickerA, "replace:B"))
+    check(!imports.owns(pickerA, "replace:A"))
     val destroyed = imports.begin("new")
     imports.cancel()
     completion(destroyed, "new", "after destroy/cancel")()
