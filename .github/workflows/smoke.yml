@@ -154,6 +154,7 @@ jobs:
         working-directory: clients/desktop
         run: |
           npm ci
+          npm run test:snapshot
           npm run build
 
   desktop-tauri:
@@ -383,7 +384,7 @@ jobs:
 
       - name: Build debug APKs
         working-directory: clients/android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain
 
       - name: Verify APK ABI contents
         run: |

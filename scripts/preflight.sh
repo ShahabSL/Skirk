@@ -49,9 +49,9 @@ fi
 go vet ./...
 
 if [ "${SKIRK_FULL_PREFLIGHT:-0}" = "1" ]; then
-  (cd clients/desktop && npm ci && npm run build)
+  (cd clients/desktop && npm ci && npm run test:snapshot && npm run build)
   if [ -n "${ANDROID_HOME:-}" ] || [ -n "${ANDROID_SDK_ROOT:-}" ]; then
-    (cd clients/android && ./gradlew :app:assembleDebug --console=plain)
+    (cd clients/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain)
   else
     echo "Skipping Android build because ANDROID_HOME/ANDROID_SDK_ROOT is not set."
   fi
