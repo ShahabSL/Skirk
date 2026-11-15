@@ -76,7 +76,35 @@ class OwnedProcessTests(unittest.TestCase):
                 mock.patch.object(owned, "_darwin_core", side_effect=[identity(), identity(creation="darwin:3:4")]), \
                 mock.patch.object(owned, "_darwin_details", return_value=("/public/fixture", ["fixture"])):
             with self.assertRaisesRegex(owned.ProcessIdentityError, "identity_changed"):
-                owned.capture_identity(401)
+                owned.capture_identity(401, expected_argv=["fixture"])
+
+    def test_darwin_requires_known_nonempty_argv_and_rejects_shifted_environment_candidate(self):
+        with mock.patch.object(owned.sys, "platform", "darwin"):
+            for argv in (None, ["", "fixture"]):
+                with self.assertRaisesRegex(owned.ProcessIdentityError, "require_expected_argv"):
+                    owned.capture_identity(401, expected_argv=argv)
+            with mock.patch.object(owned, "_darwin_core", return_value=identity()), \
+                    mock.patch.object(owned, "_darwin_details", return_value=("/public/fixture", ["arg1", "ENV=private"])):
+                with self.assertRaisesRegex(owned.ProcessIdentityError, "owned_arguments_changed"):
+                    owned.capture_identity(401, expected_argv=["fixture", "arg1"])
+
+    def test_corrupt_creation_token_cannot_establish_original_process_exit(self):
+        with mock.patch.object(owned, "capture_identity", return_value=identity()), \
+                mock.patch.object(owned.os, "kill") as kill:
+            result = owned.terminate_records([record(kernel_creation="corrupt")], term_timeout=0, kill_timeout=0)
+        self.assertFalse(result["all_stopped"])
+        self.assertEqual(result["results"][0]["status"], "invalid_owned_record")
+        kill.assert_not_called()
+
+    def test_short_darwin_query_cannot_inherit_stale_process_gone_errno(self):
+        library = mock.Mock()
+        library.proc_pidinfo.return_value = 1  # Unexpected short native result.
+        owned.ctypes.set_errno(errno.ESRCH)
+        with mock.patch.object(owned.ctypes, "CDLL", return_value=library):
+            with self.assertRaises(owned.ProcessIdentityError) as caught:
+                owned._darwin_core(401)
+        self.assertNotIsInstance(caught.exception, owned.ProcessGone)
+        self.assertEqual(caught.exception.errno, 0)
 
     def test_private_manifest_round_trip_and_failed_capture_is_not_silently_lost(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -159,7 +187,7 @@ class OwnedProcessTests(unittest.TestCase):
         alive = {401, 402}
         signals = []
 
-        def capture(pid):
+        def capture(pid, **_kwargs):
             if pid not in alive:
                 raise owned.ProcessGone("gone")
             return identity(pid)
@@ -188,7 +216,7 @@ class OwnedProcessTests(unittest.TestCase):
             clock[0] += seconds
 
         with mock.patch.object(owned.sys, "platform", "darwin"), \
-                mock.patch.object(owned, "capture_identity", side_effect=lambda pid: identity(pid)), \
+                mock.patch.object(owned, "capture_identity", side_effect=lambda pid, **kwargs: identity(pid)), \
                 mock.patch.object(owned.os, "kill", side_effect=lambda pid, sig: signals.append((pid, sig))), \
                 mock.patch.object(owned.time, "monotonic", side_effect=lambda: clock[0]), \
                 mock.patch.object(owned.time, "sleep", side_effect=sleep):

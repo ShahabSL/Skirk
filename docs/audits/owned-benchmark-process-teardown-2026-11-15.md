@@ -1,8 +1,10 @@
 # Owned benchmark process teardown
 
-This change is benchmark tooling only. Its 14 focused tests passed on this Mac
-at source `492c253` in the authorized offline window (0.014 seconds reported by
-unittest). It does not change the transport or make Google requests.
+This change is benchmark tooling only. Its initial 14 focused tests passed on
+this Mac at source `492c253` in the authorized offline window (0.014 seconds
+reported by unittest). The peer-reviewed hardening adds malformed-token,
+unknown-argv, and stale-native-errno regressions. It does not change the transport
+or make Google requests.
 
 ## Failure addressed
 
@@ -22,16 +24,19 @@ does not itself decide whether Google cleanup is authorized or safe.
 
 ## API
 
-* `capture_identity(pid)` returns PID, PPID, PGID, SID, effective UID, kernel
+* `capture_identity(pid, expected_argv=...)` returns PID, PPID, PGID, SID, effective UID, kernel
   creation token, executable, and exact argv. It never reads environment values
-  into the record. Unsupported or inaccessible identities fail explicitly.
+  into the record. On Darwin an exact known argument sequence with nonempty
+  argv0 is required; unknown boundaries fail closed. Unsupported or inaccessible
+  identities fail explicitly.
 * `append_process_record(path, pid, role, argv=None)` appends one fsynced JSON
   record with advisory file locking. The immediate parent must be owned and
   private under `.skirk-runs`; the regular manifest must be owned and mode
   `0600`, with final-component symlinks rejected. Native capture failure is
   recorded as `identity_status=unavailable`, so the spawn is not silently lost.
-  `argv` is the original `Popen.args` sequence, used only to validate a supplied
-  original handle. The native argv remains a separate identity observation.
+  `argv` is the original `Popen.args` sequence. It validates native argument
+  capture and a supplied original handle. The native argv remains a separate
+  identity observation. All current benchmark spawns supply this sequence.
 * `load_process_records(path)` returns those records, with a 4 MiB file bound
   and truncated or invalid records rejected.
 * `terminate_records(records, known_handles=None, term_timeout=5.0,
@@ -50,12 +55,17 @@ Manifest append failure must fail the experiment rather than discard ownership.
 
 On macOS, the installed SDK's `proc_pidinfo(PROC_PIDTBSDINFO)` supplies kernel
 start seconds/microseconds. `proc_pidpath` and `KERN_PROCARGS2` supply executable
-and argv. The argument parser consumes exactly `argc` entries and excludes the
-following environment. The SDK struct is checked for 136-byte layout and its
+  and argv. NUL padding cannot distinguish a leading empty argv0, so native
+  argument candidates are returned only when they exactly match the known
+  nonempty-argv0 sequence. No environment-derived strings are returned or stored
+  on a boundary mismatch. The SDK struct is checked for 136-byte layout and its
 creation fields are covered by a regression. Linux uses `/proc` start ticks
 with boot ID, effective UID, executable, and NUL-delimited argv.
 
-Identity is checked around argument capture and before each signal. A reused
+Identity is checked around argument capture and before each signal. Creation
+tokens must match their platform's strict format; malformed tokens cannot count
+as exit proof. Native errno is reset before every Darwin query so a short native
+result cannot inherit stale ESRCH. A reused
 PID is recorded as the original process having exited and is never signaled.
 Changed UID, executable, or argv fails closed. An inaccessible identity can use
 an explicitly supplied original, still-unreaped Popen handle from the current

@@ -65,6 +65,7 @@ def _darwin_core(pid: int) -> dict[str, Any]:
     info = _ProcBSDInfo()
     if ctypes.sizeof(info) != 136:
         raise ProcessIdentityError("unsupported_darwin_identity_layout")
+    ctypes.set_errno(0)
     if query(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
         raise _native_error("native_identity_query_failed", ctypes.get_errno())
     if info.pid != pid:
@@ -99,7 +100,8 @@ def _parse_darwin_args(raw: bytes) -> list[str]:
             raise ProcessIdentityError("truncated_native_arguments")
         arguments.append(os.fsdecode(raw[cursor:end]))
         cursor = end + 1
-    # KERN_PROCARGS2 includes environment after argv. Never parse or store it.
+    # KERN_PROCARGS2 also includes environment. capture_identity requires an
+    # exact known, nonempty argv0 boundary before these strings can be returned.
     return arguments
 
 
@@ -109,6 +111,7 @@ def _darwin_details(pid: int) -> tuple[str, list[str]]:
     query.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
     query.restype = ctypes.c_int
     path = ctypes.create_string_buffer(4096)
+    ctypes.set_errno(0)
     if query(pid, path, len(path)) <= 0:
         raise _native_error("native_executable_query_failed", ctypes.get_errno())
     libc = ctypes.CDLL(None, use_errno=True)
@@ -119,11 +122,13 @@ def _darwin_details(pid: int) -> tuple[str, list[str]]:
     sysctl.restype = ctypes.c_int
     mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2.
     size = ctypes.c_size_t()
+    ctypes.set_errno(0)
     if sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
         raise _native_error("native_arguments_query_failed", ctypes.get_errno())
     if not 5 <= size.value <= MAX_ARGS_BYTES:
         raise ProcessIdentityError("native_arguments_bound")
     data = ctypes.create_string_buffer(size.value)
+    ctypes.set_errno(0)
     if sysctl(mib, 3, data, ctypes.byref(size), None, 0) != 0:
         raise _native_error("native_arguments_query_failed", ctypes.get_errno())
     return os.fsdecode(path.value), _parse_darwin_args(data.raw[:size.value])
@@ -169,10 +174,12 @@ def _linux_core(pid: int) -> dict[str, Any]:
     return info
 
 
-def capture_identity(pid: int) -> dict[str, Any]:
+def capture_identity(pid: int, *, expected_argv: Sequence[str] | None = None) -> dict[str, Any]:
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         raise ProcessIdentityError("invalid_owned_pid")
     if sys.platform == "darwin":
+        if expected_argv is None or not _valid_argv(expected_argv):
+            raise ProcessIdentityError("darwin_arguments_require_expected_argv")
         before = _darwin_core(pid)
         executable, argv = _darwin_details(pid)
         after = _darwin_core(pid)
@@ -192,6 +199,8 @@ def capture_identity(pid: int) -> dict[str, Any]:
         raise ProcessIdentityError("identity_changed_during_capture")
     if not executable or not argv or not argv[0]:
         raise ProcessIdentityError("incomplete_native_identity")
+    if expected_argv is not None and argv != list(expected_argv):
+        raise ProcessIdentityError("owned_arguments_changed")
     return {**after, "executable": executable, "argv": argv}
 
 
@@ -206,7 +215,12 @@ def _valid_pid(value: Any) -> bool:
 
 
 def _valid_argv(value: Any) -> bool:
-    return isinstance(value, (tuple, list)) and bool(value) and all(isinstance(arg, str) and "\0" not in arg for arg in value)
+    return isinstance(value, (tuple, list)) and bool(value) and bool(value[0]) and all(isinstance(arg, str) and "\0" not in arg for arg in value)
+
+
+def _valid_creation(value: Any) -> bool:
+    return isinstance(value, str) and (re.fullmatch(r"darwin:[1-9][0-9]{0,19}:[0-9]{1,6}", value) is not None
+        or re.fullmatch(r"linux:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}:[1-9][0-9]{0,19}", value) is not None)
 
 
 def _valid_record(record: Any) -> bool:
@@ -218,7 +232,7 @@ def _valid_record(record: Any) -> bool:
             and record.get("identity_status") in ("captured", "unavailable"))
     if not base or record["identity_status"] == "unavailable":
         return base
-    return (isinstance(record.get("kernel_creation"), str) and bool(record["kernel_creation"])
+    return (_valid_creation(record.get("kernel_creation"))
             and isinstance(record.get("uid"), int) and not isinstance(record["uid"], bool) and record["uid"] >= 0
             and isinstance(record.get("executable"), str) and bool(record["executable"])
             and _valid_argv(record.get("argv")))
@@ -235,7 +249,7 @@ def append_process_record(path: Path, pid: int, role: str,
     record: dict[str, Any] = {"pid": pid, "role": role, "observer_pid": os.getpid(),
                               "requested_argv": list(argv) if argv is not None else None}
     try:
-        record.update(capture_identity(pid))
+        record.update(capture_identity(pid, expected_argv=argv))
         record["identity_status"] = "captured"
     except ProcessIdentityError as error:
         record.update(identity_status="unavailable", identity_error=error.code,
@@ -303,15 +317,19 @@ def _probe(record: dict[str, Any], handles: Mapping[int, Any]) -> tuple[str, Any
     if handle is not None and handle.poll() is not None:
         return "stopped", "original_child_exited"
     try:
-        current = capture_identity(record["pid"])
+        current = capture_identity(record["pid"], expected_argv=record.get("argv") if record.get("identity_status") == "captured" else record.get("requested_argv"))
     except ProcessGone:
         return "stopped", "original_process_gone"
     except (ProcessIdentityError, OSError) as error:
+        if getattr(error, "code", None) == "owned_arguments_changed":
+            return "unknown", "owned_executable_or_arguments_changed"
         if handle is not None and handle.returncode is None:
             return "child", handle
         return "unknown", getattr(error, "code", "native_identity_unavailable")
     if record.get("identity_status") != "captured":
         return ("child", handle) if handle is not None and handle.returncode is None else ("unknown", "original_identity_unavailable")
+    if current["kernel_creation"].split(":", 1)[0] != record["kernel_creation"].split(":", 1)[0]:
+        return "unknown", "owned_creation_platform_changed"
     if current["kernel_creation"] != record.get("kernel_creation"):
         return "stopped", "original_pid_reused_no_signal"
     if current["uid"] != record.get("uid") or current["uid"] != os.geteuid():
