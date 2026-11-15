@@ -1,6 +1,7 @@
 // Synthetic persistent TCP message plus bulk benchmark. It uses only localhost
 // sockets and MemoryStore; it never calls Google Drive.
 // Example: go run ./tools/persistent_bench -sparse-priority -messages=12
+// Multi-client: go run ./tools/persistent_bench -clients=10 -bulk-requests=8 -bulk-mib=4 -messages=8 -interval-ms=250
 package main
 
 import (
@@ -33,7 +34,7 @@ type localStore struct {
 	*skirk.MemoryStore
 	putDelay, getDelay, listDelay            time.Duration
 	priorityPuts, normalPuts, tinyNormalPuts atomic.Int64
-	listCalls, getCalls                      atomic.Int64
+	listCalls, getCalls, deleteCalls         atomic.Int64
 }
 
 func pause(ctx context.Context, delay time.Duration) error {
@@ -91,6 +92,16 @@ func (s *localStore) Get(ctx context.Context, name string) ([]byte, error) {
 		return nil, err
 	}
 	return s.MemoryStore.Get(ctx, name)
+}
+
+func (s *localStore) DeleteID(ctx context.Context, id string) error {
+	s.deleteCalls.Add(1)
+	return s.MemoryStore.DeleteID(ctx, id)
+}
+
+func (s *localStore) Delete(ctx context.Context, name string) error {
+	s.deleteCalls.Add(1)
+	return s.MemoryStore.Delete(ctx, name)
 }
 
 func (s *localStore) List(ctx context.Context, prefix string) ([]skirk.ObjectInfo, error) {
@@ -238,7 +249,7 @@ func run() error {
 	var sparse bool
 	var interactionEpoch bool
 	var serialEcho bool
-	var messages, intervalMS, bulkMiB, bulkRequests, putMS, getMS, listMS, pollMS int
+	var messages, intervalMS, bulkMiB, bulkRequests, putMS, getMS, listMS, pollMS, clients int
 	flag.BoolVar(&sparse, "sparse-priority", false, "enable opt-in sparse priority replenishment")
 	flag.BoolVar(&interactionEpoch, "interaction-epoch", false, "enable opt-in bounded interaction epoch")
 	flag.BoolVar(&serialEcho, "serial-echo", false, "wait for each echo before sending the next message")
@@ -246,6 +257,7 @@ func run() error {
 	flag.IntVar(&intervalMS, "interval-ms", 3000, "scheduled interval between messages")
 	flag.IntVar(&bulkMiB, "bulk-mib", 16, "bytes per repeated concurrent bulk HTTP response, MiB")
 	flag.IntVar(&bulkRequests, "bulk-requests", 0, "fixed verified bulk response count; zero runs until messages finish")
+	flag.IntVar(&clients, "clients", 1, "number of independent client muxes sharing one MemoryStore")
 	flag.IntVar(&putMS, "put-ms", 150, "synthetic object upload delay")
 	flag.IntVar(&getMS, "get-ms", 100, "synthetic object download delay")
 	flag.IntVar(&listMS, "list-ms", 60, "synthetic object list delay")
@@ -254,8 +266,19 @@ func run() error {
 	if sparse && interactionEpoch {
 		return errors.New("choose one of -sparse-priority or -interaction-epoch")
 	}
-	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || bulkRequests < 0 || bulkRequests > 100 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 {
+	if messages < 1 || messages > 100 || intervalMS < 100 || intervalMS > 10000 || bulkMiB < 1 || bulkMiB > 128 || bulkRequests < 0 || bulkRequests > 100 || putMS < 0 || getMS < 0 || listMS < 0 || pollMS < 1 || clients < 1 || clients > 10 {
 		return errors.New("benchmark arguments out of range")
+	}
+	if clients > 1 {
+		if serialEcho || bulkRequests == 0 {
+			return errors.New("multi-client stress requires pipelined echo and fixed positive -bulk-requests")
+		}
+		return runMultiClientStress(stressArgs{
+			clients: clients, messages: messages, intervalMS: intervalMS,
+			bulkMiB: bulkMiB, bulkRequests: bulkRequests,
+			putMS: putMS, getMS: getMS, listMS: listMS, pollMS: pollMS,
+			sparse: sparse, interactionEpoch: interactionEpoch,
+		})
 	}
 	echoAddr, stopEcho, err := echoServer()
 	if err != nil {
