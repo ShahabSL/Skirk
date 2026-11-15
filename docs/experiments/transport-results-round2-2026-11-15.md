@@ -1,12 +1,14 @@
 # Transport engineering results — November 15, 2026
 
 Research is on `codex/skirk-frontier-round2-20261115`. `main` remains
-`2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a`. The frozen combined CLI is
+`2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a`. The initial frozen combined CLI is
 `42e6742e93d3376a03d4354a4b172236ff1b1fc4`, SHA-256
 `c6c42930544e03694fdaaaa1fd1e14e538ceb47e598250c5cc7e26e52503c9d9`.
 Its build metadata records a clean tree. Pub/Sub SDK imports are test-only;
 the CLI's module build information confirms they are absent from the product
-binary. Nothing here is a release or a change to the public default.
+binary. Later diagnostic/recovery cohorts record their own exact source and
+binary hashes; they are not pooled with this executable. Nothing here is a
+release or a change to the public default.
 
 The user's product requirements are **Google.com-front compatibility and free
 use**. A limited free tier is not an unlimited free service. Pub/Sub REST passed
@@ -25,7 +27,10 @@ interactive scheduling plus encrypted metadata delivery. A new asynchronous
 metadata-slot scheduler recovers some of the earlier substrate's gain in a
 real persistent TCP workload. Its initial comparison is against synchronous
 slots, however; it cannot be presented as a win over default mux or `main`.
-The frozen-binary comparisons are being measured with those controls separate.
+The completed frozen-binary comparisons keep those controls separate. Against
+clean `main`, the short mixed tests improved text latency while slightly
+reducing file rate and increasing estimated units. Longer and multi-client
+tests have not established a reliable joint win.
 
 A different priority carrier, REST Pub/Sub through the selected Google front,
 also works. Its full SOCKS trial delivered twenty text responses and a 16 MiB
@@ -66,6 +71,9 @@ nearest-rank p95 values are descriptive samples, not population percentiles.
 | Fronted Pub/Sub priority + Drive bulk, full SOCKS | Twenty text responses verified; download-phase median 443 ms/max 1.664 s; upload-phase median 705 ms/max 1.333 s; 16 MiB upload 23.469 s | Download timed out at 180 s after 10,485,358 of 16,777,216 bytes. Seventeen Drive upload timeouts; visible transport reservations 25,570 units, below the local 40,000 active guard. An outer RoundTrip wrapper does not count hidden HTTP/2 retries or prove billed wire units. Failed full transport, despite fast text. Detailed raw report is retained in the hybrid worktree. |
 | Fronted Apps Script opaque echo | Five warm 64-byte round trips: median 625 ms, range 529–914 ms; two 1 MiB echoes: 1.077/1.061 s | Twelve of twelve authenticated payloads verified through the pinned `www.google.com` front on both hops. No external fetch or TCP node was involved. This is an unloaded carrier primitive, not mixed messenger latency or sustained file throughput. [Exact report](apps-script-front-echo-live-2026-11-15.md). |
 | Historical throughput envelope | November single 128 MiB 74.928 Mb/s; ten × 32 MiB 78.244 Mb/s aggregate | Short, different workloads. May notes around 90 Mb/s aggregate are weaker historical evidence. These are neither the final mixed candidate's speed nor 200,000-user capacity. |
+| Fronted Firestore document primitive | Warm 2 KiB create + known-ID read: 331/346 ms | Six exact AEAD states through the selected front, including 16/256 KiB cases. Discovery and a reliable queue are excluded. Fresh database removed and preceding API state restored. [Report](firestore-front-primitive-2026-11-15.md). |
+| Fronted Firestore WebChannel notification, repaired observer | Five warm 2 KiB write-to-listener callbacks: median 248 ms, range 233–331 ms; cold 1.361 s | Six exact AEAD states; target removal acknowledged, child joined without forced termination, zero pending calls/events/timers. This is an API primitive, not TCP RTT. The first six-state run failed local teardown and remains separate. [Source, first failure and repair](../../experiments/firestore-listen/README.md). |
+| Five simultaneous clients, actual same-binary default | 80 MiB exact files + 60 echoes; aggregate 27.456 Mb/s; scheduled full-echo p95 11.342 s | Zero API errors in the completed baseline. Async candidate stopped on metadata timeouts and exposed a harness teardown bug; it has no valid aggregate or latency comparison. Exact cleanup completed, and the ownership bug is fixed. [Report](bounded-recovery-and-capacity-2026-11-15.md). |
 
 The frozen async-versus-default upload ABBA was interrupted in its fourth
 candidate arm by one 1,048,631-byte normal upload timeout after 28 seconds.
@@ -155,9 +163,13 @@ POST bodies with concurrent text and injected lost committed responses. A
 separate scalar simulation with 600 ms per carrier exchange exposed a queue
 bottleneck: twelve texts offered every 250 ms grew from about 1.5 to 6.0 s
 RTT during a file transfer. Those numbers are simulated, not Google latency.
-An opt-in priority-batching variant is being tested against that same scalar
-baseline before any live full-relay claim. Both remain outside the product
-binary and default transport.
+Three paired scalar/batched simulations are retained in the
+[reliable-relay report](apps-script-reliable-relay-client-2026-11-15.md) and
+[sample data](apps-script-relay-packing-local-2026-11-15.json). Batching reduced
+queue growth, but did not eliminate it; download coalescing also changed the
+actual object sizes in one pair. Both remain outside the product binary and
+default transport. Live full-relay measurements require the separately
+approved deployment and completed Google identity verification.
 
 Google currently documents 20,000 URL Fetch calls/day per consumer account,
 30 simultaneous executions/user and six minutes/execution. These limits are
@@ -181,13 +193,13 @@ so it was not perfectly blinded. Full answers, corrections and provenance are
 external request was not retried to bypass that service's safeguards. Codex
 agents wrote the implementations and performed measurements.
 
-A fourth, materially separate client-UI/lifecycle audit was submitted from an
-empty temporary directory, with tools/MCP disabled and eight public source
-files. Claude rejected it after 339 ms because the account's five-hour usage
-limit was exhausted; model usage was empty. It produced no audit findings.
-That failed attempt and its reset time are recorded in the provenance, and
-the independent Codex client review continues without claiming Claude covered
-that additional scope.
+Separate client-UI/lifecycle requests did not produce a completed external
+audit. Two attempts returned the account usage limit without inference; one
+retry was early because of an incorrect Chicago/UTC conversion. A corrected
+post-reset request ran for 22 minutes and reported 128,000 thinking tokens,
+then reached the account limit before returning a final answer. All three
+attempts and reset times are retained in the provenance. Codex client reviews
+and fixes are not attributed to a completed Claude UI audit.
 
 Google front remains the default, with explicit Direct Google choice. Skirk
 carries opaque ordered TCP: it cannot identify text inside encrypted app data
@@ -210,8 +222,13 @@ emulator verified A-failed → B-Connect → A-renewal presentation without a Go
 request; it did not validate a live grant. Five controlled desktop promise
 tests, three Android Gradle/JUnit regressions and six Swift tests with ten
 parameterized cases passed. Full Android, desktop and iOS Simulator builds
-also passed. Actual unresponsive cloud-provider behavior remains a device
-test gap. [Client audit](../audits/client-state-ownership-2026-11-15.md),
+also passed. Five additional Android emulator instrumentation cases exercised
+the real `ContentResolver`, remote cancellation IPC and proxy file descriptor
+through a controlled provider in a separate process. They passed cancellation,
+retained permits, stale-result and descriptor-release assertions; this does
+not cover every external provider or a physical phone.
+[Device evidence](../audits/android-document-reader-device-2026-11-15.md),
+[client audit](../audits/client-state-ownership-2026-11-15.md),
 [iOS import audit](../audits/ios-file-import-2026-11-15.md).
 
 Two hundred thousand installations and two hundred thousand simultaneous active
@@ -223,14 +240,23 @@ provisioning and published pricing, separate from Drive's `drive.file` grant.
 
 ## Validation and cleanup
 
-The combined runtime passed full Go race tests, 55 Python harness tests and
+The integrated runtime passed full Go race tests, 116 Python harness tests and
 `SKIRK_FULL_PREFLIGHT=1 make preflight`, including desktop frontend and Android
 debug builds. The iOS Simulator application/Go engine rebuild passed. The
 subsequent hybrid journal-only change has its own targeted race/vet evidence;
 the frozen-source cross-platform Smoke run is
 [43737455855](https://github.com/ShahabSL/Skirk/actions/runs/43737455855).
-All fourteen jobs passed on the first attempt. Later additions are research
-tests and documentation; their local verification is recorded separately.
+All fourteen jobs passed on the first attempt for frozen source `42e6742`.
+Later client and diagnostic changes have separate local verification; that
+older CI result is not evidence for an untested later head.
+
+The capacity harness now persists the workload outcome before teardown,
+journals exact process identity and attempts every owned child even after a
+signal error. Darwin process creation time and argv are verified without
+environment access; no broad process-group kill or privilege escalation is
+used. Seventeen native macOS helper cases and integration tests passed. The
+original lost outcome and 1,655-unit overrun remain visible in the failed
+capacity record. [Teardown audit](../audits/owned-benchmark-process-teardown-2026-11-15.md).
 
 Live experiments use only authorized isolated accounts, fresh namespaces and
 explicit request/unit/byte bounds. All completed new probes record exact
