@@ -57,3 +57,20 @@ go run ./tools/ack_slot_probe --live --roundtrip \
   --config .skirk-runs/personal-test/quota-kit/exit.json \
   --out .skirk-runs/ack-slot-roundtrip-20261114.json
 ```
+
+Two single pinned-front arms on the isolated personal test folder completed on
+November 14, 2026. These are synthetic Drive-substrate results; neither arm
+included a Skirk TCP stream or bulk transfer. Scheduled round-trip timing starts
+at each intended 250 ms dispatch time and ends when the echo is read.
+
+| Arm | Verified request/reply and ACK | Scheduled RTT p50 / p95 | Skipped Drive versions | Conservative units, including cleanup |
+| --- | ---: | ---: | ---: | ---: |
+| Forced 1 s server-reader pause | 20/20 each direction | 1.299 / 2.145 s | 4 up, 1 down | 3,780 |
+| No injected pause | 20/20 each direction | 1.044 / 1.265 s | 0 up, 2 down | 3,950 |
+
+Both arms read back an exact 8,192-byte description, returned zero API errors,
+deleted both exact IDs, confirmed 404 twice per ID, and removed their recovery
+record. The private raw summaries are
+`.skirk-runs/ack-slot-roundtrip-live-20261114.json` and
+`.skirk-runs/ack-slot-roundtrip-nopause-live-20261114.json`. The tool does not
+measure separate one-way times or prove steady-state user capacity.
