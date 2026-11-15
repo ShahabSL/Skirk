@@ -43,8 +43,9 @@ slot IDs are deleted exactly on client stop or shadow expiry, with 404
 readback. A client makes only one setup attempt per process/run, so reopening
 after expiry cannot reset its budget. If no peer accepts, an inactive link
 expires after 45 seconds and deletes its files. Ambiguous creates use a fresh
-exact-ID readback and bounded delayed exact-ID cleanup retries; a process crash
-can still leave files until the opt-in `slotv1/` janitor runs. Manual cleanup
+exact-ID readback and bounded delayed exact-ID cleanup retries. A process
+crash or a commit later than the recovery window can still leave files until
+the opt-in `slotv1/` janitor runs. Manual cleanup
 also includes that prefix. Slot records never enter ordinary mux object cleanup.
 
 This adds quota cost and storage churn. A fully active pair can use up to 640
