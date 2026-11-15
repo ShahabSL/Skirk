@@ -193,9 +193,21 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
+    "bytes": 4688,
+    "extraction": "sanitized timing rows retained in companion report; contains no endpoint or profile"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
     "bytes": 1277,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
+    "bytes": 4663,
+    "extraction": "sanitized timing rows retained in companion report; contains no endpoint or profile"
   },
   {
     "worktree": "repocomp",
@@ -205,9 +217,21 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
+    "bytes": 4702,
+    "extraction": "sanitized timing rows retained in companion report; contains no endpoint or profile"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
     "bytes": 1284,
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
+    "bytes": 4699,
+    "extraction": "sanitized timing rows retained in companion report; contains no endpoint or profile"
   },
   {
     "worktree": "repocomp",

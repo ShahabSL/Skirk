@@ -8217,7 +8217,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 0,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8232,7 +8232,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 1,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8248,7 +8248,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 2,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8267,7 +8267,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 3,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8286,7 +8286,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 4,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8305,7 +8305,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 5,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8324,7 +8324,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 6,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8343,7 +8343,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 7,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8362,7 +8362,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 8,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8381,7 +8381,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 9,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8400,7 +8400,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 10,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8419,7 +8419,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 11,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8438,7 +8438,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 12,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8457,7 +8457,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 13,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8476,7 +8476,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 14,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8494,7 +8494,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 15,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8513,7 +8513,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 16,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8532,7 +8532,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 17,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8551,7 +8551,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 18,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8570,7 +8570,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 19,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8589,7 +8589,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 20,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8608,7 +8608,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 21,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8627,7 +8627,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 22,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8646,7 +8646,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 23,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8665,7 +8665,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 24,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8684,7 +8684,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 25,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8703,7 +8703,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 26,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8722,7 +8722,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl",
     "arm_index": 27,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8740,7 +8740,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 0,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8755,7 +8755,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 1,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8771,7 +8771,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 2,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8790,7 +8790,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 3,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8809,7 +8809,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 4,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8828,7 +8828,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 5,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8847,7 +8847,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 6,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8866,7 +8866,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 7,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8885,7 +8885,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 8,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8904,7 +8904,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 9,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8923,7 +8923,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 10,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8942,7 +8942,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 11,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8961,7 +8961,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 12,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8980,7 +8980,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 13,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -8999,7 +8999,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 14,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9017,7 +9017,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 15,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9036,7 +9036,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 16,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9055,7 +9055,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 17,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9074,7 +9074,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 18,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9093,7 +9093,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 19,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9112,7 +9112,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 20,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9131,7 +9131,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 21,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9150,7 +9150,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 22,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9169,7 +9169,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 23,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9188,7 +9188,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 24,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9207,7 +9207,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 25,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9226,7 +9226,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 26,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9245,7 +9245,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl",
     "arm_index": 27,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9263,7 +9263,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 0,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9278,7 +9278,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 1,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9294,7 +9294,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 2,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9313,7 +9313,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 3,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9332,7 +9332,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 4,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9351,7 +9351,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 5,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9370,7 +9370,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 6,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9389,7 +9389,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 7,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9408,7 +9408,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 8,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9427,7 +9427,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 9,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9446,7 +9446,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 10,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9465,7 +9465,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 11,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9484,7 +9484,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 12,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9503,7 +9503,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 13,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9522,7 +9522,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 14,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9540,7 +9540,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 15,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9559,7 +9559,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 16,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9578,7 +9578,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 17,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9597,7 +9597,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 18,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9616,7 +9616,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 19,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9635,7 +9635,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 20,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9654,7 +9654,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 21,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9673,7 +9673,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 22,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9692,7 +9692,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 23,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9711,7 +9711,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 24,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9730,7 +9730,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 25,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9749,7 +9749,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 26,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9768,7 +9768,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl",
     "arm_index": 27,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9786,7 +9786,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 0,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9801,7 +9801,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 1,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9817,7 +9817,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 2,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9836,7 +9836,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 3,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9855,7 +9855,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 4,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9874,7 +9874,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 5,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9893,7 +9893,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 6,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9912,7 +9912,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 7,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9931,7 +9931,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 8,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9950,7 +9950,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 9,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9969,7 +9969,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 10,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -9988,7 +9988,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 11,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10007,7 +10007,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 12,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10026,7 +10026,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 13,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10045,7 +10045,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 14,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10063,7 +10063,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 15,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10082,7 +10082,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 16,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10101,7 +10101,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 17,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10120,7 +10120,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 18,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10139,7 +10139,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 19,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10158,7 +10158,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 20,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10177,7 +10177,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 21,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10196,7 +10196,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 22,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10215,7 +10215,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 23,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10234,7 +10234,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 24,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10253,7 +10253,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 25,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10272,7 +10272,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 26,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
@@ -10291,7 +10291,7 @@
   },
   {
     "source_worktree": "repocomp",
-    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+    "source_path": ".skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl",
     "arm_index": 27,
     "observation_kind": "live_full_transport_SOCKS_TLS_HTTP_sample",
     "binary_sha256": "6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",

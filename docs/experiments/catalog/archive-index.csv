@@ -31,9 +31,13 @@ repocomp,.skirk-runs/adaptive-staged-down-8m-20261114-01/summary.json,5312,sourc
 repocomp,.skirk-runs/adaptive-staged-upload-8m-20261114-01/summary.json,4890,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/adaptive-staged-upload-8m-20261114-02/summary.json,5300,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json,1282,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl,4688,sanitized timing rows retained in companion report; contains no endpoint or profile
 repocomp,.skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json,1277,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl,4663,sanitized timing rows retained in companion report; contains no endpoint or profile
 repocomp,.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json,1283,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl,4702,sanitized timing rows retained in companion report; contains no endpoint or profile
 repocomp,.skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json,1284,source-index-only; inspect cited catalog entry or raw file for exact values
+repocomp,.skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl,4699,sanitized timing rows retained in companion report; contains no endpoint or profile
 repocomp,.skirk-runs/architecture-five-client-live-20261114/summary.json,955,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-0.json,7276,source-index-only; inspect cited catalog entry or raw file for exact values
 repocomp,.skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-1.json,7173,source-index-only; inspect cited catalog entry or raw file for exact values

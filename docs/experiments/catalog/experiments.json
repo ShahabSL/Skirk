@@ -3617,7 +3617,8 @@
         "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
       ],
       "raw_archive_paths": [
-        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json"
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-result.json",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-a-g4/client-samples.jsonl"
       ],
       "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
       "live_comparable": false
@@ -3638,7 +3639,8 @@
         "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
       ],
       "raw_archive_paths": [
-        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json"
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-a/client-result.json",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-a/client-samples.jsonl"
       ],
       "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
       "live_comparable": false
@@ -3659,7 +3661,8 @@
         "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
       ],
       "raw_archive_paths": [
-        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json"
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-b/client-result.json",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/packed-b/client-samples.jsonl"
       ],
       "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
       "live_comparable": false
@@ -3680,7 +3683,8 @@
         "docs/experiments/apps-script-relay-full-live-2026-11-15.json"
       ],
       "raw_archive_paths": [
-        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json"
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-b/client-result.json",
+        "repocomp/.skirk-runs/apps-script-stage2-20261115/scalar-b/client-samples.jsonl"
       ],
       "revision_or_binary": "a805fb016b0563d243cf11b2fcf08a6dfb65a2d0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
       "live_comparable": false
