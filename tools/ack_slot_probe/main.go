@@ -44,6 +44,7 @@ type options struct {
 	live          bool
 	readerPauseMS int
 	pollMS        int
+	hotUnits      int
 	roundtrip     bool
 }
 
@@ -105,6 +106,7 @@ func parseOptions(args []string) (options, error) {
 	flags.BoolVar(&value.live, "live", false, "allow bounded Drive calls")
 	flags.IntVar(&value.readerPauseMS, "reader-pause-ms", 1000, "bounded reader pause after frame ten; 0 disables delay")
 	flags.IntVar(&value.pollMS, "poll-ms", int(defaultPollInterval/time.Millisecond), "known-ID poll interval, 100-500 ms")
+	flags.IntVar(&value.hotUnits, "hot-units", 12000, "roundtrip hot-path quota cap, 4000-12000 units")
 	flags.BoolVar(&value.roundtrip, "roundtrip", false, "run bounded two-way request/reply probe")
 	if err := flags.Parse(args); err != nil {
 		return value, err
@@ -117,6 +119,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if value.pollMS < 100 || value.pollMS > 500 {
 		return value, errors.New("--poll-ms must be between 100 and 500")
+	}
+	if value.hotUnits < 4000 || value.hotUnits > 12000 {
+		return value, errors.New("--hot-units must be between 4000 and 12000")
 	}
 	if err := validateOutputPath(value.out); err != nil {
 		return value, err
@@ -190,6 +195,7 @@ type probe struct {
 	recoveryOwned bool
 	readerPause   time.Duration
 	pollInterval  time.Duration
+	maxHotUnits   int
 	roundtrip     bool
 }
 
@@ -205,6 +211,7 @@ func newProbe(config *skirk.Config, outputPath string, readerPause time.Duration
 		recovery:     outputPath + ".recovery-ids",
 		readerPause:  readerPause,
 		pollInterval: defaultPollInterval,
+		maxHotUnits:  12000,
 	}
 }
 
@@ -270,7 +277,7 @@ func (p *probe) reserve(kind string, cleanup bool) error {
 	hotCeiling := hotQuotaCeiling
 	getCap, dataCap, ackCap := maxGets, maxDataPatches, maxAckPatches
 	if p.roundtrip {
-		hotCeiling, getCap, dataCap, ackCap = 12000, 260, 70, 70
+		hotCeiling, getCap, dataCap, ackCap = p.maxHotUnits, 260, 70, 70
 	}
 	if !cleanup && p.units+p.reservedUnits+cost > hotCeiling {
 		return errors.New("quota_cap")
@@ -764,6 +771,7 @@ func main() {
 	}
 	p := newProbe(config, options.out, time.Duration(options.readerPauseMS)*time.Millisecond)
 	p.pollInterval = time.Duration(options.pollMS) * time.Millisecond
+	p.maxHotUnits = options.hotUnits
 	if options.roundtrip {
 		p.roundtrip = true
 		result := p.runRoundtrip()

@@ -89,6 +89,7 @@ type roundtripReport struct {
 	ForcedPauseCompleted bool      `json:"forced_pause_completed"`
 	ReaderPauseMS        int       `json:"reader_pause_ms"`
 	PollMS               int       `json:"poll_ms"`
+	HotUnitsCap          int       `json:"hot_units_cap"`
 	BoundaryBytes        int       `json:"metadata_boundary_bytes"`
 	BoundaryVerified     bool      `json:"metadata_boundary_verified"`
 	CleanupVerified      bool      `json:"cleanup_verified"`
@@ -329,7 +330,8 @@ func (b *roundtripProbe) read(ctx context.Context, fileID string, up bool) error
 func (p *probe) runRoundtrip() (result roundtripReport) {
 	result = roundtripReport{SchemaVersion: 1, Route: "google_front_pinned", Mode: "roundtrip",
 		RequestsScheduled: frameCount, ReaderPauseMS: int(p.readerPause / time.Millisecond),
-		PollMS: int(p.pollInterval / time.Millisecond), BoundaryBytes: roundtripCap}
+		PollMS: int(p.pollInterval / time.Millisecond), HotUnitsCap: p.maxHotUnits,
+		BoundaryBytes: roundtripCap}
 	b := &roundtripProbe{probe: p}
 	var ids []string
 	defer func() {
@@ -357,7 +359,7 @@ func (p *probe) runRoundtrip() (result roundtripReport) {
 		b.state.mu.Unlock()
 		result.OK = result.Failure == "" && result.BoundaryVerified && result.Roundtrips == frameCount &&
 			result.RequestsAcknowledged == frameCount && result.RepliesAcknowledged == frameCount &&
-			result.ForcedPauseCompleted && result.CleanupVerified && result.QuotaUnitsUpperBound < 16000
+			result.ForcedPauseCompleted && result.CleanupVerified && result.QuotaUnitsUpperBound < p.maxHotUnits+4000
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
