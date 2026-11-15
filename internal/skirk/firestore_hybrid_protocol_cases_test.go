@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -112,5 +113,35 @@ func TestFSHybridCodecRequiresContiguousOffsetsAndCanonicalAuthenticatedJSON(t *
 	wire = codec.aead.Seal(wire, nonce, raw, []byte(fsHybridMagic))
 	if _, err := codec.open(wire); !errors.Is(err, errFSHybridIntegrity) {
 		t.Fatal("duplicate authenticated JSON field accepted", err)
+	}
+}
+
+func TestFSHybridRejectsAuthenticatedUnsupportedFramesAndDeclaredAllocationBomb(t *testing.T) {
+	for _, fixture := range []struct {
+		direction byte
+		frame     muxFrame
+	}{
+		{DirectionUp, muxFrame{Kind: 255, StreamID: 7}},
+		{DirectionDown, muxFrame{Kind: muxFrameOpen, StreamID: 7, Payload: encodeMuxOpenPayload("public.test:443", nil)}},
+		{DirectionUp, muxFrame{Kind: muxFrameOpen, StreamID: 7, Seq: 1, Payload: encodeMuxOpenPayload("public.test:443", nil)}},
+		{DirectionUp, muxFrame{Kind: muxFrameOpen, StreamID: 7, Payload: encodeMuxOpenPayload("missing-port", nil)}},
+		{DirectionUp, muxFrame{Kind: muxFrameData, StreamID: 7, Seq: 0, Payload: []byte("a")}},
+		{DirectionUp, muxFrame{Kind: muxFrameFIN, StreamID: 7, Seq: 1, Payload: []byte("unexpected")}},
+		{DirectionUp, muxFrame{Kind: muxFrameData, StreamID: 0, Seq: 1, Payload: []byte("a")}},
+	} {
+		codec := fsHybridTestCodec(t, fixture.direction)
+		record := fsHybridTestRecord(t, codec, 1, 0, fixture.frame)
+		if _, err := codec.seal(codec.snapshot(1, 0, 32, fsHybridWireMax, []fsHybridRecord{record})); err == nil {
+			t.Fatal("authenticated unsupported frame accepted", fixture.frame.Kind, fixture.direction)
+		}
+	}
+	codec := fsHybridTestCodec(t, DirectionUp)
+	raw, _ := encodeMuxBatch([]muxFrame{{Kind: muxFrameData, StreamID: 7, Seq: 1}})
+	binary.BigEndian.PutUint16(raw[5:7], 65535)
+	key, _ := DeriveMuxLaneKeyV4(codec.secret, codec.sid, codec.direction, codec.clientID, codec.runID, 0)
+	sealed, _ := Seal(key, codec.sid, codec.direction, 1, raw, false)
+	name := muxObjectNameWithStreamIDs(codec.sid, codec.direction, codec.clientID, codec.runID, "public-epoch", 7, []uint64{7}, 0, 1, 1, 1, 1, len(raw), true)
+	if _, err := codec.validateMux(name, sealed); !errors.Is(err, errFSHybridIntegrity) {
+		t.Fatal("declared65535frame allocation was not rejected before decoder", err)
 	}
 }

@@ -2,6 +2,7 @@ package skirk
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"math"
 	"sort"
@@ -43,6 +44,7 @@ type fsHybridState struct {
 	outgoing    *fsHybridCodec
 	incoming    *fsHybridCodec
 	outNames    map[string]*fsHybridOutbound
+	outCipher   map[[32]byte]*fsHybridOutbound
 	outQueue    []*fsHybridOutbound
 	outSeq      uint64
 	outBytes    uint64
@@ -54,6 +56,8 @@ type fsHybridState struct {
 	rxNames          map[string]*fsHybridInbound
 	rxIDs            map[string]*fsHybridInbound
 	rxSeq            map[uint64]*fsHybridInbound
+	rxCipher         map[[32]byte]*fsHybridInbound
+	rxPhysical       map[string]*fsHybridInbound
 	rxHigh           uint64
 	rxProcessed      uint64
 	rxProcessedBytes uint64
@@ -67,7 +71,7 @@ type fsHybridState struct {
 }
 
 func newFSHybridState(outgoing, incoming *fsHybridCodec) *fsHybridState {
-	return &fsHybridState{outgoing: outgoing, incoming: incoming, outNames: make(map[string]*fsHybridOutbound), outByStream: make(map[uint64]int), rxNames: make(map[string]*fsHybridInbound), rxIDs: make(map[string]*fsHybridInbound), rxSeq: make(map[uint64]*fsHybridInbound)}
+	return &fsHybridState{outgoing: outgoing, incoming: incoming, outNames: make(map[string]*fsHybridOutbound), outCipher: make(map[[32]byte]*fsHybridOutbound), outByStream: make(map[uint64]int), rxNames: make(map[string]*fsHybridInbound), rxIDs: make(map[string]*fsHybridInbound), rxSeq: make(map[uint64]*fsHybridInbound), rxCipher: make(map[[32]byte]*fsHybridInbound), rxPhysical: make(map[string]*fsHybridInbound)}
 }
 
 func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time) (*fsHybridOutbound, bool, error) {
@@ -80,6 +84,9 @@ func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time
 	}
 	if len(s.outNames) >= fsHybridClaimsMax {
 		return nil, false, errFSHybridClosed
+	}
+	if prior := s.outCipher[sha256.Sum256(sealed)]; prior != nil {
+		return nil, false, errFSHybridIntegrity
 	}
 	meta, err := s.outgoing.validateMuxMax(name, sealed, fsHybridPhysicalMax)
 	if err != nil {
@@ -96,6 +103,7 @@ func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time
 	}
 	r := &fsHybridOutbound{name: name, digest: digest, sealed: bytes.Clone(sealed), streams: append([]uint64(nil), meta.StreamIDs...), pubDone: make(chan struct{}), deadline: deadline}
 	s.outNames[name] = r
+	s.outCipher[sha256.Sum256(sealed)] = r
 	s.outRetained += len(r.sealed)
 	return r, true, nil
 }
@@ -237,6 +245,9 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 	for _, r := range snapshot.Records {
 		digest := fsHybridIdentity(r.Name, r.Sealed)
 		entry := s.rxNames[r.Name]
+		if prior := s.rxCipher[sha256.Sum256(r.Sealed)]; prior != nil && prior != entry {
+			return nil, false, errFSHybridIntegrity
+		}
 		if entry != nil && (entry.digest != digest || entry.sequence != 0 && (entry.sequence != r.Sequence || entry.byteEnd != r.ByteEnd)) {
 			return nil, false, errFSHybridIntegrity
 		}
@@ -289,6 +300,7 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 		if entry == nil {
 			entry = &fsHybridInbound{info: ObjectInfo{Name: r.Name, ID: fsHybridID(r.Name, r.Sealed), Size: int64(len(r.Sealed)), Updated: now.UTC().Format(time.RFC3339Nano)}, digest: fsHybridIdentity(r.Name, r.Sealed), sealed: bytes.Clone(r.Sealed), physicalIDs: make(map[string]struct{})}
 			s.rxNames[r.Name], s.rxIDs[entry.info.ID] = entry, entry
+			s.rxCipher[sha256.Sum256(r.Sealed)] = entry
 			s.rxBytes += len(entry.sealed)
 		}
 		if entry.sequence == 0 {
@@ -320,7 +332,7 @@ func (s *fsHybridState) advanceProcessed() bool {
 // normalizePhysical gives the mux the SAME cache ID regardless of which
 // carrier won. A late Drive copy is authenticated before exact-ID deletion.
 func (s *fsHybridState) normalizePhysical(info ObjectInfo, sealed []byte, now time.Time) (*fsHybridInbound, error) {
-	if info.ID == "" {
+	if info.ID == "" || len(info.ID) > 128 || !isSafeObjectSegment(info.ID) {
 		return nil, errFSHybridIntegrity
 	}
 	if _, err := s.incoming.validateMuxMax(info.Name, sealed, fsHybridPhysicalMax); err != nil {
@@ -328,6 +340,12 @@ func (s *fsHybridState) normalizePhysical(info ObjectInfo, sealed []byte, now ti
 	}
 	digest := fsHybridIdentity(info.Name, sealed)
 	entry := s.rxNames[info.Name]
+	if prior := s.rxPhysical[info.ID]; prior != nil && prior != entry {
+		return nil, errFSHybridIntegrity
+	}
+	if prior := s.rxCipher[sha256.Sum256(sealed)]; prior != nil && prior != entry {
+		return nil, errFSHybridIntegrity
+	}
 	if entry != nil {
 		if entry.digest != digest {
 			return nil, errFSHybridIntegrity
@@ -338,6 +356,7 @@ func (s *fsHybridState) normalizePhysical(info ObjectInfo, sealed []byte, now ti
 			}
 		}
 		entry.physicalIDs[info.ID] = struct{}{}
+		s.rxPhysical[info.ID] = entry
 		return entry, nil
 	}
 	// Keep both memory and lifetime claim headroom for already granted but
@@ -350,11 +369,13 @@ func (s *fsHybridState) normalizePhysical(info ObjectInfo, sealed []byte, now ti
 	}
 	entry = &fsHybridInbound{info: ObjectInfo{Name: info.Name, ID: fsHybridID(info.Name, sealed), Size: int64(len(sealed)), Updated: now.UTC().Format(time.RFC3339Nano)}, digest: digest, sealed: bytes.Clone(sealed), physicalIDs: map[string]struct{}{info.ID: {}}}
 	s.rxNames[info.Name], s.rxIDs[entry.info.ID] = entry, entry
+	s.rxPhysical[info.ID] = entry
+	s.rxCipher[sha256.Sum256(sealed)] = entry
 	s.rxBytes += len(entry.sealed)
 	return entry, nil
 }
 
-func (s *fsHybridState) complete(id string) (*fsHybridInbound, []string, bool, error) {
+func (s *fsHybridState) markProcessed(id string) (*fsHybridInbound, []string, bool, error) {
 	entry := s.rxIDs[id]
 	if entry == nil {
 		return nil, nil, false, errFSHybridIntegrity

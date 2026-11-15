@@ -2,8 +2,11 @@ package skirk
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,7 +64,7 @@ func TestFSHybridCoalescedLatestSnapshotRetainsAllRecordsUntilProcessing(t *test
 	if len(client.outQueue) != 2 || client.acked != 0 {
 		t.Fatal("publication was confused with processing")
 	}
-	if _, _, advanced, err := exit.complete(ready[1].info.ID); err != nil || advanced {
+	if _, _, advanced, err := exit.markProcessed(ready[1].info.ID); err != nil || advanced {
 		t.Fatal("out-of-order completion advanced cumulative ACK", err)
 	}
 	ack0, _, err := exit.prepare()
@@ -71,7 +74,7 @@ func TestFSHybridCoalescedLatestSnapshotRetainsAllRecordsUntilProcessing(t *test
 	if _, advanced, err = client.receive(ack0, time.Now()); err != nil || advanced || len(client.outQueue) != 2 {
 		t.Fatal("unprocessed head was ACKed", err)
 	}
-	if _, _, advanced, err = exit.complete(ready[0].info.ID); err != nil || !advanced || exit.rxProcessed != 2 {
+	if _, _, advanced, err = exit.markProcessed(ready[0].info.ID); err != nil || !advanced || exit.rxProcessed != 2 {
 		t.Fatal("contiguous completion did not advance", err)
 	}
 	ack2, _, err := exit.prepare()
@@ -103,7 +106,7 @@ func TestFSHybridPhysicalFirstOPENNeverReentersAfterClosedTTL(t *testing.T) {
 	if entry.sequence != 0 {
 		t.Fatal("physical publication fabricated a Firestore processing sequence")
 	}
-	if _, _, advanced, err := exit.complete(entry.info.ID); err != nil || advanced {
+	if _, _, advanced, err := exit.markProcessed(entry.info.ID); err != nil || advanced {
 		t.Fatal("unseen watch sequence was prematurely ACKed", err)
 	}
 	wire, high, err := client.prepare()
@@ -156,7 +159,7 @@ func TestFSHybridReceiveRejectsOmissionAndOffsetGapWithoutPartialACKMutation(t *
 	if exit.peerRevision != beforeRevision || len(exit.rxNames) != beforeClaims {
 		t.Fatal("rejected snapshot mutated state")
 	}
-	if _, _, advanced, err := exit.complete(exit.rxSeq[1].info.ID); err != nil || !advanced {
+	if _, _, advanced, err := exit.markProcessed(exit.rxSeq[1].info.ID); err != nil || !advanced {
 		t.Fatal("fixture head did not complete", err)
 	}
 	second := fsHybridStateAdd(t, client, 2, 8, muxFrameData)
@@ -196,5 +199,71 @@ func TestFSHybridClaimCapClosesWithoutEvictionAndPreservesReservedCredit(t *test
 	}
 	if len(exit.rxNames) != fsHybridClaimsMax-fsHybridQueueMax {
 		t.Fatal("failed admission evicted claims")
+	}
+}
+
+func TestFSHybridRejectsRenamedCipherAndCrossNamePhysicalIDReuse(t *testing.T) {
+	client, exit := fsHybridStatePair(t)
+	a := fsHybridStateAdd(t, client, 1, 7, muxFrameOpen)
+	original := ObjectInfo{Name: a.name, ID: "physical-owned"}
+	entry, err := exit.normalizePhysical(original, a.sealed, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := strings.Replace(a.name, "public-epoch", "renamed-epoch", 1)
+	if renamed == a.name {
+		t.Fatal("fixture epoch was not replaced")
+	}
+	if _, err = exit.normalizePhysical(ObjectInfo{Name: renamed, ID: "new-physical"}, a.sealed, time.Now()); !errors.Is(err, errFSHybridIntegrity) {
+		t.Fatal("cipher replay under another name/ID accepted", err)
+	}
+	if _, _, err = client.admission(renamed, a.sealed, time.Now()); !errors.Is(err, errFSHybridIntegrity) {
+		t.Fatal("sender republished one ciphertext under another name", err)
+	}
+	b := fsHybridTestRecord(t, client.outgoing, 2, 0, muxFrame{Kind: muxFrameData, StreamID: 8, Seq: 1, Payload: []byte("different")})
+	if _, err = exit.normalizePhysical(ObjectInfo{Name: b.Name, ID: original.ID}, b.Sealed, time.Now()); !errors.Is(err, errFSHybridIntegrity) {
+		t.Fatal("one physical ID claimed two identities", err)
+	}
+	for _, bad := range []string{strings.Repeat("x", 129), "unsafe/id", ""} {
+		if _, err = exit.normalizePhysical(ObjectInfo{Name: a.name, ID: bad}, a.sealed, time.Now()); !errors.Is(err, errFSHybridIntegrity) {
+			t.Fatal("unbounded or unsafe ID retained", err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err = exit.normalizePhysical(ObjectInfo{Name: a.name, ID: fmt.Sprintf("alias-%d", i)}, a.sealed, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = exit.normalizePhysical(ObjectInfo{Name: a.name, ID: "fifth-alias"}, a.sealed, time.Now()); !errors.Is(err, errFSHybridBounds) {
+		t.Fatal("physical alias bound exceeded", err)
+	}
+	if len(exit.rxNames) != 1 || len(exit.rxPhysical) != 4 || len(entry.physicalIDs) != 4 || entry.done {
+		t.Fatal("rejected conflicts changed processing or identity claims")
+	}
+}
+
+func TestFSHybridRejectsTwoFreshRenamedOPENAliasesBeforeAnySnapshotMutation(t *testing.T) {
+	client, exit := fsHybridStatePair(t)
+	a := fsHybridTestRecord(t, client.outgoing, 1, 0, muxFrame{Kind: muxFrameOpen, StreamID: 99, Payload: encodeMuxOpenPayload("public.test:443", []byte("one write"))})
+	b := a.clone()
+	b.Sequence = 2
+	b.Name = strings.Replace(a.Name, "public-epoch", "renamed-epoch", 1)
+	b.ByteEnd = a.ByteEnd + b.cost()
+	snapshot := client.outgoing.snapshot(client.revision+1, 0, 32, fsHybridWireMax, []fsHybridRecord{a, b})
+	// Deliberately construct a valid outer AEAD without using seal's semantic
+	// checks: both inner ciphers authenticate, but there is only one OPEN.
+	raw, _ := json.Marshal(snapshot)
+	nonce := make([]byte, client.outgoing.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	wire := append([]byte(fsHybridMagic), nonce...)
+	wire = client.outgoing.aead.Seal(wire, nonce, raw, []byte(fsHybridMagic))
+	beforeRevision, beforeCredit := exit.peerRevision, exit.peerCreditSeq
+	if _, _, err := exit.receive(wire, time.Now()); !errors.Is(err, errFSHybridIntegrity) {
+		t.Fatal("samecipher two fresh names admitted", err)
+	}
+	if exit.peerRevision != beforeRevision || exit.peerCreditSeq != beforeCredit || exit.rxHigh != 0 || len(exit.rxNames) != 0 || len(exit.rxCipher) != 0 || exit.rxBytes != 0 {
+		t.Fatal("invalid snapshot partially published claims, data or credit")
 	}
 }

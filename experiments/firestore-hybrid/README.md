@@ -10,7 +10,8 @@ through two fresh Firestore documents, one single-writer document per direction.
 Drive remains the bulk transport and the bounded priority fallback. A watch
 event is a notification of current state, never a durable packet. Every document
 contains a cumulative authenticated queue of immutable mux name/ciphertext
-identities retained until mux processing acknowledges them.
+identities retained until the optional mux processing-receipt callback
+acknowledges bounded ownership. Physical deletion is a separate deferred action.
 
 This is research authorization only: the secondary researcher's owner token is
 kept in a private test directory and cannot enter product profiles. The existing
@@ -63,8 +64,12 @@ also carries cumulative peer-processing ACK and receive-credit watermarks.
 The initial prototype will bound snapshots to 64 KiB, individual inline sealed
 objects to 16 KiB, queue slots to 32, per-stream pending records to four, retained
 payload memory to 8 MiB per direction and lifetime identity claims to 4,096.
-These are experimental bounds, not claimed optimal values. Oversized priority
-objects go directly to Drive. A full queue or exhausted receive credit cannot
+Physical priority fallback objects are bounded to 4 MiB plus 64 KiB of envelope
+headroom, matching the research fixture's maximum four-MiB mux chunk. Larger
+objects are rejected rather than silently bypassing the replay claims.
+These are experimental bounds, not claimed optimal values. Priority objects
+above the inline bound but within the physical bound go directly to Drive. A
+full queue or exhausted receive credit cannot
 block bulk traffic; it takes the bounded same-identity Drive fallback instead.
 
 Receive credit is a monotonic sequence/byte watermark, not a repeatedly reusable
@@ -75,11 +80,22 @@ entire authenticated snapshot before publishing any new receive entry.
 
 The receiver stores one lifetime name/hash claim shared by its virtual Firestore
 entry and any physical Drive fallback. A different ciphertext under the same
-name is an integrity failure. Successful mux deferred `DeleteID` is the only
-processing receipt. Out-of-order processing advances the cumulative ACK only
+name, one ciphertext renamed into another name, or one physical ID reassigned
+to another identity is an integrity failure. The optional `NoteMuxProcessed`
+callback runs after successful mux processing and `markSeenProcessed`, before
+physical deletion. It records no receipt on failed/canceled processing and does
+no network I/O. Receipt errors never re-execute already accepted bytes. This
+means bounded mux ownership, not a durable destination/application receipt.
+Out-of-order processing advances the cumulative ACK only
 through the contiguous completed prefix. Payload bytes can be released after
 processing, but tombstones remain until the fresh bounded epoch ends; replay
-after mux's closed-stream TTL cannot redial an OPEN.
+after mux's closed-stream TTL cannot redial an OPEN. Hitting the lifetime claim
+cap closes the finite research session without evicting claims. Restart requires
+a fresh epoch and mux RunID; rotating just the document while old fallback files
+remain in the same namespace is forbidden. There is no cross-restart durable
+exactly-once claim. Outstanding advertised receive credit reserves up to 32
+future identity claims, so physical-only admission can close conservatively
+before 4,096 actual received objects. Reserved claims are not silently stolen.
 
 The sender returns after publication, while a bounded owned fallback worker
 waits for processing ACK. A missing notification or disconnected watch cannot
@@ -88,6 +104,23 @@ reads the latest cumulative state; a bounded processing timeout publishes the
 original name and exact sealed bytes through Drive. Physical fallback processing
 must update the same receive claim, including when it precedes the first watch
 notification. Every publication, retry and fallback is counted.
+
+Drive fallback priority discovery has a separate owned pump. The mux's p0 list
+call returns cached virtual identities and a coalesced wake immediately, because
+the core polls p0 and p1 sequentially. The pump retains a complete bounded page
+tail until its 64-slot/two-worker prefetch queue owns every descriptor, then
+advances the backend token. Fetch/authentication/normalization happens before
+mux enqueue. Normal p1 discovery and its optional quota, page, adaptive and bulk
+pool interfaces remain direct. A configurable bounded interval follows a
+discovery cycle; there is no additional always-running Google polling timer.
+
+Store close cancels and joins its workers, carrier and base operations; a base
+that ignores cancellation keeps the join pending. It clears payloads only after
+joining, retains finite tombstone metadata until GC, and fences late callbacks.
+Provider deletion belongs to the external owned fixture, using exact cleanup
+targets after the join, a global Drive hard guard with reserved cleanup quota,
+and delayed verification. A 30-second context alone is not a quota or cleanup
+proof; Store close makes no unbudgeted provider deletion calls.
 
 ACK changes can be piggybacked on outbound data; bounded ACK-only scheduling is
 measured explicitly. Receiving an ACK or credit-only snapshot does not itself

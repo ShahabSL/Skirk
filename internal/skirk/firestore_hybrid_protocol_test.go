@@ -8,12 +8,15 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -121,12 +124,53 @@ func (c *fsHybridCodec) validateMuxMax(name string, sealed []byte, limit int) (m
 		return muxObjectMeta{}, err
 	}
 	envelope, raw, err := OpenEnvelope(key, sealed)
-	if err != nil || envelope.SessionID != c.sid || envelope.Direction != c.direction || envelope.Sequence != meta.Seq || meta.PlainBytes != len(raw) {
+	if err != nil || envelope.SessionID != c.sid || envelope.Direction != c.direction || envelope.Sequence != meta.Seq || envelope.Flags != FlagData || meta.PlainBytes != len(raw) {
+		return muxObjectMeta{}, errFSHybridIntegrity
+	}
+	// The production decoder accepts a uint16 count before allocating. Bound
+	// that authenticated declaration before any frame-slice allocation here.
+	if len(raw) < muxBatchHeaderSize {
+		return muxObjectMeta{}, errFSHybridIntegrity
+	}
+	count := int(binary.BigEndian.Uint16(raw[5:7]))
+	if count < 1 || count > muxMaxFrames || count > (len(raw)-muxBatchHeaderSize)/muxFrameHeaderSize {
 		return muxObjectMeta{}, errFSHybridIntegrity
 	}
 	frames, err := decodeMuxBatch(raw)
 	if err != nil || len(frames) == 0 || frames[0].StreamID != meta.StreamID || !slices.Equal(muxBatchStreamIDs(frames), meta.StreamIDs) {
 		return muxObjectMeta{}, errFSHybridIntegrity
+	}
+	for _, frame := range frames {
+		if frame.StreamID == 0 {
+			return muxObjectMeta{}, errFSHybridIntegrity
+		}
+		switch frame.Kind {
+		case muxFrameOpen:
+			target, _, openErr := decodeMuxOpenPayload(frame.Payload)
+			host, port, splitErr := net.SplitHostPort(target)
+			n, portErr := strconv.Atoi(port)
+			if c.direction != DirectionUp || frame.Seq != 0 || openErr != nil || splitErr != nil || host == "" || portErr != nil || n < 1 || n > 65535 {
+				return muxObjectMeta{}, errFSHybridIntegrity
+			}
+		case muxFrameData:
+			if frame.Seq == 0 {
+				return muxObjectMeta{}, errFSHybridIntegrity
+			}
+		case muxFrameFIN:
+			if frame.Seq == 0 || len(frame.Payload) != 0 {
+				return muxObjectMeta{}, errFSHybridIntegrity
+			}
+		case muxFrameRST:
+			if frame.Seq != 0 || len(frame.Payload) > 1024 {
+				return muxObjectMeta{}, errFSHybridIntegrity
+			}
+		case muxFrameMetadataCapability:
+			if frame.Seq != 0 || !fsHybridMetadataCapability(c.direction, frame.Payload) {
+				return muxObjectMeta{}, errFSHybridIntegrity
+			}
+		default:
+			return muxObjectMeta{}, errFSHybridIntegrity
+		}
 	}
 	if meta.FrameRangeKnown && len(meta.StreamIDs) == 1 {
 		first, last := muxBatchFrameSeqRange(frames)
@@ -137,11 +181,29 @@ func (c *fsHybridCodec) validateMuxMax(name string, sealed []byte, limit int) (m
 	return meta, nil
 }
 
+func fsHybridMetadataCapability(direction byte, payload []byte) bool {
+	if len(payload) != muxMetadataCapabilityPayloadBytes && len(payload) != muxMetadataCapabilityV2PayloadBytes {
+		return false
+	}
+	kind := payload[0]
+	if len(payload) == muxMetadataCapabilityV2PayloadBytes {
+		limit := int(binary.BigEndian.Uint16(payload[18:]))
+		if payload[1] != 2 || (limit != driveInlineMaxBytes && limit != driveMetadataOnlyLargeMaxBytes) {
+			return false
+		}
+	}
+	if direction == DirectionUp {
+		return kind == muxMetadataCapabilityRequest && len(payload) == muxMetadataCapabilityPayloadBytes || kind == muxMetadataCapabilityRequestV2 && len(payload) == muxMetadataCapabilityV2PayloadBytes
+	}
+	return kind == muxMetadataCapabilityEcho && len(payload) == muxMetadataCapabilityPayloadBytes || kind == muxMetadataCapabilityEchoV2 && len(payload) == muxMetadataCapabilityV2PayloadBytes
+}
+
 func (c *fsHybridCodec) validate(s fsHybridSnapshot) error {
 	if s.Epoch != hex.EncodeToString(c.epoch[:]) || s.Direction != c.direction || s.Revision == 0 || s.Processed > fsHybridClaimsMax || s.CreditSeq > fsHybridClaimsMax || s.CreditBytes > fsHybridClaimsMax*(fsHybridInlineMax+fsHybridNameMax+64)+fsHybridCacheMax || len(s.Records) > fsHybridQueueMax {
 		return errFSHybridBounds
 	}
 	seen := make(map[string]struct{}, len(s.Records))
+	seenCipher := make(map[[32]byte]struct{}, len(s.Records))
 	for i, record := range s.Records {
 		if record.Sequence == 0 || record.Sequence > fsHybridClaimsMax || record.ByteEnd < record.cost() {
 			return errFSHybridBounds
@@ -150,6 +212,10 @@ func (c *fsHybridCodec) validate(s fsHybridSnapshot) error {
 			return errFSHybridIntegrity
 		}
 		seen[record.Name] = struct{}{}
+		if _, exists := seenCipher[sha256.Sum256(record.Sealed)]; exists {
+			return errFSHybridIntegrity
+		}
+		seenCipher[sha256.Sum256(record.Sealed)] = struct{}{}
 		if _, err := c.validateMux(record.Name, record.Sealed); err != nil {
 			return err
 		}
