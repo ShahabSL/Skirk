@@ -1747,6 +1747,12 @@
   },
   {
     "worktree": "repocomp",
+    "path": ".skirk-runs/sustained-end-to-end-burst-20261115/arms/summary.json",
+    "bytes": 55902,
+    "extraction": "all4balancedfulltransportarms;sanitizedsamples/filehashes/origin/teardown/logretirementcuts in companionreport"
+  },
+  {
+    "worktree": "repocomp",
     "path": ".skirk-runs/sustained-end-to-end-stress-20261115/arms/summary.json",
     "bytes": 51969,
     "extraction": "sanitized aggregate rows and exact application/origin/teardown proof in companion report; partial arm retained"

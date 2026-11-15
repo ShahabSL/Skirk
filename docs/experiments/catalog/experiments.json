@@ -3825,6 +3825,45 @@
       ],
       "revision_or_binary": "runtime8c9829/281986;observerdc81870",
       "live_comparable": false
+    },
+    {
+      "id": "R3-050",
+      "candidate": "Separately declared finite concurrency-burst recovery observer",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Newfixed32arm/16rolling60s/64cohort timeoutallowances;inheritsV2exactsourceclasses/origin/teardown/PATCHrules;allquota/byte/deadlines unchanged",
+      "latency": "No runtime change",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google calls from implementation tests; no arbitrary CLI limits",
+      "correctness_and_errors": "29burst/216broaderPythonPASS3.945s;root254integrationPASS5.148s;inclusivewindow andtriggerretention tested",
+      "cleanup": "OldV1/V2source/pins/results unchanged",
+      "decision": "Observe1–2concurrentRPCwaves in separatelylabelledcohort;doesnotreclassifyoldquality-budgetfailure",
+      "source_documents": [
+        "docs/experiments/sustained-end-to-end-burst-recovery-2026-11-15.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "d5437ca;runtime8c9829/281986unchanged",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-051",
+      "candidate": "100MiB plus100persistent echoes: complete burst-recovery ABBA vs actualmain",
+      "evidence_level": "live_full_transport_complete_small_ABBA",
+      "workload": "Candidate/main/main/candidate,4exact100MiBfiles+400echoes+4preludes;1250msoffers,1sbulk lead;2complete arms perbundle",
+      "latency": "Candidate scheduled fullp95median9.016s(range7.950–10.083) vsactualmain20.545s(range13.137–27.953),−56.1%;duringbulk12.663vs23.631s;postbulk~3vs~6.6s",
+      "throughput_mbps": "Candidate twoarmmedian25.4835(range25.017–25.950),main19.6855(range14.874–24.497),+29.45%descriptive",
+      "estimated_quota_units": "Candidate131122.5/arm vsmain114620,+14.40%;6candidate RPCerrors vs0main;allretained",
+      "correctness_and_errors": "Allfiles/hash/400echoes andexactpre/poststoporigins pass. FirstcandidatePATCHrevision19timeout→exactsealedreadback→continued;6RPCerrorsretained;bothcandidates newmessagesafterwriter/reader caps andbeyondadvertised2min",
+      "cleanup": "All4writer/childproofs pass;7residualmux/0slots removed;8exactprefix0immediate31s;profilesgone",
+      "decision": "StrongpositivebundleQoSresult underlargerpredeclaredqualitybudget,notuniversalpromotion:2arms/controlspread/singlehost,extraunitsanderrors;oldfailuresunchanged",
+      "source_documents": [
+        "docs/experiments/sustained-end-to-end-burst-recovery-2026-11-15.md",
+        "docs/experiments/sustained-end-to-end-burst-recovery-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/sustained-end-to-end-burst-20261115/"
+      ],
+      "revision_or_binary": "candidate8c9829/281986;main2c52ff8/340461;observerd5437ca",
+      "live_comparable": true
     }
   ]
 }

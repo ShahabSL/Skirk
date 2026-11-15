@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **189 interpreted experiment records**, **314 recognized raw result files** indexed across local worktrees, and **415 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **191 interpreted experiment records**, **315 recognized raw result files** indexed across local worktrees, and **419 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -269,3 +269,7 @@ R3-046 records the reviewed outcome/origin observer and R3-047 retains all four 
 ## End-to-end stress v2: real timeout burst exceeds declared quality allowance
 
 R3-048 retains the separately versioned bare-upload source inference; R3-049 records its [first live candidate failure](experiments/sustained-end-to-end-recovery-stress-v2-2026-11-15.md). Five eligible timeouts exceeded the predeclared allowance of four per rolling minute after six verified echoes. This was a real quality-budget stop, with no Google-quota or eventual-recovery conclusion. No file checkpoint or partial p95 exists, and the other three arms were not attempted. All owned writers stopped and both exact prefixes were empty after31seconds.
+
+## Complete sustained comparison under a separately declared burst allowance
+
+R3-050/051 retain the fixed burst observer and [all four complete100MiB/100echo arms](experiments/sustained-end-to-end-burst-recovery-2026-11-15.md). The candidate bundle had descriptive two-run medians25.4835Mb/s and9.016s scheduled full-echo p95, versus actualmain19.6855Mb/s and20.545s. Its units were14.40%higher and it retained six real RPC errors, including a PATCH timeout resolved by exact sealed readback. Everyfile,400echoes,origin and owned-process proof passed; all8prefixes were empty after31seconds. This is a positive bundle result with limited replication and real cost/error tradeoffs, not an architectural ceiling, universal promotion, capacity claim or reclassification of earlier failures.
