@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-15",
+  "scope": "Local actual SOCKS/mux and HTTP broker with fixed simulated 600 ms RPC; no Google requests",
+  "shared": {
+    "payload_bytes": 16777216,
+    "messages_per_arm": 12,
+    "offer_interval_ms": 250,
+    "frame_bytes": 786432,
+    "mux_chunk_limit_bytes": 4194304,
+    "max_bytes_per_direction": 33554432,
+    "priority_reserve_bytes": 1048576,
+    "priority_reserve_objects": 16,
+    "up_channels": 1,
+    "pull_channels": 1
+  },
+  "evidence_pairs": [
+    {
+      "id": "download-first",
+      "source": "ab54f98",
+      "binary_sha256": "834ed047d23caa0584e22f740b99b2c1a5ed50595045b113cbd5cf8d416a32e4",
+      "log": ".skirk-runs/relay-packed-ab54f98-simulation.log",
+      "method": "GET",
+      "status": "passed",
+      "duration_seconds": 72.73,
+      "arms": [
+        {
+          "packed": false,
+          "echo_rtt_ms": [
+            1499.333,
+            1851.151,
+            2203.433,
+            2554.058,
+            2905.251,
+            3256.243,
+            3609.492,
+            3961.713,
+            4920.162,
+            5273.371,
+            5624.888,
+            5974.79
+          ],
+          "median_ms": 3432.868,
+          "max_ms": 5974.79,
+          "first_to_last_growth_ms": 4475.457,
+          "text_completed_during_bulk": 12,
+          "up_calls": 28,
+          "pull_calls": 44,
+          "packed_up_rpcs": 0,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 3145769,
+          "file_ttfb_ms": null,
+          "file_complete_ms": null,
+          "file_mbps": null,
+          "exact_file_verified": true
+        },
+        {
+          "packed": true,
+          "echo_rtt_ms": [
+            1498.74,
+            1247.496,
+            1600.078,
+            1350.279,
+            1703.178,
+            1452.324,
+            1804.968,
+            1554.115,
+            1305.101,
+            1654.873,
+            1404.819,
+            1756.034
+          ],
+          "median_ms": 1526.428,
+          "max_ms": 1804.968,
+          "first_to_last_growth_ms": 257.294,
+          "text_completed_during_bulk": 12,
+          "up_calls": 15,
+          "pull_calls": 39,
+          "packed_up_rpcs": 5,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 2097200,
+          "file_ttfb_ms": null,
+          "file_complete_ms": null,
+          "file_mbps": null,
+          "exact_file_verified": true
+        }
+      ],
+      "limitations": [
+        "File timing was not instrumented; per-subcase duration includes cleanup and cannot be used as file time.",
+        "Actual normal object maxima differ despite same configured mux limit."
+      ]
+    },
+    {
+      "id": "download-observed",
+      "source": "ebcb9fd",
+      "binary_sha256": "658b9d1acbe9a154bf126a7ab9e7ec7160e83f28de555ed2c314f7605cc08a4b",
+      "log": ".skirk-runs/relay-packed-ebcb9fd-bulk-simulation.log",
+      "method": "GET",
+      "status": "passed",
+      "duration_seconds": 75.12,
+      "arms": [
+        {
+          "packed": false,
+          "echo_rtt_ms": [
+            1498.602,
+            1849.942,
+            2202.003,
+            2554.125,
+            2904.727,
+            3255.91,
+            3608.402,
+            3958.347,
+            4916.301,
+            5267.562,
+            5619.71,
+            5972.922
+          ],
+          "median_ms": 3432.156,
+          "max_ms": 5972.922,
+          "first_to_last_growth_ms": 4474.32,
+          "text_completed_during_bulk": 12,
+          "file_ttfb_ms": 6645.582,
+          "file_complete_ms": 26711.75,
+          "file_mbps": 5.02467,
+          "up_calls": 27,
+          "pull_calls": 44,
+          "packed_up_rpcs": 0,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 4194338,
+          "exact_file_verified": true
+        },
+        {
+          "packed": true,
+          "echo_rtt_ms": [
+            1500.362,
+            1250.043,
+            1601.639,
+            1351.638,
+            1703.786,
+            1453.829,
+            1805.557,
+            1555.377,
+            1305.591,
+            1658.708,
+            1408.718,
+            1759.798
+          ],
+          "median_ms": 1527.87,
+          "max_ms": 1805.557,
+          "first_to_last_growth_ms": 259.436,
+          "text_completed_during_bulk": 12,
+          "file_ttfb_ms": 15805.653,
+          "file_complete_ms": 24296.635,
+          "file_mbps": 5.524128,
+          "up_calls": 14,
+          "pull_calls": 40,
+          "packed_up_rpcs": 5,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 1048631,
+          "exact_file_verified": true
+        }
+      ],
+      "limitations": [
+        "Packed file first byte worsened materially; this is not a blanket winner.",
+        "Actual normal object maxima and coalescing differ.",
+        "One matched pair, fixed artificial delay, local origin; no real Google throughput inference."
+      ]
+    },
+    {
+      "id": "upload-observed",
+      "source": "89f508a",
+      "binary_sha256": "deeebb2b5116399513f3986e0e633a36f994950ab8241ecead15a48db069f4cc",
+      "log": ".skirk-runs/relay-packed-89f508a-upload-simulation.log",
+      "method": "POST",
+      "status": "passed",
+      "duration_seconds": 59.9,
+      "arms": [
+        {
+          "packed": false,
+          "echo_rtt_ms": [
+            1501.553,
+            1852.636,
+            2205.612,
+            3170.425,
+            3520.786,
+            3872.942,
+            4226.371,
+            5190.812,
+            5541.239,
+            5892.32,
+            6245.125,
+            7209.33
+          ],
+          "median_ms": 4049.657,
+          "max_ms": 7209.33,
+          "first_to_last_growth_ms": 5707.777,
+          "text_completed_during_bulk": 12,
+          "file_ttfb_ms": 32376.658,
+          "file_complete_ms": 32376.683,
+          "file_mbps": 4.145506,
+          "up_calls": 53,
+          "pull_calls": 53,
+          "packed_up_rpcs": 0,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 4194338,
+          "exact_file_verified": true
+        },
+        {
+          "packed": true,
+          "echo_rtt_ms": [
+            1503.205,
+            1252.979,
+            2218.362,
+            1968.384,
+            2931.608,
+            2681.653,
+            3646.753,
+            3396.51,
+            4361.734,
+            4112.062,
+            5078.861,
+            4828.884
+          ],
+          "median_ms": 3164.059,
+          "max_ms": 5078.861,
+          "first_to_last_growth_ms": 3325.679,
+          "text_completed_during_bulk": 12,
+          "file_ttfb_ms": 24484.676,
+          "file_complete_ms": 24484.722,
+          "file_mbps": 5.481693,
+          "up_calls": 40,
+          "pull_calls": 40,
+          "packed_up_rpcs": 6,
+          "packed_down_rpcs": 0,
+          "max_normal_sealed_bytes": 4194338,
+          "exact_file_verified": true
+        }
+      ],
+      "limitations": [
+        "Packing reduces latency and file completion here, but upload echo latency still grows by 3.326 seconds over twelve offered messages.",
+        "HTTP POST first response is its server-confirmed upload receipt, not first transmitted upload byte."
+      ]
+    }
+  ],
+  "conclusion": "Priority packing resolves much of the GET-direction service queue in this finite workload, but current UP fairness and complete-object authentication/reassembly leave upload latency growth and poor file first-byte behavior. No production promotion, free-scale claim, or architecture optimum is established."
+}

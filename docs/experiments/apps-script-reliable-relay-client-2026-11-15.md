@@ -128,10 +128,10 @@ checks, and passed in 37.85 seconds including separately paced cleanup.
 These simulated results show queue growth when one object fragment consumes
 an entire 600 ms RPC at a 4-message/second offered rate. Memory headroom does
 not solve the service-rate limit. A bounded multi-object priority-packing
-variant should be compared against this retained scalar baseline before any
-latency claim. No timing here measures Google's service or a regional route.
+variant was subsequently compared against this retained scalar baseline.
+No timing here measures Google's service or a regional route.
 
-## Priority packing variant, source pending execution
+## Priority packing variant
 
 `PackPriority` is an explicit research setting, default false. It packs at most
 eight complete small priority objects into at most half one RPC frame or
@@ -156,11 +156,75 @@ part of a group becomes visible. Existing incomplete scalar assemblies cannot
 become complete grouped objects. Unsupported scalar peers reject grouped
 requests or responses instead of silently losing payload.
 
-The new same-binary comparison keeps the scalar mode's original burst
+The same-binary comparison keeps the scalar mode's original burst
 accounting, uses one shared incompressible payload, fixes 32 MiB/direction and
-1 MiB/16 reserves on both modes, and changes only `PackPriority`. Its tests and
-results remain pending. Five client packing fault tests and broker atomicity,
+1 MiB/16 reserves on both modes, and changes only `PackPriority`.
+Five client packing fault tests and broker atomicity,
 replay and normal-progress tests accompany the new full SOCKS case.
+
+The packing source at `ab54f98` passed the complete non-simulation relay race
+suite in 27.967 seconds and package vet. That includes exact 16 MiB GET/POST
+with 17 text replies and lost responses in four actual HTTP/SOCKS cases,
+atomic group failures, complete-ID acknowledgements, processing deletion,
+bounded cancellation, and priority/normal progress. A separate actual
+end-to-end TLS origin/client test passed under race in 20.553 seconds, verifying
+16 MiB GET, 16 MiB POST, 25 exact persistent HTTP echoes, one origin file
+side effect in each direction, and empty payload caches. The blind forwarding
+template's six Node tests passed. A later targeted race test for terminal
+carrier failure aborting the application's TLS wait passed in 1.613 seconds.
+
+## Matched simulated results
+
+All six arms below completed every offered echo and the exact 16 MiB file.
+Each pair uses one binary and one shared incompressible payload. The JSON
+[evidence](apps-script-relay-packing-local-2026-11-15.json) retains all 72 echo
+samples, source and binary hashes, call counts, observed object sizes, and
+separate timing scopes. Earlier failed test conditions remain described above.
+
+| Pair | Priority packing | Echo median / max | First→last echo growth | File first byte | File completion | File Mb/s |
+|---|---|---:|---:|---:|---:|---:|
+| First GET | Off | 3432.868 / 5974.790 ms | 4475.457 ms | Not recorded | Not recorded | Not recorded |
+| First GET | On | 1526.428 / 1804.968 ms | 257.294 ms | Not recorded | Not recorded | Not recorded |
+| Observed GET | Off | 3432.156 / 5972.922 ms | 4474.320 ms | 6645.582 ms | 26711.750 ms | 5.024670 |
+| Observed GET | On | 1527.870 / 1805.557 ms | 259.436 ms | 15805.653 ms | 24296.635 ms | 5.524128 |
+| Observed POST | Off | 4049.657 / 7209.330 ms | 5707.777 ms | 32376.658 ms | 32376.683 ms | 4.145506 |
+| Observed POST | On | 3164.059 / 5078.861 ms | 3325.679 ms | 24484.676 ms | 24484.722 ms | 5.481693 |
+
+Packing reduces GET-direction chat queue growth in these finite samples, but
+the observed GET first byte became materially slower. Actual largest sealed
+normal objects differed: 4,194,338 bytes without packing versus 1,048,631 with
+packing in the observed GET pair. The 4 MiB setting is a maximum, not a claim
+about actual object size. Coalescing and object ordering therefore confound a
+simple file-performance attribution. The POST pair observed 4,194,338 bytes
+in both arms; packed upload still accumulated 3.326 seconds of echo latency
+growth. No blanket winner or latency isolation guarantee follows.
+
+For POST, HTTP first response is the server-confirmed upload receipt. It is not
+the time the first upload byte was sent. File completion includes receiving
+and checking the exact body/hash or acknowledged upload hash. Per-subcase wall
+durations include cleanup and were never substituted for file duration.
+
+## Remaining architecture frontier
+
+A 768 KiB normal fragment on one 600 ms service slot has an ideal ceiling of
+10.486 Mb/s per direction before framing, Base64, priority work, deletion, or
+provider transfer time. With permanent normal UP backlog, the current
+four-priority-object burst followed by one normal RPC can serve at most
+`4 / (2 × 0.6) = 3.33` priority objects/second, before delete RPCs. That is
+below the four messages/second offered rate when each message becomes an
+object. Multiple application messages inside one object can amortize that
+cost; the bound is in objects, not application messages. PULL's eight-object
+burst has a corresponding 6.67-object/second ideal service rate.
+
+Credible next candidates include charging fairness by RPC service rather than
+objects, an explicit eight-object UP burst, a separate priority channel,
+larger normal frames, or independently acknowledged bulk channels. Larger
+frames can block a priority packet for longer, and more channels need atomic
+cross-channel admission/replay ownership and consume more execution
+concurrency. Record-level authenticated slabs could also reduce the wait for
+an entire large mux object before exposing its first bytes. These are design
+hypotheses requiring their own fault tests and mixed measurements; no further
+variant is implemented or declared optimal here.
 
 Live research limits are separate quantities: at most 256 visible execution
 POSTs per variant, each conservatively reserving eight internal HTTP/2
