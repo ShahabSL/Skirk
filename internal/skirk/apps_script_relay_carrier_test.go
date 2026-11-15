@@ -42,6 +42,7 @@ func relayResearchSafeStage(stage string) bool {
 // internal replay upper bound before dispatch. Body limits exclude TLS/headers;
 // these are not a claim to observe Google's accepted or billed request count.
 type relayResearchCarrierBudget struct {
+	CanceledCalls                                                                                             int64
 	Statuses                                                                                                  map[int]int64
 	Stages                                                                                                    map[string]int64
 	HTTP2Responses, TransportErrors                                                                           int64
@@ -80,6 +81,7 @@ func (b *relayResearchCarrierBudget) snapshot() map[string]int64 {
 	for code, n := range b.Statuses {
 		snapshot["http_status_"+strconv.Itoa(code)] = n
 	}
+	snapshot["canceled_calls"] = b.CanceledCalls
 	for stage, n := range b.Stages {
 		snapshot["stage_"+stage] = n
 	}
@@ -89,7 +91,9 @@ func (b *relayResearchCarrierBudget) snapshot() map[string]int64 {
 func (b *relayResearchCarrierBudget) observe(result *HTTPResult, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if err != nil {
+	if errors.Is(err, context.Canceled) {
+		b.CanceledCalls++
+	} else if err != nil {
 		b.TransportErrors++
 	}
 	if result != nil {
@@ -100,6 +104,16 @@ func (b *relayResearchCarrierBudget) observe(result *HTTPResult, err error) {
 		if result.Proto == "HTTP/2.0" {
 			b.HTTP2Responses++
 		}
+	}
+}
+
+func TestRelayClientGoogleCarrierSeparatesCancellationFromTransportFailure(t *testing.T) {
+	budget := &relayResearchCarrierBudget{}
+	budget.observe(nil, context.Canceled)
+	budget.observe(nil, context.DeadlineExceeded)
+	budget.observe(nil, errors.New("synthetic network failure"))
+	if snapshot := budget.snapshot(); snapshot["canceled_calls"] != 1 || snapshot["transport_errors"] != 2 {
+		t.Fatal("shutdown cancellation changed error counts", snapshot)
 	}
 }
 func (b *relayResearchCarrierBudget) stage(stage string) {
