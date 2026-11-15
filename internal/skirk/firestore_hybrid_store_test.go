@@ -444,6 +444,11 @@ func (s *fsHybridPriorityStore) runWriter() {
 				return
 			}
 			s.mu.Lock()
+			if s.closed || s.ctx.Err() != nil {
+				s.counters["late_write_completions"]++
+				s.mu.Unlock()
+				return
+			}
 			s.own = doc
 			s.ownPublished = true
 			s.state.published(high)
