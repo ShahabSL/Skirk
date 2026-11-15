@@ -23,6 +23,7 @@ from pathlib import Path
 
 from skirk_live_capacity_bench import require_metrics
 from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, RecoveryCohort, RecoveryRejected
+from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
 
 
 MAIN_COMPARE_ORDERS = (("main", "current", "current", "main"),
@@ -204,8 +205,11 @@ def main():
     parser.add_argument("--max-arm-units", type=int, default=100000)
     parser.add_argument("--max-total-units", type=int, default=350000,
                         help="cohort workload estimate; explicit cleanup is reported separately")
-    parser.add_argument("--bounded-normal-upload-timeouts", action="store_true",
+    recovery_flags = parser.add_mutually_exclusive_group()
+    recovery_flags.add_argument("--bounded-normal-upload-timeouts", action="store_true",
                         help="separate robustness experiment: tolerate only correlated normal multipart timeouts, capped at8/arm,4/60s,16/cohort")
+    recovery_flags.add_argument("--bounded-read-upload-timeouts", action="store_true",
+                        help="separate robustness experiment: observe classified Drive GET and normal upload timeouts, shared caps8/arm,4/60s,16/cohort; no harness retries")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -231,7 +235,7 @@ def main():
         parser.error("estimated rolling quota ceiling must be1000..125000")
     if not 1000 <= args.max_arm_units <= 250000 or not args.max_arm_units <= args.max_total_units <= 1000000:
         parser.error("invalid bounded per-arm/cohort quota estimates")
-    if args.bounded_normal_upload_timeouts and (not args.observe or args.small_traffic != "persistent"):
+    if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts) and (not args.observe or args.small_traffic != "persistent"):
         parser.error("bounded recovery requires --observe and persistent traffic")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
@@ -386,7 +390,8 @@ def main():
     summaries = []
     unit_history = []
     completed_units = 0
-    recovery_cohort = RecoveryCohort() if args.bounded_normal_upload_timeouts else None
+    recovery_cohort = (ReadUploadCohort() if args.bounded_read_upload_timeouts
+                       else RecoveryCohort() if args.bounded_normal_upload_timeouts else None)
     try:
         for index, mode in enumerate(order):
             candidate = mode in ("inline", "sparse_inline", "epoch_inline")
@@ -442,7 +447,10 @@ def main():
                    "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
 
-            recovery = NormalUploadRecovery(run_dir, recovery_cohort) if recovery_cohort else None
+            recovery = (ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
+                        expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
+                        expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0)
+                        if args.bounded_read_upload_timeouts else NormalUploadRecovery(run_dir, recovery_cohort) if recovery_cohort else None)
             last_snapshots = {}
 
             def check_quota_estimate(snapshots, now):

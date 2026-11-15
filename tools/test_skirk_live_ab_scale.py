@@ -46,8 +46,13 @@ class ScaleBudgetValidationTests(unittest.TestCase):
         self.assertNotIn('deadlines exceed', error)
 
     def test_recovery_mode_requires_observable_persistent_evidence(self):
-        for flags in [[], ['--observe'], ['--small-traffic', 'persistent']]:
-            self.assertIn('requires --observe and persistent', self.validation_error(['--bounded-normal-upload-timeouts', *flags]))
+        for recovery in ('--bounded-normal-upload-timeouts', '--bounded-read-upload-timeouts'):
+            for flags in [[], ['--observe'], ['--small-traffic', 'persistent']]:
+                self.assertIn('requires --observe and persistent', self.validation_error([recovery, *flags]))
+
+    def test_recovery_modes_are_mutually_exclusive_before_any_live_work(self):
+        self.assertIn('not allowed with argument', self.validation_error([
+            '--bounded-normal-upload-timeouts', '--bounded-read-upload-timeouts']))
 
 
 if __name__ == '__main__':
