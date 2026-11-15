@@ -98,6 +98,14 @@ const (
 	cleanupRetryMaxDelay         = 16 * time.Second
 )
 
+const (
+	muxSparsePriorityMaxPayload   = 4 * 1024
+	muxSparsePriorityIdleGap      = 750 * time.Millisecond
+	muxSparsePriorityMinInterval  = 2 * time.Second
+	muxSparsePriorityGlobalBurst  = 8
+	muxSparsePriorityGlobalRefill = 250 * time.Millisecond
+)
+
 type muxFrame struct {
 	Kind       byte
 	ClientID   string
@@ -108,6 +116,8 @@ type muxFrame struct {
 	EnqueuedAt time.Time
 	Priority   bool
 	Ack        *muxFrameAck
+
+	normalOwner *muxStream // Local bookkeeping; never encoded into the object.
 }
 
 type muxFrameAck struct {
@@ -132,6 +142,9 @@ func (a *muxFrameAck) complete(err error) {
 func completeMuxFrameAcks(frames []muxFrame, err error) {
 	for _, frame := range frames {
 		frame.Ack.complete(err)
+		if frame.normalOwner != nil {
+			frame.normalOwner.normalPending.Add(-1)
+		}
 	}
 }
 
@@ -230,6 +243,10 @@ type driveMux struct {
 	recvDir   byte
 	epoch     string
 	transport string
+
+	sparsePriorityMu     sync.Mutex
+	sparsePriorityTokens int
+	sparsePriorityAt     time.Time
 
 	lanes []*muxLane
 
@@ -362,6 +379,9 @@ type muxStream struct {
 	sendClassMu      sync.Mutex
 	prioritySent     int64
 	priorityDemoted  bool
+	lastPayloadAt    time.Time
+	lastSparseAt     time.Time
+	normalPending    atomic.Int64
 	recvExpected     uint64
 	recvPending      map[uint64]muxFrame
 	recvPendingBytes int
@@ -975,7 +995,13 @@ func (m *driveMux) closeAll() {
 func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 	buffer := make([]byte, m.readBufferSize())
 	for {
-		n, err := readChunkWithPolicy(stream.conn, buffer, stream.bulkSendCoalescing())
+		var n int
+		var err error
+		if m.t.SparsePriority {
+			n, err = readChunkWithPolicyFunc(stream.conn, buffer, stream.bulkSendCoalescing)
+		} else {
+			n, err = readChunkWithPolicy(stream.conn, buffer, stream.bulkSendCoalescing())
+		}
 		if n > 0 {
 			if sendErr := m.sendDataPayload(ctx, stream, buffer[:n]); sendErr != nil {
 				if m.role == "client" && ctx.Err() != nil {
@@ -1033,7 +1059,16 @@ func (m *driveMux) sendDataPayload(ctx context.Context, stream *muxStream, paylo
 			chunkSize = maxPayload
 		}
 		chunk := append([]byte(nil), payload[:chunkSize]...)
-		if err := m.sendFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: seq, Payload: chunk, Priority: stream.claimPriorityPayload(len(chunk))}); err != nil {
+		priority := stream.claimPriorityPayload(len(chunk))
+		frame := muxFrame{Kind: muxFrameData, ClientID: stream.clientID, RunID: stream.runID, StreamID: stream.id, Seq: seq, Payload: chunk, Priority: priority}
+		if !priority && m.t.SparsePriority {
+			stream.normalPending.Add(1)
+			frame.normalOwner = stream
+		}
+		if err := m.sendFrame(ctx, frame); err != nil {
+			if frame.normalOwner != nil {
+				frame.normalOwner.normalPending.Add(-1)
+			}
 			return err
 		}
 		payload = payload[chunkSize:]
@@ -1047,6 +1082,7 @@ func (s *muxStream) notePriorityPayload(n int) {
 	}
 	s.sendClassMu.Lock()
 	defer s.sendClassMu.Unlock()
+	s.lastPayloadAt = time.Now()
 	s.prioritySent += int64(n)
 	if s.prioritySent > muxPriorityStreamBytes {
 		s.priorityDemoted = true
@@ -1054,19 +1090,56 @@ func (s *muxStream) notePriorityPayload(n int) {
 }
 
 func (s *muxStream) claimPriorityPayload(n int) bool {
-	if s == nil || n <= 0 || n > muxPriorityStreamBytes {
-		if s != nil {
-			s.demotePriorityPayloads()
-		}
+	return s.claimPriorityPayloadAt(n, time.Now())
+}
+
+func (s *muxStream) claimPriorityPayloadAt(n int, now time.Time) bool {
+	if s == nil || n <= 0 {
 		return false
 	}
 	s.sendClassMu.Lock()
 	defer s.sendClassMu.Unlock()
-	if s.priorityDemoted || s.prioritySent+int64(n) > muxPriorityStreamBytes {
+	previous := s.lastPayloadAt
+	s.lastPayloadAt = now
+	if n > muxPriorityStreamBytes || (!s.priorityDemoted && s.prioritySent+int64(n) > muxPriorityStreamBytes) {
 		s.priorityDemoted = true
 		return false
 	}
+	if s.priorityDemoted {
+		if s.mux == nil || s.mux.t == nil || !s.mux.t.SparsePriority ||
+			n > muxSparsePriorityMaxPayload || previous.IsZero() || now.Sub(previous) < muxSparsePriorityIdleGap ||
+			(!s.lastSparseAt.IsZero() && now.Sub(s.lastSparseAt) < muxSparsePriorityMinInterval) ||
+			s.normalPending.Load() != 0 || !s.mux.claimSparsePriorityAt(now) {
+			return false
+		}
+		s.lastSparseAt = now
+		return true
+	}
 	s.prioritySent += int64(n)
+	return true
+}
+
+func (m *driveMux) claimSparsePriorityAt(now time.Time) bool {
+	m.sparsePriorityMu.Lock()
+	defer m.sparsePriorityMu.Unlock()
+	if m.sparsePriorityAt.IsZero() {
+		m.sparsePriorityAt = now
+		m.sparsePriorityTokens = muxSparsePriorityGlobalBurst
+	}
+	if elapsed := now.Sub(m.sparsePriorityAt); elapsed >= muxSparsePriorityGlobalRefill {
+		refills := elapsed / muxSparsePriorityGlobalRefill
+		if refills >= muxSparsePriorityGlobalBurst {
+			m.sparsePriorityTokens = muxSparsePriorityGlobalBurst
+			m.sparsePriorityAt = now
+		} else {
+			m.sparsePriorityTokens = min(muxSparsePriorityGlobalBurst, m.sparsePriorityTokens+int(refills))
+			m.sparsePriorityAt = m.sparsePriorityAt.Add(refills * muxSparsePriorityGlobalRefill)
+		}
+	}
+	if m.sparsePriorityTokens == 0 {
+		return false
+	}
+	m.sparsePriorityTokens--
 	return true
 }
 
@@ -1077,12 +1150,6 @@ func (s *muxStream) claimPriorityFIN() bool {
 	s.sendClassMu.Lock()
 	defer s.sendClassMu.Unlock()
 	return !s.priorityDemoted && s.prioritySent <= muxPriorityStreamBytes
-}
-
-func (s *muxStream) demotePriorityPayloads() {
-	s.sendClassMu.Lock()
-	defer s.sendClassMu.Unlock()
-	s.priorityDemoted = true
 }
 
 func (s *muxStream) nextSendSeq() uint64 {
@@ -1107,7 +1174,22 @@ func (s *muxStream) noteFirstRecvPayload(n int) {
 }
 
 func (s *muxStream) bulkSendCoalescing() bool {
-	return s.sendPayloadBytes.Load() >= bulkStreamCoalesceAfter
+	return s.bulkSendCoalescingAt(time.Now())
+}
+
+func (s *muxStream) bulkSendCoalescingAt(now time.Time) bool {
+	if s.sendPayloadBytes.Load() < bulkStreamCoalesceAfter {
+		return false
+	}
+	if s.mux != nil && s.mux.t != nil && s.mux.t.SparsePriority && s.normalPending.Load() == 0 {
+		s.sendClassMu.Lock()
+		last := s.lastPayloadAt
+		s.sendClassMu.Unlock()
+		if !last.IsZero() && now.Sub(last) >= muxSparsePriorityIdleGap {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *driveMux) startWriter(stream *muxStream) {

@@ -188,3 +188,26 @@ The November 2026 [architecture frontier](architecture-frontier-2026.md)
 adds persistent messenger-style text under concurrent upload and download,
 an isolated Drive class-query pilot, corrected bounded priority experiments,
 100 MiB failure evidence, and five/ten-client synthetic stress results.
+
+## Opt-in sparse priority replenishment
+
+`tunnel.sparse_priority: true` is an experimental muxv4 scheduler setting for
+long-lived TCP connections that pass the initial 64 KiB priority allowance.
+After demotion, it can place a payload of at most 4 KiB in the priority lane
+only after a 750 ms quiet gap, at most once per stream every 2 seconds, and
+only when that stream has no outstanding normal upload. A shared budget allows
+eight such regrants at once and refills at four per second. Sustained writes
+stay on the normal lane. Priority FIN remains disabled after demotion.
+
+The read loop reevaluates coalescing after the first byte arrives, so a quiet
+connection that has previously sent 256 KiB does not retain the forced bulk
+read delay for its next short message. This option changes only local mux
+scheduling; the Drive object protocol and Google route are unchanged. The
+default is off. Local MemoryStore benchmarks can expose scheduling behavior,
+but do not model Drive visibility, rate limits, or backend stalls. Promotion
+requires the mixed live gates above, including tiny-object ratio and quota.
+
+For a local persistent TCP echo with concurrent verified bulk responses, run
+`go run ./tools/persistent_bench` once with and once without
+`-sparse-priority`, using the same delay and workload flags. The tool uses
+localhost sockets and MemoryStore only.

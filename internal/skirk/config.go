@@ -140,6 +140,7 @@ type TunnelConfig struct {
 	BurstPoll           bool   `json:"burst_poll,omitempty"`
 	BurstPollMS         int    `json:"burst_poll_ms,omitempty"`
 	BurstPollWindowMS   int    `json:"burst_poll_window_ms,omitempty"`
+	SparsePriority      bool   `json:"sparse_priority,omitempty"`
 	ChunkSize           int    `json:"chunk_size,omitempty"`
 	PollIntervalMS      int    `json:"poll_interval_ms,omitempty"`
 	Concurrency         int    `json:"concurrency,omitempty"`

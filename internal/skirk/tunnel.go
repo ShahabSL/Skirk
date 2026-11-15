@@ -85,6 +85,7 @@ type Tunnel struct {
 	BurstPoll            bool
 	BurstPollInterval    time.Duration
 	BurstPollWindow      time.Duration
+	SparsePriority       bool
 	Observe              bool
 	MetadataOnlyPriority bool
 	role                 string
@@ -131,6 +132,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		BurstPoll:            cfg.Tunnel.BurstPoll,
 		BurstPollInterval:    time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
 		BurstPollWindow:      time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
+		SparsePriority:       cfg.Tunnel.SparsePriority,
 		Observe:              cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
 		MetadataOnlyPriority: cfg.Drive.MetadataOnlyPriority,
 		PollInterval:         cfg.PollInterval(),
@@ -865,10 +867,15 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 }
 
 func readChunkWithPolicy(reader io.Reader, buffer []byte, forceBulk bool) (int, error) {
+	return readChunkWithPolicyFunc(reader, buffer, func() bool { return forceBulk })
+}
+
+func readChunkWithPolicyFunc(reader io.Reader, buffer []byte, forceBulk func() bool) (int, error) {
 	n, err := reader.Read(buffer)
 	if n <= 0 || err != nil || n == len(buffer) {
 		return n, err
 	}
+	bulk := forceBulk()
 	deadlineConn, ok := reader.(interface {
 		SetReadDeadline(time.Time) error
 	})
@@ -878,8 +885,8 @@ func readChunkWithPolicy(reader io.Reader, buffer []byte, forceBulk bool) (int, 
 	defer deadlineConn.SetReadDeadline(time.Time{})
 	started := time.Now()
 	for n < len(buffer) {
-		delay := coalesceDelayForBytesWithPolicy(n, forceBulk)
-		maxAge := coalesceMaxAgeForBytesWithPolicy(n, forceBulk)
+		delay := coalesceDelayForBytesWithPolicy(n, bulk)
+		maxAge := coalesceMaxAgeForBytesWithPolicy(n, bulk)
 		if maxAge > 0 {
 			remaining := maxAge - time.Since(started)
 			if remaining <= 0 {
