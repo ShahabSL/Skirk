@@ -397,15 +397,27 @@ def run_workload(args: argparse.Namespace,
     probe_started_utc = datetime.now(timezone.utc).isoformat()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            bulk_future = pool.submit(
-                bulk_runner, "bulk", 0, args.bulk_url, args.port, run_start,
+            def run_bulk():
+                sample = bulk_runner("bulk", 0, args.bulk_url, args.port, run_start,
                 run_start, deadline, args.bulk_timeout, args.connect_timeout,
                 args.stall_seconds, args.stall_bytes_per_second,
                 args.bulk_max_mib * 1024 * 1024, False, [],
                 args.bulk_expected_bytes, args.bulk_sha256, None,
                 str(args.bulk_request_file) if args.bulk_direction == "upload" else None,
-                args.bulk_upload_bytes if args.bulk_direction == "upload" else None,
-            )
+                args.bulk_upload_bytes if args.bulk_direction == "upload" else None)
+                path = getattr(args, "bulk_result_file", None)
+                if path is not None:
+                    pending = path.with_name(path.name + ".pending")
+                    descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(descriptor, "w") as stream:
+                        json.dump(sample, stream)
+                        stream.write("\n")
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.link(pending, path)  # Publish complete proof without replacing another result.
+                    pending.unlink()
+                return sample
+            bulk_future = pool.submit(run_bulk)
             if args.pipelined:
                 samples.extend(pipelined_text_samples(sock, args, run_start, deadline, bulk_future))
             else:
@@ -448,6 +460,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bulk-expected-bytes", type=int, required=True, help="exact HTTP response bytes")
     parser.add_argument("--bulk-sha256", required=True, help="exact HTTP response SHA-256")
     parser.add_argument("--out", type=Path, required=True, help="fresh JSON file under .skirk-runs")
+    parser.add_argument("--bulk-result-file", type=Path,
+                        help="persist completed file proof before later text frames finish")
     parser.add_argument("--small-count", type=int, default=24)
     parser.add_argument("--small-interval-ms", type=int, default=250)
     parser.add_argument("--pipelined", action="store_true", help="send scheduled text frames without waiting for their echoes")
@@ -465,6 +479,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stall-bytes-per-second", type=int, default=1024)
     parser.add_argument("--bulk-max-mib", type=int, default=128)
     args = parser.parse_args(argv)
+    if args.bulk_result_file is not None and (args.bulk_result_file.exists() or
+            ".skirk-runs" not in args.bulk_result_file.resolve().parts):
+        parser.error("bulk result file must be fresh under .skirk-runs")
     if not 1 <= args.port <= 65535 or not 1 <= args.echo_port <= 65535:
         parser.error("ports must be 1..65535")
     validate_url(parser, "--bulk-url", args.bulk_url)

@@ -189,6 +189,29 @@ class PersistentTextTests(unittest.TestCase):
             self.assertEqual(result[0]["small"]["successes"], 3)
             self.assertIsNotNone(result[0]["probe_started_utc"])
 
+    def test_completed_bulk_proof_survives_while_later_text_is_pending(self):
+        with tempfile.TemporaryDirectory() as directory, LocalSocksEcho() as proxy:
+            private = Path(directory) / ".skirk-runs"
+            private.mkdir()
+            args = arguments(proxy)
+            args.small_count = 4
+            args.small_interval_ms = 300
+            args.bulk_result_file = private / "bulk.json"
+            reports = []
+            worker = threading.Thread(target=lambda: reports.append(run_workload(args, successful_bulk)), daemon=True)
+            worker.start()
+            deadline = time.monotonic() + 2
+            while not args.bulk_result_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(args.bulk_result_file.exists())
+            self.assertTrue(worker.is_alive(), "file proof was deferred until all text completed")
+            proof = json.loads(args.bulk_result_file.read_text())
+            self.assertTrue(proof["ok"])
+            self.assertEqual(proof["kind"], "bulk")
+            worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(reports[0]["small"]["successes"], 4)
+
     def test_one_demoted_stream_carries_prelude_and_text_during_bulk(self):
         with LocalSocksEcho() as proxy:
             report = run_workload(arguments(proxy), successful_bulk)
