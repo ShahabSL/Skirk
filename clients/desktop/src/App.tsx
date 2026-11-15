@@ -467,7 +467,7 @@ function App() {
               disabled={runtimeBusy || connected || !snapshot?.capabilities.systemProxySupported}
               icon={<MonitorCog />}
               label="System proxy"
-              detail={snapshot?.capabilities.systemProxySupported === false ? "Windows only" : "Proxy-aware apps"}
+              detail={snapshot?.capabilities.systemProxySupported === false ? "Windows and Mac" : "Proxy-aware apps"}
               onClick={() => void changeMode("system")}
             />
             <ModeButton
@@ -596,6 +596,15 @@ function App() {
               <code>127.0.0.1:{runtimeProfile.httpPort}</code>, or use SOCKS5 at{" "}
               <code>127.0.0.1:{runtimeProfile.socksPort}</code> with remote DNS. Check the tunnel with{" "}
               <code>curl --socks5-hostname 127.0.0.1:{runtimeProfile.socksPort} https://example.com/</code>.
+            </div>
+          ) : null}
+
+          {snapshot?.platform === "macos" && selectedMode === "system" ? (
+            <div className="warning-note" style={{ gridColumn: "1 / -1" }} role="note">
+              <strong>Mac system proxy.</strong> Connect sets the active network service's HTTP and HTTPS proxy for
+              apps that use macOS proxy settings. Disconnect restores the previous settings. If that service already
+              has another proxy or automatic proxy setup, use local Proxy mode instead. This does not capture apps
+              that ignore system proxy settings.
             </div>
           ) : null}
 
@@ -1557,7 +1566,7 @@ function runtimeMetric(snapshot: DesktopSnapshot | null) {
   }
   const parts = [`PID ${connection.pid ?? "-"}`];
   if (connection.systemProxyEnabled) {
-    parts.push("Windows proxy");
+    parts.push("System proxy");
   }
   if (connection.tunnelActive) {
     parts.push(connection.tunnelInterfaceName ?? "VPN");

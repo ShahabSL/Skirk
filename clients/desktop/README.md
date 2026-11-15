@@ -18,7 +18,7 @@ What it does:
 - gives each imported profile a stable local client identity, so the same
   copied profile can run on multiple devices at the same time;
 - starts/stops the Go Skirk SOCKS and HTTP proxy client;
-- supports proxy mode on Windows, Linux, and macOS, plus Windows system proxy,
+- supports proxy mode on Windows, Linux, and macOS, plus Windows and macOS system proxy,
   Windows VPN, and Linux VPN modes;
 - shows proxy addresses, process status, and logs;
 - offers an on-demand **Test exit** challenge through the running proxy and
@@ -37,9 +37,17 @@ macOS.
 
 ## macOS Proxy Setup
 
-The macOS app currently supports Proxy mode. **Connect** starts local SOCKS5
-and HTTP proxy listeners; it does not route Safari, other browsers, or the whole
-Mac automatically.
+Select **System proxy** for apps that honor macOS network proxy settings.
+**Connect** sets HTTP and HTTPS on the active network service to Skirk's local
+HTTP listener. **Disconnect** restores the settings saved before connection.
+The app also attempts that restoration when it next starts after an unexpected
+exit. If the service already has an enabled manual, automatic, or authenticated
+proxy, Skirk leaves it alone and asks you to use **Proxy** mode. Apps that ignore
+macOS proxy settings are not captured by this mode; it is not a whole-device
+VPN.
+
+Alternatively, **Proxy** mode starts local SOCKS5 and HTTP proxy listeners
+without changing macOS network settings. Configure a browser or app manually:
 
 1. Import a profile and select **Proxy**, then click **Connect**.
 2. In your browser's proxy settings, set HTTP and HTTPS to `127.0.0.1:18081`,
@@ -52,9 +60,9 @@ Mac automatically.
    curl --socks5-hostname 127.0.0.1:18080 https://example.com/
    ```
 
-If the command succeeds but your browser still does not load pages, check the
-browser's proxy settings. The app does not enable macOS System Proxy or VPN mode
-in this release.
+If the command succeeds but your browser still does not load pages, check its
+proxy settings and whether it honors the macOS system proxy. macOS VPN mode is
+not available in this release.
 
 ## Development
 
@@ -123,6 +131,11 @@ sing-box sidecar to create a Linux TUN interface, so it must run with root or
 
 System proxy mode changes the current user's Windows HTTP/HTTPS proxy settings,
 stores a backup first, and restores that backup on disconnect or app restart.
+On macOS it changes only the active network service's HTTP/HTTPS proxy after
+checking for a conflicting configuration; it restores settings still owned by
+Skirk on disconnect or next launch. A hard crash can leave the system pointing
+at a stopped local proxy until Skirk starts again or the user turns off the
+proxy in Network settings.
 
 VPN mode runs the bundled `skirk-tunnel.exe` sidecar, which is sing-box staged as
 a separate TUN runtime in release builds. Creating a Windows TUN adapter requires

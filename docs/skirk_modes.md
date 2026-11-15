@@ -86,6 +86,9 @@ normal Google API hostnames are blocked or unreliable.
 - Android app: whole-device VPN mode and optional SOCKS/HTTP LAN sharing.
 - Windows desktop app: profile import, SOCKS/HTTP proxy control, system proxy,
   VPN mode, performance presets, and local Drive API estimate.
+- macOS desktop app: profile import, SOCKS/HTTP proxy control, optional system
+  proxy on the active network service, performance presets, and local Drive API
+  estimate. The system proxy applies to proxy-aware apps, not all Mac traffic.
 
 ## Constraints
 

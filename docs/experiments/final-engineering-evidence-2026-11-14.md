@@ -533,9 +533,18 @@ copy. The release workflow has a Developer ID/notarization path, but its five
 required repository secret names and a local Developer ID Application
 identity are absent. Xcode showed a team Admin with a Developer ID creation
 option; actual certificate issuance and team-matched notary access were not
-tested. The current app starts SOCKS/HTTP listeners but does not configure
-Safari or macOS system proxy settings automatically, so the issue's browser
-symptom is also open.
+tested. The bundle in that earlier test started SOCKS/HTTP listeners without
+configuring macOS system proxy settings. An optional **System proxy** mode was
+subsequently added. In a bounded native Mac run, the GUI authenticated exit
+proof took 3.927 s; a proxy-aware `URLSession` client with no explicit proxy
+setting delivered exact text in 2.232 s, a SHA-verified 1 MiB download in
+3.731 s, and a matching 1 MiB upload in 5.530 s through the pinned Google
+front and Drive. Both peers had zero API errors, exact session cleanup deleted
+59 residuals, and Wi-Fi proxy settings were restored. A separate temporary
+network-service test covered restart recovery and external changes. The
+[macOS system-proxy report](macos-system-proxy-live-2026-11-15.md) records
+methods and limits. Safari and Chrome were not individually checked, and
+signed/notarized distribution remains unresolved.
 
 Native Windows x64 full Go tests and CLI smoke, plus Windows ARM64 Go/CLI
 smoke, passed at commit `9704579` in

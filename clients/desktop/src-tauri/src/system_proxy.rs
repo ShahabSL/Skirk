@@ -20,26 +20,45 @@ pub struct SystemProxyManager;
 
 impl SystemProxyManager {
     pub fn enable(paths: &AppPaths, http_port: u16) -> Result<(), String> {
-        if !cfg!(windows) {
-            return Err("system proxy mode is only available on Windows".into());
+        #[cfg(windows)]
+        return windows_impl::enable(paths, http_port);
+        #[cfg(target_os = "macos")]
+        return macos_impl::enable(paths, http_port);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = (paths, http_port);
+            Err("system proxy mode is only available on Windows and macOS".into())
         }
-        windows_impl::enable(paths, http_port)
     }
 
     pub fn disable(paths: &AppPaths) -> Result<(), String> {
-        if !cfg!(windows) {
-            return Ok(());
+        #[cfg(windows)]
+        return windows_impl::disable(paths);
+        #[cfg(target_os = "macos")]
+        return macos_impl::disable(paths);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = paths;
+            Ok(())
         }
-        windows_impl::disable(paths)
     }
 
     pub fn cleanup_stale_proxy(paths: &AppPaths) -> Result<(), String> {
-        if !cfg!(windows) {
-            return Ok(());
+        #[cfg(windows)]
+        return windows_impl::cleanup_stale_proxy(paths);
+        #[cfg(target_os = "macos")]
+        return macos_impl::cleanup_stale_proxy(paths);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = paths;
+            Ok(())
         }
-        windows_impl::cleanup_stale_proxy(paths)
     }
 }
+
+#[cfg(target_os = "macos")]
+#[path = "macos_proxy.rs"]
+mod macos_impl;
 
 #[cfg(windows)]
 fn backup_path(paths: &AppPaths) -> std::path::PathBuf {
@@ -232,22 +251,5 @@ mod windows_impl {
                 0,
             );
         }
-    }
-}
-
-#[cfg(not(windows))]
-mod windows_impl {
-    use super::AppPaths;
-
-    pub fn enable(_paths: &AppPaths, _http_port: u16) -> Result<(), String> {
-        Err("system proxy mode is only available on Windows".into())
-    }
-
-    pub fn disable(_paths: &AppPaths) -> Result<(), String> {
-        Ok(())
-    }
-
-    pub fn cleanup_stale_proxy(_paths: &AppPaths) -> Result<(), String> {
-        Ok(())
     }
 }

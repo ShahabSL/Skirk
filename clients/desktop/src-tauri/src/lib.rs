@@ -393,7 +393,10 @@ impl DesktopRuntime {
                 return Err("Connect before testing the exit".into());
             }
             let client = state.client.as_ref().ok_or("Skirk client is not running")?;
-            (client.profile_id.clone(), loopback_probe_address(&client.socks_address))
+            (
+                client.profile_id.clone(),
+                loopback_probe_address(&client.socks_address),
+            )
         };
         let profile = load_profiles(&self.paths)?
             .into_iter()
@@ -787,8 +790,8 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| "profile lifecycle lock poisoned")?;
         self.ensure_idle_for_profile_change("changing connection mode")?;
-        if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
-            return Err("system proxy mode is only available on Windows".into());
+        if matches!(mode, ConnectionMode::System) && !(cfg!(windows) || cfg!(target_os = "macos")) {
+            return Err("system proxy mode is only available on Windows and macOS".into());
         }
         if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
             return Err(vpn_unavailable_message());
@@ -838,8 +841,8 @@ impl DesktopRuntime {
             .clone();
         let mode = settings.connection_mode;
         let performance = normalize_performance_settings(profile.performance.clone())?;
-        if matches!(mode, ConnectionMode::System) && !cfg!(windows) {
-            return Err("system proxy mode is only available on Windows".into());
+        if matches!(mode, ConnectionMode::System) && !(cfg!(windows) || cfg!(target_os = "macos")) {
+            return Err("system proxy mode is only available on Windows and macOS".into());
         }
         if matches!(mode, ConnectionMode::Vpn) && !self.platform_capabilities().vpn_mode_supported {
             return Err(vpn_unavailable_message());
@@ -1043,7 +1046,7 @@ impl DesktopRuntime {
         let vpn_admin = platform_has_tun_privileges();
         let vpn_platform_supported = cfg!(windows) || cfg!(target_os = "linux");
         PlatformCapabilities {
-            system_proxy_supported: cfg!(windows),
+            system_proxy_supported: cfg!(windows) || cfg!(target_os = "macos"),
             vpn_mode_supported: vpn_platform_supported && vpn_sidecar_present,
             vpn_requires_admin,
             vpn_admin,
@@ -1686,7 +1689,7 @@ fn process_start_error(path: &Path, detail: &str) -> String {
 fn connected_message(mode: &ConnectionMode) -> String {
     match mode {
         ConnectionMode::Proxy => "Connected in local proxy mode".into(),
-        ConnectionMode::System => "Connected and Windows system proxy is enabled".into(),
+        ConnectionMode::System => "Connected and system proxy is enabled".into(),
         ConnectionMode::Vpn => "Connected in VPN mode".into(),
     }
 }
@@ -2067,7 +2070,11 @@ async fn disconnect(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnapsho
     runtime.snapshot()
 }
 
-fn run_exit_probe_sidecar(skirk: PathBuf, config: String, socks: String) -> Result<ExitProbeResult, String> {
+fn run_exit_probe_sidecar(
+    skirk: PathBuf,
+    config: String,
+    socks: String,
+) -> Result<ExitProbeResult, String> {
     let mut command = Command::new(skirk);
     command
         .arg("probe-exit")
