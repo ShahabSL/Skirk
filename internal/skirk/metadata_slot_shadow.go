@@ -65,14 +65,22 @@ func metadataSlotOwnLifetimeExpired(parent, child context.Context) bool {
 // Read-only diagnostic validation of a nonmatching readback. It changes no
 // protocol state or fallback decision, but prevents an integrity failure from
 // being relabeled as an ordinary older/empty snapshot.
-func metadataSlotDiagnosticBenignReadback(peer *metadataSlotPeer, patch metadataSlotPatch, description string) bool {
+func (m *driveMux) metadataSlotDiagnosticBenignReadback(link *muxSlotLink, patch metadataSlotPatch, description string) bool {
 	if description == "" || description == patch.description {
 		return true // Freshly created slots have no encrypted description yet.
 	}
-	peer.mu.Lock()
-	defer peer.mu.Unlock()
-	snapshot, err := peer.outbound.codec.open(description)
-	return err == nil && snapshot.revision < patch.revision
+	link.peer.mu.Lock()
+	snapshot, err := link.peer.outbound.codec.open(description)
+	link.peer.mu.Unlock()
+	if err != nil || snapshot.revision >= patch.revision {
+		return false
+	}
+	for _, record := range snapshot.records {
+		if err := m.validateSlotShadowDirection(record, link, m.sendDir); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func metadataSlotDiagnosticACKResolved(peer *metadataSlotPeer, patch metadataSlotPatch) bool {
@@ -388,7 +396,7 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 		}
 		if timeout && m.t.Observe && m.t.Logger != nil {
 			readTimedOut := ctx.Err() == nil && metadataSlotDiagnosticTimeout(readErr)
-			safeReadback := readTimedOut || readErr == nil && readback.ID == id && readback.Name == name && metadataSlotDiagnosticBenignReadback(link.peer, patch, readback.Description)
+			safeReadback := readTimedOut || readErr == nil && readback.ID == id && readback.Name == name && m.metadataSlotDiagnosticBenignReadback(link, patch, readback.Description)
 			ackResolved := metadataSlotDiagnosticACKResolved(link.peer, patch)
 			safeFallback = safeReadback && (readTimedOut || errors.Is(resolveErr, errMetadataSlotBusy) || ackResolved)
 			if safeFallback && ackResolved {
@@ -498,11 +506,15 @@ func (m *driveMux) runSlotShadowReader(ctx context.Context, link *muxSlotLink) {
 }
 
 func (m *driveMux) validateSlotShadow(record metadataSlotRecord, link *muxSlotLink) error {
+	return m.validateSlotShadowDirection(record, link, m.recvDir)
+}
+
+func (m *driveMux) validateSlotShadowDirection(record metadataSlotRecord, link *muxSlotLink, direction byte) error {
 	meta, ok := parseMuxObjectInfo(ObjectInfo{Name: record.MuxName})
 	if !ok || !meta.Priority || meta.ClientID != link.key.clientID || meta.RunID != link.key.runID || len(meta.StreamIDs) != 1 {
 		return errors.New("shadow record mux name invalid")
 	}
-	key, err := DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Lane)
+	key, err := DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, direction, meta.ClientID, meta.RunID, meta.Lane)
 	if err != nil {
 		return err
 	}
@@ -510,7 +522,7 @@ func (m *driveMux) validateSlotShadow(record metadataSlotRecord, link *muxSlotLi
 	if err != nil {
 		return err
 	}
-	if envelope.Direction != m.recvDir || envelope.Sequence != meta.Seq || envelope.SessionID != m.t.SessionID {
+	if envelope.Direction != direction || envelope.Sequence != meta.Seq || envelope.SessionID != m.t.SessionID {
 		return errors.New("shadow mux envelope identity mismatch")
 	}
 	frames, err := decodeMuxBatch(raw)

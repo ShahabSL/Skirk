@@ -147,12 +147,18 @@ func TestSlotPatchRecoveryUnconfirmedReadbackRetiresBeforeLateOriginalCompletion
 				store.readErr = context.DeadlineExceeded
 			}
 			if readback == "authenticated-older" {
-				older, err := up.peer.outbound.codec.seal(metadataSlotSnapshot{generation: up.generation, direction: DirectionUp, revision: 1})
+				olderBatch := deliveryBatch(t, client, []byte("public older authenticated DATA"))
+				if _, err := up.peer.enqueue(olderBatch.name, olderBatch.sealed); err != nil {
+					t.Fatal(err)
+				}
+				older, err := up.peer.prepare()
 				if err != nil {
 					t.Fatal(err)
 				}
-				up.peer.outbound.nextRevision = 1
-				store.readDescription = &older
+				if err := up.peer.published(older); err != nil {
+					t.Fatal(err)
+				}
+				store.readDescription = &older.description
 			}
 			client.t.Data = store
 			client.t.Observe = true
@@ -184,6 +190,71 @@ func TestSlotPatchRecoveryUnconfirmedReadbackRetiresBeforeLateOriginalCompletion
 			}
 			if !strings.Contains(output.String(), "result=immutable_fallback") {
 				t.Fatal("retirement outcome missing")
+			}
+		})
+	}
+}
+
+func TestSlotPatchRecoveryOlderSnapshotChecksInnerAuthenticationAndIdentity(t *testing.T) {
+	for _, which := range []string{"tampered", "wrong-lane", "wrong-direction", "wrong-namespace", "unsupported-kind", "wrong-stream"} {
+		t.Run(which, func(t *testing.T) {
+			base := newShadowSlotMemoryStore()
+			client, _, up, _ := deliverySlotPair(t, base)
+			defer client.stopSlotLinks()
+			client.t.Observe = true
+			var output slotRecoveryLog
+			client.t.Logger = log.New(&output, "", 0)
+			batch := deliveryBatch(t, client, []byte("public older inner validation"))
+			meta, ok := parseMuxObjectInfo(ObjectInfo{Name: batch.name})
+			if !ok {
+				t.Fatal("fixture name")
+			}
+			lane, clientID, direction := meta.Lane, meta.ClientID, byte(DirectionUp)
+			if which == "wrong-lane" {
+				lane = (lane + 1) % muxLaneCount
+			}
+			if which == "wrong-namespace" {
+				clientID = "foreign-public-fixture"
+			}
+			if which == "wrong-direction" {
+				direction = DirectionDown
+			}
+			key, err := DeriveMuxLaneKeyV4(client.t.Secret, client.t.SessionID, DirectionUp, clientID, meta.RunID, lane)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := batch.raw
+			if which == "unsupported-kind" || which == "wrong-stream" {
+				frame := batch.frames[0]
+				if which == "unsupported-kind" {
+					frame.Kind = muxFrameOpen
+				} else {
+					frame.StreamID++
+				}
+				raw, err = encodeMuxBatch([]muxFrame{frame})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			sealed, err := Seal(key, client.t.SessionID, direction, meta.Seq, raw, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if which == "tampered" {
+				sealed[len(sealed)-1] ^= 1
+			}
+			older, err := up.peer.outbound.codec.seal(metadataSlotSnapshot{generation: up.generation, direction: DirectionUp, revision: 1,
+				records: []metadataSlotRecord{{SlotSeq: 1, MuxName: batch.name, MuxSealed: sealed}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			up.peer.outbound.nextRevision = 1
+			client.t.Data = &slotRecoveryDiagnosticStore{shadowSlotMemoryStore: base, patchErr: context.DeadlineExceeded, readDescription: &older}
+			if err := client.patchSlotShadow(context.Background(), up); err == nil || err == errMuxSlotPatchTimeoutFallback {
+				t.Fatalf("outer AEAD hid invalid inner record: %v", err)
+			}
+			if !strings.Contains(output.String(), "result=invalid_readback_or_state") || strings.Contains(output.String(), "result=immutable_fallback") {
+				t.Fatalf("invalid inner record gained healthy marker: %s", output.String())
 			}
 		})
 	}
