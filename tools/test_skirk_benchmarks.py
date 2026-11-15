@@ -183,6 +183,22 @@ class MainComparisonSafetyTests(unittest.TestCase):
             with self.subTest(order=order), self.assertRaises(ValueError):
                 validate_arm_order(order, main_binary)
 
+    def test_main_comparison_rejects_exit_probe_before_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current, main = root / "current", root / "main"
+            current.write_bytes(b"current binary")
+            main.write_bytes(b"main binary")
+            output = root / ".skirk-runs" / "main-comparison"
+            argv = ["skirk_live_ab.py", "--binary", str(current), "--main-binary", str(main),
+                    "--config", str(root / "unused.json"), "--out", str(output), "--live",
+                    "--order", "main,current,current,main", "--probe-exit"]
+            stderr = io.StringIO()
+            with patch("sys.argv", argv), patch("sys.stderr", stderr), self.assertRaises(SystemExit):
+                live_ab_main()
+            self.assertIn("--probe-exit cannot be used with --main-binary", stderr.getvalue())
+            self.assertFalse(output.exists())
+
     def test_candidate_comparison_requires_balanced_same_config_arms(self):
         for order in (["control", "candidate", "candidate", "control"],
                       ["candidate", "control", "control", "candidate"]):

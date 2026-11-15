@@ -165,6 +165,8 @@ def main():
         binary_compare = validate_arm_order(order, args.main_binary, args.control_binary)
     except ValueError as error:
         parser.error(str(error))
+    if args.main_binary is not None and args.probe_exit:
+        parser.error("--probe-exit cannot be used with --main-binary: main may lack the exit probe command")
     candidate_modes = (args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
                        args.candidate_separate_metadata_slot_pools, args.candidate_normal_list_page_size_100,
                        args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery)
