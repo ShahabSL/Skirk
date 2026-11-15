@@ -231,7 +231,7 @@ func (m *driveMux) patchSlotShadow(ctx context.Context, link *muxSlotLink) error
 	}
 	// While the writer was rate-limited, more records may have arrived. Add
 	// the bounded queue suffix to one cumulative snapshot before preparing it.
-	if m.t.MetadataSlotAsyncV1 {
+	if m.t.MetadataSlotAsyncV1 || m.t.MetadataSlotPrimaryV1 {
 		for i := 0; i < muxSlotShadowQueue; i++ {
 			select {
 			case record := <-link.shadowQ:

@@ -77,6 +77,7 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 	defer l.mux.releaseSlotHandoff(batch.frames[0].key())
 	timer := time.NewTimer(muxSlotDeliveryACKWait)
 	defer timer.Stop()
+	deadline := timer.C
 	publicationACK := false
 	acceptProcessingACK := func(err error) bool {
 		if err != nil {
@@ -114,15 +115,23 @@ func (l *muxLane) finishSlotHandoff(ctx context.Context, batch muxPreparedUpload
 				break
 			}
 			publicationACK = true
+			if l.mux.t.MetadataSlotPrimaryV1 {
+				// A primary carrier retains its cumulative Drive snapshot until
+				// processing ACK or explicit writer/link failure. Queue admission
+				// remains bounded; successful publication alone is not a reason
+				// to duplicate the record after a fixed processing deadline.
+				timer.Stop()
+				deadline = nil
+			}
 			completeMuxFrameAcks(batch.frames, nil)
 			l.mux.t.markUpload()
 			l.mux.wakeReceiver()
 			if l.mux.t.Observe && l.mux.t.Logger != nil {
-				l.mux.t.Logger.Printf("mux slot async storage_ack role=%s record=%s state=drive_published", l.mux.role, targetFingerprint(batch.name))
+				l.mux.t.Logger.Printf("mux slot async storage_ack role=%s record=%s state=drive_published primary=%t", l.mux.role, targetFingerprint(batch.name), l.mux.t.MetadataSlotPrimaryV1)
 			}
 			// Publication confirms only that Drive accepted the ciphertext.
 			// Keep ownership until processing ACK or identical immutable fallback.
-		case <-timer.C:
+		case <-deadline:
 			waiting = false
 		case <-ctx.Done():
 			l.failUploadBatch(ctx, batch.frames, ctx.Err(), 0)

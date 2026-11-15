@@ -2303,7 +2303,7 @@ func (l *muxLane) uploadPreparedBatchV4(ctx context.Context, batch muxPreparedUp
 	if len(batch.frames) == 0 {
 		return nil
 	}
-	if l.mux.t.MetadataSlotAsyncV1 {
+	if l.mux.t.MetadataSlotAsyncV1 || l.mux.t.MetadataSlotPrimaryV1 {
 		if l.handoffSlotDelivery(ctx, batch) {
 			return nil // Ownership transferred; only publication or processing completes ACKs.
 		}

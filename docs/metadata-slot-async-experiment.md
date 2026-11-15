@@ -17,6 +17,20 @@ checks suppress late duplicate copies. Cancellation fails pending upload ACKs,
 closes affected streams and releases ownership. These are in-process guarantees;
 the design is not a durable destination-delivery or crash-resumption protocol.
 
+A distinct `drive.metadata_slot_primary_v1` experiment also uses asynchronous
+ownership. After confirmed PATCH publication it disables the 1.5-second peer
+processing deadline. The cumulative snapshot remains the primary copy until
+processing ACK, explicit writer/link failure or cancellation. An unpublished
+handoff still has the original bounded timeout; task and per-stream limits
+still send overflow directly as immutable objects. A stopped writer immediately
+wakes owners for identical immutable fallback. This removes speculative
+post-publication duplicate writes, while potentially keeping ownership longer
+under a stalled receiver. The slot's existing lifetime and GET/PATCH budgets
+bound the wait. It adds neither a durable destination ACK nor process-crash
+recovery. The separate harness flag `--candidate-metadata-slot-primary-v1`
+enables asynchronous slots in both arms and changes only this deadline in the
+candidate, so its effect can be measured independently.
+
 The slot writer drains up to the bounded queue size after its PATCH-rate wait
 and before preparing the next cumulative snapshot. One PATCH may therefore
 publish several queued records. Publication waiters are completed only through

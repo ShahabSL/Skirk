@@ -114,6 +114,7 @@ type DriveConfig struct {
 	MetadataSlotV1            bool   `json:"metadata_slot_v1,omitempty"`
 	MetadataSlotDeliveryV1    bool   `json:"metadata_slot_delivery_v1,omitempty"`
 	MetadataSlotAsyncV1       bool   `json:"metadata_slot_async_v1,omitempty"`
+	MetadataSlotPrimaryV1     bool   `json:"metadata_slot_primary_v1,omitempty"`
 	SeparateMetadataSlotPools bool   `json:"separate_metadata_slot_pools,omitempty"`
 	// CombinedMuxDiscovery uses one legacy prefix list for both mux classes.
 	CombinedMuxDiscovery bool `json:"combined_mux_discovery,omitempty"`

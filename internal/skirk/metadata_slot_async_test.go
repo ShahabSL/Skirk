@@ -278,6 +278,43 @@ func TestSlotAsyncGlobalCapacityRejectsHandoff(t *testing.T) {
 	}
 }
 
+func TestSlotPrimaryWaitsAfterPublicationAndFallsBackOnWriterFailure(t *testing.T) {
+	store := newShadowSlotMemoryStore()
+	client, _, up, _ := deliverySlotPair(t, store)
+	client.t.MetadataSlotPrimaryV1 = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() { cancel(); waitAsyncIdle(t, client); client.stopSlotLinks() }()
+	go client.runSlotShadowWriter(ctx, up)
+	batch := asyncAckBatch(t, client, 1)
+	if err := client.lanes[client.frameLane(batch.frames[0])].uploadPreparedBatchV4(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-batch.frames[0].Ack.ch:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("publication ACK missing")
+	}
+	time.Sleep(muxSlotDeliveryACKWait + 100*time.Millisecond)
+	if _, err := store.Get(ctx, batch.name); err == nil {
+		t.Fatal("primary publication duplicated into immutable on processing deadline")
+	}
+	client.slotAsyncMu.Lock()
+	pending := client.slotAsyncCount
+	client.slotAsyncMu.Unlock()
+	if pending != 1 {
+		t.Fatalf("unacknowledged primary record lost ownership: %d", pending)
+	}
+	client.closeSlotLink(up)
+	waitAsyncIdle(t, client)
+	stored, err := store.Get(ctx, batch.name)
+	if err != nil || !bytes.Equal(stored, batch.sealed) {
+		t.Fatalf("writer failure did not preserve exact fallback: %v", err)
+	}
+}
+
 func TestSlotWriterBudgetExitStopsHandoffsAndWakesQueuedOwners(t *testing.T) {
 	store := newShadowSlotMemoryStore()
 	client, _, up, _ := deliverySlotPair(t, store)

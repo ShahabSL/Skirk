@@ -93,6 +93,7 @@ type Tunnel struct {
 	MetadataSlotV1         bool
 	MetadataSlotDeliveryV1 bool
 	MetadataSlotAsyncV1    bool
+	MetadataSlotPrimaryV1  bool
 	CombinedMuxDiscovery   bool
 	AdaptiveMuxDiscovery   bool
 	slotAttempted          atomic.Bool // One bounded shadow generation per client process/run.
@@ -148,6 +149,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		MetadataSlotV1:         cfg.Drive.MetadataSlotV1,
 		MetadataSlotDeliveryV1: cfg.Drive.MetadataSlotDeliveryV1,
 		MetadataSlotAsyncV1:    cfg.Drive.MetadataSlotAsyncV1,
+		MetadataSlotPrimaryV1:  cfg.Drive.MetadataSlotPrimaryV1,
 		CombinedMuxDiscovery:   cfg.Drive.CombinedMuxDiscovery,
 		AdaptiveMuxDiscovery:   cfg.Drive.AdaptiveMuxDiscovery,
 		PollInterval:           cfg.PollInterval(),
