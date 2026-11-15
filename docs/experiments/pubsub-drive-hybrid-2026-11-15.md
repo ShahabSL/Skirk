@@ -55,12 +55,16 @@ the original 30-second catch-up can still replay OPEN effects; this test does
 not solve or conceal that existing distributed-systems boundary.
 
 The cache holds at most 32 MiB and 4,096 entries, with at most 64 outstanding ACK
-IDs per entry. HTTP responses are limited to 4 MiB before JSON decoding; pulls
+IDs per entry and 4 MiB retained ACK-ID bytes across the entire receiver. HTTP responses are limited to 4 MiB before JSON decoding; pulls
 request at most eight messages. API calls and request/response bytes share one
 locked global budget across all HTTP pools (2,000 calls, 128 MiB). Thirty-two
-calls are reserved for cloud cleanup. The Drive HTTP transport separately reserves
+calls and 1 MiB are reserved for cloud cleanup. Each active request atomically
+reserves its bounded maximum response size before HTTP begins; partial/error
+response bytes are counted and unused reservation is released. Cleanup responses
+are capped at 16 KiB, so active response exhaustion cannot consume that reserve. The Drive HTTP transport separately reserves
 per-attempt units, including independent pools and retries: active requests stop
-at 40,000 reserved units, total cleanup ceiling 50,000, at most 2,000 attempts.
+at 40,000 reserved units, total cleanup ceiling 50,000, at most 2,000 attempts
+with 32 attempts reserved for cleanup.
 These are conservative experiment guards, not claims about Google project quota.
 Per-peer actual Drive accounting is reported independently. Gate shutdown waits
 for response-body closure before cleanup and rejects later mux calls locally.
@@ -73,7 +77,8 @@ directions, and forced broker duplicate delivery. It rejects any priority write
 that reaches the memory-backed bulk store. Additional tests cover outer/inner
 authentication corruption, cross-session/direction rejection, payload/HTTP bounds,
 stale and expired broker records, duplicate ACK merge before/after processing,
-ACK retry, claim retention beyond the mux closed-stream lifetime, queue-admission
+ACK retry, an actual authenticated OPEN retaining exactly one destination dial/initial-byte
+write after manually expiring the mux closed-stream lifetime, queue-admission
 retry, exact pull concurrency, cancellation/join, clock skew, atomic global
 budgets and Drive gate body-lifetime shutdown.
 

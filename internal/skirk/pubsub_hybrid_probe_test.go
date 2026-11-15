@@ -24,28 +24,40 @@ import (
 
 const hybridSealedMax = 1 << 20
 const hybridResponseMax = 4 << 20
+const hybridCleanupResponseMax = 16 << 10
+const hybridCleanupByteReserve = 1 << 20
+const hybridAckBytesMax = 4 << 20
 const hybridCacheMax = 32 << 20
 const hybridEntriesMax = 4096 // Retained until the bounded experiment ends.
 
 type hybridBudget struct {
 	mu                       sync.Mutex
 	Calls, BytesOut, BytesIn int64
+	PendingBytes             int64
 	MaxCalls, MaxBytes       int64
 }
 
-func (b *hybridBudget) reserve(n int, cleanup bool) error {
+func (b *hybridBudget) reserve(n, response int, cleanup bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	limit := b.MaxCalls
+	callLimit, byteLimit := b.MaxCalls, b.MaxBytes
 	if !cleanup {
-		limit -= 32
+		callLimit -= 32
+		byteLimit -= hybridCleanupByteReserve
 	}
-	if b.Calls >= limit || b.BytesIn+b.BytesOut+int64(n) > b.MaxBytes {
+	if b.Calls >= callLimit || b.BytesIn+b.BytesOut+b.PendingBytes+int64(n+response) > byteLimit {
 		return errors.New("hybrid global call/byte guard")
 	}
 	b.Calls++
 	b.BytesOut += int64(n)
+	b.PendingBytes += int64(response)
 	return nil
+}
+func (b *hybridBudget) finishResponse(reserved, n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.PendingBytes -= int64(reserved)
+	b.BytesIn += int64(n)
 }
 func (b *hybridBudget) reserveDrive(cost int, cleanup bool) error {
 	b.mu.Lock()
@@ -54,20 +66,15 @@ func (b *hybridBudget) reserveDrive(cost int, cleanup bool) error {
 	if !cleanup {
 		limit -= 10000
 	}
-	if b.Calls >= b.MaxCalls || b.BytesOut+int64(cost) > limit {
+	callLimit := b.MaxCalls
+	if !cleanup {
+		callLimit -= 32
+	}
+	if b.Calls >= callLimit || b.BytesOut+int64(cost) > limit {
 		return errors.New("hybrid global Drive request/unit guard")
 	}
 	b.Calls++
 	b.BytesOut += int64(cost)
-	return nil
-}
-func (b *hybridBudget) received(n int) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.BytesIn += int64(n)
-	if b.BytesIn+b.BytesOut > b.MaxBytes {
-		return errors.New("hybrid global response byte guard")
-	}
 	return nil
 }
 func (b *hybridBudget) snapshot() map[string]int64 {
@@ -93,9 +100,16 @@ func (a *hybridREST) call(ctx context.Context, method, path string, body any) (*
 			return nil, e
 		}
 	}
-	if e = a.budget.reserve(len(raw), a.cleanup); e != nil {
+	responseCap := hybridResponseMax
+	if a.cleanup {
+		responseCap = hybridCleanupResponseMax
+	}
+	reserved := responseCap + 1
+	if e = a.budget.reserve(len(raw), reserved, a.cleanup); e != nil {
 		return nil, e
 	}
+	actualReceived := 0
+	defer func() { a.budget.finishResponse(reserved, actualReceived) }()
 	host := "pubsub.googleapis.com"
 	urlHost := host
 	if isGoogleFrontRoute(a.client.route.Mode) {
@@ -118,17 +132,16 @@ func (a *hybridREST) call(ctx context.Context, method, path string, body any) (*
 	if response.Header.Get("Content-Encoding") != "" && response.Header.Get("Content-Encoding") != "identity" {
 		return nil, errors.New("unexpected compressed hybrid response")
 	}
-	data, e := io.ReadAll(io.LimitReader(response.Body, hybridResponseMax+1))
+	data, e := io.ReadAll(io.LimitReader(response.Body, int64(responseCap+1)))
 	ended := time.Now()
+	actualReceived = len(data)
 	if e != nil {
 		return nil, e
 	}
-	if len(data) > hybridResponseMax {
+	if len(data) > responseCap {
 		return nil, errors.New("hybrid HTTP response too large")
 	}
-	if e = a.budget.received(len(data)); e != nil {
-		return nil, e
-	}
+
 	return &HTTPResult{Status: response.StatusCode, Body: data, Header: response.Header, Proto: response.Proto, RequestStarted: started, ResponseReceived: ended, Attempts: 1}, nil
 }
 
@@ -160,6 +173,7 @@ type hybridStore struct {
 	mu                                                  sync.Mutex
 	entries                                             map[string]*hybridEntry
 	cacheBytes                                          int
+	ackBytes                                            int
 	receive                                             func(ObjectInfo) bool
 	ctx                                                 context.Context
 	cancel                                              context.CancelFunc
@@ -348,6 +362,9 @@ func (s *hybridStore) Get(ctx context.Context, name string) ([]byte, error) {
 		}
 	}
 	s.mu.Unlock()
+	if strings.Contains(name, "/p0/") {
+		return nil, errors.New("hybrid missing priority name")
+	}
 	return s.base.Get(ctx, name)
 }
 func (s *hybridStore) Delete(ctx context.Context, name string) error {
@@ -362,6 +379,9 @@ func (s *hybridStore) Delete(ctx context.Context, name string) error {
 	s.mu.Unlock()
 	if id != "" {
 		return s.DeleteID(ctx, id)
+	}
+	if strings.Contains(name, "/p0/") {
+		return errors.New("hybrid missing priority name")
 	}
 	return s.base.Delete(ctx, name)
 }
@@ -398,7 +418,10 @@ func (s *hybridStore) DeleteID(ctx context.Context, id string) error {
 	}
 	s.mu.Lock()
 	for _, ack := range ids {
-		delete(entry.acks, ack)
+		if _, exists := entry.acks[ack]; exists {
+			s.ackBytes -= len(ack)
+			delete(entry.acks, ack)
+		}
 	}
 	s.mu.Unlock()
 	s.acked.Add(int64(len(ids)))
@@ -483,9 +506,12 @@ func (s *hybridStore) ingest(ctx context.Context, m hybridMessage) error {
 		// first authenticated broker time: redelivery cannot refresh replay age.
 		info = entry.info
 	}
-	if _, exists := entry.acks[m.AckID]; !exists && len(entry.acks) >= 64 {
+	if _, exists := entry.acks[m.AckID]; !exists && (len(entry.acks) >= 64 || s.ackBytes+len(m.AckID) > hybridAckBytesMax) {
 		s.mu.Unlock()
 		return errors.New("hybrid redelivery ACK capacity")
+	}
+	if _, exists := entry.acks[m.AckID]; !exists {
+		s.ackBytes += len(m.AckID)
 	}
 	entry.acks[m.AckID] = struct{}{}
 	done := entry.done
@@ -548,7 +574,9 @@ func (s *hybridStore) start(ctx context.Context, pool int) error {
 				}
 				for _, m := range response.Messages {
 					if e = s.ingest(s.ctx, m); e != nil {
-						s.setError(e)
+						if s.ctx.Err() == nil {
+							s.setError(e)
+						}
 						return
 					}
 				}

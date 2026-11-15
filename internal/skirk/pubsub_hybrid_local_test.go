@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -207,14 +209,14 @@ func TestHybridParallelPullCancellationAndRetryAdmission(t *testing.T) {
 	}
 }
 func TestHybridGlobalBudgetConcurrentAndBoundedHTTP(t *testing.T) {
-	budget := &hybridBudget{MaxCalls: 42, MaxBytes: 100}
+	budget := &hybridBudget{MaxCalls: 42, MaxBytes: hybridCleanupByteReserve + 100}
 	var allowed atomic.Int64
 	var wg sync.WaitGroup
 	for i := 0; i < 40; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if budget.reserve(1, false) == nil {
+			if budget.reserve(1, 0, false) == nil {
 				allowed.Add(1)
 			}
 		}()
@@ -250,7 +252,7 @@ func (t *hybridRewriteTransport) RoundTrip(r *http.Request) (*http.Response, err
 	return t.base.RoundTrip(clone)
 }
 
-func TestHybridTombstoneSurvivesMuxClosedLifetimeAndExpiredBrokerRecord(t *testing.T) {
+func TestHybridClaimRetainsOriginalAgeAndExpiredBrokerRecord(t *testing.T) {
 	client, exit, name, sealed := hybridTestPair(t)
 	var opens, acks atomic.Int64
 	exit.receive = func(ObjectInfo) bool { opens.Add(1); return true }
@@ -461,4 +463,171 @@ func TestHybridDriveStopWaitsForResponseBody(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("body closure did not release gate")
 	}
+}
+
+func TestHybridCleanupReservesSurviveActiveExhaustion(t *testing.T) {
+	budget := &hybridBudget{MaxCalls: 40, MaxBytes: hybridCleanupByteReserve + 200}
+	if e := budget.reserve(0, 200, false); e != nil {
+		t.Fatal(e)
+	}
+	if budget.reserve(1, 0, false) == nil {
+		t.Fatal("active response-byte reservation exceeded")
+	}
+	budget.finishResponse(200, 200)
+	if budget.reserve(1, 0, false) == nil {
+		t.Fatal("active bytes consumed cleanup reserve")
+	}
+	for i := 0; i < 12; i++ {
+		if e := budget.reserve(0, hybridCleanupResponseMax+1, true); e != nil {
+			t.Fatal("exact delete/get cleanup blocked", e)
+		}
+		budget.finishResponse(hybridCleanupResponseMax+1, 128)
+	}
+	calls := &hybridBudget{MaxCalls: 34, MaxBytes: 8 << 20}
+	for i := 0; i < 2; i++ {
+		if e := calls.reserve(0, 0, false); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if calls.reserve(0, 0, false) == nil {
+		t.Fatal("active calls consumed cleanup reserve")
+	}
+	for i := 0; i < 12; i++ {
+		if calls.reserve(0, 0, true) != nil {
+			t.Fatal("cloud cleanup call reserve lost")
+		}
+	}
+	drive := &hybridBudget{MaxCalls: 34, MaxBytes: 50000}
+	if drive.reserveDrive(5, false) != nil || drive.reserveDrive(5, false) != nil || drive.reserveDrive(5, false) == nil || drive.reserveDrive(50, true) != nil || drive.reserveDrive(5, true) != nil {
+		t.Fatal("Drive delete/get call reserve lost")
+	}
+}
+
+type hybridRejectBase struct {
+	*MemoryStore
+	called atomic.Int64
+}
+
+func (s *hybridRejectBase) Get(context.Context, string) ([]byte, error) {
+	s.called.Add(1)
+	return nil, errors.New("base must not see missing p0")
+}
+func (s *hybridRejectBase) Delete(context.Context, string) error {
+	s.called.Add(1)
+	return errors.New("base must not see missing p0")
+}
+func TestHybridMissingPriorityNameNeverFallsBackAndACKBytesBounded(t *testing.T) {
+	client, exit, name, sealed := hybridTestPair(t)
+	base := &hybridRejectBase{MemoryStore: NewMemoryStore()}
+	exit.base = base
+	if _, e := exit.Get(context.Background(), name); e == nil {
+		t.Fatal("missing p0 Get accepted")
+	}
+	if e := exit.Delete(context.Background(), name); e == nil {
+		t.Fatal("missing p0 Delete accepted")
+	}
+	if base.called.Load() != 0 {
+		t.Fatal("missing p0 reached Drive")
+	}
+	exit.ackBytes = hybridAckBytesMax
+	exit.receive = func(ObjectInfo) bool { t.Fatal("ACK-overflow record enqueued"); return false }
+	m := hybridTestMessage(t, client, name, sealed, "over-budget", time.Now())
+	if e := exit.ingest(context.Background(), m); e == nil {
+		t.Fatal("aggregate retained ACK-ID byte bound exceeded")
+	}
+}
+func TestHybridActualOPENDoesNotRedialAfterMuxClosedExpiry(t *testing.T) {
+	client, exit, _, _ := hybridTestPair(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	initial := []byte("one destination-side effect")
+	raw, e := encodeMuxBatch([]muxFrame{{Kind: muxFrameOpen, StreamID: 99, Payload: encodeMuxOpenPayload("example.test:443", initial)}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	key, _ := DeriveMuxLaneKeyV4(exit.secret, exit.sid, DirectionUp, exit.clientID, exit.runID, 0)
+	sealed, e := Seal(key, exit.sid, DirectionUp, 42, raw, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	name := muxObjectNameWithStreamIDs(exit.sid, DirectionUp, exit.clientID, exit.runID, "open-epoch", 99, []uint64{99}, 0, 42, 1, 0, 0, len(raw), true)
+	tunnel := &Tunnel{Data: exit, Secret: exit.secret, SessionID: exit.sid, ClientID: exit.clientID, RunID: exit.runID, Logger: log.New(io.Discard, "", 0)}
+	mux, e := newDriveMux(tunnel, "exit", DirectionDown, DirectionUp)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer mux.closeAll()
+	var dials, writes, acks atomic.Int64
+	written := make(chan struct{}, 2)
+	var observers sync.WaitGroup
+	mux.dialExit = func(context.Context, string) (net.Conn, error) {
+		dials.Add(1)
+		local, remote := net.Pipe()
+		observers.Add(1)
+		go func() {
+			defer observers.Done()
+			defer remote.Close()
+			got := make([]byte, len(initial))
+			if _, e := io.ReadFull(remote, got); e == nil && bytes.Equal(got, initial) {
+				writes.Add(1)
+				written <- struct{}{}
+			}
+			<-ctx.Done()
+		}()
+		return local, nil
+	}
+	exit.receive = func(info ObjectInfo) bool {
+		meta, ok := parseMuxObjectInfo(info)
+		if !ok {
+			t.Fatal("invalid OPEN metadata")
+		}
+		if e := mux.processMuxObject(ctx, meta); e != nil {
+			t.Error(e)
+			return false
+		}
+		return true
+	}
+	exit.ack = func(context.Context, string, string, any) (*HTTPResult, error) {
+		acks.Add(1)
+		return &HTTPResult{Status: 200}, nil
+	}
+	at := time.Now()
+	m := hybridTestMessage(t, client, name, sealed, "open-first", at)
+	if e = exit.ingest(ctx, m); e != nil {
+		t.Fatal(e)
+	}
+	select {
+	case <-written:
+	case <-ctx.Done():
+		t.Fatal("initial destination bytes missing")
+	}
+	if acks.Load() != 0 {
+		t.Fatal("OPEN ACK before mux processing/deferred Delete")
+	}
+	if e = exit.DeleteID(ctx, hybridID(name, sealed)); e != nil {
+		t.Fatal(e)
+	}
+	streamKey := muxStreamKey{ClientID: exit.clientID, RunID: exit.runID, StreamID: 99}
+	stream := mux.streamByKey(streamKey)
+	if stream == nil {
+		t.Fatal("real destination stream missing")
+	}
+	stream.close()
+	mux.streamsMu.Lock()
+	mux.closed[streamKey] = time.Now().Add(-time.Second)
+	mux.streamsMu.Unlock()
+	if mux.isClosedStream(streamKey) {
+		t.Fatal("could not expire mux closed claim")
+	}
+	exit.now = func() time.Time { return at.Add(muxClosedStreamTTL + time.Second) }
+	m.AckID = "open-redelivery-after-closed-ttl"
+	if e = exit.ingest(ctx, m); e != nil {
+		t.Fatal(e)
+	}
+	if dials.Load() != 1 || writes.Load() != 1 || acks.Load() != 2 {
+		t.Fatal("duplicate OPEN redialed/repeated initial bytes or lost ACK", dials.Load(), writes.Load(), acks.Load())
+	}
+	cancel()
+	mux.closeAll()
+	observers.Wait()
 }
