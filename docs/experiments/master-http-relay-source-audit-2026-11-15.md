@@ -62,9 +62,25 @@ encryption: a Skirk variant must keep its AEAD envelope opaque through Apps
 Script, including destination/control metadata. Raw encrypted TLS data usually
 will not compress materially. Direct DNS or host-bypass branches in the other
 project must not silently change Skirk's selected route. Separately, Skirk's
-current SOCKS UDP DNS A helper calls local `net.LookupIP`; platform tests should
-verify the actual resolver path under blocked/poisoned DNS before adding any
-cache. This review did not establish a runtime DNS leak.
+current raw SOCKS UDP DNS A helper calls local `net.LookupIP`. This is distinct
+from the normal Android and iOS VPN path: both configure HEV mapped DNS at
+`198.18.0.2`, synthesize addresses from `240.0.0.0/4`, then recover domain names
+for SOCKS forwarding; iOS also configures mapped IPv6. HEV intercepts those DNS
+packets before the Go UDP helper. Thus the helper observation alone does not
+establish that normal VPN DNS uses local resolution. Relevant local source is
+`clients/android/.../SkirkVpnService.kt`,
+`clients/ios/TunnelExtension/PacketBridge.swift`,
+`third_party/hev-socks5-tunnel/src/hev-socks5-tunnel.c`, and
+`third_party/hev-socks5-tunnel/src/misc/hev-utils.c`.
+
+A falsifiable platform check should block or poison external DNS only inside
+an isolated emulator/test network, preserve the pinned Google route, then
+query a fresh hostname through VPN mapped DNS and connect to the returned
+synthetic address. Require a SOCKS domain target at the exit, a successful
+connection, and no external local DNS packet for that hostname. Test raw SOCKS
+UDP DNS separately, plus literal IPv4/IPv6, expired mappings and an application
+using its own DoH. Record Android and iOS independently. No host-wide DNS or
+firewall change, runtime leak claim or cache implementation was made here.
 
 ## Documented limits, not multiplied by deployment IDs
 
