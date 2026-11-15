@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from skirk_bounded_recovery import CorrelationPending, RecoveryRejected
 from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
@@ -18,6 +19,7 @@ PROCESS_RETRY = 'mux process retry object=public-object lane=0 seq=2 priority=fa
 UPLOAD_RETRY = 'mux upload retry role=exit lane=0 priority=false attempt=1 error=timeout\n'
 CANDIDATE_SHA = "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f"
 MAIN_SHA = "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3"
+DIAGNOSTIC_SHA = "bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f"
 
 
 def snapshot(counts=None, reason="timeout", active=False):
@@ -200,6 +202,31 @@ class ReadUploadRecoveryTests(unittest.TestCase):
             self.rejected("terminal_auth_quota_or_backoff_log", lambda: self.guard._line("exit", line, 0))
         self.rejected("unclassified_mux_retry", lambda: self.guard._line("exit", UPLOAD_RETRY.replace("priority=false", "priority=true"), 0))
         self.rejected("unclassified_error_log", lambda: self.guard._line("exit", "unclassified subsystem error=timeout", 0))
+
+    def test_only_exact_new_diagnostic_retirement_from_approved_binary_is_observable(self):
+        line = "mux slot shadow stopped role=exit reason=patch_budget_exhausted authoritative=immutable"
+        self.rejected("unclassified_slot_shadow_stop", lambda: self.guard._line("exit", line, 0))
+        self.guard.binary_sha256 = "d" * 64
+        with mock.patch.object(ReadUploadRecovery, "RETIREMENT_DIAGNOSTICS", frozenset(("d" * 64,))):
+            self.guard._line("exit", line, 0)
+            for bad in (line.replace("patch_budget_exhausted", "transport_error"), line.replace("patch_budget_exhausted", "timeout"),
+                        line.replace("role=exit", "role=client"), line.replace("authoritative=immutable", "authoritative=other"),
+                        line + " unexpected=field"):
+                self.rejected("unclassified_slot_shadow_stop", lambda: self.guard._line("exit", bad, 0))
+        self.assertEqual(self.guard.report()["roles"]["exit"]["slot_patch_budget_retirements"], 1)
+        self.assertEqual(self.guard.arm_events, 0, "retirement is not an RPC timeout or error discount")
+
+    def test_frozen_diagnostic_registry_is_distinct_from_old_generic_executables(self):
+        line = "mux slot shadow stopped role=exit reason=patch_budget_exhausted authoritative=immutable"
+        for binary in (CANDIDATE_SHA, MAIN_SHA):
+            self.guard.binary_sha256 = binary
+            self.rejected("unclassified_slot_shadow_stop", lambda: self.guard._line("exit", line, 0))
+        self.guard = ReadUploadRecovery(self.directory, self.cohort, expected_frames=2, expected_bulk_bytes=4096,
+                                       binary_sha256=DIAGNOSTIC_SHA)
+        self.assertTrue(self.guard._eligible_failure("metadata", "1", "none", "context deadline exceeded"))
+        self.guard._line("exit", line, 0)
+        self.check(final=True)
+        self.assertEqual(self.guard.report()["bare_read_source_revision"], "6ecd41e92e44df1256c3bb8fb14a81ff6d8e0919")
 
     def test_malformed_operation_counter_cannot_bypass_recovery_policy(self):
         data = {"client": snapshot(), "exit": snapshot()}

@@ -30,6 +30,9 @@ no-status conditions. It is pinned to these frozen executable SHA-256 values:
 - `34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3`,
   source `2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a`: metadata, download, list;
   this main source has no private slot-cleanup label.
+- `bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f`,
+  clean diagnostic source `6ecd41e92e44df1256c3bb8fb14a81ff6d8e0919`: all four
+  read labels and the exact local PATCH-budget retirement diagnostic.
 
 `driveRequestLabel` restricts those labels to GET; the current private cleanup
 marker also explicitly checks GET. This exception records
@@ -136,12 +139,25 @@ own bounded publication interval.
 The full affected/existing suite then passed **84 tests in 3.778 seconds** after
 those additions. Its raw local log is `.skirk-runs/read-upload-tests-final.log`.
 
-Independent review also found a remaining live applicability issue: finite
-metadata-slot retirement can emit the generic `reason=transport_error`, which
-the observer still rejects. That string can also represent integrity or other
-failures. There is no blanket healthy-retirement exemption; a trustworthy,
-specific classification is needed before a long-lived slot-recovery cohort can
-claim to have exercised that transition.
+Independent review also found that frozen generic `reason=transport_error`
+cannot distinguish finite slot retirement from integrity/other failures. The
+separate diagnostic source adds a private sentinel at only the exact local
+64-PATCH refusal, preserving its original error text and closed-error semantics.
+Only its clean bba4 executable is registered for an exact
+`mux slot shadow stopped role={matching role} reason=patch_budget_exhausted authoritative=immutable`
+observation. Other reasons, roles, fields, unapproved binaries, generic closed,
+same-text errors, wrapped/joined errors and actual AEAD errors stay rejected.
+Retirement observations are reported separately; they neither spend a timeout
+allowance nor erase any RPC error/call/unit. No link state, wire, quota cap,
+fallback or scheduling behavior changed.
+
+The final affected/existing suite passed **86 tests in 3.791 seconds**, including
+exact diagnostic registry/role/reason checks and old-binary rejection. Log:
+`.skirk-runs/read-upload-tests-frozen.log`. Go diagnostic tests, source/runtime
+diff and build-stamp provenance are recorded in the separate
+`slot-patch-budget-diagnostic-2026-11-15.md` audit. The observer registry update
+does not rebuild or change that already frozen CLI. No live recovery or pool
+result is implied by these offline checks.
 
 Independent source review and a root-coordinated live lease are required before
 using this mode for any actual account measurement. Historical failed arms stay

@@ -34,7 +34,11 @@ class ReadUploadRecovery(NormalUploadRecovery):
             "63532c8a92fef95cdd30a8f1e45eb20dbe207d50", READ_OPS),
         "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3": (
             "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a", READ_OPS - {"slot_cleanup_probe"}),
+        "bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f": (
+            "6ecd41e92e44df1256c3bb8fb14a81ff6d8e0919", READ_OPS),
     }
+    RETIREMENT_DIAGNOSTICS = frozenset((
+        "bba4bc72e1964ab521d7e65f7739ae413fb601600231979cd7978d0ed026ae6f",))
 
     def __init__(self, directory, cohort, *, expected_frames, expected_bulk_bytes, expected_upload_bytes=0,
                  binary_sha256=None):
@@ -51,7 +55,7 @@ class ReadUploadRecovery(NormalUploadRecovery):
         for state in self.roles.values():
             state.update(op_drive={op: 0 for op in self.ALLOWED_OPS}, op_counter={},
                          op_times={op: [] for op in self.ALLOWED_OPS},
-                         lag_since=None, downloads={}, read_retries={}, upload_retries={}, observations=[])
+                         lag_since=None, downloads={}, read_retries={}, upload_retries={}, observations=[], retirements=0)
 
     @staticmethod
     def _fields(line):
@@ -104,6 +108,12 @@ class ReadUploadRecovery(NormalUploadRecovery):
 
     def _line(self, role, line, now):
         state = self.roles[role]
+        if "mux slot shadow stopped " in line:
+            match = re.search(r"mux slot shadow stopped role=(client|exit) reason=patch_budget_exhausted authoritative=immutable$", line)
+            if match is None or match.group(1) != role or self.binary_sha256 not in self.RETIREMENT_DIAGNOSTICS:
+                raise RecoveryRejected("unclassified_slot_shadow_stop")
+            state["retirements"] += 1
+            return
         if "drive request failed " in line:
             match = self.FAILED.search(line)
             if match is None or not self._eligible_failure(*match.groups()):
@@ -251,5 +261,6 @@ class ReadUploadRecovery(NormalUploadRecovery):
                                          reported_api_errors_by_operation=dict(state["op_counter"]),
                                          mux_read_timeout_events=sum(state["downloads"].values()),
                                          paired_read_retry_announcements=sum(state["read_retries"].values()),
-                                         failure_observations=list(state["observations"]))
+                                         failure_observations=list(state["observations"]),
+                                         slot_patch_budget_retirements=state["retirements"])
         return result
