@@ -1,9 +1,10 @@
 # Android document-reader device coverage
 
-Status: instrumentation source prepared; **not compiled or run yet**. The
-parent task owns Drive timing leases, so no Gradle process, emulator boot, or
-Google call has been started for this work. No transport or production reader
-implementation is changed by this test setup.
+Status: **all five actual device tests passed** in the authorized offline
+window. The final runner reported 0.665 seconds on the Pixel 7/API 36 emulator
+(emulator 37.2.13.0), with emulator networking disabled. No transport or
+production reader implementation changed, and no Google request was made by
+the tests. This is a controlled emulator result, not physical-phone coverage.
 
 ## Actual framework path
 
@@ -19,8 +20,9 @@ The provider exists only under `src/androidTest`; the production manifest has
 no fixture component. It must be exported for the instrumented target UID to
 call the separate test APK. Every fixture method checks the exact target or
 test-provider UID, the provider verifies its target's signing relationship,
-and session data needs an unpredictable 128-bit nonce. Shell/other-app UID
-access must be checked on device before treating the fixture as validated.
+and session data needs an unpredictable 128-bit nonce. A real `adb shell
+content call` was rejected with `SecurityException: Test provider caller
+rejected`; the manifest inspection found the provider only in the test APK.
 Only public strings and bounded test byte arrays are available; there are no
 profiles, credentials, network requests, or external-storage grants.
 
@@ -42,7 +44,7 @@ observations. Cancellation of a subsequent descriptor read is checked through
 close/release: ContentResolver's open cancellation transport need not remain
 connected after the descriptor has been returned.
 
-## Cases prepared
+## Cases passed
 
 1. Main cancellation responsiveness and actual remote signal delivery through
    the occupied cleanup executor, followed by a descriptor returned *after*
@@ -63,16 +65,56 @@ jobs, releases actual provider gates, joins readers, and resets the fixture.
 It never releases provider work synchronously on Main. Fixture classes and
 their process are removed with the test APK after the dedicated emulator run.
 
-## Planned execution and evidence
+## Execution and evidence
 
-Use the dedicated Pixel 7/API 36 emulator only after the parent releases CPU
-and emulator activity. Preserve the installed app APK and private app prefs
-before installing the test target; use public fixture data only. Build the
-test APK with `AndroidJUnitRunner`, run the class above, retain the test report
-and sanitized device log under ignored `.skirk-runs`, inspect the test-only
-manifest/component and unrelated-UID denial, restore the app/prefs, remove the
-test APK and fixture process, and shut the emulator down. A provider or API
-limitation is a test gap until observed and resolved, not a passed case.
+The dedicated `Pixel_7_API_36` ran with `-read-only -no-snapshot -no-window`.
+The initial app was absent, verified before installation. Both app and test
+APK were removed afterward, their processes were absent, original network
+settings were restored, and the emulator exited. `adb devices` then showed
+no devices. Read-only disk mode preserved the original AVD disk and app state.
+
+Build command (from `clients/android`, with the installed SDK/JDK configured):
+
+```sh
+SKIRK_ANDROID_NDK_VERSION=27.2.12479018 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain --no-daemon
+```
+
+The full first build passed in 65 seconds. The initial attempt with this
+checkout's default NDK 27.0 failed because that NDK was not installed; selecting
+the existing 27.2 toolchain fixed the environment without changing source.
+
+The first real run exposed a fixture packaging problem: AGP omits target-app
+Kotlin dependencies from the test APK, so the separate provider process lacked
+Kotlin Intrinsics. The provider is now Java with framework/JDK dependencies
+only. The first Java fixture then failed all five cases before file-open
+observations because its typed-asset dispatch was incomplete. Implementing the
+typed and ordinary asset entry points with the same cancellation-aware path
+resolved the fixture. Both unsuccessful logs are retained; they are not
+production-reader failures or passing device evidence.
+
+Final invocation:
+
+```sh
+adb -s emulator-5554 shell am instrument -w -r -e class app.skirk.client.ProfileDocumentReaderDeviceTest app.skirk.client.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+All five cases passed after the last 10-second incremental test-APK build.
+The controlled main-thread cancellation measured **0.077292 ms** in that
+single emulator sample; the real remote callback ran on `binder:4306_2`.
+Responsiveness, occupied-executor causal ordering, retained permits, eventual
+descriptor closure, and stale-result ownership are assertions in the tests,
+not inferred solely from that timing or thread name.
+
+Private raw logs, validation/cleanup JSON, and shell-UID rejection are in
+`.skirk-runs/android-reader-device-20261115/` in the test worktree. Final APK
+SHA-256 values:
+
+- app: `8c493e67410d2f905eba22d332c04cd386479317cbc43dc4855503015fe20d25`
+- test: `0fd4ccb6f4167a9297eea513070c967f53ba30d0fc4c79c7cf96ae8e2453199b`
+
+No arbitrary document provider or physical phone is established by these
+cases. A permanently unresponsive provider can still occupy the bounded
+reader/cleanup capacity; cancellation does not forcibly terminate its IPC.
 
 Dependencies are test-only stable AndroidX Test runner 1.7.0 and JUnit extension
 1.3.0, listed in the official stable release notes. No Espresso/Compose UI

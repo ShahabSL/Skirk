@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+private const val PROFILE_READER_TEST_AUTHORITY = ProfileReaderTestProvider.AUTHORITY
+
 @RunWith(AndroidJUnit4::class)
 class ProfileDocumentReaderDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -230,7 +232,8 @@ class ProfileDocumentReaderDeviceTest {
             document(ByteArray(256 * 1024 + 1) { 120 }) to false,
         )
         for ((d, success) in cases) {
-            assertEquals(success, awaitResult(read(d)).isSuccess)
+            val result = awaitResult(read(d))
+            assertEquals(result.exceptionOrNull()?.toString(), success, result.isSuccess)
             await("completed actual read did not close descriptor") { snapshot(d).getInt("closes") == 1 }
         }
     }
