@@ -371,17 +371,21 @@ objects. The shadow lane is not a promotion candidate from this run.
 At 4 Hz polling in both directions, the two known-ID GETs alone would cost
 2,400 units per minute per active pair. Four one-way metadata PATCHes per
 second add 12,000 units per minute before acknowledgements, retries, or other
-traffic. A single shared 1,000,000-unit project cannot carry 200,000 such
-active pairs; self-managed projects distribute project quota but add setup and
-account-level limits. A fixed slot should therefore be considered only for
+traffic. Dividing one project's 1,000,000-unit/minute limit by polling alone
+gives at most **416 continuously active pairs**; adding those one-way PATCHes
+lowers that arithmetic ceiling to **69 pairs** before other traffic. These are
+quota-only upper bounds, not observed supported-user counts. A single shared
+project cannot carry 200,000 such active pairs; self-managed projects
+distribute project quota but add setup and account-level limits. A fixed slot
+should therefore be considered only for
 bounded interactive traffic, alongside immutable media objects for bulk.
 
 ## Platform validation on this branch
 
 Fresh current-branch builds passed the full preflight, Android debug
-sidecar/APK build, iOS Simulator build and two UI tests, macOS ARM64 Tauri
-bundle, and Windows x64 GUI/sidecar cross-compile with portable-ZIP CRC and
-contents checks. Logs are under
+sidecar/APK build, iOS Simulator build and three passing UI tests (one
+additional live VPN test skipped), macOS ARM64 Tauri bundle, and Windows x64 GUI/sidecar cross-compile
+with portable-ZIP CRC and final-sidecar hash checks. Logs are under
 `.skirk-runs/platform-build-current-20261114/`. Runtime evidence remains
 narrower: the [bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
 verified an HTTPS page plus exact 8 MiB uploads and downloads on a Pixel
