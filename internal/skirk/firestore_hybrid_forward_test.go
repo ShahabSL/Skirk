@@ -70,8 +70,7 @@ func (s *fsHybridPriorityStore) ListFresh(ctx context.Context, prefix string, si
 }
 func (s *fsHybridPriorityStore) ListFreshStatus(ctx context.Context, prefix string, since time.Time) (ObjectListInfo, error) {
 	if fsHybridPriorityQuery([]string{prefix}) {
-		s.signal(s.discoverWake)
-		return s.virtualPage([]string{prefix}), nil
+		return s.priorityPage(ctx, []string{prefix})
 	}
 	base, ok := s.base.(FreshListStatusStore)
 	if !ok {
@@ -90,8 +89,7 @@ func (s *fsHybridPriorityStore) ListFreshStatus(ctx context.Context, prefix stri
 }
 func (s *fsHybridPriorityStore) ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, token string) (ObjectListInfo, error) {
 	if fsHybridPriorityQuery([]string{prefix}) {
-		s.signal(s.discoverWake)
-		return s.virtualPage([]string{prefix}), nil
+		return s.priorityPage(ctx, []string{prefix})
 	}
 	base, ok := s.base.(FreshListPageStatusStore)
 	if !ok {
@@ -110,8 +108,7 @@ func (s *fsHybridPriorityStore) ListFreshPageStatus(ctx context.Context, prefix 
 }
 func (s *fsHybridPriorityStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, token string, maxPages int) (ObjectListInfo, error) {
 	if fsHybridPriorityQuery([]string{prefix}) {
-		s.signal(s.discoverWake)
-		return s.virtualPage([]string{prefix}), nil
+		return s.priorityPage(ctx, []string{prefix})
 	}
 	base, ok := s.base.(AdaptiveMuxListPageStatusStore)
 	if !ok {

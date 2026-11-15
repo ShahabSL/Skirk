@@ -64,7 +64,6 @@ type fsHybridPriorityStore struct {
 	wake              chan struct{}
 	fallbackWake      chan struct{}
 	fallbackJobs      chan *fsHybridOutbound
-	prefetch          chan struct{}
 	discoverWake      chan struct{}
 	prefetchJobs      chan ObjectInfo
 	prefetchAdmission chan struct{}
@@ -113,7 +112,7 @@ func newFSHybridPriorityStore(parent context.Context, base BlobStore, carrier fs
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, cfg.Duration)
-	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), prefetch: make(chan struct{}, 2), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{}, 1)}
+	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{}, 1)}
 	readCtx, stop := context.WithTimeout(ctx, cfg.OperationTimeout)
 	s.own, err = carrier.ReadOwn(readCtx)
 	stop()
@@ -343,6 +342,14 @@ func fsHybridTransient(err error) bool {
 }
 
 func fsHybridPrecondition(err error) bool {
+	if err == nil || IsTerminalOAuthTokenError(err) || errors.Is(err, errFSHybridIntegrity) || errors.Is(err, errFSHybridBounds) || errors.Is(err, errFSHybridClosed) {
+		return false
+	}
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		if _, joined := cause.(interface{ Unwrap() []error }); joined {
+			return false
+		}
+	}
 	var api *GoogleAPIError
 	if !errors.As(err, &api) {
 		return false
@@ -543,6 +550,10 @@ func (s *fsHybridPriorityStore) runFallbackWorker() {
 				r.pubClosed = true
 			}
 			s.mu.Unlock()
+			if err != nil && !fsHybridTransient(err) {
+				s.fail(err)
+				return
+			}
 		}
 	}
 }

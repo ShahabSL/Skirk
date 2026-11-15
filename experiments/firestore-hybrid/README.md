@@ -150,6 +150,28 @@ performance. The real pinned browser SDK/loopback bridge must be exercised
 separately and then in the controlled owned live fixture, never replaced by a
 native/direct path.
 
+Current component evidence (2026-11-15; not a live transport result):
+
+- The isolated carrier at `22d9f06` passed its full Go suite, vet, targeted
+  real pinned SDK/loopback REST/reconnect/cancel cases and repeated race checks.
+  Its 15 Node cases include natural child exit and 16 seconds of empty-poll
+  continuity. The prototype now integrates that carrier unchanged.
+- Combined deterministic store cases passed three times under the race
+  detector. They exercise exact committed-write readback, byte-identical
+  conditional retry, hard failures that cannot be laundered by another write,
+  lost notifications with immutable physical-first fallback, initial-only empty
+  bootstrap, reconnect versus authorization failure, late conditional writes
+  after document deletion, and close waiting for an unresponsive writer.
+- An 80-object first page plus a nonempty next-page token and one more object
+  proves page-tail retention beyond the old 16-object boundary. With both
+  readers blocked and all 66 admission slots occupied, the actual sequential
+  mux poll still executes normal discovery; after release all 81 identities are
+  dispatched once. This is a counter-controlled offline proof, not a latency
+  benchmark.
+- The actual full mixed SOCKS proof and OPEN replay/dial proof are still being
+  built. These component results do not authorize a live hybrid performance or
+  production-security claim.
+
 ## Official API references
 
 - [Firestore REST PATCH](https://firebase.google.com/docs/firestore/reference/rest/v1/projects.databases.documents/patch)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 )
@@ -254,6 +255,17 @@ func (s *fsHybridPriorityStore) virtualPage(contains []string) ObjectListInfo {
 	}
 	return result
 }
+
+func (s *fsHybridPriorityStore) priorityPage(ctx context.Context, contains []string) (ObjectListInfo, error) {
+	s.mu.Lock()
+	closed := s.closed || s.ctx.Err() != nil || ctx.Err() != nil
+	s.mu.Unlock()
+	if closed {
+		return ObjectListInfo{}, errFSHybridClosed
+	}
+	s.signal(s.discoverWake)
+	return s.virtualPage(contains), nil
+}
 func (s *fsHybridPriorityStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
 	result, err := s.ListFreshContainsPageStatus(ctx, []string{prefix}, time.Time{}, "", 4)
 	return result.Objects, err
@@ -265,14 +277,7 @@ func (s *fsHybridPriorityStore) ListFreshContainsPageStatus(ctx context.Context,
 	if fsHybridPriorityQuery(contains) {
 		// Core polls p0 before p1 in one goroutine. Never wait for Drive
 		// priority prefetch here; its separate owner retains every page tail.
-		s.mu.Lock()
-		closed := s.closed || s.ctx.Err() != nil
-		s.mu.Unlock()
-		if closed || ctx.Err() != nil {
-			return ObjectListInfo{}, errFSHybridClosed
-		}
-		s.signal(s.discoverWake)
-		return s.virtualPage(contains), nil
+		return s.priorityPage(ctx, contains)
 	}
 	call, done, err := s.begin(ctx)
 	if err != nil {
@@ -375,6 +380,12 @@ func (s *fsHybridPriorityStore) Snapshot() map[string]int64 {
 	result["send_payload_bytes"] = int64(s.state.outRetained)
 	result["processed_prefix"] = int64(s.state.rxProcessed)
 	result["peer_processed_prefix"] = int64(s.state.acked)
+	result["pending_prefetch"] = int64(len(s.prefetchPending))
+	result["queued_prefetch"] = int64(len(s.prefetchJobs))
+	result["queued_fallback"] = int64(len(s.fallbackJobs))
+	if s.joined {
+		result["joined"] = 1
+	}
 	return result
 }
 
@@ -395,9 +406,24 @@ func (s *fsHybridPriorityStore) Close() error {
 		// No writer/base operation can create a further physical copy. Retain
 		// all metadata tombstones until GC; late mux callbacks are closed noops.
 		s.mu.Lock()
+		// Every owner is joined before queued descriptors are discarded. A
+		// canceled owner is not a resource-cleanup proof; immutable identities
+		// and generated physical IDs remain below for exact external cleanup.
+		for len(s.prefetchJobs) > 0 {
+			<-s.prefetchJobs
+		}
+		for len(s.prefetchAdmission) > 0 {
+			<-s.prefetchAdmission
+		}
+		for len(s.fallbackJobs) > 0 {
+			<-s.fallbackJobs
+		}
+		clear(s.prefetchPending)
+		s.state.outQueue = nil
 		for _, r := range s.state.outNames {
 			r.sealed = nil
 			r.record.Sealed = nil
+			r.fbQueued = false
 		}
 		for _, entry := range s.state.rxNames {
 			entry.sealed = nil
@@ -435,5 +461,6 @@ func (s *fsHybridPriorityStore) CleanupTargets() ([]fsHybridCleanupTarget, error
 	for id, name := range owned {
 		result = append(result, fsHybridCleanupTarget{ID: id, Name: name})
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, nil
 }
