@@ -101,7 +101,7 @@ disposition rather than adopting every assertion.
 | 17 | Prewritten media slabs with range reads | Requires index/rendezvous; no streaming append assumption. |
 | 18 | Whole-file media overwrite ring | Prior slow-tail evidence; explicit overwrite/revision semantics required. |
 | 19 | Resumable upload with receiver tail reads | Undocumented partial visibility; do not implement as if guaranteed. |
-| 20 | Pub/Sub StreamingPull control plane plus Drive bulk | Not Drive-only; pinned-front API reachability must be proved, not assumed impossible or available. |
+| 20 | Pub/Sub StreamingPull control plane plus Drive bulk | Not Drive-only. A later unary Pub/Sub probe proved this API authority reachable through the selected Google front; persistent StreamingPull remains a separate test. |
 
 The audit underemphasized the **pre-generated immutable ID credit queue**.
 That deserves a separate comparison against mutable rings: no repeated
@@ -117,6 +117,15 @@ per-message deletes but still needs bounded unacknowledged records, teardown,
 orphan recovery, and exact-ID cleanup. Notification/HTTP3 asymmetry can change
 costs, but neither provides free latency improvement. These corrections are
 part of the review rather than silently adopting model suggestions.
+
+A subsequent [encrypted unary Pub/Sub probe](experiments/pubsub-front-2026-11-15.md)
+at commit `438bdd9` verified eight messages through pinned `www.google.com`
+SNI with HTTP authority `pubsub.googleapis.com` and cleaned its topic and
+subscription. It refutes the generated answer's automatic claim that a Pub/Sub
+client violates the Google-front reachability constraint. It does not prove a
+full tunnel or persistent StreamingPull. Pub/Sub still needs its own Cloud
+credentials, IAM, resource lifecycle, and explicit setup; a Drive-only OAuth
+grant cannot silently provide those permissions.
 
 The audit also misread the implementation status of metadata-only priority:
 it is already implemented and benchmarked on the research branch. Its

@@ -12,8 +12,11 @@ also disabled all configured MCP servers.
 The response overstates causal evidence about connection stalls, omits slot
 lifecycle cleanup, misreads already implemented metadata-only support, assumes
 comment ordering and description revisions, and treats untested Pub/Sub front
-reachability as impossible. These assertions are preserved below so they can be
-audited; they are not adopted as engineering facts.
+reachability as impossible. A later encrypted unary Pub/Sub probe at `438bdd9`
+proved that API authority reachable through the Google front. These assertions
+are preserved below so they can be audited; they are not adopted as engineering
+facts. Persistent StreamingPull and a full hybrid still need separate tests
+and explicit Cloud/IAM setup.
 
 ---
 
