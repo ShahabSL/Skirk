@@ -328,6 +328,28 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 	if err = os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
+	for _, mutate := range []func(*relayResearchPrivateSettings){
+		func(v *relayResearchPrivateSettings) { v.ClientID = "client/other" },
+		func(v *relayResearchPrivateSettings) { v.RunID = "run/other" },
+		func(v *relayResearchPrivateSettings) { v.OuterKeyHex = v.HTTPAuth },
+		func(v *relayResearchPrivateSettings) { v.OuterKeyHex = v.ScriptAuth },
+		func(v *relayResearchPrivateSettings) { v.MuxSecretHex = v.HTTPAuth },
+		func(v *relayResearchPrivateSettings) { v.MuxSecretHex = v.ScriptAuth },
+	} {
+		bad := s
+		mutate(&bad)
+		raw, marshalErr := json.Marshal(bad)
+		if marshalErr != nil || os.WriteFile(path, raw, 0600) != nil {
+			t.Fatal("could not prepare invalid private settings")
+		}
+		if _, _, _, readErr := rrReadPrivateSettings(dir); !errors.Is(readErr, errRelayResearchBounds) {
+			t.Fatal("unsafe identity or reused credentials accepted", readErr)
+		}
+	}
+	raw, _ := json.Marshal(s)
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
