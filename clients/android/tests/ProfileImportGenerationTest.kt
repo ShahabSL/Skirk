@@ -20,6 +20,14 @@ fun main() {
     imports.begin("replace:B")
     check(!imports.owns(pickerA, "replace:B"))
     check(!imports.owns(pickerA, "replace:A"))
+    val externalA = imports.beginPicker("replace:A")!!
+    imports.cancel()
+    check(imports.beginPicker("replace:B") == null) // No unidentifiable overlapping OS results.
+    check(imports.finishPicker(replacement = false) == null) // Wrong launcher cannot consume it.
+    check(imports.finishPicker(replacement = true) == externalA)
+    check(!imports.owns(externalA, "replace:A"))
+    check(imports.beginPicker("replace:B") != null)
+    imports.finishPicker(replacement = true)
     val destroyed = imports.begin("new")
     imports.cancel()
     completion(destroyed, "new", "after destroy/cancel")()

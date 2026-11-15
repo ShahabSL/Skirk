@@ -212,14 +212,12 @@ fun ConfigScreen() {
     val profileImports = remember { ProfileImportGeneration() }
     var profileReadJob by remember { mutableStateOf<Job?>(null) }
     var profileReadTarget by remember { mutableStateOf<String?>(null) }
-    var profilePickerRequest by remember { mutableStateOf<ProfileImportGeneration.Request?>(null) }
 
     fun cancelProfileRead() {
         profileImports.cancel()
         profileReadJob?.cancel()
         profileReadJob = null
         profileReadTarget = null
-        profilePickerRequest = null
     }
     DisposableEffect(Unit) {
         onDispose { cancelProfileRead() }
@@ -302,8 +300,7 @@ fun ConfigScreen() {
         }
     }
     val replacementFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        val request = profilePickerRequest
-        profilePickerRequest = null
+        val request = profileImports.finishPicker(replacement = true)
         val target = replacingProfileId?.let { "replace:$it" }.orEmpty()
         if (uri != null && request != null && request.target.startsWith("replace:") &&
             profileImports.owns(request, target) && !connectionStore.read().running) {
@@ -311,8 +308,7 @@ fun ConfigScreen() {
         }
     }
     val newProfileFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        val request = profilePickerRequest
-        profilePickerRequest = null
+        val request = profileImports.finishPicker(replacement = false)
         if (uri != null && request != null && request.target == "new" &&
             profileImports.owns(request, "new") && !connectionStore.read().running) readPickedProfile(uri, "new")
     }
@@ -641,8 +637,7 @@ fun ConfigScreen() {
                         onPaste = ::pasteProfileFromClipboard,
                         onChooseFile = {
                             cancelProfileRead()
-                            profilePickerRequest = profileImports.begin("new")
-                            newProfileFilePicker.launch("*/*")
+                            profileImports.beginPicker("new")?.let { newProfileFilePicker.launch("*/*") }
                         },
                         readingFile = profileReadTarget == "new",
                         onCancelFile = ::cancelProfileRead,
@@ -687,8 +682,7 @@ fun ConfigScreen() {
                             onPaste = ::pasteProfileFromClipboard,
                             onChooseFile = {
                             cancelProfileRead()
-                            profilePickerRequest = profileImports.begin("new")
-                            newProfileFilePicker.launch("*/*")
+                            profileImports.beginPicker("new")?.let { newProfileFilePicker.launch("*/*") }
                         },
                         readingFile = profileReadTarget == "new",
                         onCancelFile = ::cancelProfileRead,
@@ -757,8 +751,9 @@ fun ConfigScreen() {
                 },
                 onChooseFile = {
                     cancelProfileRead()
-                    replacingProfileId?.let { profilePickerRequest = profileImports.begin("replace:$it") }
-                    replacementFilePicker.launch("*/*")
+                    replacingProfileId?.let { target ->
+                        profileImports.beginPicker("replace:$target")?.let { replacementFilePicker.launch("*/*") }
+                    }
                 },
                 readingFile = profileReadTarget == "replace:$replacingProfileId",
                 onCancelFile = ::cancelProfileRead,
