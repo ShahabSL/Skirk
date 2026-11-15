@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -370,7 +372,7 @@ func TestHybridFullSOCKSMixedBytesAndDuplicateCarrier(t *testing.T) {
 	bind(exit, down, up)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	rows, e := hybridSOCKSMeasurements(ctx, cfg, client, exit, client, exit, 4<<20)
+	rows, e := hybridSOCKSMeasurements(ctx, cfg, client, exit, client, exit, 4<<20, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -630,4 +632,43 @@ func TestHybridActualOPENDoesNotRedialAfterMuxClosedExpiry(t *testing.T) {
 	cancel()
 	mux.closeAll()
 	observers.Wait()
+}
+
+func TestHybridProgressJournalConcurrentRowsAndFailureCancel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "progress.jsonl")
+	file, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	progress := &hybridProgress{file: file, cancel: cancel}
+	var writers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		writers.Add(1)
+		go func(i int) { defer writers.Done(); progress.write(map[string]any{"phase": "sample", "sequence": i}) }(i)
+	}
+	writers.Wait()
+	if e = progress.error(); e != nil {
+		t.Fatal(e)
+	}
+	raw, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte{'\n'})
+	if len(lines) != 8 {
+		t.Fatal("journal rows lost", len(lines))
+	}
+	for _, line := range lines {
+		var row map[string]any
+		if json.Unmarshal(line, &row) != nil || row["phase"] != "sample" {
+			t.Fatal("journal row interleaved")
+		}
+	}
+	file.Close()
+	progress.write(map[string]any{"phase": "failure"})
+	if progress.error() == nil || ctx.Err() == nil {
+		t.Fatal("journal failure did not cancel bounded active work")
+	}
 }

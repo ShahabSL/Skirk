@@ -112,6 +112,35 @@ type hybridLiveRow struct {
 	SHA256    string  `json:"sha256"`
 	OK        bool    `json:"ok"`
 }
+type hybridProgress struct {
+	mu     sync.Mutex
+	file   *os.File
+	err    error
+	cancel context.CancelFunc
+}
+
+func (p *hybridProgress) write(value any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.err != nil {
+		return
+	}
+	raw, e := json.Marshal(value)
+	if e == nil {
+		_, e = p.file.Write(append(raw, '\n'))
+	}
+	if e == nil {
+		e = p.file.Sync()
+	}
+	if e != nil {
+		p.err = e
+		if p.cancel != nil {
+			p.cancel()
+		}
+	}
+}
+func (p *hybridProgress) error() error { p.mu.Lock(); defer p.mu.Unlock(); return p.err }
+
 type hybridCloudResources struct {
 	topics, subs []string
 	control      hybridCall
@@ -178,7 +207,7 @@ func hybridBindMux(store *hybridStore, mux *driveMux, ctx context.Context) {
 		return mux.enqueueMuxObject(ctx, meta)
 	}
 }
-func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore) ([]hybridLiveRow, error) {
+func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore, record func(hybridLiveRow)) ([]hybridLiveRow, error) {
 	var rows []hybridLiveRow
 	sid := client.sid
 	seq := uint64(0)
@@ -248,7 +277,11 @@ func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore) ([]h
 					return rows, e
 				}
 				h := sha256.Sum256(payload)
-				rows = append(rows, hybridLiveRow{Kind: "one_way_256b", Pool: pool, Sequence: int(seq), Bytes: 256, PublishMS: float64(publish.Microseconds()) / 1000, TotalMS: float64(got.at.Sub(start).Microseconds()) / 1000, SHA256: hex.EncodeToString(h[:]), OK: true})
+				row := hybridLiveRow{Kind: "one_way_256b", Pool: pool, Sequence: int(seq), Bytes: 256, PublishMS: float64(publish.Microseconds()) / 1000, TotalMS: float64(got.at.Sub(start).Microseconds()) / 1000, SHA256: hex.EncodeToString(h[:]), OK: true}
+				rows = append(rows, row)
+				if record != nil {
+					record(row)
+				}
 			case <-ctx.Done():
 				exit.stop()
 				return rows, ctx.Err()
@@ -263,7 +296,7 @@ func hybridPoolMeasurements(ctx context.Context, client, exit *hybridStore) ([]h
 }
 
 // Exercise real TCP/SOCKS/mux code. User traffic and external targets are absent.
-func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitData BlobStore, clientHybrid, exitHybrid *hybridStore, bulkBytes int) ([]hybridLiveRow, error) {
+func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitData BlobStore, clientHybrid, exitHybrid *hybridStore, bulkBytes int, record func(hybridLiveRow)) ([]hybridLiveRow, error) {
 	payload := make([]byte, bulkBytes)
 	if _, e := rand.Read(payload); e != nil {
 		return nil, e
@@ -409,6 +442,9 @@ func hybridSOCKSMeasurements(ctx context.Context, cfg *Config, clientData, exitD
 			failures = append(failures, errors.New("hybrid HTTP response status/bytes/hash mismatch"))
 		}
 		mu.Unlock()
+		if record != nil {
+			record(row)
+		}
 	}
 	request("warm_text", "/text", nil, 0)
 	for _, direction := range []string{"download", "upload"} {
@@ -568,6 +604,42 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	var rows []hybridLiveRow
 	var runErr error
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	journalFile, journalErr := os.OpenFile(out+".progress.jsonl", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if journalErr != nil {
+		cancel()
+		t.Fatal("fresh private progress journal required")
+	}
+	defer journalFile.Close()
+	progress := &hybridProgress{file: journalFile, cancel: cancel}
+	began := time.Now()
+	progress.write(map[string]any{"phase": "setup", "mode": mode, "elapsed_ms": 0})
+	clientHybrid.event = func(kind string) {
+		progress.write(map[string]any{"phase": "operation", "receiver": "client", "kind": kind, "elapsed_ms": time.Since(began).Milliseconds()})
+	}
+	exitHybrid.event = func(kind string) {
+		progress.write(map[string]any{"phase": "operation", "receiver": "exit", "kind": kind, "elapsed_ms": time.Since(began).Milliseconds()})
+	}
+	record := func(row hybridLiveRow) {
+		progress.write(map[string]any{"phase": "sample", "elapsed_ms": time.Since(began).Milliseconds(), "row": row})
+		t.Logf("hybrid sample kind=%s pool=%d sequence=%d bytes=%d total_ms=%.3f ok=%t", row.Kind, row.Pool, row.Sequence, row.Bytes, row.TotalMS, row.OK)
+	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				progress.write(map[string]any{"phase": "heartbeat", "elapsed_ms": time.Since(began).Milliseconds(), "pubsub": budget.snapshot(), "client_published": clientHybrid.published.Load(), "exit_published": exitHybrid.published.Load(), "client_delivered": clientHybrid.delivered.Load(), "exit_delivered": exitHybrid.delivered.Load(), "empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load()})
+			}
+		}
+	}()
+	defer func() { stopHeartbeat(); <-heartbeatDone }()
+
 	if mode != "drive" {
 		runErr = cloud.create(ctx, label)
 		clientHybrid.topic = cloud.topics[0]
@@ -577,13 +649,14 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 	}
 	if runErr == nil {
 		if mode == "pools" {
-			rows, runErr = hybridPoolMeasurements(ctx, clientHybrid, exitHybrid)
+			rows, runErr = hybridPoolMeasurements(ctx, clientHybrid, exitHybrid, record)
 		} else if mode == "hybrid" {
-			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientHybrid, exitHybrid, clientHybrid, exitHybrid, 16<<20)
+			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientHybrid, exitHybrid, clientHybrid, exitHybrid, 16<<20, record)
 		} else {
-			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientDrive, exitDrive, nil, nil, 16<<20)
+			rows, runErr = hybridSOCKSMeasurements(ctx, cfg, clientDrive, exitDrive, nil, nil, 16<<20, record)
 		}
 	}
+	progress.write(map[string]any{"phase": "active_complete", "elapsed_ms": time.Since(began).Milliseconds(), "rows": len(rows)})
 	cancel()
 	clientHybrid.stop()
 	exitHybrid.stop()
@@ -661,6 +734,12 @@ func TestLivePinnedPubSubHybrid(t *testing.T) {
 		}
 	}
 	report := map[string]any{"mode": mode, "route": cfg.Route.Mode, "sni": "www.google.com", "project": "skirk-p", "rows": rows, "pubsub": budget.snapshot(), "client_drive_active": activeClientQuota, "exit_drive_active": activeExitQuota, "drive_cleanup": cleanupDrive.QuotaSnapshot(), "drive_guard_reserved_units": driveBudget.snapshot()["request_body_bytes"], "cleanup_verified": cleanupOK && cloudCleanup, "client_pubsub_published": clientHybrid.published.Load(), "exit_pubsub_published": exitHybrid.published.Load(), "client_pubsub_delivered": clientHybrid.delivered.Load(), "exit_pubsub_delivered": exitHybrid.delivered.Load(), "pubsub_duplicates": clientHybrid.duplicates.Load() + exitHybrid.duplicates.Load(), "pubsub_ack_ids": clientHybrid.acked.Load() + exitHybrid.acked.Load(), "pubsub_empty_pulls": clientHybrid.emptyPulls.Load() + exitHybrid.emptyPulls.Load(), "experimental": true, "no_product_scope_export": true}
+	stopHeartbeat()
+	<-heartbeatDone
+	progress.write(map[string]any{"phase": "cleanup_complete", "elapsed_ms": time.Since(began).Milliseconds(), "verified": cleanupOK && cloudCleanup})
+	if journalErr := progress.error(); journalErr != nil {
+		runErr = errors.Join(runErr, errors.New("private progress journal write failed"))
+	}
 	ok := runErr == nil && cleanupOK && cloudCleanup
 	if runErr != nil {
 		report["failure"] = runErr.Error()

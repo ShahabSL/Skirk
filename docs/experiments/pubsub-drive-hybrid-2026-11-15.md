@@ -124,3 +124,77 @@ publish/subscribe IAM, isolated resources per peer, provisioning/revocation,
 renewable least-privilege credentials, quotas and cost/billing review. No owner
 or `cloud-platform` token is exported in a Skirk product profile. The current
 single-client test does not establish 200,000-user capacity or durable recovery.
+
+## Retained live pool experiment
+
+On 2026-11-15, source `f2109da`, binary SHA-256
+`f7a3d059b9b785b4ceeb6dd167492f4825357e6984c44277cd766a7bdd300330`,
+mode `pools` passed all eighteen authenticated synthetic records in 203.48 s.
+There were 97 REST calls, 18,507 request-body bytes, 23,353 response-body bytes,
+18 ACK IDs, thirteen empty pull responses, zero duplicate deliveries and zero
+Drive units. All four resources returned 404 immediately and after 31 seconds;
+the private recovery ledger and borrowed token were removed. The private original
+report is `.skirk-runs/hybrid-pools-f2109da-20261115.json`.
+
+All publish-start → authenticated-receive samples are retained below. Pool size
+was changed by stopping/joining the previous receiver workers and starting the
+next condition on the same subscription. No 30-second tail was excluded.
+
+| Pool | Sequence | Publish response ms | Authenticated one-way ms |
+| ---: | ---: | ---: | ---: |
+| 1 | 1 | 250.364 | 2470.755 |
+| 1 | 2 | 73.529 | 732.313 |
+| 1 | 3 | 73.254 | 836.566 |
+| 2 | 4 | 66.902 | 30812.658 |
+| 2 | 5 | 74.878 | 705.738 |
+| 2 | 6 | 63.955 | 213.133 |
+| 4 | 7 | 64.562 | 30902.708 |
+| 4 | 8 | 76.421 | 212.348 |
+| 4 | 9 | 68.309 | 170.618 |
+| 4 | 10 | 87.319 | 30756.158 |
+| 4 | 11 | 132.739 | 170.495 |
+| 4 | 12 | 86.491 | 170.553 |
+| 2 | 13 | 65.958 | 30913.051 |
+| 2 | 14 | 79.726 | 180.852 |
+| 2 | 15 | 70.079 | 169.941 |
+| 1 | 16 | 80.071 | 30929.909 |
+| 1 | 17 | 69.355 | 170.222 |
+| 1 | 18 | 67.298 | 167.916 |
+
+Pool medians (six samples each) were 784.440, 459.436 and 191.483 ms for
+one/two/four workers, but each pool also had a roughly 30.9-second maximum.
+These conditions do not establish a clean worker-count speed ranking. Every
+post-restart condition's first sample incurred the large delay, including the
+last one-worker condition. One plausible inference is that an outstanding pull
+canceled at the client can still claim a subsequent message before server-side
+cancellation takes effect, leaving it unavailable until the 30-second ACK lease
+expires. This has not been isolated experimentally. The results do not prove
+that `maxMessages=8` causes batching delay. A deliberate cancel/reconnect test
+with different ACK deadlines can discriminate the lease hypothesis.
+
+The next full hybrid test uses fresh subscriptions and a stable two-worker
+receiver, keeping the carrier unchanged. New runs append and sync a private
+`.progress.jsonl` after every sample plus five-second counters and categorized
+empty/timeout/cancel/error worker events, without payloads, ACK IDs or tokens.
+The report remains a separate final artifact; a journal failure cancels active
+work and is reported after cleanup. This makes a failed or slow run inspectable
+before its final deadline.
+
+## Scale and cost require separate evidence
+
+Google's [quota document](https://docs.cloud.google.com/pubsub/quotas) lists fixed
+limits of 10,000 topics and 10,000 subscriptions per project. Two of each per
+client limits this simple isolation scheme to 5,000 clients per project before
+other constraints. It also warns that normal-user gcloud credentials are rate
+limited for manual usage and recommends service accounts for automation; this
+test token is not a production throughput credential. No 200,000-user capacity
+has been established. Quota attribution and resource-owner billing differ.
+
+[Pub/Sub pricing](https://cloud.google.com/pubsub/pricing) currently provides
+10 GiB monthly free throughput per billing account, then $40/TiB for ordinary
+combined publishing/delivery, with a minimum 1 KiB per request and possible
+transfer/storage charges. Batching changes those costs but can affect latency.
+The [IAM reference](https://docs.cloud.google.com/pubsub/docs/access-control)
+supports resource-level publish and consume permissions; future setup must give
+a client only its own topic/subscription rights. A user's separate Drive OAuth
+grant does not supply these rights. Cloud owner credentials remain test-only.

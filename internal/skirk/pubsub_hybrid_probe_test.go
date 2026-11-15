@@ -175,6 +175,7 @@ type hybridStore struct {
 	cacheBytes                                          int
 	ackBytes                                            int
 	receive                                             func(ObjectInfo) bool
+	event                                               func(string)
 	ctx                                                 context.Context
 	cancel                                              context.CancelFunc
 	wg                                                  sync.WaitGroup
@@ -194,6 +195,11 @@ func newHybridStore(base BlobStore, secret string, sid [16]byte, sendDirection b
 		recv = DirectionDown
 	}
 	return &hybridStore{base: base, secret: secret, sid: sid, direction: recv, sendDirection: sendDirection, clientID: cid, runID: rid, key: key, entries: map[string]*hybridEntry{}, startedAt: time.Now().Add(-muxStartupCatchup), now: time.Now}, nil
+}
+func (s *hybridStore) noteEvent(kind string) {
+	if s.event != nil {
+		s.event(kind)
+	}
 }
 func (s *hybridStore) setError(e error) {
 	if e == nil {
@@ -557,11 +563,14 @@ func (s *hybridStore) start(ctx context.Context, pool int) error {
 				cancel()
 				if e = pubsubStreamRequire(r, e); e != nil {
 					if s.ctx.Err() != nil {
+						s.noteEvent("pull_cancelled")
 						return
 					}
 					if errors.Is(e, context.DeadlineExceeded) {
+						s.noteEvent("pull_deadline")
 						continue
 					}
+					s.noteEvent("pull_error")
 					s.setError(e)
 					return
 				}
@@ -569,12 +578,14 @@ func (s *hybridStore) start(ctx context.Context, pool int) error {
 					Messages []hybridMessage `json:"receivedMessages"`
 				}
 				if (len(bytes.TrimSpace(r.Body)) > 0 && json.Unmarshal(r.Body, &response) != nil) || len(response.Messages) > 8 {
+					s.noteEvent("pull_invalid_response")
 					s.setError(errors.New("hybrid bounded pull response invalid"))
 					return
 				}
 				for _, m := range response.Messages {
 					if e = s.ingest(s.ctx, m); e != nil {
 						if s.ctx.Err() == nil {
+							s.noteEvent("admission_error")
 							s.setError(e)
 						}
 						return
@@ -582,6 +593,7 @@ func (s *hybridStore) start(ctx context.Context, pool int) error {
 				}
 				if len(response.Messages) == 0 {
 					s.emptyPulls.Add(1)
+					s.noteEvent("pull_empty")
 					select {
 					case <-s.ctx.Done():
 						return
@@ -633,6 +645,7 @@ func (s *hybridStore) start(ctx context.Context, pool int) error {
 					r, e := s.ack(s.ctx, "POST", "/v1/"+s.subscription+":modifyAckDeadline", map[string]any{"ackIds": ids[:n], "ackDeadlineSeconds": 30})
 					if e = pubsubStreamRequire(r, e); e != nil {
 						if s.ctx.Err() == nil {
+							s.noteEvent("lease_error")
 							s.setError(e)
 						}
 						return
