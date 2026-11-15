@@ -97,7 +97,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -772,6 +776,13 @@ private fun ConnectionPanel(
     // Metrics belong to the last engine run and can outlive a profile switch.
     // Only a failed connection's own terminal message should trigger recovery.
     val googleGrantExpired = phase == ConnectionPhase.FAILED && isGoogleGrantExpired(message)
+    val spokenStatus = when {
+        googleGrantExpired -> "Google access needs renewal. Import a renewed profile to reconnect."
+        uiState == ConnectionUiState.Error -> connectionActionableMessage(message)?.let {
+            "${uiState.title}. $it"
+        } ?: uiState.title
+        else -> uiState.title
+    }
     Panel {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -781,6 +792,11 @@ private fun ConnectionPanel(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = uiState.title,
+                    modifier = Modifier.semantics {
+                        contentDescription = spokenStatus
+                        heading()
+                        liveRegion = LiveRegionMode.Polite
+                    },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                 )

@@ -29,6 +29,7 @@ struct ContentView: View {
     @State private var copiedRenewalCommand = false
     @State private var showingRemoveConfirmation = false
     @State private var showingProfileFilePicker = false
+    @AccessibilityFocusState private var statusFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -39,7 +40,10 @@ struct ContentView: View {
                             .foregroundStyle(tunnel.status == .connected ? .green : .secondary)
                             .font(.title2)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(tunnel.statusText).font(.headline)
+                            Text(tunnel.statusText)
+                                .font(.headline)
+                                .accessibilityAddTraits(.isHeader)
+                                .accessibilityFocused($statusFocused)
                             Text(tunnel.status == .connected
                                  ? tunnel.exitProbeMessage ?? "Exit reachability has not been tested"
                                  : "Google Drive transport")
@@ -88,6 +92,7 @@ struct ContentView: View {
                     Section {
                         Label("Google access needs renewal", systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
+                            .accessibilityAddTraits(.isHeader)
                         Text("Google rejected this iPhone's saved access. Ask the exit owner to renew the kit, restart the exit, and send you an updated client.skirk.")
                         Button(copiedRenewalCommand ? "Renewal command copied" : "Copy command for exit owner") {
                             UIPasteboard.general.string = Self.renewalCommand
@@ -187,8 +192,36 @@ struct ContentView: View {
                 Text("You will need client.skirk to import this profile again.")
             }
             .task { await tunnel.load() }
+            .task(id: tunnel.statusText) {
+                guard tunnel.statusText == "Connecting…" else { return }
+                // Fast transitions should announce their outcome, not a transient state.
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, tunnel.statusText == "Connecting…", !statusFocused else { return }
+                AccessibilityNotification.Announcement("Connecting").post()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
                 tunnel.refreshStatus()
+            }
+            .onChange(of: tunnel.status) { previous, current in
+                if current == .connected && previous != .connected && !statusFocused {
+                    AccessibilityNotification.Announcement("VPN active").post()
+                } else if current == .disconnected &&
+                            (previous == .connected || previous == .connecting || previous == .reasserting || previous == .disconnecting) &&
+                            tunnel.connectionError == nil && !tunnel.googleAuthorizationNeedsRenewal && !statusFocused {
+                    AccessibilityNotification.Announcement("VPN disconnected").post()
+                }
+            }
+            .onChange(of: tunnel.connectionError) { _, message in
+                if let message {
+                    AccessibilityNotification.Announcement("Connection failed. \(message)").post()
+                }
+            }
+            .onChange(of: tunnel.googleAuthorizationNeedsRenewal) { _, needsRenewal in
+                if needsRenewal {
+                    AccessibilityNotification.Announcement(
+                        "Google access needs renewal. Import a renewed profile to reconnect."
+                    ).post()
+                }
             }
             .fileImporter(isPresented: $showingProfileFilePicker, allowedContentTypes: [.item]) { result in
                 switch result {
