@@ -3,6 +3,7 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -512,7 +513,10 @@ func TestRelayClientRealSOCKS16MiBEachDirectionMixedTextLostReplies(t *testing.T
 			return response, nil
 		}
 	})
-	payload := bytes.Repeat([]byte("0123456789abcdef"), 1<<20)
+	payload := make([]byte, 16<<20)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
 	want := sha256.Sum256(payload)
 	var uploadSideEffects atomic.Int64
 	bulkReached := make(chan string, 4)
