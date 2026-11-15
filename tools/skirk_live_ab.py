@@ -280,7 +280,7 @@ def main():
     recovery_flags.add_argument("--bounded-read-upload-timeouts", action="store_true",
                         help="separate robustness experiment: observe classified Drive GET and normal upload timeouts, shared caps8/arm,4/60s,16/cohort; no harness retries")
     recovery_flags.add_argument("--bounded-end-to-end-recovery-stress", action="store_true",
-                        help="separate end-to-end stress: source-bound PATCH recovery and idempotent p0/normal immutable timeouts; complete byte/echo/side-effect proof; shared8/arm4/60s16/cohort")
+                        help="separate stress: source-bound PATCH recovery, API-idempotent normal and logically deduped non-idempotent p0 creates; complete byte/echo/origin proof; shared8/arm4/60s16/cohort")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
