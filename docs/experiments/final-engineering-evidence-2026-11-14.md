@@ -446,21 +446,32 @@ previously stopped at `NEConfigurationErrorDomain Code=11` before the packet
 extension made Drive calls. A signed physical iPhone packet-tunnel run remains
 unverified; the available iPhone was not connected for this test. Private UI
 result: `.skirk-runs/ios-ui-integrated-final-20261114.xcresult`. The macOS
-ARM64 Tauri app bundle built locally and its 23 Rust
-command tests passed. The latest native GUI smoke at `dc6db7f` imported a legacy
-Direct config with Google front selected by default, persisted an explicit
-Direct choice after restart, and kept route and ports when replacing the
-synthetic profile. The bundled ARM64 Go sidecar ran `version`; this smoke did
-not send Drive or proxy traffic. Earlier local proxy-mode runtime evidence is
-recorded in [validation](../validation-2026.md). Strict `codesign` and
-`spctl` checks failed. No Developer ID Application identity or configured
-notary CI credentials were available, so this branch could not complete a
-public signed package. Final logs are private under
-`.skirk-runs/macos-final-app-build-20261114.log` and
-`.skirk-runs/macos-native-smoke-20261114/result.md`. The reported Mac
-[“damaged” app and no web traffic](https://github.com/ShahabSL/Skirk/issues/16)
-remain unresolved release issues; the synthetic GUI smoke does not reproduce
-or close them. Native Windows x64 full
+ARM64 Tauri app bundle built locally and its 23 Rust command tests passed.
+An isolated synthetic native GUI smoke at `dc6db7f` verified Google front as
+the default, explicit Direct choice across restart, and renewal-style profile
+replacement preserving route and ports. A final bundle rebuilt at `b04bed2`
+contained an ARM64 Go sidecar reporting that commit. In a separate fresh
+`shahabpre` mailbox session, the native GUI selected the pinned Google front,
+connected its local SOCKS proxy, and showed an authenticated **Test exit**
+response in **3.494 s**. Through that app-managed SOCKS listener, a local
+text GET returned HTTP 200 with exact body in **2.050 s**, a 1 MiB download
+matched its SHA-256 in **3.470 s**, and a 1 MiB upload received the matching
+SHA-256 in **5.084 s**. The client recorded 4,105 estimated Drive units and
+the longer-running exit 22,055, with zero API errors or backoff; their run
+durations differ, so these totals are not a paired per-minute rate. The app
+disconnected and removed its imported profile. Exact cleanup deleted one
+remaining mux object, then verified zero objects across both generated
+`muxv4/` and `slotv1/` prefixes immediately and after 30 seconds. Private
+evidence is under `.skirk-runs/macos-native-live-final-20261114/`, including
+`exact-cleanup.json`; build log:
+`.skirk-runs/macos-final-integrated-app-build-20261114.log`. This proves the
+native proxy path for one bounded local-origin test, not automatic browser
+proxy configuration or sustained Mac traffic. Strict `codesign` and `spctl`
+checks failed on the locally built bundle. No Developer ID Application
+identity or configured notary CI credentials were available, so a public
+signed package and the reported Mac
+[“damaged” app](https://github.com/ShahabSL/Skirk/issues/16) remain unresolved.
+Native Windows x64 full
 Go tests and CLI smoke and Windows ARM64
 Go/CLI smoke passed at commit `9704579` in
 [native Windows CI run 43674155603](https://github.com/ShahabSL/Skirk/actions/runs/43674155603)
