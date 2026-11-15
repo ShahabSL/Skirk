@@ -256,6 +256,40 @@ func TestRelayResearchTombstoneCapacityNeverEvictsDedupe(t *testing.T) {
 	}
 }
 
+func TestRelayResearchRejectedSequenceCannotConsumeResponseReceipts(t *testing.T) {
+	b := rrFixture(t, relayResearchConfig{FrameBytes: 128 << 10})
+	wires := make([][]byte, 2)
+	replies := make([][]byte, 2)
+	for i := range wires {
+		var err error
+		wires[i], err = b.codec.seal(relayResearchPacket{Kind: rrUp, Seq: uint64(i + 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replies[i], err = b.exchange(context.Background(), wires[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	badSequence, _ := b.codec.seal(relayResearchPacket{Kind: rrUp, Seq: 99, Receipt: 2})
+	if _, err := b.exchange(context.Background(), badSequence); !errors.Is(err, errRelayResearchSequence) {
+		t.Fatal("unexpected future sequence error", err)
+	}
+	changedWire, _ := b.codec.seal(relayResearchPacket{Kind: rrUp, Seq: 2, Receipt: 1})
+	if _, err := b.exchange(context.Background(), changedWire); !errors.Is(err, errRelayResearchConflict) {
+		t.Fatal("changed exact request identity accepted", err)
+	}
+	for i := range wires {
+		reply, err := b.exchange(context.Background(), wires[i])
+		if err != nil || !bytes.Equal(reply, replies[i]) {
+			t.Fatal("rejected request consumed recovery response", i, err)
+		}
+	}
+	if b.snapshot().CachedReplies != 2 {
+		t.Fatal("invalid request changed exact recovery cache", b.snapshot())
+	}
+}
+
 func TestRelayResearchHTTPRejectsUnauthorizedBeforeRPCState(t *testing.T) {
 	b := rrFixture(t, relayResearchConfig{FrameBytes: 128 * 1024})
 	w := httptest.NewRecorder()

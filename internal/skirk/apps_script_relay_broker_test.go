@@ -149,6 +149,18 @@ func (b *relayResearchBroker) exchange(ctx context.Context, wire []byte) ([]byte
 	}
 	b.stats.Requests++
 	ch := b.channels[p.Kind]
+	r, exists := ch.replies[p.Seq]
+	// A malformed future sequence or changed ciphertext must not discard the
+	// exact responses required to recover an earlier ambiguous exchange.
+	if exists {
+		if r.hash != hash {
+			b.mu.Unlock()
+			return nil, errRelayResearchConflict
+		}
+	} else if p.Seq != ch.next || ch.active {
+		b.mu.Unlock()
+		return nil, errRelayResearchSequence
+	}
 	if p.Receipt > ch.completed {
 		b.mu.Unlock()
 		return nil, errRelayResearchSequence
@@ -161,18 +173,9 @@ func (b *relayResearchBroker) exchange(ctx context.Context, wire []byte) ([]byte
 			}
 		}
 	}
-	r, exists := ch.replies[p.Seq]
 	if exists {
-		if r.hash != hash {
-			b.mu.Unlock()
-			return nil, errRelayResearchConflict
-		}
 		b.stats.Replayed++
 	} else {
-		if p.Seq != ch.next || ch.active {
-			b.mu.Unlock()
-			return nil, errRelayResearchSequence
-		}
 		if len(ch.replies) >= 2 {
 			b.mu.Unlock()
 			return nil, errRelayResearchBounds
