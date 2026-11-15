@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 from skirk_live_capacity_bench import require_metrics
+from skirk_live_capacity_compare import require_slot_activity
 from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, RecoveryCohort, RecoveryRejected
 from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
 
@@ -64,7 +65,8 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
                candidate_metadata_slot_primary_vs_mux: bool = False,
                candidate_metadata_slot_async_vs_mux: bool = False,
                candidate_upload_stall_hedge_delay_ms: int = 0,
-               upload_stall_hedge_budget_bytes: int = 16 * 1024 * 1024) -> dict:
+               upload_stall_hedge_budget_bytes: int = 16 * 1024 * 1024,
+               candidate_async_separate_metadata_slot_pools: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -144,7 +146,21 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
         drive["upload_hedge_delay_ms"] = 0
         drive["upload_stall_hedge_delay_ms"] = candidate_upload_stall_hedge_delay_ms if mode == "candidate" else 0
         drive["upload_stall_hedge_budget_bytes"] = upload_stall_hedge_budget_bytes
+    if candidate_async_separate_metadata_slot_pools:
+        drive.update(metadata_slot_v1=True, metadata_slot_delivery_v1=True, metadata_slot_async_v1=True)
+        if mode == "candidate":
+            drive["separate_metadata_slot_pools"] = True
+        config.setdefault("tunnel", {})["interaction_epoch"] = True
     return config
+
+
+def async_pool_mixed_proof(before: dict[str, str], mixed: dict[str, str]) -> dict:
+    """Require one common post-prelude UP record; report DOWN separately."""
+    if set(before) != {"client", "exit"} or set(mixed) != {"client", "exit"}:
+        raise RuntimeError("async_pool_role_proof_missing")
+    if any("mux slot delivery active" not in before[role] for role in ("client", "exit")):
+        raise RuntimeError("async_pool_handshake_missing_before_mixed")
+    return require_slot_activity("async", [before["client"]], [mixed["client"]], mixed["exit"])[0]
 
 
 def workload_completed(result: dict, expected_small: int, returncode: int) -> bool:
@@ -178,6 +194,8 @@ def main():
                         help="compare default mux control against async slots plus interaction epoch only in candidates")
     parser.add_argument("--candidate-separate-metadata-slot-pools", action="store_true",
                         help="enable slot delivery in both arms, split slot GET/PATCH pools only in candidates")
+    parser.add_argument("--candidate-async-separate-metadata-slot-pools", action="store_true",
+                        help="both arms use async slots and shared interaction epoch; split slot GET/PATCH pools only in candidates")
     parser.add_argument("--candidate-normal-list-page-size-100", action="store_true",
                         help="compare final default p1 page size 1000 against 100 on the same binary")
     parser.add_argument("--candidate-combined-mux-discovery", action="store_true",
@@ -235,6 +253,8 @@ def main():
         parser.error("estimated rolling quota ceiling must be1000..125000")
     if not 1000 <= args.max_arm_units <= 250000 or not args.max_arm_units <= args.max_total_units <= 1000000:
         parser.error("invalid bounded per-arm/cohort quota estimates")
+    if args.candidate_async_separate_metadata_slot_pools and args.small_traffic != "persistent":
+        parser.error("async slot pool comparison requires persistent traffic")
     if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts) and (not args.observe or args.small_traffic != "persistent"):
         parser.error("bounded recovery requires --observe and persistent traffic")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
@@ -256,6 +276,7 @@ def main():
                        args.candidate_metadata_slot_async_v1,
                        args.candidate_metadata_16k, args.candidate_metadata_slot_primary_v1,
                        args.candidate_metadata_slot_primary_vs_mux, args.candidate_metadata_slot_async_vs_mux,
+                       args.candidate_async_separate_metadata_slot_pools,
                        bool(args.candidate_upload_stall_hedge_delay_ms))
     if args.candidate_upload_stall_hedge_delay_ms and not 1000 <= args.candidate_upload_stall_hedge_delay_ms <= 10000:
         parser.error("stall hedge delay must be0 or1000..10000ms")
@@ -270,7 +291,7 @@ def main():
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
-    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k or args.candidate_upload_stall_hedge_delay_ms) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
+    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k or args.candidate_upload_stall_hedge_delay_ms or args.candidate_async_separate_metadata_slot_pools) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
         parser.error("configuration comparison requires the same binary in both arms")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
@@ -410,7 +431,8 @@ def main():
                              args.candidate_metadata_slot_primary_vs_mux,
                              args.candidate_metadata_slot_async_vs_mux,
                              args.candidate_upload_stall_hedge_delay_ms,
-                             args.upload_stall_hedge_budget_bytes)
+                             args.upload_stall_hedge_budget_bytes,
+                             args.candidate_async_separate_metadata_slot_pools)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -453,6 +475,8 @@ def main():
                         binary_sha256=row["binary_sha256"])
                         if args.bounded_read_upload_timeouts else NormalUploadRecovery(run_dir, recovery_cohort) if recovery_cohort else None)
             last_snapshots = {}
+            mixed_before = {}
+            mixed_offsets = {}
 
             def check_quota_estimate(snapshots, now):
                 units = sum(value["quota"]["units"] for value in snapshots.values())
@@ -558,6 +582,9 @@ def main():
                         command.extend(("--bulk-request-file", str(upload_file)))
                     if args.persistent_pipeline:
                         command.append("--pipelined")
+                    if args.candidate_async_separate_metadata_slot_pools:
+                        command.extend(("--ready-file", str(run_dir / "mix.ready"),
+                                        "--start-signal", str(run_dir / "mix.start")))
                 else:
                     command = [sys.executable, str(Path(__file__).with_name("skirk_live_mix_bench.py")),
                                "--port", str(port), "--small-url", f"http://127.0.0.1:{origin_port}/{'message' if args.small_traffic == 'message' else 'small'}",
@@ -577,6 +604,18 @@ def main():
                                         "--bulk-expected-upload-bytes", str(len(payload))))
                 with (run_dir / "mixed.stdout").open("w") as stream:
                     bench = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT)
+                    if args.candidate_async_separate_metadata_slot_pools:
+                        prelude_deadline = time.monotonic() + 85
+                        while not (run_dir / "mix.ready").exists():
+                            if bench.poll() is not None or time.monotonic() >= prelude_deadline:
+                                raise RuntimeError("async_pool_prelude_barrier_failed")
+                            guarded_metrics()
+                            time.sleep(.1)
+                        for role in ("client", "exit"):
+                            with (run_dir / f"{role}.log").open("rb") as role_log:
+                                mixed_before[role] = role_log.read().decode(errors="replace")
+                                mixed_offsets[role] = role_log.tell()
+                        (run_dir / "mix.start").write_text("go\n")
                     while bench.poll() is None:
                         time.sleep(1)
                         guarded_metrics()
@@ -586,6 +625,13 @@ def main():
                 result = json.loads(report_path.read_text())
                 quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics(final=True).items()}
                 completed = workload_completed(result, args.small_count, bench.returncode)
+                if args.candidate_async_separate_metadata_slot_pools:
+                    mixed_logs = {}
+                    for role, offset in mixed_offsets.items():
+                        with (run_dir / f"{role}.log").open("rb") as role_log:
+                            role_log.seek(offset)
+                            mixed_logs[role] = role_log.read().decode(errors="replace")
+                    row["async_pool_mixed_slot_proof"] = async_pool_mixed_proof(mixed_before, mixed_logs)
                 if args.candidate_upload_stall_hedge_delay_ms:
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace") for role in ("client", "exit"))
                     row["upload_stall_commit_proven_count"] = logs_text.count("drive upload stall action=commit_proven")
