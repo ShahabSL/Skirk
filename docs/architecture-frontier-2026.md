@@ -380,6 +380,12 @@ distribute project quota but add setup and account-level limits. A fixed slot
 should therefore be considered only for
 bounded interactive traffic, alongside immutable media objects for bulk.
 
+At that continuous polling rate, one pair spends 3.456 million GET units per
+day. The published 400-million-unit daily project threshold would cover only
+about 115 such always-on pairs before potential API usage charges, even with
+no PATCHes or bulk traffic. This is an economic threshold for new projects,
+not an additional hard concurrency limit or a measured capacity result.
+
 ## Platform validation on this branch
 
 Fresh current-branch builds passed the full preflight, Android debug
