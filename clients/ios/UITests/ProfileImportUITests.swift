@@ -126,6 +126,7 @@ final class ProfileImportUITests: XCTestCase {
                 "This Simulator cannot reach iOS VPN services. Test profile import here; use a signed iPhone to test the packet tunnel."
             ].exists
             print("SIMULATOR_VPN_UNAVAILABLE=\(vpnUnavailable)")
+            XCTAssertTrue(connected || vpnUnavailable, "Connect should show an active tunnel or a visible Simulator error")
             if app.buttons["Disconnect"].exists {
                 app.buttons["Disconnect"].tap()
             } else if app.buttons["Cancel connection"].exists {

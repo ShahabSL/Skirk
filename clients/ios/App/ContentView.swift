@@ -77,6 +77,11 @@ struct ContentView: View {
                             .disabled(!tunnel.canConnect || replacingProfile)
                         }
                     }
+
+                    if let message = tunnel.connectionError {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 if tunnel.hasProfile && tunnel.googleAuthorizationNeedsRenewal {

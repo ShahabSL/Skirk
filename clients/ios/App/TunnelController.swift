@@ -33,6 +33,7 @@ final class TunnelController: ObservableObject {
     @Published private(set) var googleAuthorizationNeedsRenewal = false
     @Published private(set) var exitProbeMessage: String?
     @Published private(set) var isTestingExit = false
+    @Published private(set) var connectionError: String?
     @Published var message: String?
 
     private let providerBundleID = "app.skirk.ios.PacketTunnel"
@@ -72,6 +73,7 @@ final class TunnelController: ObservableObject {
         do {
             try ProfileVault.saveRouteMode(mode)
             routeMode = mode
+            connectionError = nil
             message = nil
         } catch {
             message = error.localizedDescription
@@ -91,6 +93,7 @@ final class TunnelController: ObservableObject {
             exitProbeGeneration &+= 1
             exitProbeMessage = nil
             isTestingExit = false
+            connectionError = nil
             message = nil
         } catch {
             message = error.localizedDescription
@@ -111,6 +114,7 @@ final class TunnelController: ObservableObject {
             exitProbeGeneration &+= 1
             exitProbeMessage = nil
             isTestingExit = false
+            connectionError = nil
             message = nil
         } catch {
             message = error.localizedDescription
@@ -135,17 +139,18 @@ final class TunnelController: ObservableObject {
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
         isTestingExit = false
+        connectionError = nil
         message = nil
         defer { isConnecting = false }
         do {
             guard let profile = try ProfileVault.read() else {
-                message = "Import a Skirk profile first."
+                connectionError = "Import a Skirk profile first."
                 return
             }
             let manager = try await configuredManager()
             guard !cancelRequested else { return }
             guard let session = manager.connection as? NETunnelProviderSession else {
-                message = "The iOS VPN session could not be created."
+                connectionError = "The iOS VPN session could not be created."
                 return
             }
             try session.startTunnel(options: [
@@ -153,7 +158,7 @@ final class TunnelController: ObservableObject {
                 "clientID": try stableClientID() as NSString,
                 "routeMode": routeMode.rawValue as NSString,
             ])
-            message = nil
+            connectionError = nil
             refreshStatus()
         } catch {
             show(error)
@@ -168,6 +173,7 @@ final class TunnelController: ObservableObject {
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
         isTestingExit = false
+        connectionError = nil
         manager?.connection.stopVPNTunnel()
         refreshStatus()
     }
@@ -183,6 +189,7 @@ final class TunnelController: ObservableObject {
             }
             intentionalDisconnect = false
             googleAuthorizationNeedsRenewal = false
+            connectionError = nil
             message = nil
             return
         }
@@ -250,16 +257,17 @@ final class TunnelController: ObservableObject {
         let nsError = error as NSError
         if (nsError.domain == "NEConfigurationErrorDomain" && nsError.code == 11)
             || nsError.localizedDescription == "IPC failed" {
-            message = "This Simulator cannot reach iOS VPN services. Test profile import here; use a signed iPhone to test the packet tunnel."
+            connectionError = "This Simulator cannot reach iOS VPN services. Test profile import here; use a signed iPhone to test the packet tunnel."
             return
         }
         #endif
         if GoogleAuthorizationStatus.isExpiredDisconnectError(error)
             || GoogleAuthorizationStatus.isExpiredEngineError(error.localizedDescription) {
             googleAuthorizationNeedsRenewal = true
+            connectionError = nil
             message = nil
         } else {
-            message = error.localizedDescription
+            connectionError = error.localizedDescription
         }
     }
 
