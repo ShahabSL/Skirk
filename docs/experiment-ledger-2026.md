@@ -4,7 +4,7 @@ This ledger preserves **positive, negative, incomplete, simulated, primitive, an
 
 There are **119 interpreted experiment records**, **273 recognized raw result files** indexed across local worktrees, and **208 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
-[Machine-readable experiment JSON](catalog/experiments.json) · [CSV](catalog/experiments.csv) · [Sanitized per-arm observations](catalog/arm-observations.json) · [Raw result-file index JSON](catalog/archive-index.json) · [CSV](catalog/archive-index.csv)
+[Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
 ## Strong results that should not be lost
 
