@@ -6,14 +6,21 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +75,29 @@ func rrCampaignPayload(s relayResearchPrivateSettings) ([]byte, error) {
 	payload := make([]byte, s.BulkBytes)
 	cipher.NewCTR(block, make([]byte, aes.BlockSize)).XORKeyStream(payload, payload)
 	return payload, nil
+}
+
+func rrNewOwnedTLSOrigin(handler http.Handler) (*httptest.Server, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Skirk owned relay research origin"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(3 * time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.MaxHeaderBytes = 16 << 10
+	server.Config.ReadHeaderTimeout = 10 * time.Second
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}, MinVersion: tls.VersionTLS12}
+	server.StartTLS()
+	return server, nil
 }
 
 func (s relayResearchPrivateSettings) relayConfig() (relayResearchConfig, error) {
@@ -316,7 +346,7 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 	}
 	defer events.Close()
 	var eventsMu sync.Mutex
-	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origin, err := rrNewOwnedTLSOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/bulk" {
 			eventsMu.Lock()
@@ -354,6 +384,9 @@ func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, 
 			http.NotFound(w, r)
 		}
 	}))
+	if err != nil {
+		return err
+	}
 	defer origin.Close()
 	originAddr := origin.Listener.Addr().String()
 	cfg := &Config{Secret: s.MuxSecretHex, SessionID: s.SessionID, Client: ClientConfig{ID: s.ClientID, RunID: s.RunID}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: s.ChunkBytes, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
