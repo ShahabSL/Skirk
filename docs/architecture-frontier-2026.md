@@ -301,11 +301,12 @@ sidecar/APK build, iOS Simulator build and two UI tests, macOS ARM64 Tauri
 bundle, and Windows x64 GUI/sidecar cross-compile with portable-ZIP CRC and
 contents checks. Logs are under
 `.skirk-runs/platform-build-current-20261114/`. Runtime evidence remains
-narrower: one live HTTPS request through Android VPN on a Pixel emulator, iOS
-Simulator Connect stopped before the packet extension, macOS ran local proxy
+narrower: the [bounded Android VPN integrity smoke](android-vpn-smoke-2026-11-14.md)
+verified an HTTPS page plus exact 8 MiB uploads and downloads on a Pixel
+emulator. iOS Simulator Connect stopped before the packet extension; macOS ran local proxy
 mode, and Windows was not run natively. None of those app builds exercised the
 new opt-in scheduler or fixed-slot probes through a platform UI. Physical
-iPhone packet forwarding, sustained Android browser/video/bulk traffic,
+iPhone packet forwarding, sustained Android browsing/video with concurrent bulk traffic,
 Windows runtime, and signed macOS distribution remain unverified.
 
 ## Promotion gate
