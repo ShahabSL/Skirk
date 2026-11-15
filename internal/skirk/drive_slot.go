@@ -37,11 +37,11 @@ func (d *DriveStore) MetadataSlotEnabled() bool {
 }
 
 func validMetadataSlotName(name string) bool {
-	if !strings.HasPrefix(name, driveMetadataSlotPrefix) || len(name) <= len(driveMetadataSlotPrefix) || len(name) > driveMetadataSlotMaxNameBytes || strings.HasSuffix(name, "/") || strings.Contains(name, "//") {
+	if !strings.HasPrefix(name, driveMetadataSlotPrefix) || len(name) <= len(driveMetadataSlotPrefix) || len(name) > driveMetadataSlotMaxNameBytes || strings.HasSuffix(name, "/") || strings.Contains(name, "//") || strings.Contains(name, "..") {
 		return false
 	}
 	for _, ch := range name {
-		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_' || ch == '/' {
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_' || ch == '.' || ch == '/' {
 			continue
 		}
 		return false

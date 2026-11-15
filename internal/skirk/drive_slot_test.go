@@ -13,6 +13,21 @@ import (
 
 const testSlotName = "slotv1/session/client/run/generation/up"
 
+func TestMetadataSlotNameAllowsConfiguredDotsButNotDotTraversal(t *testing.T) {
+	if !validMetadataSlotName("slotv1/session/client.one/run.two/up") {
+		t.Fatal("valid dotted client and run labels rejected")
+	}
+	for _, name := range []string{
+		"slotv1/session/../run/up",
+		"slotv1/session/client..one/run/up",
+		"slotv1/session/client//up",
+	} {
+		if validMetadataSlotName(name) {
+			t.Fatalf("accepted ambiguous slot name %q", name)
+		}
+	}
+}
+
 func slotResponse(id, name, description, version, parent, space string) string {
 	value, _ := json.Marshal(map[string]any{
 		"id": id, "name": name, "description": description, "version": version,
