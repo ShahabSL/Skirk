@@ -93,6 +93,15 @@ type ObjectIDStore interface {
 	DeleteID(ctx context.Context, fileID string) error
 }
 
+// MuxProcessingReceiptStore is optional. After a mux object has successfully
+// entered mux-owned processing, the receiver can record a bounded in-memory
+// receipt independently of deferred physical deletion. Implementations must not
+// perform I/O, wait for the peer, or discard an unrecorded receipt. This is not
+// a durable destination/application acknowledgement.
+type MuxProcessingReceiptStore interface {
+	NoteMuxProcessed(name, objectID string) error
+}
+
 // MuxObjectMetadataStore verifies one exact object ID after a failed priority
 // enqueue. The bool is false when that ID is outside the configured mailbox.
 type MuxObjectMetadataStore interface {

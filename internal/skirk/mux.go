@@ -3502,6 +3502,15 @@ func (m *driveMux) runReceiveWorker(ctx context.Context, priorityOnly bool) {
 			continue
 		}
 		m.markSeenProcessed(meta)
+		if ctx.Err() == nil {
+			if receipts, ok := m.t.Data.(MuxProcessingReceiptStore); ok {
+				if receiptErr := receipts.NoteMuxProcessed(meta.Name, meta.ID); receiptErr != nil && m.t.Logger != nil {
+					// Processing already owns any side effects. A failed receipt
+					// must never send this object through the receive path again.
+					m.t.Logger.Printf("mux processing receipt failed object=%s error=%s", muxShortName(meta.Name), errorSummary(receiptErr))
+				}
+			}
+		}
 		if meta.SlotLink != nil {
 			if err := meta.SlotLink.peer.markProcessed(meta.SlotSeq, meta.Name); err != nil {
 				m.logSlotShadowError(err)
