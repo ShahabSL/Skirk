@@ -93,6 +93,12 @@ type ObjectIDStore interface {
 	DeleteID(ctx context.Context, fileID string) error
 }
 
+// MuxObjectMetadataStore verifies one exact object ID after a failed priority
+// enqueue. The bool is false when that ID is outside the configured mailbox.
+type MuxObjectMetadataStore interface {
+	GetMuxObjectMetadataByID(ctx context.Context, fileID string) (ObjectInfo, bool, error)
+}
+
 // NormalObjectIDStore lets the mux isolate large normal media reads from its
 // control HTTP pool without changing the path for priority or small objects.
 type NormalObjectIDStore interface {

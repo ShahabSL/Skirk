@@ -25,11 +25,21 @@ If a continuation finishes empty, the first page still advances the cursor.
 Failed queue insertion retains the existing cursor rewind and prevents the
 same poll from continuing from a stale page token.
 
+If a p0 object fails to enqueue, adaptive discovery remembers its exact name
+and Drive ID even after the broad list completes. The next sparse poll still
+queries p0. After a complete p0 query, at most four exact-ID metadata checks
+per poll can recover an object omitted by search, or retire a retry on a
+confirmed 404, trash, rename, or move out of the mailbox. A surviving ID is
+checked at most once every 30 seconds. An unverified ID stays pending; no
+search miss alone discards a real object.
+
 The deterministic test creates 8,001 newer p1 objects, inserts an older p0
 after the first truncated poll, and verifies the next poll queries p0 between
 broad page one and broad page two, then continues and eventually completes.
 Other tests cover a one-list sparse poll with an old-peer object, incomplete
 searches with and without page tokens, an empty final page, a rejected page
-token, and queue backpressure. These tests prove the discovery and
+token, queue backpressure, a failed p0 enqueue followed by sparse recovery,
+confirmed deletion, mailbox membership, and the exact-ID check cap. These
+tests prove the discovery and
 cursor behavior, not Google-side latency, bulk goodput, or long-run quota.
 Keep this mode opt-in until bounded live A/B runs measure all three.

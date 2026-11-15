@@ -14,6 +14,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -545,6 +546,47 @@ func (d *DriveStore) EnsureFolder(ctx context.Context, name string) (ObjectInfo,
 
 func (d *DriveStore) getObjectInfoByID(ctx context.Context, fileID string) (ObjectInfo, error) {
 	return d.getObjectInfoByIDWithHTTP(ctx, d.http, fileID)
+}
+
+func (d *DriveStore) GetMuxObjectMetadataByID(ctx context.Context, fileID string) (ObjectInfo, bool, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return ObjectInfo{}, false, errors.New("mux object metadata requires a file id")
+	}
+	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=id,name,size,modifiedTime,description,trashed,parents,spaces"
+	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return ObjectInfo{}, false, err
+	}
+	if err := require2xx(result, "drive mux object metadata by id"); err != nil {
+		return ObjectInfo{}, false, err
+	}
+	var payload struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		Size         string   `json:"size"`
+		ModifiedTime string   `json:"modifiedTime"`
+		Description  string   `json:"description"`
+		Trashed      bool     `json:"trashed"`
+		Parents      []string `json:"parents"`
+		Spaces       []string `json:"spaces"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ObjectInfo{}, false, err
+	}
+	if payload.ID == "" || payload.ID != fileID {
+		return ObjectInfo{}, false, errors.New("drive mux object metadata returned a mismatched file id")
+	}
+	size, _ := strconv.ParseInt(payload.Size, 10, 64)
+	info := ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size, Updated: payload.ModifiedTime, InlineData: d.decodeInlineData(payload.Name, payload.Description, size)}
+	inMailbox := !payload.Trashed
+	if d.folderID != "" && payload.Parents != nil {
+		inMailbox = inMailbox && slices.Contains(payload.Parents, d.folderID)
+	}
+	if d.isAppData() && len(payload.Spaces) > 0 {
+		inMailbox = inMailbox && slices.Contains(payload.Spaces, "appDataFolder")
+	}
+	return info, inMailbox, nil
 }
 
 func (d *DriveStore) getObjectInfoByIDWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, fileID string) (ObjectInfo, error) {

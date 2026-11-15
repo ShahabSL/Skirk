@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +99,11 @@ const (
 	cleanupRetryQueueMax         = muxReceiveQueue
 	cleanupRetryBaseDelay        = 2 * time.Second
 	cleanupRetryMaxDelay         = 16 * time.Second
+)
+
+const (
+	muxPriorityRetryProbeLimit    = 4
+	muxPriorityRetryProbeInterval = 30 * time.Second
 )
 
 const (
@@ -261,6 +267,16 @@ type muxStreamKey struct {
 	StreamID uint64
 }
 
+type muxPriorityRetryKey struct {
+	name string
+	id   string
+}
+
+type muxPriorityRetryState struct {
+	addedAt   time.Time
+	lastProbe time.Time
+}
+
 type driveMux struct {
 	t         *Tunnel
 	role      string
@@ -323,6 +339,7 @@ type driveMux struct {
 	priorityListSince     time.Time
 	priorityListPageToken string
 	priorityListPartial   bool
+	priorityRetryObjects  map[muxPriorityRetryKey]muxPriorityRetryState
 	normalListLastPoll    time.Time
 	clientFinalDrainAt    atomic.Int64
 	fatalOnce             sync.Once
@@ -2468,6 +2485,7 @@ func (m *driveMux) pollMuxObjects(ctx context.Context) bool {
 func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal bool) bool {
 	prefix := m.recvPrefix()
 	if _, ok := m.t.Data.(FreshListContainsPageStatusStore); ok && m.t.AdaptiveMuxDiscovery {
+		pollStarted := time.Now()
 		var firstInfos []ObjectInfo
 		var firstErr error
 		combinedWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive_first", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -2475,14 +2493,20 @@ func (m *driveMux) pollMuxObjectsWithNormal(ctx context.Context, forceNormal boo
 			return firstInfos, firstErr
 		}, parseMuxObjectInfo, m.hasListFreshPageToken, m.rewindListSinceForMetas)
 		priorityWork := false
-		if m.hasListFreshPartial() || m.hasPriorityListPartial() {
+		if m.hasPriorityRetryPending() || m.hasListFreshPartial() || m.hasPriorityListPartial() {
+			priorityListOK := false
 			priorityWork = m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_priority_fallback", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-				return m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
+				infos, err := m.listRecvMuxObjectsByClass(ctx, prefix, "/p0/", &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, false)
+				priorityListOK = err == nil
+				return infos, err
 			}, parseMuxObjectInfo, func() bool {
 				return m.hasListFreshPageTokenFor(&m.priorityListMu, &m.priorityListPageToken)
 			}, func(metas []muxObjectMeta) {
 				m.rewindListSinceForMetasLocked(metas, &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken)
 			})
+			if priorityListOK && !m.hasPriorityListPartial() {
+				m.reconcilePriorityRetries(ctx, prefix, pollStarted)
+			}
 		}
 		if firstErr == nil && m.hasListFreshPageToken() {
 			continuationWork := m.pollMuxObjectsFromPrefix(ctx, prefix, "prefix_adaptive_continuation", func(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -2853,6 +2877,98 @@ func (m *driveMux) hasPriorityListPartial() bool {
 	return m.priorityListPartial
 }
 
+// A complete p0 list is not enough to retire a retry: the object may have
+// been omitted by an eventually consistent search while still not queued.
+func (m *driveMux) hasPriorityRetryPending() bool {
+	if m == nil {
+		return false
+	}
+	m.priorityListMu.Lock()
+	keys := make([]muxPriorityRetryKey, 0, len(m.priorityRetryObjects))
+	for key := range m.priorityRetryObjects {
+		keys = append(keys, key)
+	}
+	m.priorityListMu.Unlock()
+	for _, key := range keys {
+		if m.priorityRetryAccepted(key) {
+			m.priorityListMu.Lock()
+			delete(m.priorityRetryObjects, key)
+			m.priorityListMu.Unlock()
+		}
+	}
+	m.priorityListMu.Lock()
+	pending := len(m.priorityRetryObjects) != 0
+	m.priorityListMu.Unlock()
+	return pending
+}
+
+func (m *driveMux) priorityRetryAccepted(key muxPriorityRetryKey) bool {
+	if key.id == "" {
+		return m.isKnown(key.name)
+	}
+	m.seenMu.Lock()
+	_, accepted := m.knownIDs[key.name][key.id]
+	m.seenMu.Unlock()
+	return accepted
+}
+
+func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, pollStarted time.Time) {
+	store, ok := m.t.Data.(MuxObjectMetadataStore)
+	if !ok || ctx.Err() != nil {
+		return
+	}
+	now := time.Now()
+	m.priorityListMu.Lock()
+	keys := make([]muxPriorityRetryKey, 0, muxPriorityRetryProbeLimit)
+	for key, state := range m.priorityRetryObjects {
+		if key.id == "" || !state.addedAt.Before(pollStarted) || (!state.lastProbe.IsZero() && now.Sub(state.lastProbe) < muxPriorityRetryProbeInterval) {
+			continue
+		}
+		state.lastProbe = now
+		m.priorityRetryObjects[key] = state
+		keys = append(keys, key)
+		if len(keys) == muxPriorityRetryProbeLimit {
+			break
+		}
+	}
+	m.priorityListMu.Unlock()
+	for _, key := range keys {
+		if m.priorityRetryAccepted(key) {
+			m.clearPriorityRetry(key)
+			continue
+		}
+		info, inMailbox, err := store.GetMuxObjectMetadataByID(ctx, key.id)
+		if err != nil {
+			var googleErr *GoogleAPIError
+			if errors.As(err, &googleErr) && googleErr.Status == http.StatusNotFound {
+				m.clearPriorityRetry(key)
+			} else {
+				m.reportTerminalOAuthError(ctx, err)
+			}
+			continue
+		}
+		if !inMailbox || info.ID != key.id || info.Name != key.name || !strings.HasPrefix(info.Name, prefix) {
+			m.clearPriorityRetry(key)
+			continue
+		}
+		meta, valid := parseMuxObjectInfo(info)
+		if !valid || !meta.Priority {
+			m.clearPriorityRetry(key)
+			continue
+		}
+		m.enqueueMuxObject(ctx, meta)
+		if m.priorityRetryAccepted(key) {
+			m.clearPriorityRetry(key)
+		}
+	}
+}
+
+func (m *driveMux) clearPriorityRetry(key muxPriorityRetryKey) {
+	m.priorityListMu.Lock()
+	delete(m.priorityRetryObjects, key)
+	m.priorityListMu.Unlock()
+}
+
 func (m *driveMux) hasListFreshPageTokenFor(mu *sync.Mutex, pageToken *string) bool {
 	if m == nil || mu == nil || pageToken == nil {
 		return false
@@ -2918,11 +3034,21 @@ func (m *driveMux) rewindListSinceForMetasLocked(metas []muxObjectMeta, mu *sync
 		return
 	}
 	target := m.listSinceTargetForMetas(metas)
-	if target.IsZero() {
-		return
-	}
 	mu.Lock()
-	if since.IsZero() || target.Before(*since) {
+	if mu == &m.priorityListMu && m.t != nil && m.t.AdaptiveMuxDiscovery {
+		if m.priorityRetryObjects == nil {
+			m.priorityRetryObjects = make(map[muxPriorityRetryKey]muxPriorityRetryState)
+		}
+		for _, meta := range metas {
+			if meta.Priority && meta.Name != "" {
+				key := muxPriorityRetryKey{name: meta.Name, id: meta.ID}
+				if _, exists := m.priorityRetryObjects[key]; !exists {
+					m.priorityRetryObjects[key] = muxPriorityRetryState{addedAt: time.Now()}
+				}
+			}
+		}
+	}
+	if !target.IsZero() && (since.IsZero() || target.Before(*since)) {
 		*since = target
 	}
 	*pageToken = ""
