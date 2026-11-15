@@ -543,14 +543,16 @@ function App() {
               {copyStatus.startsWith("Local SOCKS") ? <Check /> : <Copy />}
               {copyStatus.startsWith("Local SOCKS") ? "Copied local SOCKS" : "Copy local SOCKS"}
             </button>
-            <button
-              type="button"
-              disabled={!connected || exitProbeRunning}
-              onClick={() => void testExit()}
-            >
-              {exitProbeRunning ? <Loader2 className="spin" /> : <RefreshCw />}
-              {exitProbeRunning ? "Testing exit…" : "Test exit"}
-            </button>
+            {connected ? (
+              <button
+                type="button"
+                disabled={exitProbeRunning}
+                onClick={() => void testExit()}
+              >
+                {exitProbeRunning ? <Loader2 className="spin" /> : <RefreshCw />}
+                {exitProbeRunning ? "Testing exit…" : "Test exit"}
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={copyLocalHttpDisabled}
@@ -559,22 +561,18 @@ function App() {
               {copyStatus.startsWith("Local HTTP") ? <Check /> : <Copy />}
               {copyStatus.startsWith("Local HTTP") ? "Copied local HTTP" : "Copy local HTTP"}
             </button>
-            <button
-              type="button"
-              disabled={copyLanSocksDisabled}
-              onClick={() => void copyEndpoint("LAN SOCKS", lanSocksAddress)}
-            >
-              {copyStatus.startsWith("LAN SOCKS") ? <Check /> : <Copy />}
-              {copyStatus.startsWith("LAN SOCKS") ? "Copied LAN SOCKS" : "Copy LAN SOCKS"}
-            </button>
-            <button
-              type="button"
-              disabled={copyLanHttpDisabled}
-              onClick={() => void copyEndpoint("LAN HTTP", lanHttpAddress)}
-            >
-              {copyStatus.startsWith("LAN HTTP") ? <Check /> : <Copy />}
-              {copyStatus.startsWith("LAN HTTP") ? "Copied LAN HTTP" : "Copy LAN HTTP"}
-            </button>
+            {!copyLanSocksDisabled ? (
+              <button type="button" onClick={() => void copyEndpoint("LAN SOCKS", lanSocksAddress)}>
+                {copyStatus.startsWith("LAN SOCKS") ? <Check /> : <Copy />}
+                {copyStatus.startsWith("LAN SOCKS") ? "Copied LAN SOCKS" : "Copy LAN SOCKS"}
+              </button>
+            ) : null}
+            {!copyLanHttpDisabled ? (
+              <button type="button" onClick={() => void copyEndpoint("LAN HTTP", lanHttpAddress)}>
+                {copyStatus.startsWith("LAN HTTP") ? <Check /> : <Copy />}
+                {copyStatus.startsWith("LAN HTTP") ? "Copied LAN HTTP" : "Copy LAN HTTP"}
+              </button>
+            ) : null}
           </div>
 
           {connected ? (
