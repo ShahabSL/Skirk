@@ -80,6 +80,9 @@ type relayResearchCodec struct {
 }
 
 func newRelayResearchCodec(key []byte, epoch [16]byte, frameBytes int) (*relayResearchCodec, error) {
+	if len(key) != 32 {
+		return nil, errRelayResearchBounds
+	}
 	cfg, err := (relayResearchConfig{FrameBytes: frameBytes}).normalized()
 	if err != nil {
 		return nil, err
