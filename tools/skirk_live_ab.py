@@ -25,12 +25,63 @@ from skirk_live_capacity_bench import require_metrics
 from skirk_live_capacity_compare import require_slot_activity
 from skirk_bounded_recovery import CorrelationPending, NormalUploadRecovery, RecoveryCohort, RecoveryRejected
 from skirk_read_upload_recovery import ReadUploadCohort, ReadUploadRecovery
+from skirk_end_to_end_recovery import EndToEndRecoveryCohort, EndToEndRecoveryStress
+from skirk_stress_origin_proof import OriginSideEffects
+from skirk_ab_finalize import ArmFinalizer
 
 
 MAIN_COMPARE_ORDERS = (("main", "current", "current", "main"),
                        ("current", "main", "main", "current"))
 CONTROL_COMPARE_ORDERS = (("control", "candidate", "candidate", "control"),
                           ("candidate", "control", "control", "candidate"))
+
+
+def finalize_arm_evidence(finalizer, row, *, recovery=None, snapshots=None, logs=(), config_paths=()):
+    """Always stop owners even when optional evidence enrichment fails."""
+    observer_failures = []
+    try:
+        if recovery:
+            row["bounded_recovery"] = recovery.report()
+            row.setdefault("completion_status", "interrupted")
+            row.setdefault("clean_api_run", False)
+        if snapshots:
+            row["last_observed_quotas"] = {role: snapshot["quota"] for role, snapshot in snapshots.items()}
+    except Exception as error:
+        observer_failures.append({"stage": "pre_stop_evidence", "error_type": type(error).__name__})
+    finally:
+        teardown = finalizer.finalize(row, logs=logs, config_paths=config_paths)
+        row["teardown"] = teardown
+    if isinstance(recovery, EndToEndRecoveryStress):
+        proof = {"pre_stop": recovery.last_side_effects, "post_stop": None,
+                 "boundary": "observed after all registered writers, benchmark and curl children were reaped; not restart exactly-once"}
+        if teardown["all_stopped"] and teardown["writers_stopped"]:
+            try:
+                recovery.check_origin(final=True)
+                proof.update(post_stop=recovery.last_side_effects, status="verified")
+                row["bounded_recovery"] = recovery.report()
+            except Exception as error:
+                proof.update(post_stop=recovery.last_side_effects, status="failed",
+                             reasons=recovery.origin_proof_failure,
+                             error_type=type(error).__name__)
+                observer_failures.append({"stage": "post_stop_origin", "error_type": type(error).__name__})
+        else:
+            proof["status"] = "unverified_owners_not_stopped"
+            observer_failures.append({"stage": "post_stop_origin", "error_type": "OwnersNotStopped"})
+        row["post_stop_origin_proof"] = proof
+        try:
+            finalizer.persist_post_stop_proof(proof)
+        except Exception as error:
+            observer_failures.append({"stage": "persist_post_stop_origin", "error_type": type(error).__name__})
+    if observer_failures:
+        row["observer_failures"] = observer_failures
+        row["ok"] = False
+        row.setdefault("failure", "arm_evidence_failed")
+        row["completion_status"] = "incomplete_end_to_end_stress" if isinstance(recovery, EndToEndRecoveryStress) else "incomplete"
+        row["clean_api_run"] = False
+        # Keep the independent helper's persisted teardown result unchanged;
+        # workload evidence can additionally prohibit cohort continuation.
+        row["teardown"] = dict(teardown, cohort_continuation_allowed=False)
+    return row["teardown"]
 
 
 def validate_arm_order(order: list[str], main_binary: Path | None,
@@ -228,6 +279,8 @@ def main():
                         help="separate robustness experiment: tolerate only correlated normal multipart timeouts, capped at8/arm,4/60s,16/cohort")
     recovery_flags.add_argument("--bounded-read-upload-timeouts", action="store_true",
                         help="separate robustness experiment: observe classified Drive GET and normal upload timeouts, shared caps8/arm,4/60s,16/cohort; no harness retries")
+    recovery_flags.add_argument("--bounded-end-to-end-recovery-stress", action="store_true",
+                        help="separate end-to-end stress: source-bound PATCH recovery and idempotent p0/normal immutable timeouts; complete byte/echo/side-effect proof; shared8/arm4/60s16/cohort")
     parser.add_argument("--order", default="baseline,inline,inline,baseline")
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
@@ -255,7 +308,7 @@ def main():
         parser.error("invalid bounded per-arm/cohort quota estimates")
     if args.candidate_async_separate_metadata_slot_pools and args.small_traffic != "persistent":
         parser.error("async slot pool comparison requires persistent traffic")
-    if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts) and (not args.observe or args.small_traffic != "persistent"):
+    if (args.bounded_normal_upload_timeouts or args.bounded_read_upload_timeouts or args.bounded_end_to_end_recovery_stress) and (not args.observe or args.small_traffic != "persistent"):
         parser.error("bounded recovery requires --observe and persistent traffic")
     if not args.live or ".skirk-runs" not in args.out.resolve().parts:
         parser.error("requires --live and private .skirk-runs output")
@@ -291,6 +344,10 @@ def main():
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
+    if args.bounded_end_to_end_recovery_stress:
+        for binary in (args.binary, args.main_binary, args.control_binary):
+            if binary is not None and not EndToEndRecoveryStress.supports_binary(binary_sha256(binary)):
+                parser.error("end-to-end stress requires reviewed source-bound executables")
     if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k or args.candidate_upload_stall_hedge_delay_ms or args.candidate_async_separate_metadata_slot_pools) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
         parser.error("configuration comparison requires the same binary in both arms")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
@@ -321,19 +378,37 @@ def main():
     if args.small_traffic == "message":
         message_file.write_bytes(message_body)
         message_file.chmod(0o600)
+    origin_effects = OriginSideEffects() if args.bounded_end_to_end_recovery_stress else None
 
     class Origin(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            bulk = self.path == "/bulk"
+            if origin_effects:
+                if bulk:
+                    origin_effects.bulk_started("get")
+                else:
+                    origin_effects.unexpected_http()
             body = small_payload if self.path == "/small" else payload
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            valid = False
             try:
                 self.wfile.write(body)
+                valid = True
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                if origin_effects and bulk:
+                    origin_effects.bulk_finished("get", valid)
 
         def do_POST(self):
+            bulk = self.path == "/bulk-upload"
+            if origin_effects:
+                if bulk:
+                    origin_effects.bulk_started("post")
+                else:
+                    origin_effects.unexpected_http()
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -348,13 +423,23 @@ def main():
                     digest.update(chunk)
                     remaining -= len(chunk)
                 if remaining or digest.hexdigest() != payload_sha256:
+                    if origin_effects:
+                        origin_effects.bulk_finished("post", False)
                     self.send_error(400)
                     return
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(bulk_ack)))
                 self.end_headers()
-                self.wfile.write(bulk_ack)
+                valid = False
+                try:
+                    self.wfile.write(bulk_ack)
+                    valid = True
+                finally:
+                    if origin_effects:
+                        origin_effects.bulk_finished("post", valid)
                 return
+            if origin_effects and bulk:
+                origin_effects.bulk_finished("post", False)
             if self.path != "/message" or length != len(message_body) or self.rfile.read(length) != message_body:
                 self.send_error(400)
                 return
@@ -369,6 +454,11 @@ def main():
         def log_message(self, *_):
             pass
 
+        def send_error(self, code, message=None, explain=None):
+            if origin_effects:
+                origin_effects.unexpected_http()
+            return super().send_error(code, message, explain)
+
     origin = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Origin)
     threading.Thread(target=origin.serve_forever, daemon=True).start()
     origin_port = origin.server_address[1]
@@ -376,6 +466,8 @@ def main():
     if args.small_traffic == "persistent":
         class Echo(socketserver.BaseRequestHandler):
             def handle(self):
+                if origin_effects:
+                    origin_effects.echo_opened()
                 self.request.settimeout(120)
 
                 def read_exact(count):
@@ -398,6 +490,8 @@ def main():
                         body = read_exact(size)
                         if body is None:
                             return
+                        if origin_effects:
+                            origin_effects.echo_frame()
                         self.request.sendall(header + body)
                 except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                     return
@@ -411,13 +505,14 @@ def main():
     summaries = []
     unit_history = []
     completed_units = 0
-    recovery_cohort = (ReadUploadCohort() if args.bounded_read_upload_timeouts
+    recovery_cohort = (EndToEndRecoveryCohort() if args.bounded_end_to_end_recovery_stress else ReadUploadCohort() if args.bounded_read_upload_timeouts
                        else RecoveryCohort() if args.bounded_normal_upload_timeouts else None)
     try:
         for index, mode in enumerate(order):
             candidate = mode in ("inline", "sparse_inline", "epoch_inline")
             run_dir = args.out / f"{index}-{mode}"
-            run_dir.mkdir()
+            run_dir.mkdir(mode=0o700)
+            finalizer = ArmFinalizer(run_dir)
             cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare,
                              args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
                              args.candidate_separate_metadata_slot_pools,
@@ -434,10 +529,9 @@ def main():
                              args.upload_stall_hedge_budget_bytes,
                              args.candidate_async_separate_metadata_slot_pools)
             path = run_dir / "config.json"
-            path.write_text(json.dumps(cfg))
-            path.chmod(0o600)
             procs, logs = [], []
             bench = None
+            arm_error = None
             binary = args.main_binary if mode == "main" else args.control_binary if mode == "control" else args.binary
             row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"].get("upload_hedge_delay_ms", 0),
                    "upload_stall_hedge_delay_ms": cfg["drive"].get("upload_stall_hedge_delay_ms", 0),
@@ -466,10 +560,20 @@ def main():
                    "combined_mux_discovery": cfg["drive"].get("combined_mux_discovery", False),
                    "adaptive_mux_discovery": cfg["drive"].get("adaptive_mux_discovery", False),
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
-                   "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
+                   "binary_sha256": None, "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
 
-            recovery = (ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
+            origin_baseline = origin_effects.snapshot() if origin_effects else None
+            recovery = None
+
+            def new_recovery():
+                return (EndToEndRecoveryStress(run_dir, recovery_cohort,
+                        expected_frames=args.small_count,
+                        expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
+                        expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0,
+                        binary_sha256=row["binary_sha256"],
+                        side_effects=lambda final: origin_effects.delta(origin_baseline))
+                        if args.bounded_end_to_end_recovery_stress else ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
                         expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
                         expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0,
                         binary_sha256=row["binary_sha256"])
@@ -518,6 +622,10 @@ def main():
                     raise RuntimeError("local API error/backoff guard")
                 return snapshots
             try:
+                path.write_text(json.dumps(cfg))
+                path.chmod(0o600)
+                row["binary_sha256"] = binary_sha256(binary)
+                recovery = new_recovery()
                 with socket.socket() as sock:
                     sock.bind(("127.0.0.1", 0))
                     port = sock.getsockname()[1]
@@ -530,7 +638,9 @@ def main():
                         command += ["--listen", f"127.0.0.1:{port}"]
                     if args.observe:
                         command += ["--observe"]
-                    procs.append(subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT))
+                    proc = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT)
+                    procs.append(proc)
+                    finalizer.register(proc, role, command, writer=True)
                 for _ in range(200):
                     if any(proc.poll() is not None for proc in procs):
                         raise RuntimeError("Skirk exited before test")
@@ -547,13 +657,17 @@ def main():
                     time.sleep(.1)
                 guarded_metrics()
                 # Equal small warm-up for token/TLS connection and mailbox path.
-                subprocess.run(["curl", "-sS", "-o", os.devnull, "--max-time", "30", "--noproxy", "",
+                finalizer.run(["curl", "-sS", "-o", os.devnull, "--max-time", "30", "--noproxy", "",
                                 "--socks5-hostname", f"127.0.0.1:{port}", f"http://127.0.0.1:{origin_port}/small"],
-                               check=True, capture_output=True, timeout=35)
+                               role="warmup", timeout=35)
+                # Exclude exactly the shared successful warm-up, then count
+                # every origin effect throughout the measured workload.
+                if origin_effects:
+                    origin_baseline = origin_effects.snapshot()
                 if args.probe_exit:
-                    probe = subprocess.run([str(binary.resolve()), "probe-exit", "--config", str(path),
+                    probe = finalizer.run([str(binary.resolve()), "probe-exit", "--config", str(path),
                                             "--socks", f"127.0.0.1:{port}"],
-                                           capture_output=True, text=True, timeout=50)
+                                           role="probe", text=True, timeout=50, writer=True)
                     try:
                         proof = json.loads(probe.stdout)
                     except json.JSONDecodeError as error:
@@ -577,6 +691,7 @@ def main():
                                "--bulk-timeout", str(args.persistent_bulk_timeout), "--stall-seconds", str(args.stall_seconds),
                                "--bulk-result-file", str(run_dir / "bulk-completion.json"),
                                "--sample-journal", str(run_dir / "frame-receipts.jsonl"),
+                               "--owned-process-journal", str(run_dir / "curl-processes.jsonl"),
                                "--out", str(report_path)]
                     if args.bulk_direction == "upload":
                         command.extend(("--bulk-request-file", str(upload_file)))
@@ -596,6 +711,7 @@ def main():
                                "--bulk-sha256", hashlib.sha256(bulk_response).hexdigest(),
                                "--overall-timeout", "100", "--request-timeout", "80", "--label", run_dir.name,
                                "--stall-seconds", str(args.stall_seconds),
+                               "--owned-process-journal", str(run_dir / "curl-processes.jsonl"),
                                "--out", str(report_path)]
                     if args.small_traffic == "message":
                         command.extend(("--small-request-file", str(message_file)))
@@ -604,6 +720,8 @@ def main():
                                         "--bulk-expected-upload-bytes", str(len(payload))))
                 with (run_dir / "mixed.stdout").open("w") as stream:
                     bench = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT)
+                    finalizer.register(bench, "benchmark", command)
+                    finalizer.register_child_journal(run_dir / "curl-processes.jsonl", parent=bench)
                     if args.candidate_async_separate_metadata_slot_pools:
                         prelude_deadline = time.monotonic() + 85
                         while not (run_dir / "mix.ready").exists():
@@ -694,6 +812,10 @@ def main():
                        "downloads": sum(q["ops"].get("download", {}).get("calls", 0) for q in quotas.values())})
                 row["completion_status"] = ("completed_with_permitted_timeouts" if row["errors"] else "completed_clean") if completed else "incomplete"
                 row["clean_api_run"] = completed and row["errors"] == 0
+                if args.bounded_end_to_end_recovery_stress:
+                    row["completion_status"] = ("completed_end_to_end_stress_with_observed_timeouts" if row["errors"]
+                                                else "completed_end_to_end_stress_no_observed_timeouts") if completed else "incomplete_end_to_end_stress"
+                    row["clean_api_run"] = False
                 completed_units += row["combined_units_including_warmup_and_tail"]
                 if not completed and "failure" not in row:
                     row["failure"] = "incomplete_verified_workload"
@@ -703,37 +825,18 @@ def main():
                     # finally cleanup before starting any further live arm.
                     break
             except Exception as error:
+                arm_error = error
                 row["failure"] = type(error).__name__
                 if isinstance(error, RecoveryRejected):
                     row["failure_reason"] = error.code
                 raise
             finally:
-                if recovery:
-                    row["bounded_recovery"] = recovery.report()
-                    row.setdefault("completion_status", "interrupted")
-                    row.setdefault("clean_api_run", False)
-                if last_snapshots:
-                    row["last_observed_quotas"] = {role: snapshot["quota"] for role, snapshot in last_snapshots.items()}
-                if bench is not None and bench.poll() is None:
-                    bench.terminate()
-                    try:
-                        bench.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        bench.kill()
-                        bench.wait()
-                for proc in procs:
-                    proc.terminate()
-                for proc in procs:
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-                for stream in logs:
-                    stream.close()
-                path.unlink(missing_ok=True)
+                teardown = finalize_arm_evidence(finalizer, row, recovery=recovery,
+                                                 snapshots=last_snapshots, logs=logs, config_paths=(path,))
                 summaries.append(row)
                 (args.out / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
+                if not teardown["cohort_continuation_allowed"] and arm_error is None:
+                    raise RuntimeError("owned_arm_teardown_failed")
     finally:
         origin.shutdown()
         if echo_origin is not None:
