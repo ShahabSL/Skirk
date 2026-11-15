@@ -1,5 +1,6 @@
 import json
 import hashlib
+import io
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from skirk_live_capacity_bench import require_metrics
-from skirk_live_ab import arm_config, validate_arm_order, workload_completed
+from skirk_live_ab import arm_config, main as live_ab_main, validate_arm_order, workload_completed
 from skirk_live_mix_bench import execute_curl, run_one
 from skirk_stage_analysis import arm_summary, duration_ms
 
@@ -254,6 +255,41 @@ class MainComparisonSafetyTests(unittest.TestCase):
         self.assertNotIn("separate_metadata_slot_pools", control["drive"])
         self.assertTrue(candidate["drive"]["separate_metadata_slot_pools"])
         self.assertTrue(original["drive"]["separate_metadata_slot_pools"])
+
+    def test_normal_page_comparison_changes_only_page_size_and_session(self):
+        original = {"secret": "fictional", "session_id": "old",
+                    "route": {"mode": "google_front_pinned"},
+                    "drive": {"folder_id": "test-folder", "normal_list_page_size": 500,
+                              "metadata_slot_v1": True, "metadata_slot_delivery_v1": True},
+                    "tunnel": {"poll_interval_ms": 1000}}
+        control = arm_config(original, "control", "one", 0, True, False, False, False, True)
+        candidate = arm_config(original, "candidate", "two", 0, True, False, False, False, True)
+        self.assertEqual(control["drive"]["normal_list_page_size"], 1000)
+        self.assertEqual(candidate["drive"]["normal_list_page_size"], 100)
+        self.assertEqual(control["route"], original["route"])
+        self.assertEqual(candidate["route"], original["route"])
+        self.assertNotIn("metadata_slot_v1", control["drive"])
+        self.assertNotIn("metadata_slot_v1", candidate["drive"])
+        self.assertNotIn("metadata_slot_delivery_v1", control["drive"])
+        self.assertNotIn("metadata_slot_delivery_v1", candidate["drive"])
+        candidate["drive"]["normal_list_page_size"] = 1000
+        self.assertEqual({k: v for k, v in control.items() if k != "session_id"},
+                         {k: v for k, v in candidate.items() if k != "session_id"})
+        self.assertEqual(original["drive"]["normal_list_page_size"], 500)
+
+    def test_normal_page_comparison_rejects_different_binaries_before_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / "first", root / "second"
+            first.write_bytes(b"first binary")
+            second.write_bytes(b"second binary")
+            output = root / ".skirk-runs" / "page-compare"
+            argv = ["skirk_live_ab.py", "--binary", str(first), "--control-binary", str(second),
+                    "--config", str(root / "unused.json"), "--out", str(output), "--live", "--observe",
+                    "--order", "control,candidate,candidate,control", "--candidate-normal-list-page-size-100"]
+            with patch("sys.argv", argv), patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+                live_ab_main()
+            self.assertFalse(output.exists())
 
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}

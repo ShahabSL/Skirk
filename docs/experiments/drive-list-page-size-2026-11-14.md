@@ -42,3 +42,30 @@ Google documents a maximum `files.list` page size of 1000, allows smaller
 returns than requested, and charges 100 units per list call:
 [files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list),
 [usage limits](https://developers.google.com/workspace/drive/api/guides/limits).
+
+## Sparse live path comparison
+
+The 528-object probe establishes a backlog benefit. To test whether the larger
+page changes ordinary small-message latency or file speed when the mailbox is
+sparse, `skirk_live_ab.py` has a separate same-binary ABBA mode. The control
+sets `normal_list_page_size=1000`; the candidate sets it to `100`. It removes
+slot and other transport experiments from both arms, preserves the test kit's
+selected pinned Google front route, and checks the exact message/file hashes,
+exit proof, API errors, and estimated Drive units on every arm:
+
+```sh
+go build -trimpath -o .skirk-runs/page-size-skirk ./cmd/skirk
+python3 tools/skirk_live_ab.py \
+  --binary .skirk-runs/page-size-skirk \
+  --control-binary .skirk-runs/page-size-skirk \
+  --config .skirk-runs/personal-test/quota-kit/client.json \
+  --out .skirk-runs/page-size-sparse-001 --live --observe --probe-exit \
+  --order control,candidate,candidate,control \
+  --candidate-normal-list-page-size-100 \
+  --bulk-mib 16 --bulk-direction download \
+  --small-traffic message --small-count 12 --small-interval-ms 250
+```
+
+The four generated `muxv4/<session>/` prefixes still require exact cleanup
+and a delayed zero-file check after the harness exits. No sparse live result
+is claimed by this command alone.

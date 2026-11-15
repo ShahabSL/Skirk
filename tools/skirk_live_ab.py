@@ -50,7 +50,8 @@ def validate_arm_order(order: list[str], main_binary: Path | None,
 def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, binary_compare: bool,
                candidate_metadata_slot_v1: bool = False,
                candidate_metadata_slot_delivery_v1: bool = False,
-               candidate_separate_metadata_slot_pools: bool = False) -> dict:
+               candidate_separate_metadata_slot_pools: bool = False,
+               candidate_normal_list_page_size_100: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -67,6 +68,10 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
             drive["metadata_slot_delivery_v1"] = True
     if candidate_separate_metadata_slot_pools and mode == "candidate":
         drive["separate_metadata_slot_pools"] = True
+    if candidate_normal_list_page_size_100:
+        # Override any saved setting in both arms. Only the normal p1 page
+        # size differs; both arms use the same binary and unchanged route.
+        drive["normal_list_page_size"] = 100 if mode == "candidate" else 1000
     if binary_compare:
         # Use one supported config and OAuth quota path for both binaries.
         drive.pop("quota_project", None)
@@ -115,6 +120,8 @@ def main():
                         help="enable bounded authenticated slot delivery only in candidate arms")
     parser.add_argument("--candidate-separate-metadata-slot-pools", action="store_true",
                         help="enable slot delivery in both arms, split slot GET/PATCH pools only in candidates")
+    parser.add_argument("--candidate-normal-list-page-size-100", action="store_true",
+                        help="compare final default p1 page size 1000 against 100 on the same binary")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -142,17 +149,19 @@ def main():
         binary_compare = validate_arm_order(order, args.main_binary, args.control_binary)
     except ValueError as error:
         parser.error(str(error))
-    if (args.candidate_metadata_slot_v1 and args.candidate_metadata_slot_delivery_v1) or (
-            args.candidate_separate_metadata_slot_pools and
-            (args.candidate_metadata_slot_v1 or args.candidate_metadata_slot_delivery_v1)):
-        parser.error("choose only one metadata slot candidate mode")
-    if args.candidate_metadata_slot_v1 or args.candidate_metadata_slot_delivery_v1 or args.candidate_separate_metadata_slot_pools:
+    candidate_modes = (args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
+                       args.candidate_separate_metadata_slot_pools, args.candidate_normal_list_page_size_100)
+    if sum(candidate_modes) > 1:
+        parser.error("choose only one candidate mode")
+    if any(candidate_modes):
         if tuple(order) not in CONTROL_COMPARE_ORDERS or not args.observe:
-            parser.error("metadata slot candidates require a control/candidate ABBA order and --observe")
+            parser.error("candidates require a control/candidate ABBA order and --observe")
     if (not args.binary.is_file() or
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
+    if args.candidate_normal_list_page_size_100 and binary_sha256(args.binary) != binary_sha256(args.control_binary):
+        parser.error("list page comparison requires the same binary in both arms")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
     if not 1 <= args.small_interval_ms <= 5000 or not 1 <= args.small_workers <= 8 or not 8 <= args.tail_seconds <= 60:
@@ -274,7 +283,8 @@ def main():
             run_dir.mkdir()
             cfg = arm_config(config, mode, uuid.uuid4().hex, args.chunk_size, binary_compare,
                              args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
-                             args.candidate_separate_metadata_slot_pools)
+                             args.candidate_separate_metadata_slot_pools,
+                             args.candidate_normal_list_page_size_100)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -292,6 +302,7 @@ def main():
                    "metadata_slot_v1": cfg["drive"].get("metadata_slot_v1", False),
                    "metadata_slot_delivery_v1": cfg["drive"].get("metadata_slot_delivery_v1", False),
                    "separate_metadata_slot_pools": cfg["drive"].get("separate_metadata_slot_pools", False),
+                   "normal_list_page_size": cfg["drive"].get("normal_list_page_size"),
                    "separate_bulk_media_pool": cfg["drive"].get("separate_bulk_media_pool", False),
                    "binary_sha256": binary_sha256(binary), "route_mode": cfg.get("route", {}).get("mode"),
                    "quota_project_header": bool(cfg["drive"].get("quota_project"))}
