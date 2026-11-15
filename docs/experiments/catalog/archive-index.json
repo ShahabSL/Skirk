@@ -1,5 +1,23 @@
 [
   {
+    "worktree": "apps-script-relay-client-wt",
+    "path": ".skirk-runs/relay-packed-89f508a-upload-simulation.log",
+    "bytes": 1588,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "apps-script-relay-client-wt",
+    "path": ".skirk-runs/relay-packed-ab54f98-simulation.log",
+    "bytes": 1431,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "apps-script-relay-client-wt",
+    "path": ".skirk-runs/relay-packed-ebcb9fd-bulk-simulation.log",
+    "bytes": 1568,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
     "worktree": "drive-changes-watch-wt",
     "path": ".skirk-runs/drive-changes-watch-live.json",
     "bytes": 2462,

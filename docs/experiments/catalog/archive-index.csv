@@ -1,4 +1,7 @@
 worktree,path,bytes,extraction
+apps-script-relay-client-wt,.skirk-runs/relay-packed-89f508a-upload-simulation.log,1588,source-index-only; inspect cited catalog entry or raw file for exact values
+apps-script-relay-client-wt,.skirk-runs/relay-packed-ab54f98-simulation.log,1431,source-index-only; inspect cited catalog entry or raw file for exact values
+apps-script-relay-client-wt,.skirk-runs/relay-packed-ebcb9fd-bulk-simulation.log,1568,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-changes-watch-wt,.skirk-runs/drive-changes-watch-live.json,2462,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-changes-watch-wt,.skirk-runs/drive-files-watch-live.json,2409,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-watch-probe,.skirk-runs/drive-watch-probe-20261114.json,416,source-index-only; inspect cited catalog entry or raw file for exact values

@@ -3281,6 +3281,107 @@
       "raw_archive_paths": [],
       "revision_or_binary": "therealaleph/MasterHttpRelayVPN-RUST b32f65f0cdec0602c9ffe4db0ed24b81d974cd6f;review09c26ee",
       "live_comparable": false
+    },
+    {
+      "id": "R3-023",
+      "candidate": "Reliable synchronous relay client+broker bounded ownership fault tests",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Actual localSOCKS/mux/HTTPbroker;16MiBGET+POST and17textreplies/lostUP/PULLresponses;separateTLSorigin16MiBGET+POST25echoes",
+      "latency": "Localtestdurations only; noGooglelatency",
+      "throughput_mbps": null,
+      "estimated_quota_units": "NoGooglecalls; bounded8internalattempt/bodyupperreservations are sourcepolicy,notconsumption",
+      "correctness_and_errors": "Initial19/20failed3scleanupassertion despiteexactbytes;correctedpostmeasurementexistingcleanupkick20/20;scalar28top-level+3fullmuxrace63.763s;packedrace27.967s,TLSrace20.553s,Node6tests",
+      "cleanup": "Payloadcachesempty afterpacedcleanup;claimsretain4096boundedidentities,notdurablerestart exactlyonce",
+      "decision": "RetainedresponseACK/writeoffsetdedupe/freshprocess epoch andboundedownership implemented only in research; finiteclaimlifetime/service-rate/otherhopquotas remain",
+      "source_documents": [
+        "docs/experiments/apps-script-reliable-relay-client-2026-11-15.md",
+        "docs/experiments/apps-script-relay-packing-local-2026-11-15.json"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "scalar443bdbd/a227a021b419489a126390795ee9bf8f93ea882e73e189c30b362d2655d678f0;packedab54f98;validateda805fb0/6710666a393895d6b2d10b6d681791887f674df56bff7fa8ba3f46fe3ee9fe1f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-024",
+      "candidate": "Scalar relay600ms service stress and retained failed test conditions",
+      "evidence_level": "local_full_transport_simulated_rpc_latency",
+      "workload": "LocalHTTP600ms/RPC,4MiBmaxmuxobject,768KiBfragments,16MiBfile+12echoes/250ms;noGoogle",
+      "latency": "EchoRTTmedian3428.605ms,max5969.796ms,first→last+4472.090ms",
+      "throughput_mbps": "Filetimingnotrecorded",
+      "estimated_quota_units": "26UP+43PULLRPCs afterwarmup; noGoogleunits",
+      "correctness_and_errors": "All12exactechoesduringfile;initialactual3MiBobjectconditionfailed afterbytesdelivered;correctedtestobservedmax2097200B notconfigured4MiB;fastloopbackmissingoverlapfailurealso retained",
+      "cleanup": "Postmeasurementcleanupseparatelypaced",
+      "decision": "4message/s offeredrate exceeds scalar600msone-objectservice; memoryheadroomnotlatencyisolation; configuredchunklimitnotobservedobjectsize",
+      "source_documents": [
+        "docs/experiments/apps-script-reliable-relay-client-2026-11-15.md",
+        "docs/experiments/apps-script-relay-packing-local-2026-11-15.json"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "scalar443bdbd; source/reportsin26f6f3c",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-025",
+      "candidate": "Local600ms relayprioritypacking download-first matchedpair",
+      "evidence_level": "local_full_transport_simulated_rpc_latency",
+      "workload": "Samebinaryscalar/packed,16MiBsharedincompressiblefile+12echoes/250ms,32MiB/direction+1MiB/16priorityreserve,768KiBframes,oneUP/onePULL;noGoogle",
+      "latency": "EchoRTTmedian3432.868→1526.428ms,max5974.79→1804.968ms;growth4475.457→257.294ms;fileTTFBNone→Nonems",
+      "throughput_mbps": "Notrecorded; do not usepairwalltimeasfileduration",
+      "estimated_quota_units": "UPcalls28→15;PULL44→39;noGoogleunits",
+      "correctness_and_errors": "Botharmsexact16MiB+12echoes;alltextduringfile;72rawRTTsretainedacrossthreepairs",
+      "cleanup": "Pacedpostmeasurementlocalcleanup;noCloudresources",
+      "decision": "File timing was not instrumented; per-subcase duration includes cleanup and cannot be used as file time.; Actual normal object maxima differ despite same configured mux limit.; no liveGoogle/architectureoptimumclaim",
+      "source_documents": [
+        "docs/experiments/apps-script-reliable-relay-client-2026-11-15.md",
+        "docs/experiments/apps-script-relay-packing-local-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "apps-script-relay-client-wt/.skirk-runs/relay-packed-ab54f98-simulation.log"
+      ],
+      "revision_or_binary": "ab54f98/834ed047d23caa0584e22f740b99b2c1a5ed50595045b113cbd5cf8d416a32e4",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-026",
+      "candidate": "Local600ms relayprioritypacking download-observed matchedpair",
+      "evidence_level": "local_full_transport_simulated_rpc_latency",
+      "workload": "Samebinaryscalar/packed,16MiBsharedincompressiblefile+12echoes/250ms,32MiB/direction+1MiB/16priorityreserve,768KiBframes,oneUP/onePULL;noGoogle",
+      "latency": "EchoRTTmedian3432.156→1527.87ms,max5972.922→1805.557ms;growth4474.32→259.436ms;fileTTFB6645.582→15805.653ms",
+      "throughput_mbps": "5.02467→5.524128Mb/s;completion26711.75→24296.635ms",
+      "estimated_quota_units": "UPcalls27→14;PULL44→40;noGoogleunits",
+      "correctness_and_errors": "Botharmsexact16MiB+12echoes;alltextduringfile;72rawRTTsretainedacrossthreepairs",
+      "cleanup": "Pacedpostmeasurementlocalcleanup;noCloudresources",
+      "decision": "Packed file first byte worsened materially; this is not a blanket winner.; Actual normal object maxima and coalescing differ.; One matched pair, fixed artificial delay, local origin; no real Google throughput inference.; no liveGoogle/architectureoptimumclaim",
+      "source_documents": [
+        "docs/experiments/apps-script-reliable-relay-client-2026-11-15.md",
+        "docs/experiments/apps-script-relay-packing-local-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "apps-script-relay-client-wt/.skirk-runs/relay-packed-ebcb9fd-bulk-simulation.log"
+      ],
+      "revision_or_binary": "ebcb9fd/658b9d1acbe9a154bf126a7ab9e7ec7160e83f28de555ed2c314f7605cc08a4b",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-027",
+      "candidate": "Local600ms relayprioritypacking upload-observed matchedpair",
+      "evidence_level": "local_full_transport_simulated_rpc_latency",
+      "workload": "Samebinaryscalar/packed,16MiBsharedincompressiblefile+12echoes/250ms,32MiB/direction+1MiB/16priorityreserve,768KiBframes,oneUP/onePULL;noGoogle",
+      "latency": "EchoRTTmedian4049.657→3164.059ms,max7209.33→5078.861ms;growth5707.777→3325.679ms;fileTTFB32376.658→24484.676ms",
+      "throughput_mbps": "4.145506→5.481693Mb/s;completion32376.683→24484.722ms",
+      "estimated_quota_units": "UPcalls53→40;PULL53→40;noGoogleunits",
+      "correctness_and_errors": "Botharmsexact16MiB+12echoes;alltextduringfile;72rawRTTsretainedacrossthreepairs",
+      "cleanup": "Pacedpostmeasurementlocalcleanup;noCloudresources",
+      "decision": "Packing reduces latency and file completion here, but upload echo latency still grows by 3.326 seconds over twelve offered messages.; HTTP POST first response is its server-confirmed upload receipt, not first transmitted upload byte.; no liveGoogle/architectureoptimumclaim",
+      "source_documents": [
+        "docs/experiments/apps-script-reliable-relay-client-2026-11-15.md",
+        "docs/experiments/apps-script-relay-packing-local-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "apps-script-relay-client-wt/.skirk-runs/relay-packed-89f508a-upload-simulation.log"
+      ],
+      "revision_or_binary": "89f508a/deeebb2b5116399513f3986e0e633a36f994950ab8241ecead15a48db069f4cc",
+      "live_comparable": false
     }
   ]
 }

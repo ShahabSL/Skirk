@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **162 interpreted experiment records**, **294 recognized raw result files** indexed across local worktrees, and **267 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **167 interpreted experiment records**, **297 recognized raw result files** indexed across local worktrees, and **273 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -233,3 +233,7 @@ R3-018/019 retain the [two later strict100MiB cohorts](experiments/sustained-str
 ## Alternative synchronous Google-front carrier
 
 R3-021 preserves all twelve successful owned Apps Script opaque AEAD echo exchanges, including the 624.779 ms warm64Bmedian and1MiB1069.133msmedian, both redirecthops pinned through the selected Googlefront. This is an unloaded APIprimitive, not a full TCP/mixedworkload result. R3-022 preserves the external full-tunnel source audit and its response-loss/unboundedqueue traps; retained-responseACKs and write-offset dedupe must precede promotion. The ephemeral echo deployment was archived and its disabled state verified through the same front.
+
+## Retained reliable relay local stress and packing tradeoffs
+
+R3-023..027 preserve the independent reliable-relay fault tests, initial cleanup/overlap/object-size assertion failures, and all three matched local600ms packing pairs. GETecho medians fell3.432→1.528s, but observed fileTTFB worsened6.646→15.806s. POSTfile completion improved32.377→24.485s while echoqueuegrowth still reached3.326s. All72rawRTTs are retained in the sanitized arm catalog. These are actual localSOCKS/mux tests with synthetic RPC delay, not Google speed measurements, and they expose a remaining service-rate/fairness frontier rather than an optimal protocol.
