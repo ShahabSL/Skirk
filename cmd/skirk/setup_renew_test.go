@@ -209,6 +209,67 @@ func TestRenewOAuthRejectsMismatchedClientKitBeforeLogin(t *testing.T) {
 	}
 }
 
+func TestRenewOAuthAllowsClientTransportSettings(t *testing.T) {
+	kitDir := t.TempDir()
+	exit, client, _ := writeTestOAuthRenewKit(t, kitDir, "secret")
+	client.Drive.NormalListPageSize = 500
+	client.Drive.SeparateBulkMediaPool = true
+	client.Drive.QuotaProject = "client-quota-project"
+	if err := writeJSONFile(filepath.Join(kitDir, "client.json"), client); err != nil {
+		t.Fatal(err)
+	}
+	// The exported profile may have its own transport settings as well.
+	client.Drive.MetadataSlotV1 = true
+	text, err := skirk.EncodeConfigText(&client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTextFile(filepath.Join(kitDir, "client.skirk"), text+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTextFile(filepath.Join(kitDir, "client-command.txt"), "skirk serve-client --config '"+text+"' --listen 127.0.0.1:18080\n"); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := loadOAuthRenewKit(kitDir, filepath.Join(kitDir, "exit.json"))
+	if err != nil {
+		t.Fatalf("same mailbox with client transport settings should renew: %v", err)
+	}
+	newAuth := exit.Auth
+	newAuth.RefreshToken = "renewed-refresh-token"
+	files, err := kit.updatedFiles(newAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replaceOAuthRenewFiles(kitDir, files); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"client.json", "client.skirk"} {
+		got, err := skirk.LoadConfig(filepath.Join(kitDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Auth.RefreshToken != newAuth.RefreshToken || got.Drive.NormalListPageSize != 500 ||
+			!got.Drive.SeparateBulkMediaPool || got.Drive.QuotaProject != "client-quota-project" {
+			t.Fatalf("%s lost renewed OAuth or client Drive settings", name)
+		}
+		if name == "client.skirk" && !got.Drive.MetadataSlotV1 {
+			t.Fatal("exported profile lost its slot setting")
+		}
+	}
+}
+
+func TestRenewOAuthRejectsDifferentDriveSpace(t *testing.T) {
+	kitDir := t.TempDir()
+	_, client, _ := writeTestOAuthRenewKit(t, kitDir, "secret")
+	client.Drive.Space = "appDataFolder"
+	if err := writeJSONFile(filepath.Join(kitDir, "client.json"), client); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOAuthRenewKit(kitDir, filepath.Join(kitDir, "exit.json")); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected Drive space mismatch rejection, got %v", err)
+	}
+}
+
 func TestReplaceAuthJSONPreservesUnknownFields(t *testing.T) {
 	original := []byte(`{"secret":"secret","session_id":"session","auth":{"client_id":"old","refresh_token":"old"},"future_setting":{"enabled":true}}`)
 	updated, err := replaceAuthJSON(original, skirk.AuthConfig{ClientID: "old", RefreshToken: "new"})

@@ -226,7 +226,9 @@ func loadOAuthRenewKit(kitDir, exitPath string) (*oauthRenewKit, error) {
 }
 
 func checkOAuthRenewClientIdentity(exit, client *skirk.Config) error {
-	if client.Secret != exit.Secret || client.SessionID != exit.SessionID || client.Drive != exit.Drive || client.Auth.ClientID != exit.Auth.ClientID {
+	if client.Secret != exit.Secret || client.SessionID != exit.SessionID ||
+		client.Drive.Space != exit.Drive.Space || client.Drive.FolderID != exit.Drive.FolderID ||
+		client.Auth.ClientID != exit.Auth.ClientID {
 		return errors.New("client profile does not match the exit secret, session, Drive mailbox, and OAuth client ID")
 	}
 	return nil
