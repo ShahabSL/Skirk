@@ -27,8 +27,17 @@ class ReadUploadRecovery(NormalUploadRecovery):
     HOSTS = frozenset(("www.google.com", "google.com", "www.googleapis.com", "drive.googleapis.com"))
     ID_PATH = re.compile(r"/drive/v3/files/[A-Za-z0-9_-]{1,256}$")
     LOG_AHEAD_METRICS_SECONDS = 5.25  # CLI publishes every 5s; no core change.
+    # Frozen experiment executables whose read-label GET semantics were read
+    # in the exact source. Unknown executables require observed request URLs.
+    SOURCE_BOUND_READS = {
+        "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f": (
+            "63532c8a92fef95cdd30a8f1e45eb20dbe207d50", READ_OPS),
+        "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3": (
+            "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a", READ_OPS - {"slot_cleanup_probe"}),
+    }
 
-    def __init__(self, directory, cohort, *, expected_frames, expected_bulk_bytes, expected_upload_bytes=0):
+    def __init__(self, directory, cohort, *, expected_frames, expected_bulk_bytes, expected_upload_bytes=0,
+                 binary_sha256=None):
         super().__init__(directory, cohort)
         if (type(expected_frames) is not int or not 1 <= expected_frames <= 1000
                 or type(expected_bulk_bytes) is not int or expected_bulk_bytes <= 0
@@ -37,9 +46,12 @@ class ReadUploadRecovery(NormalUploadRecovery):
         self.expected_frames = expected_frames
         self.expected_bulk_bytes = expected_bulk_bytes
         self.expected_upload_bytes = expected_upload_bytes
+        self.binary_sha256 = binary_sha256
+        self.source_bound = self.SOURCE_BOUND_READS.get(binary_sha256)
         for state in self.roles.values():
             state.update(op_drive={op: 0 for op in self.ALLOWED_OPS}, op_counter={},
-                         lag_since=None, downloads={}, read_retries={}, upload_retries={})
+                         op_times={op: [] for op in self.ALLOWED_OPS},
+                         lag_since=None, downloads={}, read_retries={}, upload_retries={}, observations=[])
 
     @staticmethod
     def _fields(line):
@@ -54,30 +66,41 @@ class ReadUploadRecovery(NormalUploadRecovery):
             raise RecoveryRejected("unclassified_read_mux_timeout")
         return tuple(fields[key] for key in ("object", "lane", "seq", "priority"))
 
-    def _eligible_failure(self, operation, attempts, status, error):
+    def _request_shape(self, operation, attempts, status, error):
+        if operation not in self.ALLOWED_OPS or attempts != "1" or status != "none":
+            return None
+        if error == "context deadline exceeded":
+            return ("source_inferred_not_observed" if self.source_bound and operation in self.source_bound[1]
+                    else None)
         match = self.REQUEST.fullmatch(error)
-        if operation not in self.ALLOWED_OPS or attempts != "1" or status != "none" or match is None:
-            return False
+        if match is None:
+            return None
         method, url, message = match.groups()
         if not self.TIMEOUT.fullmatch(message):
-            return False
+            return None
         try:
             parsed = urlsplit(url)
             query = parse_qs(parsed.query, keep_blank_values=True)
         except ValueError:
-            return False
+            return None
         if parsed.netloc not in self.HOSTS or parsed.fragment or parsed.username or parsed.password:
-            return False
+            return None
         if operation == "upload":
-            return method == "Post" and parsed.path == "/upload/drive/v3/files" and query.get("uploadType") == ["multipart"]
+            valid = method == "Post" and parsed.path == "/upload/drive/v3/files" and query.get("uploadType") == ["multipart"]
+            return "observed_url" if valid else None
         if method != "Get":
-            return False
+            return None
         alt = query.get("alt")
         if operation == "list":
-            return parsed.path == "/drive/v3/files" and bool(parsed.query) and alt in (None, ["json"])
+            valid = parsed.path == "/drive/v3/files" and bool(parsed.query) and alt in (None, ["json"])
+            return "observed_url" if valid else None
         if not self.ID_PATH.fullmatch(parsed.path) or parsed.path.endswith("/generateIds"):
-            return False
-        return alt == ["media"] if operation == "download" else alt in (None, ["json"])
+            return None
+        valid = alt == ["media"] if operation == "download" else alt in (None, ["json"])
+        return "observed_url" if valid else None
+
+    def _eligible_failure(self, operation, attempts, status, error):
+        return self._request_shape(operation, attempts, status, error) is not None
 
     def _line(self, role, line, now):
         state = self.roles[role]
@@ -86,9 +109,12 @@ class ReadUploadRecovery(NormalUploadRecovery):
             if match is None or not self._eligible_failure(*match.groups()):
                 raise RecoveryRejected("unclassified_read_or_upload_failure")
             operation = match.group(1)
+            state["observations"].append({"operation": operation, "attempts": 1, "status": "none",
+                                          "request_shape": self._request_shape(*match.groups())})
             self.arm_events += 1
             state["drive"] += 1
             state["op_drive"][operation] += 1
+            state["op_times"][operation].append(now)
             self.cohort.reserve(now, self.arm_events)
             return
         if "mux process retry budget exhausted" in line or "mux process stale " in line or "drive auth rejected " in line:
@@ -177,6 +203,7 @@ class ReadUploadRecovery(NormalUploadRecovery):
                 raise RecoveryRejected("api_error_counter_regressed_or_invalid")
             counted = 0
             behind = False
+            unmatched_times = []
             for operation in set(ops) | self.ALLOWED_OPS:
                 info = ops.get(operation, {})
                 if not isinstance(info, dict):
@@ -191,6 +218,8 @@ class ReadUploadRecovery(NormalUploadRecovery):
                 observed = state["op_drive"].get(operation, 0)
                 pending |= count > observed
                 behind |= count < observed
+                if count < observed:
+                    unmatched_times.append(state["op_times"][operation][count])
             if errors != counted or errors and quota.get("last_error_reason") != "timeout":
                 raise RecoveryRejected("unclassified_or_recovered_retry_api_error")
             state["counter"] = errors
@@ -201,8 +230,7 @@ class ReadUploadRecovery(NormalUploadRecovery):
             for lane, count in state["upload_retries"].items():
                 pending |= count > sum(record["lane"] == lane for record in state["records"])
             if behind:
-                if state["lag_since"] is None:
-                    state["lag_since"] = now
+                state["lag_since"] = min(unmatched_times)
                 if now - state["lag_since"] > self.LOG_AHEAD_METRICS_SECONDS:
                     raise RecoveryRejected("read_upload_metrics_lag_exceeded")
             else:
@@ -216,9 +244,12 @@ class ReadUploadRecovery(NormalUploadRecovery):
         result = super().report()
         result["mode"] = "bounded_observable_read_and_normal_upload_timeouts"
         result["log_ahead_metrics_max_seconds"] = self.LOG_AHEAD_METRICS_SECONDS
+        result["bare_read_source_binary_sha256"] = self.binary_sha256 if self.source_bound else None
+        result["bare_read_source_revision"] = self.source_bound[0] if self.source_bound else None
         for role, state in self.roles.items():
             result["roles"][role].update(drive_timeout_events_by_operation=dict(state["op_drive"]),
                                          reported_api_errors_by_operation=dict(state["op_counter"]),
                                          mux_read_timeout_events=sum(state["downloads"].values()),
-                                         paired_read_retry_announcements=sum(state["read_retries"].values()))
+                                         paired_read_retry_announcements=sum(state["read_retries"].values()),
+                                         failure_observations=list(state["observations"]))
         return result

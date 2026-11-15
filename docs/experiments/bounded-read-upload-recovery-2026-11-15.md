@@ -14,9 +14,33 @@ unchanged. The existing upload-only policy implementation is unchanged.
 
 Every eligible Drive failure must explicitly report `attempts=1`, `status=none`,
 and a URL-bearing Go GET/POST error ending in `context deadline exceeded` or
-`i/o timeout` (including the standard Client.Timeout header-wait suffix).
+`i/o timeout` (including the standard Client.Timeout header-wait suffix), except
+for the narrowly source-bound bare-read case below.
 There is no allowance for an HTTP status error, final `attempts>1`, arbitrary
-connection failure, or bare timeout without the expected request URL.
+connection failure, or bare timeout outside the source-bound exception.
+
+The actual retained candidate metadata failure is the bare line
+`drive request failed op=metadata attempts=1 status=none duration=6.002s error=context deadline exceeded`.
+The root authorized this separate allowance: **exactly** bare `context deadline
+exceeded`, only for source-verified read labels, only with the same one-attempt,
+no-status conditions. It is pinned to these frozen executable SHA-256 values:
+
+- `c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f`,
+  source `63532c8a92fef95cdd30a8f1e45eb20dbe207d50`: all four read labels.
+- `34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3`,
+  source `2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a`: metadata, download, list;
+  this main source has no private slot-cleanup label.
+
+`driveRequestLabel` restricts those labels to GET; the current private cleanup
+marker also explicitly checks GET. This exception records
+`request_shape=source_inferred_not_observed`. It does **not** infer a URI, host,
+dispatch stage, or physical wire-attempt count. A retry wait can replace an
+earlier URL-bearing error with a bare context error, so bare does not establish
+that a request was queued or never dispatched. Bare uploads, bare i/o timeouts,
+unknown labels/binaries, status errors and attempts>1 remain ineligible. A
+URL-bearing error always receives the strict URL checks; a bad URL cannot fall
+back to inferred semantics. New executable hashes require explicit source review
+before any corresponding source-bound allowance is added.
 
 Allowed hosts are exactly `www.google.com`, `google.com`, `www.googleapis.com`,
 and `drive.googleapis.com`, over HTTPS without credentials, a nonstandard
@@ -61,7 +85,8 @@ remains in the report; a successful workload with errors is
 
 There is an important publication cadence distinction. The CLI writes its
 runtime metrics every **five seconds**. Therefore eligible logs can lead metrics
-for at most 5.25 seconds, with a tracked per-role lag start; longer lag stops.
+for at most 5.25 seconds, measured from the oldest still-unmatched per-operation
+event (counter progress releases earlier events); longer lag stops.
 Counters ahead of eligible logs, mux-pair mismatch, or final mismatch uses the
 existing single 0.25-second correlation refresh. That refresh rechecks quota
 estimates/backoff before any allowance. Final equality is mandatory; the policy
@@ -89,7 +114,7 @@ is performed by the existing benchmark worker before it writes that checkpoint.
 
 ## Offline validation
 
-81 focused/existing Python tests passed in 3.787 seconds, including the new
+81 focused/existing Python tests initially passed in 3.787 seconds, including the new
 parser/correlation/budget/proof cases, unchanged normal-only tests, comparison
 safety tests, and real loopback persistent-frame/file tests. No Google calls
 were made. Test log: ignored `.skirk-runs/read-upload-tests.log` in the isolated
@@ -102,6 +127,21 @@ and role mismatch; hidden recovered retry counters; metrics lag expiry;
 counter regression; matched and mismatched read recovery; early integrity
 failure; missing/duplicate/unchecked frame or bulk evidence; and mutually
 exclusive CLI flags before any live work.
+
+Follow-up tests cover the actual bare c47 metadata line with exact per-role/op
+counter correlation; strict executable/label/message binding of the exception;
+and metrics advancing while a newer, still-unmatched event remains within its
+own bounded publication interval.
+
+The full affected/existing suite then passed **84 tests in 3.778 seconds** after
+those additions. Its raw local log is `.skirk-runs/read-upload-tests-final.log`.
+
+Independent review also found a remaining live applicability issue: finite
+metadata-slot retirement can emit the generic `reason=transport_error`, which
+the observer still rejects. That string can also represent integrity or other
+failures. There is no blanket healthy-retirement exemption; a trustworthy,
+specific classification is needed before a long-lived slot-recovery cohort can
+claim to have exercised that transition.
 
 Independent source review and a root-coordinated live lease are required before
 using this mode for any actual account measurement. Historical failed arms stay

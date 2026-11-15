@@ -449,7 +449,8 @@ def main():
 
             recovery = (ReadUploadRecovery(run_dir, recovery_cohort, expected_frames=args.small_count,
                         expected_bulk_bytes=len(bulk_ack) if args.bulk_direction == "upload" else len(payload),
-                        expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0)
+                        expected_upload_bytes=len(payload) if args.bulk_direction == "upload" else 0,
+                        binary_sha256=row["binary_sha256"])
                         if args.bounded_read_upload_timeouts else NormalUploadRecovery(run_dir, recovery_cohort) if recovery_cohort else None)
             last_snapshots = {}
 

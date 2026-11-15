@@ -16,6 +16,8 @@ MUX_UPLOAD = 'mux upload role=exit lane=0 seq=2 priority=false sealed_bytes=1048
 MUX_DOWNLOAD = 'mux download role=exit direction=up lane=0 seq=2 priority=false object=public-object error=timeout\n'
 PROCESS_RETRY = 'mux process retry object=public-object lane=0 seq=2 priority=false attempt=1 error=timeout\n'
 UPLOAD_RETRY = 'mux upload retry role=exit lane=0 priority=false attempt=1 error=timeout\n'
+CANDIDATE_SHA = "c47a214ef00db17e8bbee7f40e6ec45d0de7b2174394829ab0919dd61e31082f"
+MAIN_SHA = "34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3"
 
 
 def snapshot(counts=None, reason="timeout", active=False):
@@ -70,6 +72,30 @@ class ReadUploadRecoveryTests(unittest.TestCase):
         self.check(dict.fromkeys((case[0] for case in cases), 1), final=True)
         self.assertEqual(self.guard.report()["arm_observed_timeout_events"], 4)
         self.assertEqual(self.guard.report()["roles"]["exit"]["reported_api_errors"], 4)
+
+    def test_actual_frozen_candidate_bare_metadata_failure_is_source_bound_and_correlated(self):
+        self.guard = ReadUploadRecovery(self.directory, self.cohort, expected_frames=2, expected_bulk_bytes=4096,
+                                        binary_sha256=CANDIDATE_SHA)
+        self.append('drive request failed op=metadata attempts=1 status=none duration=6.002s error=context deadline exceeded\n', "client")
+        self.guard.check({"client": snapshot(), "exit": snapshot()}, 0)
+        self.guard.check({"client": snapshot({"metadata": 1}), "exit": snapshot()}, 1, final=True)
+        observation = self.guard.report()["roles"]["client"]["failure_observations"]
+        self.assertEqual(observation, [{"operation": "metadata", "attempts": 1, "status": "none",
+                                       "request_shape": "source_inferred_not_observed"}])
+        self.assertNotIn("url", observation[0])
+        self.assertEqual(self.guard.report()["bare_read_source_binary_sha256"], CANDIDATE_SHA)
+
+    def test_bare_read_exception_is_exact_label_binary_and_shape_bound(self):
+        for binary in (CANDIDATE_SHA, MAIN_SHA, None, "unknown"):
+            guard = ReadUploadRecovery(self.directory, self.cohort, expected_frames=2, expected_bulk_bytes=4096,
+                                       binary_sha256=binary)
+            for op in ("metadata", "download", "list", "slot_cleanup_probe", "upload", "patch", "upload_commit_probe"):
+                expected = binary in (CANDIDATE_SHA, MAIN_SHA) and op in guard.READ_OPS and not (binary == MAIN_SHA and op == "slot_cleanup_probe")
+                self.assertEqual(guard._eligible_failure(op, "1", "none", "context deadline exceeded"), expected)
+            for attempts, status, message in (("2", "none", "context deadline exceeded"), ("1", "503", "context deadline exceeded"),
+                                              ("1", "none", "i/o timeout"), ("1", "none", "context deadline exceeded extra")):
+                self.assertFalse(guard._eligible_failure("metadata", attempts, status, message))
+            self.assertFalse(guard._eligible_failure("download", "1", "none", failure().replace("www.google.com", "attacker.example").split("error=", 1)[1].strip()))
 
     def test_single_read_and_normal_upload_share_budget_and_keep_actual_errors(self):
         self.append(failure() + MUX_DOWNLOAD + PROCESS_RETRY + UPLOAD + MUX_UPLOAD + UPLOAD_RETRY)
@@ -127,6 +153,14 @@ class ReadUploadRecoveryTests(unittest.TestCase):
             self.check({"download": 1})
         self.append(failure()[-5:])
         self.check({"download": 1}, final=True)
+
+    def test_metrics_progress_ages_only_the_oldest_still_unmatched_event(self):
+        self.append(failure())
+        self.check(now=0)
+        self.append(failure())
+        self.check({"download": 1}, now=4)
+        self.check({"download": 1}, now=9.2)
+        self.check({"download": 2}, now=9.3, final=True)
 
     def test_non_timeout_recovered_retry_unknown_ops_and_backoff_rejected(self):
         for counts, reason in (({"download": 1}, "retry_recovered"), ({"download": 1}, "notFound"),
