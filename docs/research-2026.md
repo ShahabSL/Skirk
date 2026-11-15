@@ -292,8 +292,30 @@ guide says the activation-checked project is the rate-quota project, so quota
 movement is a reasonable *inference*, not independently measured usage
 attribution. A project quota chart or Google Workspace support confirmation
 is still needed before treating it as a scaling design. The API metrics pages
-for both test projects showed no request data at this check, despite the
-successful live requests, so they did not settle attribution.
+for both test projects showed no request data at this initial check, despite
+the successful live requests, so they did not settle attribution.
+
+A November 15 follow-up found populated Cloud Console Drive method tables for
+both projects. Using the same isolated `shahabpre` OAuth grant, a bounded burst
+of **100 identical, read-only `files.list` requests** with
+`X-Goog-User-Project: flowing-precept-514715-p1` returned **100 HTTP 200**
+responses and no API error between **06:04:08 and 06:05:17 UTC**. These calls
+represented about **10,000 estimated Drive units** and created no files.
+The status-only private summary is
+`.skirk-runs/quota-attribution-header-burst-20261115.json`.
+The second project's six-hour `files.list` table read **6,744** shortly after
+the burst and **6,752** about five minutes later; the OAuth project's table
+read **14,794** at both observations. The second project's rolling one-hour
+total fell from **444** before the burst to **382** afterward as older traffic
+left the interval. None of these aggregate readings isolates the burst or
+shows a conclusive 100-request movement. Google's
+[`serviceruntime` metric reference](https://docs.cloud.google.com/monitoring/api/metrics_gcp_p_z)
+says `api/request_count` is sampled every 60 seconds and can remain invisible
+for up to 180 seconds after sampling; the Console method table can have
+additional aggregation or caching behavior. Successful requests and these
+rolling totals therefore still do **not** independently prove Drive quota
+attribution. A stronger follow-up would use a fixed time-series interval and
+unique uncached requests, or obtain a Drive-specific confirmation from Google.
 
 The Go Drive transport now accepts optional `drive.quota_project` in a kit
 profile. It validates the standard Google Cloud project ID form and adds the
