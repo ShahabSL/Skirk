@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,5 +261,60 @@ func TestRelayResearchHTTPRejectsUnauthorizedBeforeRPCState(t *testing.T) {
 	b.handler("synthetic-auth-secret-at-least-32-characters").ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden || b.snapshot().Requests != 0 {
 		t.Fatal("unauthorized request reached RPC state")
+	}
+}
+
+type rrBlockedBody struct {
+	entered, closed, finished chan struct{}
+	once                      sync.Once
+}
+
+func (b *rrBlockedBody) Read([]byte) (int, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.closed
+	return 0, io.ErrClosedPipe
+}
+func (b *rrBlockedBody) Close() error {
+	close(b.closed)
+	time.Sleep(time.Millisecond)
+	close(b.finished)
+	return nil
+}
+
+func TestRelayResearchHTTPConcurrencyAndCloseJoinBodyCancellation(t *testing.T) {
+	b := rrFixture(t, relayResearchConfig{FrameBytes: 128 * 1024})
+	handler := b.handler("synthetic-auth-secret-at-least-32-characters")
+	var bodies []*rrBlockedBody
+	var done []chan struct{}
+	for range 4 {
+		body := &rrBlockedBody{entered: make(chan struct{}), closed: make(chan struct{}), finished: make(chan struct{})}
+		bodies = append(bodies, body)
+		r := httptest.NewRequest(http.MethodPost, "/exchange", nil)
+		r.Body = body
+		ended := make(chan struct{})
+		done = append(done, ended)
+		go func() { handler.ServeHTTP(httptest.NewRecorder(), r); close(ended) }()
+		<-body.entered
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/exchange", bytes.NewBufferString(`{}`)))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatal("HTTP handler admission unbounded")
+	}
+	b.Close()
+	for i, ended := range done {
+		select {
+		case <-ended:
+		case <-time.After(time.Second):
+			t.Fatal("body reader not joined")
+		}
+		select {
+		case <-bodies[i].finished:
+		default:
+			t.Fatal("Close returned before cancellation callback joined")
+		}
+	}
+	if len(b.httpSlots) != 0 {
+		t.Fatal("HTTP slot leaked")
 	}
 }

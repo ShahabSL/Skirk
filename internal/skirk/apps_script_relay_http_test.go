@@ -43,8 +43,13 @@ func (b *relayResearchBroker) handler(auth string) http.Handler {
 		controller := http.NewResponseController(w)
 		_ = controller.SetReadDeadline(time.Now().Add(10 * time.Second))
 		defer controller.SetReadDeadline(time.Time{})
-		stop := context.AfterFunc(b.ctx, func() { _ = r.Body.Close() })
-		defer stop()
+		readClosed := make(chan struct{})
+		stop := context.AfterFunc(b.ctx, func() { defer close(readClosed); _ = r.Body.Close() })
+		defer func() {
+			if !stop() {
+				<-readClosed
+			}
+		}()
 		limit := int64(base64.StdEncoding.EncodedLen(b.codec.maxWireBytes()) + 1024)
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 		if err != nil {
