@@ -2904,7 +2904,7 @@
       "latency": "No live hybrid latency result at source snapshotcc4e231",
       "throughput_mbps": null,
       "estimated_quota_units": null,
-      "correctness_and_errors": "Race suite passes; real authenticated OPEN exactly1 destination dial/initial write after closed-map expiry and duplicate delivery; outer+innerAEAD; ACK after real mux processing; bounded queues/ACK memory/global physical budgets;0p0 bulk-store leakage",
+      "correctness_and_errors": "Race suite passes; real authenticated OPEN exactly1 destination dial/initial write after closed-map expiry and duplicate delivery; outer+innerAEAD; ACK after real mux processing; bounded queues/ACK memory/visible-dispatch budgets; initial guard cannot independently count opaque HTTP2 retries;0p0 bulk-store leakage",
       "cleanup": "Offline only; live setup prewrites exact-resource recovery ledger and reserves32calls+1MiB cleanup budget; no successful live cleanup inferred",
       "decision": "Safe for a bounded live probe after independent review; no product export, durable process-restart proof or200000-user capacity claim",
       "source_documents": [
@@ -2953,6 +2953,26 @@
         "pubsub-streaming-wt/.skirk-runs/hybrid-pools-f2109da-20261115.json"
       ],
       "revision_or_binary": "f2109da;f7a3d059b9b785b4ceeb6dd167492f4825357e6984c44277cd766a7bdd300330",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-007",
+      "candidate": "Stable-two-worker PubSub priority/Drive bulk actual SOCKS hybrid, failed mixed tuple",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "One warm64B text;16MiB download+ten concurrent64B texts, then16MiB reverse upload+ten texts; fresh2-worker subscriptions; same savedauto/8MiB config plus separate bulk pools",
+      "latency": "Warm3.518s; download text10/10 median443.381ms,max1664.068ms; upload text10/10 median704.592ms,max1332.820ms; download TTFB58.846s then180.004s deadline",
+      "throughput_mbps": "Upload5.719 including setup; download incomplete, no speed assigned",
+      "estimated_quota_units": "Client14255+exit10905 active visible request estimates;25570 visible guard reserved units including cleanup;197PubSub calls,50025request+55425response bytes",
+      "correctness_and_errors": "21texts exact; reverse upload16MiB length/SHA verified; download only10485358/16777216B; exit upload23calls17timeouts,client7/0; PubSub46/46 publications/deliveries,0duplicates,45ACK IDs,36empty pulls",
+      "cleanup": "Four exact Cloud resources404 immediately+31s; Drive immediate/delayed prefix scans empty after2own-ID deletions and ID absence checks; borrowed token/recovery ledger removed",
+      "decision": "Fast text retained but tuple failed and is not a working full transport/promoted winner. Unchanged bulk path timeout cause not isolated; no matched same-binary Drive control. Initial outer-RoundTripper guard/counters miss opaque HTTP2 retries; do not claim exact wire/API billing counts",
+      "source_documents": [
+        "docs/experiments/pubsub-drive-hybrid-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "pubsub-streaming-wt/.skirk-runs/hybrid-full-75bab64-20261115.json"
+      ],
+      "revision_or_binary": "75bab64;5ba77dfe0866c93246b0da512babb6b6e0ca74c4bddb00e5246ceec7fed0f29d",
       "live_comparable": false
     }
   ]
