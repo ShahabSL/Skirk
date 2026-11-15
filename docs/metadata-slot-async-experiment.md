@@ -43,6 +43,12 @@ and preserve the chosen Google route. A clean-main binary may be passed as
 both binary hashes to distinguish the same-binary default comparison from
 the clean-main comparison.
 
+`--candidate-metadata-slot-async-vs-mux` provides the same full-package
+comparison for asynchronous ownership with its original processing deadline.
+Only candidate arms enable slots and the epoch scheduler, and primary mode
+is cleared. Use this selector when evaluating the asynchronous mode rather
+than assuming the primary variant wins before its measurements complete.
+
 The slot writer drains up to the bounded queue size after its PATCH-rate wait
 and before preparing the next cumulative snapshot. One PATCH may therefore
 publish several queued records. Publication waiters are completed only through

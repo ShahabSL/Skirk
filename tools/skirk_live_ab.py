@@ -59,7 +59,8 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
                shared_interaction_epoch: bool = False,
                candidate_metadata_16k: bool = False,
                candidate_metadata_slot_primary_v1: bool = False,
-               candidate_metadata_slot_primary_vs_mux: bool = False) -> dict:
+               candidate_metadata_slot_primary_vs_mux: bool = False,
+               candidate_metadata_slot_async_vs_mux: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -83,11 +84,11 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
         drive["separate_metadata_slot_pools"] = True
     if candidate_metadata_slot_async_v1 and mode == "candidate":
         drive["metadata_slot_async_v1"] = True
-    if candidate_metadata_slot_primary_v1 or (candidate_metadata_slot_primary_vs_mux and mode == "candidate"):
+    if candidate_metadata_slot_primary_v1 or ((candidate_metadata_slot_primary_vs_mux or candidate_metadata_slot_async_vs_mux) and mode == "candidate"):
         drive["metadata_slot_v1"] = True
         drive["metadata_slot_delivery_v1"] = True
         drive["metadata_slot_async_v1"] = True
-        if mode == "candidate":
+        if mode == "candidate" and not candidate_metadata_slot_async_vs_mux:
             drive["metadata_slot_primary_v1"] = True
     if candidate_normal_list_page_size_100:
         # Override any saved setting in both arms. Only the normal p1 page
@@ -125,7 +126,7 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
         config["tunnel"]["interaction_epoch"] = mode in ("epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge")
     if shared_interaction_epoch:
         config.setdefault("tunnel", {})["interaction_epoch"] = True
-    elif candidate_metadata_slot_primary_vs_mux and mode == "candidate":
+    elif (candidate_metadata_slot_primary_vs_mux or candidate_metadata_slot_async_vs_mux) and mode == "candidate":
         # This treatment is the complete persistent-text candidate package.
         # The control retains default scheduling after binary-compare cleanup.
         config.setdefault("tunnel", {})["interaction_epoch"] = True
@@ -163,6 +164,8 @@ def main():
                         help="enable async slots in both arms; only candidates wait beyond 1.5s after confirmed publication")
     parser.add_argument("--candidate-metadata-slot-primary-vs-mux", action="store_true",
                         help="compare default mux control against primary async slots plus interaction epoch only in candidates")
+    parser.add_argument("--candidate-metadata-slot-async-vs-mux", action="store_true",
+                        help="compare default mux control against async slots plus interaction epoch only in candidates")
     parser.add_argument("--candidate-separate-metadata-slot-pools", action="store_true",
                         help="enable slot delivery in both arms, split slot GET/PATCH pools only in candidates")
     parser.add_argument("--candidate-normal-list-page-size-100", action="store_true",
@@ -217,7 +220,7 @@ def main():
                        args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery,
                        args.candidate_metadata_slot_async_v1,
                        args.candidate_metadata_16k, args.candidate_metadata_slot_primary_v1,
-                       args.candidate_metadata_slot_primary_vs_mux)
+                       args.candidate_metadata_slot_primary_vs_mux,args.candidate_metadata_slot_async_vs_mux)
     if sum(candidate_modes) > 1:
         parser.error("choose only one candidate mode")
     if any(candidate_modes):
@@ -362,7 +365,8 @@ def main():
                              args.shared_interaction_epoch,
                              args.candidate_metadata_16k,
                              args.candidate_metadata_slot_primary_v1,
-                             args.candidate_metadata_slot_primary_vs_mux)
+                             args.candidate_metadata_slot_primary_vs_mux,
+                             args.candidate_metadata_slot_async_vs_mux)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -516,7 +520,7 @@ def main():
                     if row["shadow_active_count"] < 2 or row["shadow_observed_count"] < 1:
                         completed = False
                         row["failure"] = "shadow_handshake_or_observation_missing"
-                if (args.candidate_metadata_slot_delivery_v1 and mode == "candidate") or args.candidate_separate_metadata_slot_pools or args.candidate_metadata_slot_async_v1 or args.candidate_metadata_slot_primary_v1 or (args.candidate_metadata_slot_primary_vs_mux and mode == "candidate"):
+                if (args.candidate_metadata_slot_delivery_v1 and mode == "candidate") or args.candidate_separate_metadata_slot_pools or args.candidate_metadata_slot_async_v1 or args.candidate_metadata_slot_primary_v1 or ((args.candidate_metadata_slot_primary_vs_mux or args.candidate_metadata_slot_async_vs_mux) and mode == "candidate"):
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
                                           for role in ("client", "exit"))
                     row["slot_active_count"] = logs_text.count("mux slot delivery active")
@@ -526,7 +530,7 @@ def main():
                             or row["slot_sender_ack_count"] < 1):
                         completed = False
                         row["failure"] = "slot_delivery_or_handshake_missing"
-                    if (args.candidate_metadata_slot_async_v1 and mode == "candidate") or args.candidate_metadata_slot_primary_v1 or (args.candidate_metadata_slot_primary_vs_mux and mode == "candidate"):
+                    if (args.candidate_metadata_slot_async_v1 and mode == "candidate") or args.candidate_metadata_slot_primary_v1 or ((args.candidate_metadata_slot_primary_vs_mux or args.candidate_metadata_slot_async_vs_mux) and mode == "candidate"):
                         row["slot_async_handoff_count"] = logs_text.count("mux slot async handoff")
                         row["slot_async_storage_ack_count"] = logs_text.count("mux slot async storage_ack")
                         if row["slot_async_handoff_count"] < 1 or row["slot_async_storage_ack_count"] < 1:

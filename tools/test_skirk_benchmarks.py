@@ -325,6 +325,18 @@ class MainComparisonSafetyTests(unittest.TestCase):
         shared=arm_config(original,"control","shared",0,True,candidate_metadata_slot_primary_vs_mux=True,shared_interaction_epoch=True)
         self.assertTrue(shared["tunnel"]["interaction_epoch"])
 
+    def test_async_package_comparison_keeps_processing_deadline(self):
+        original={"route":{"mode":"google_front_pinned"},"drive":{"metadata_slot_primary_v1":True},"tunnel":{"interaction_epoch":True}}
+        control=arm_config(original,"control","control",0,True,candidate_metadata_slot_async_vs_mux=True)
+        candidate=arm_config(original,"candidate","candidate",0,True,candidate_metadata_slot_async_vs_mux=True)
+        for key in ("metadata_slot_v1","metadata_slot_delivery_v1","metadata_slot_async_v1","metadata_slot_primary_v1"):
+            self.assertNotIn(key,control["drive"])
+        self.assertNotIn("interaction_epoch",control["tunnel"])
+        for key in ("metadata_slot_v1","metadata_slot_delivery_v1","metadata_slot_async_v1"):
+            self.assertTrue(candidate["drive"][key])
+        self.assertNotIn("metadata_slot_primary_v1",candidate["drive"])
+        self.assertTrue(candidate["tunnel"]["interaction_epoch"])
+
     def test_normal_page_comparison_changes_only_page_size_and_session(self):
         original = {"secret": "fictional", "session_id": "old",
                     "route": {"mode": "google_front_pinned"},
