@@ -1,6 +1,7 @@
 # Guarded Google-fronted Pub/Sub StreamingPull primitive
 
-Status: implemented primitive with local tests; no live result recorded yet.
+Status: local duplex/framing tests pass; the first bounded live run was rejected at
+the standard gRPC method path through the pinned Google front.
 The [earlier unary probe](pubsub-front-2026-11-15.md) established encrypted
 messages through the pinned Google front. This experiment compares one persistent
 HTTP/2 StreamingPull receiver with prestarted unary long polls. It carries no
@@ -66,6 +67,25 @@ recommends StreamingPull for latency/throughput and notes periodic server-side
 stream closure; a production transport must reconnect, dedupe, extend leases
 and handle quota backpressure. The probe does not claim those lifecycle features.
 
+## Bounded live outcome: standard gRPC method path
+
+The authorized test on 2026-11-15 used commit `f802ade`, the existing isolated
+`skirk-p` project and a fresh secondary-account token. The initial request reached
+HTTP/2 but returned HTTP 404 with a non-gRPC content type at
+`/google.pubsub.v1.Subscriber/StreamingPull`. The probe recorded one 96-byte
+request frame, zero response frames, zero delivered samples and 18 unary
+setup/cleanup calls. This is a route/method feasibility failure for this exact
+request, not a latency measurement or evidence that all gRPC routes are impossible.
+No alternative private path was tried. The 20-message comparison did not run.
+
+Cancellation joined the pipe writer and response reader. Both generated topics
+and both subscriptions were deleted; all four returned 404 immediately and again
+after 31 seconds. The recovery ledger and borrowed token were removed. The
+private result is `.skirk-runs/pubsub-stream-live-20261115.json`; its `ok=false`
+and `cleanup_verified=true` are retained. The proven unary REST carrier is the
+next candidate for a bounded hybrid transport, with two prestarted long pulls
+per direction and an independent publisher pool.
+
 ## Possible full transport, contingent on live evidence
 
 A hybrid could keep mux bulk objects on Drive and place the existing sealed
@@ -79,7 +99,7 @@ route without emitting incompatible control objects. A client still selects
 pinned Google front or Direct explicitly.
 
 This adds a separate Cloud product and resource lifecycle. Each operator needs
-a billing-enabled project with Pub/Sub enabled and narrowly scoped publish/subscribe
+a project with Pub/Sub enabled and must assess billing/quotas for its intended usage and narrowly scoped publish/subscribe
 IAM on their own resources. Client topics/subscriptions need isolation so
 subscribers cannot consume another user's ciphertext or spend unbounded project
 quota. Avoid sharing owner credentials or project-wide administration in an
