@@ -579,14 +579,26 @@ func (d *DriveStore) GetMuxObjectMetadataByID(ctx context.Context, fileID string
 	}
 	size, _ := strconv.ParseInt(payload.Size, 10, 64)
 	info := ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size, Updated: payload.ModifiedTime, InlineData: d.decodeInlineData(payload.Name, payload.Description, size)}
-	inMailbox := !payload.Trashed
-	if d.folderID != "" && payload.Parents != nil {
-		inMailbox = inMailbox && slices.Contains(payload.Parents, d.folderID)
+	if payload.Trashed {
+		return info, false, nil
 	}
-	if d.isAppData() && len(payload.Spaces) > 0 {
-		inMailbox = inMailbox && slices.Contains(payload.Spaces, "appDataFolder")
+	if d.folderID != "" {
+		if payload.Parents == nil {
+			return info, false, errors.New("drive mux object mailbox parents were omitted")
+		}
+		if !slices.Contains(payload.Parents, d.folderID) {
+			return info, false, nil
+		}
 	}
-	return info, inMailbox, nil
+	if d.isAppData() {
+		if payload.Spaces == nil {
+			return info, false, errors.New("drive mux object mailbox spaces were omitted")
+		}
+		if !slices.Contains(payload.Spaces, "appDataFolder") {
+			return info, false, nil
+		}
+	}
+	return info, true, nil
 }
 
 func (d *DriveStore) getObjectInfoByIDWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, fileID string) (ObjectInfo, error) {

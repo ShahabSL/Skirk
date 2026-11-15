@@ -273,8 +273,9 @@ type muxPriorityRetryKey struct {
 }
 
 type muxPriorityRetryState struct {
-	addedAt   time.Time
-	lastProbe time.Time
+	addedAt       time.Time
+	lastProbe     time.Time
+	notFoundCount uint8
 }
 
 type driveMux struct {
@@ -2919,11 +2920,33 @@ func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, 
 	}
 	now := time.Now()
 	m.priorityListMu.Lock()
-	keys := make([]muxPriorityRetryKey, 0, muxPriorityRetryProbeLimit)
+	type candidate struct {
+		key   muxPriorityRetryKey
+		state muxPriorityRetryState
+	}
+	eligible := make([]candidate, 0, len(m.priorityRetryObjects))
 	for key, state := range m.priorityRetryObjects {
 		if key.id == "" || !state.addedAt.Before(pollStarted) || (!state.lastProbe.IsZero() && now.Sub(state.lastProbe) < muxPriorityRetryProbeInterval) {
 			continue
 		}
+		eligible = append(eligible, candidate{key: key, state: state})
+	}
+	sort.Slice(eligible, func(i, j int) bool {
+		a, b := eligible[i], eligible[j]
+		if !a.state.lastProbe.Equal(b.state.lastProbe) {
+			return a.state.lastProbe.Before(b.state.lastProbe)
+		}
+		if !a.state.addedAt.Equal(b.state.addedAt) {
+			return a.state.addedAt.Before(b.state.addedAt)
+		}
+		if a.key.name != b.key.name {
+			return a.key.name < b.key.name
+		}
+		return a.key.id < b.key.id
+	})
+	keys := make([]muxPriorityRetryKey, 0, muxPriorityRetryProbeLimit)
+	for _, item := range eligible {
+		key, state := item.key, item.state
 		state.lastProbe = now
 		m.priorityRetryObjects[key] = state
 		keys = append(keys, key)
@@ -2941,7 +2964,7 @@ func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, 
 		if err != nil {
 			var googleErr *GoogleAPIError
 			if errors.As(err, &googleErr) && googleErr.Status == http.StatusNotFound {
-				m.clearPriorityRetry(key)
+				m.notePriorityRetryNotFound(key)
 			} else {
 				m.reportTerminalOAuthError(ctx, err)
 			}
@@ -2956,11 +2979,36 @@ func (m *driveMux) reconcilePriorityRetries(ctx context.Context, prefix string, 
 			m.clearPriorityRetry(key)
 			continue
 		}
+		m.resetPriorityRetryNotFound(key)
 		m.enqueueMuxObject(ctx, meta)
 		if m.priorityRetryAccepted(key) {
 			m.clearPriorityRetry(key)
 		}
 	}
+}
+
+func (m *driveMux) notePriorityRetryNotFound(key muxPriorityRetryKey) {
+	m.priorityListMu.Lock()
+	state, exists := m.priorityRetryObjects[key]
+	if exists {
+		if state.notFoundCount >= 1 {
+			delete(m.priorityRetryObjects, key)
+		} else {
+			state.notFoundCount = 1
+			m.priorityRetryObjects[key] = state
+		}
+	}
+	m.priorityListMu.Unlock()
+}
+
+func (m *driveMux) resetPriorityRetryNotFound(key muxPriorityRetryKey) {
+	m.priorityListMu.Lock()
+	state, exists := m.priorityRetryObjects[key]
+	if exists && state.notFoundCount != 0 {
+		state.notFoundCount = 0
+		m.priorityRetryObjects[key] = state
+	}
+	m.priorityListMu.Unlock()
 }
 
 func (m *driveMux) clearPriorityRetry(key muxPriorityRetryKey) {

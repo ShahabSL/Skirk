@@ -59,12 +59,17 @@ func TestDriveMuxRetryMetadataChecksMailboxMembership(t *testing.T) {
 		config    DriveConfig
 		body      string
 		inMailbox bool
+		wantErr   bool
 	}{
 		{name: "folder", config: DriveConfig{FolderID: "mailbox-folder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","parents":["mailbox-folder"]}`, inMailbox: true},
 		{name: "moved", config: DriveConfig{FolderID: "mailbox-folder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","parents":["other-folder"]}`},
+		{name: "empty-parents", config: DriveConfig{FolderID: "mailbox-folder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","parents":[]}`},
+		{name: "missing-parents", config: DriveConfig{FolderID: "mailbox-folder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1"}`, wantErr: true},
 		{name: "trashed", config: DriveConfig{FolderID: "mailbox-folder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","parents":["mailbox-folder"],"trashed":true}`},
 		{name: "appdata", config: DriveConfig{Space: "appDataFolder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","spaces":["appDataFolder"]}`, inMailbox: true},
 		{name: "appdata-moved", config: DriveConfig{Space: "appDataFolder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","spaces":["drive"]}`},
+		{name: "appdata-empty-spaces", config: DriveConfig{Space: "appDataFolder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1","spaces":[]}`},
+		{name: "appdata-missing-spaces", config: DriveConfig{Space: "appDataFolder"}, body: `{"id":"file-id","name":"muxv4/session/down/p0/object","size":"1"}`, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -75,6 +80,12 @@ func TestDriveMuxRetryMetadataChecksMailboxMembership(t *testing.T) {
 			})}}
 			store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "test-token"}, RouteConfig{Mode: "direct"}), tc.config)
 			info, inMailbox, err := store.GetMuxObjectMetadataByID(context.Background(), "file-id")
+			if tc.wantErr {
+				if err == nil || inMailbox {
+					t.Fatalf("omitted mailbox field gave info=%+v inMailbox=%t err=%v", info, inMailbox, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -524,17 +535,35 @@ func TestAdaptiveMuxDiscoveryRetriesFailedPriorityAfterBroadCompletes(t *testing
 
 func TestAdaptiveMuxDiscoveryClearsRetryOnlyAfterConfirmedDeletion(t *testing.T) {
 	mux, store, _ := setupAdaptiveFailedPriorityPoll(t)
-	store.objects = nil // Exact metadata GET now confirms a 404.
+	store.objects = nil // Exact metadata GET now returns 404.
 	before := len(store.calls)
 	mux.pollMuxObjects(context.Background())
-	if len(store.calls) != before+2 || len(store.metadataCalls) != 1 || mux.hasPriorityRetryPending() {
-		t.Fatalf("confirmed deletion did not clear retry: calls=%#v metadata=%d", store.calls[before:], len(store.metadataCalls))
+	if len(store.calls) != before+2 || len(store.metadataCalls) != 1 || !mux.hasPriorityRetryPending() {
+		t.Fatalf("one 404 cleared a retry prematurely: calls=%#v metadata=%d", store.calls[before:], len(store.metadataCalls))
+	}
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 1 || !mux.hasPriorityRetryPending() {
+		t.Fatal("second deletion check ignored cooldown or dropped retry")
+	}
+	expireAdaptiveRetryProbeCooldown(mux)
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 2 || mux.hasPriorityRetryPending() {
+		t.Fatalf("two separated 404s did not clear retry: metadata=%d", len(store.metadataCalls))
 	}
 	before = len(store.calls)
 	mux.pollMuxObjects(context.Background())
 	if len(store.calls) != before+1 || len(mux.recvUrgent) != 0 {
 		t.Fatalf("deleted priority caused unbounded sparse fallback: %#v", store.calls[before:])
 	}
+}
+
+func expireAdaptiveRetryProbeCooldown(mux *driveMux) {
+	mux.priorityListMu.Lock()
+	for key, state := range mux.priorityRetryObjects {
+		state.lastProbe = time.Now().Add(-muxPriorityRetryProbeInterval)
+		mux.priorityRetryObjects[key] = state
+	}
+	mux.priorityListMu.Unlock()
 }
 
 func TestAdaptiveMuxDiscoveryWorkerRewindTracksOnlyPriority(t *testing.T) {
@@ -585,13 +614,62 @@ func TestAdaptiveMuxDiscoveryExactRetryVerificationIsBoundedPerPoll(t *testing.T
 		t.Fatalf("first poll made %d exact metadata requests; pending=%t", len(store.metadataCalls), mux.hasPriorityRetryPending())
 	}
 	mux.pollMuxObjects(context.Background())
-	if len(store.metadataCalls) != muxPriorityRetryProbeLimit+1 || mux.hasPriorityRetryPending() {
+	if len(store.metadataCalls) != muxPriorityRetryProbeLimit+1 || !mux.hasPriorityRetryPending() {
 		t.Fatalf("second poll made %d exact metadata requests; pending=%t", len(store.metadataCalls), mux.hasPriorityRetryPending())
+	}
+	expireAdaptiveRetryProbeCooldown(mux)
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 2*muxPriorityRetryProbeLimit+1 || !mux.hasPriorityRetryPending() {
+		t.Fatalf("third poll made %d exact metadata requests; pending=%t", len(store.metadataCalls), mux.hasPriorityRetryPending())
+	}
+	expireAdaptiveRetryProbeCooldown(mux)
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 2*(muxPriorityRetryProbeLimit+1) || mux.hasPriorityRetryPending() {
+		t.Fatalf("fourth poll made %d exact metadata requests; pending=%t", len(store.metadataCalls), mux.hasPriorityRetryPending())
 	}
 	before := len(store.calls)
 	mux.pollMuxObjects(context.Background())
 	if len(store.calls) != before+1 {
 		t.Fatalf("cleared retries kept p0 query active: %#v", store.calls[before:])
+	}
+}
+
+func TestAdaptiveMuxDiscoveryExactRetryVerificationIsFair(t *testing.T) {
+	store := &adaptiveDiscoveryStore{MemoryStore: NewMemoryStore(), metadataError: true}
+	mux := adaptiveTestMux(t, store)
+	for i := 0; i < muxPriorityRetryProbeLimit+1; i++ {
+		info := ObjectInfo{
+			ID:   fmt.Sprintf("pending-id-%d", i),
+			Name: muxObjectNameWithStreamIDs(mux.t.SessionID, DirectionDown, mux.t.ClientID, mux.t.RunID, "old-epoch", uint64(i+1), nil, 0, uint64(i+1), 1, 0, 0, 16, true),
+		}
+		meta, ok := parseMuxObjectInfo(info)
+		if !ok {
+			t.Fatal("test priority name did not parse")
+		}
+		mux.rewindReceiveListForMeta(meta)
+	}
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != muxPriorityRetryProbeLimit {
+		t.Fatalf("first poll made %d exact metadata requests", len(store.metadataCalls))
+	}
+	first := make(map[string]struct{}, muxPriorityRetryProbeLimit)
+	for _, id := range store.metadataCalls {
+		first[id] = struct{}{}
+	}
+	mux.priorityListMu.Lock()
+	for key, state := range mux.priorityRetryObjects {
+		if !state.lastProbe.IsZero() {
+			state.lastProbe = time.Now().Add(-muxPriorityRetryProbeInterval)
+			mux.priorityRetryObjects[key] = state
+		}
+	}
+	mux.priorityListMu.Unlock()
+	mux.pollMuxObjects(context.Background())
+	if len(store.metadataCalls) != 2*muxPriorityRetryProbeLimit {
+		t.Fatalf("second poll made %d total exact metadata requests", len(store.metadataCalls))
+	}
+	if _, repeated := first[store.metadataCalls[muxPriorityRetryProbeLimit]]; repeated {
+		t.Fatalf("oldest unprobed ID was starved by repeat metadata checks: %v", store.metadataCalls)
 	}
 }
 
@@ -630,12 +708,7 @@ func TestAdaptiveMuxDiscoveryTransientMetadataErrorKeepsRetryWithCooldown(t *tes
 	if len(store.metadataCalls) != 1 || !mux.hasPriorityRetryPending() {
 		t.Fatal("exact metadata GET ignored cooldown or discarded retry")
 	}
-	mux.priorityListMu.Lock()
-	for key, state := range mux.priorityRetryObjects {
-		state.lastProbe = time.Now().Add(-muxPriorityRetryProbeInterval)
-		mux.priorityRetryObjects[key] = state
-	}
-	mux.priorityListMu.Unlock()
+	expireAdaptiveRetryProbeCooldown(mux)
 	store.metadataError = false
 	mux.pollMuxObjects(context.Background())
 	if len(store.metadataCalls) != 2 || !mux.isKnown(priority.Name) || mux.hasPriorityRetryPending() {
