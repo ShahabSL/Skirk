@@ -41,6 +41,7 @@ type relayResearchPrivateSettings struct {
 	MaxBytes               int64       `json:"max_bytes"`
 	PriorityReserveBytes   int64       `json:"priority_reserve_bytes"`
 	PriorityReserveObjects int         `json:"priority_reserve_objects"`
+	PackPriority           bool        `json:"pack_priority,omitempty"`
 	DurationSeconds        int         `json:"duration_seconds"`
 	MaxCalls               int64       `json:"max_calls"`
 	MaxEncodedBytes        int64       `json:"max_encoded_bytes"`
@@ -49,7 +50,7 @@ type relayResearchPrivateSettings struct {
 }
 
 func (s relayResearchPrivateSettings) relayConfig() (relayResearchConfig, error) {
-	return (relayResearchConfig{FrameBytes: s.FrameBytes, MaxBytes: s.MaxBytes, PriorityReserveBytes: s.PriorityReserveBytes, PriorityReserveObjects: s.PriorityReserveObjects}).normalized()
+	return (relayResearchConfig{FrameBytes: s.FrameBytes, MaxBytes: s.MaxBytes, PriorityReserveBytes: s.PriorityReserveBytes, PriorityReserveObjects: s.PriorityReserveObjects, PackPriority: s.PackPriority}).normalized()
 }
 
 func rrReadPrivateSettings(dir string) (relayResearchPrivateSettings, []byte, [16]byte, error) {

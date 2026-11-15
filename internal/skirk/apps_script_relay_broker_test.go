@@ -138,7 +138,7 @@ func (b *relayResearchBroker) exchange(ctx context.Context, wire []byte) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	if p.Kind != rrUp && p.Kind != rrPull || p.Status != 0 || len(p.Committed) > 0 || len(p.Deleted) > 0 || p.Receipt >= p.Seq || p.Kind == rrPull && (len(p.Pieces) > 0 || len(p.Deletes) > 0) || p.Kind == rrUp && len(p.Pieces) > 1 {
+	if p.Kind != rrUp && p.Kind != rrPull || p.Status != 0 || len(p.Committed) > 0 || len(p.Deleted) > 0 || p.Receipt >= p.Seq || p.Kind == rrPull && (len(p.Pieces) > 0 || len(p.Deletes) > 0) || p.Kind == rrUp && len(p.Pieces) > 1 && (!b.cfg.PackPriority || len(p.Pieces) > rrPriorityPackMaxObjects) {
 		return nil, errRelayResearchBounds
 	}
 	hash := sha256.Sum256(wire)
@@ -213,7 +213,7 @@ func (b *relayResearchBroker) compute(p relayResearchPacket, r *relayResearchRep
 		if err == nil {
 			for _, piece := range p.Pieces {
 				var committed bool
-				committed, err = b.acceptUp(piece)
+				committed, err = b.acceptUpPrepared(piece, len(p.Pieces) > 1)
 				if err != nil {
 					break
 				}
@@ -257,6 +257,9 @@ func (b *relayResearchBroker) compute(p relayResearchPacket, r *relayResearchRep
 // Busy is a completed no-mutation response, so the sole UP pump can advance
 // to deletion/control work instead of waiting behind retained payloads.
 func (b *relayResearchBroker) preflightUp(pieces []relayResearchPiece) error {
+	if len(pieces) > 1 {
+		return b.preflightGroupedPriority(pieces)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.ctx.Err() != nil {
@@ -274,6 +277,69 @@ func (b *relayResearchBroker) preflightUp(pieces []relayResearchPiece) error {
 		}
 		if err := b.upAdmissionLocked(p); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Group only complete small priority objects. Normal fragments use independent
+// RPCs so bulk admission pressure cannot reject an otherwise admissible control
+// batch. Verify every object, including inner mux AEAD, before any publication
+// or DOWN deletion. RPC receipt bookkeeping remains a separate acknowledgement.
+func (b *relayResearchBroker) preflightGroupedPriority(pieces []relayResearchPiece) error {
+	b.mu.Lock()
+	if b.closed || b.ctx.Err() != nil {
+		b.mu.Unlock()
+		return errRelayResearchClosed
+	}
+	if !b.cfg.PackPriority || len(pieces) > rrPriorityPackMaxObjects {
+		b.mu.Unlock()
+		return errRelayResearchBounds
+	}
+	ids, names := map[string]bool{}, map[string]bool{}
+	bytesTotal, newBytes, newClaims := 0, int64(0), 0
+	validate := b.validateUp
+	checks := make([]relayResearchPiece, 0, len(pieces))
+	for _, p := range pieces {
+		bytesTotal += len(p.Data)
+		if !p.Priority || !rrPriorityName(p.Name) || p.Offset != 0 || p.Total != len(p.Data) || bytesTotal > rrPriorityPackLimit(b.cfg) || ids[p.ID] || names[p.Name] {
+			b.mu.Unlock()
+			return errRelayResearchBounds
+		}
+		ids[p.ID], names[p.Name] = true, true
+		if sha256.Sum256(p.Data) != p.Hash {
+			b.mu.Unlock()
+			return errRelayResearchConflict
+		}
+		if o := b.up[p.ID]; o != nil {
+			if !rrRecordMatches(o, p) || !o.complete {
+				b.mu.Unlock()
+				return errRelayResearchConflict
+			}
+			continue
+		}
+		if b.upNames[p.Name] != "" {
+			b.mu.Unlock()
+			return errRelayResearchConflict
+		}
+		newBytes += int64(p.Total)
+		newClaims++
+		checks = append(checks, p)
+	}
+	if len(b.up)+newClaims > b.cfg.MaxObjects || newBytes > b.cfg.MaxBytes {
+		b.mu.Unlock()
+		return errRelayResearchBounds
+	}
+	if b.stats.UpBytes+newBytes > b.cfg.MaxBytes {
+		b.mu.Unlock()
+		return errRelayResearchBusy
+	}
+	b.mu.Unlock()
+	if validate != nil {
+		for _, p := range checks {
+			if err := validate(ObjectInfo{ID: p.ID, Name: p.Name, Size: int64(p.Total)}, p.Data); err != nil {
+				return errRelayResearchConflict
+			}
 		}
 	}
 	return nil
@@ -298,6 +364,9 @@ func (b *relayResearchBroker) upAdmissionLocked(p relayResearchPiece) error {
 	return nil
 }
 func (b *relayResearchBroker) acceptUp(p relayResearchPiece) (bool, error) {
+	return b.acceptUpPrepared(p, false)
+}
+func (b *relayResearchBroker) acceptUpPrepared(p relayResearchPiece, innerValidated bool) (bool, error) {
 	for {
 		b.mu.Lock()
 		if b.closed || b.ctx.Err() != nil {
@@ -354,7 +423,7 @@ func (b *relayResearchBroker) acceptUp(p relayResearchPiece) (bool, error) {
 		}
 		validate, notify, info, data := b.validateUp, b.notifyUp, o.info, o.data
 		b.mu.Unlock()
-		if validate != nil {
+		if validate != nil && !innerValidated {
 			if err := validate(info, data); err != nil {
 				return false, errRelayResearchConflict
 			}
@@ -530,6 +599,37 @@ func (b *relayResearchBroker) pull() ([]relayResearchPiece, error) {
 		}
 		if chosen >= 0 {
 			o := b.down[b.downOrder[chosen]]
+			if b.cfg.PackPriority && o.priority && o.sent == 0 && o.total <= rrPriorityPackLimit(b.cfg) {
+				// Count objects, not RPCs, against the fairness burst. If no
+				// normal fragment currently waits, allow a full bounded pack;
+				// a later normal arrival then wins the next selection.
+				limit := rrPriorityPackMaxObjects
+				for _, candidate := range b.down {
+					if !candidate.priority && !candidate.deleted && candidate.sent < candidate.total {
+						limit = min(limit, 8-b.priorityBurst)
+						break
+					}
+				}
+				var pieces []relayResearchPiece
+				bytesTotal, last := 0, chosen
+				for j := 0; j < len(b.downOrder) && len(pieces) < limit; j++ {
+					i := (chosen + j) % len(b.downOrder)
+					v := b.down[b.downOrder[i]]
+					if !v.priority || v.deleted || v.sent != 0 || v.total > rrPriorityPackLimit(b.cfg)-bytesTotal {
+						continue
+					}
+					pieces = append(pieces, relayResearchPiece{ID: v.info.ID, Name: v.info.Name, Total: v.total, Hash: v.hash, Data: append([]byte(nil), v.data...), Priority: true})
+					v.sent = v.total
+					bytesTotal += v.total
+					last = i
+				}
+				if len(pieces) > 0 {
+					b.downCursor = (last + 1) % len(b.downOrder)
+					b.priorityBurst += len(pieces)
+					b.mu.Unlock()
+					return pieces, nil
+				}
+			}
 			size := min(b.cfg.FrameBytes, o.total-o.sent)
 			priority := o.priority
 			p := relayResearchPiece{ID: o.info.ID, Name: o.info.Name, Total: o.total, Offset: o.sent, Hash: o.hash, Data: append([]byte(nil), o.data[o.sent:o.sent+size]...), Priority: priority}

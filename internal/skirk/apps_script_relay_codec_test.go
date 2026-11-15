@@ -16,15 +16,16 @@ import (
 )
 
 const (
-	rrUp             byte = 1
-	rrPull           byte = 2
-	rrResponse       byte = 128
-	rrStatusOK       byte = 0
-	rrStatusBounds   byte = 1
-	rrStatusConflict byte = 2
-	rrStatusClosed   byte = 3
-	rrStatusBusy     byte = 4
-	rrMaxObject           = 8 * 1024 * 1024
+	rrUp                     byte = 1
+	rrPull                   byte = 2
+	rrResponse               byte = 128
+	rrStatusOK               byte = 0
+	rrStatusBounds           byte = 1
+	rrStatusConflict         byte = 2
+	rrStatusClosed           byte = 3
+	rrStatusBusy             byte = 4
+	rrMaxObject                   = 8 * 1024 * 1024
+	rrPriorityPackMaxObjects      = 8
 )
 
 var (
@@ -43,6 +44,7 @@ type relayResearchConfig struct {
 	PollWait               time.Duration
 	PriorityReserveBytes   int64
 	PriorityReserveObjects int
+	PackPriority           bool
 }
 
 func (c relayResearchConfig) normalized() (relayResearchConfig, error) {
@@ -67,7 +69,8 @@ func (c relayResearchConfig) normalized() (relayResearchConfig, error) {
 	return c, nil
 }
 
-func rrPriorityName(name string) bool { return strings.Contains(name, "/p0/") }
+func rrPriorityName(name string) bool                 { return strings.Contains(name, "/p0/") }
+func rrPriorityPackLimit(cfg relayResearchConfig) int { return min(cfg.FrameBytes/2, 128<<10) }
 
 type relayResearchPiece struct {
 	ID, Name      string
