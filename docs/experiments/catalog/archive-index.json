@@ -1,0 +1,1640 @@
+[
+  {
+    "worktree": "drive-changes-watch-wt",
+    "path": ".skirk-runs/drive-changes-watch-live.json",
+    "bytes": 2462,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "drive-changes-watch-wt",
+    "path": ".skirk-runs/drive-files-watch-live.json",
+    "bytes": 2409,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "drive-watch-probe",
+    "path": ".skirk-runs/drive-watch-probe-20261114.json",
+    "bytes": 416,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "drive-watch-probe",
+    "path": ".skirk-runs/drive-watch-probe-retry-20261114.json",
+    "bytes": 416,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "fresh-architecture-wt",
+    "path": ".skirk-runs/id-train-live-20261115.json",
+    "bytes": 6461,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "list-page-probe-wt",
+    "path": ".skirk-runs/list-page-live-20261114-a.json",
+    "bytes": 15066,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "quota-project-wt",
+    "path": ".skirk-runs/quota-write-probe-20261115-02.json",
+    "bytes": 731,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "quota-project-wt",
+    "path": ".skirk-runs/quota-write-probe-20261115.json",
+    "bytes": 654,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "recovery-v5-final-wt",
+    "path": ".skirk-runs/recovery-v5-rebased-down2-20261115/arms/summary.json",
+    "bytes": 5549,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "recovery-v5-wt",
+    "path": ".skirk-runs/recovery-v5-live-down-20261115/arms/summary.json",
+    "bytes": 5553,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "recovery-v5-wt",
+    "path": ".skirk-runs/recovery-v5-live-up-20261115/arms/summary.json",
+    "bytes": 5545,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/ack-slot-live-20261114.json",
+    "bytes": 505,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/ack-slot-roundtrip-live-20261114.json",
+    "bytes": 776,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/ack-slot-roundtrip-nopause-live-20261114.json",
+    "bytes": 773,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/adaptive-list-down-8m-20261114-01/summary.json",
+    "bytes": 5306,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/adaptive-list-upload-8m-20261114-01/summary.json",
+    "bytes": 5302,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/adaptive-staged-down-8m-20261114-01/summary.json",
+    "bytes": 5312,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/adaptive-staged-upload-8m-20261114-01/summary.json",
+    "bytes": 4890,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/adaptive-staged-upload-8m-20261114-02/summary.json",
+    "bytes": 5300,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-20261114/summary.json",
+    "bytes": 955,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-0.json",
+    "bytes": 7276,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-1.json",
+    "bytes": 7173,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-2.json",
+    "bytes": 7278,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-3.json",
+    "bytes": 7268,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/0-baseline/bench-4.json",
+    "bytes": 7262,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-cooldown-20261114/summary.json",
+    "bytes": 1324,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/0-baseline/bench-0.json",
+    "bytes": 7301,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/0-baseline/bench-1.json",
+    "bytes": 7303,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/0-baseline/bench-2.json",
+    "bytes": 7258,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/0-baseline/bench-3.json",
+    "bytes": 7302,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/0-baseline/bench-4.json",
+    "bytes": 7270,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-retry-20261114/summary.json",
+    "bytes": 1510,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/0-epoch/bench-0.json",
+    "bytes": 7270,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/0-epoch/bench-1.json",
+    "bytes": 7263,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/0-epoch/bench-2.json",
+    "bytes": 7156,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/0-epoch/bench-3.json",
+    "bytes": 7270,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/0-epoch/bench-4.json",
+    "bytes": 7257,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-live-reverse-20261114/summary.json",
+    "bytes": 1319,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/0-epoch/bench-0.json",
+    "bytes": 7268,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/0-epoch/bench-1.json",
+    "bytes": 7254,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/0-epoch/bench-2.json",
+    "bytes": 7266,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/0-epoch/bench-3.json",
+    "bytes": 7265,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/0-epoch/bench-4.json",
+    "bytes": 7276,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/1-baseline/bench-0.json",
+    "bytes": 7268,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/1-baseline/bench-1.json",
+    "bytes": 7266,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/1-baseline/bench-2.json",
+    "bytes": 7271,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/1-baseline/bench-3.json",
+    "bytes": 7270,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/1-baseline/bench-4.json",
+    "bytes": 7266,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-20261114/summary.json",
+    "bytes": 1851,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/0-baseline/bench-0.json",
+    "bytes": 7268,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/0-baseline/bench-1.json",
+    "bytes": 7275,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/0-baseline/bench-2.json",
+    "bytes": 7278,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/0-baseline/bench-3.json",
+    "bytes": 7269,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/0-baseline/bench-4.json",
+    "bytes": 7276,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/1-epoch/bench-0.json",
+    "bytes": 7272,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/1-epoch/bench-1.json",
+    "bytes": 7269,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/1-epoch/bench-2.json",
+    "bytes": 7269,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/1-epoch/bench-3.json",
+    "bytes": 7255,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/1-epoch/bench-4.json",
+    "bytes": 7260,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-five-client-longstall-reverse-20261114/summary.json",
+    "bytes": 1852,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-message-inline-down-32m-20261114/summary.json",
+    "bytes": 3952,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-message-inline-up-32m-20261114/summary.json",
+    "bytes": 3871,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-message-splitpoll-up-32m-20261114/summary.json",
+    "bytes": 3917,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-persistent-smoke-4m-20261114/summary.json",
+    "bytes": 1943,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-persistent-sparse-up-16m-20261114/summary.json",
+    "bytes": 3473,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-persistent-sparse-up-32m-20261114/summary.json",
+    "bytes": 1534,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-down-100m-20261114/summary.json",
+    "bytes": 2187,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-down-16m-20261114/summary.json",
+    "bytes": 4286,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-hedge-up-100m-20261114/summary.json",
+    "bytes": 4333,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-up-100m-20261114/summary.json",
+    "bytes": 1730,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-up-16m-20261114/summary.json",
+    "bytes": 2801,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-cap-up-retry-16m-20261114/summary.json",
+    "bytes": 4278,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-metadata-down-16m-20261114/summary.json",
+    "bytes": 4285,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-metadata-up-16m-20261114/summary.json",
+    "bytes": 4271,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/architecture-pipeline-epoch-up-16m-20261114/summary.json",
+    "bytes": 4296,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/astra-final-cleanup-check-probe.json",
+    "bytes": 207,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/astra-hedge-abba-64m/summary.json",
+    "bytes": 1898,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/astra-isolated-abba-64m/summary.json",
+    "bytes": 255,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/astra-isolated-hedge-repeat-64m/summary.json",
+    "bytes": 264,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/astra-live-64m-24small/summary.json",
+    "bytes": 653,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-inline-compat/summary.json",
+    "bytes": 159,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-inline-probe.json",
+    "bytes": 5528,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-live-inline-abba/summary.json",
+    "bytes": 957,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-live-inline-isolated-abba-repeat/summary.json",
+    "bytes": 1161,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-live-inline-isolated-abba/summary.json",
+    "bytes": 3,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/audit-matrix-20261114/summary.json",
+    "bytes": 2138,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/android-final/combined/summary.txt",
+    "bytes": 83,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/android-final/cycles/summary.txt",
+    "bytes": 59,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/android-final/ui-cycles/summary.txt",
+    "bytes": 59,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/android-hardclose/workload/summary.txt",
+    "bytes": 116,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/linux-final/hammer/summary.txt",
+    "bytes": 43,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/linux-final/hammer2/summary.txt",
+    "bytes": 43,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/linux-final/hammer3/summary.txt",
+    "bytes": 73,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/postfix-20260518T122617Z/linux/hammer/summary.txt",
+    "bytes": 42,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/clean-hammer-20260518T111122Z/postfix-battle-20260518T123245Z/linux/hammer/summary.txt",
+    "bytes": 74,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-clean-20260518T125446Z/linux/hammer/summary.txt",
+    "bytes": 74,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-clean-20260518T125446Z/linux/hammer2/summary.txt",
+    "bytes": 74,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-final-20260518T131057Z/android/workload/summary.txt",
+    "bytes": 42,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-final-20260518T131057Z/linux/hammer/summary.txt",
+    "bytes": 42,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-strict-20260518T130226Z/android/workload/summary.txt",
+    "bytes": 42,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cleanup-throttle-20260518T125228Z/battle-strict-20260518T130226Z/linux/hammer/summary.txt",
+    "bytes": 42,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cloudflare-free-relay-20260525T054126Z/bench-1m.json",
+    "bytes": 971,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/cloudflare-worker-prod-20260525T032005Z/bench-1m.json",
+    "bytes": 918,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/combined-list-down-16m-20261114-01/summary.json",
+    "bytes": 5162,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/combined-list-upload-16m-20261114-01/summary.json",
+    "bytes": 5161,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/default-perf-final-vs-main-16m-20261115-01/summary.json",
+    "bytes": 5154,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/final-main-abba-16m-20261114/summary.json",
+    "bytes": 3976,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/live-exit-proof-20261114/summary.json",
+    "bytes": 2345,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/main-vs-current-16m-20261114-02/summary.json",
+    "bytes": 4715,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/main-vs-current-download-reverse-16m-20261114-01/summary.json",
+    "bytes": 2132,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/main-vs-current-download-reverse-16m-20261114-02/summary.json",
+    "bytes": 881,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/main-vs-current-download-reverse-16m-20261114-03/summary.json",
+    "bytes": 5153,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/main-vs-current-upload-16m-20261114-01/summary.json",
+    "bytes": 4705,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-bulk-pool-abba-32m/summary.json",
+    "bytes": 3657,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-bulk-pool-hedge-abba-32m/summary.json",
+    "bytes": 3672,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-h3-abba-64m/summary.json",
+    "bytes": 2068,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-main-vs-current-64m/summary.json",
+    "bytes": 3149,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-metadata-abba-32m/summary.json",
+    "bytes": 3459,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-metadata-abba-64m-retry/summary.json",
+    "bytes": 3503,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-metadata-abba-64m/summary.json",
+    "bytes": 457,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/max-api-metadata-only-probe.json",
+    "bytes": 15868,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/mixed-hammer-20260520T031542Z/summary.txt",
+    "bytes": 87,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/mutable-slot-live-20261114.json",
+    "bytes": 2872,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/page-size-sparse-16m-20261114-01/summary.json",
+    "bytes": 5012,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/bench-0.json",
+    "bytes": 5122,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/bench-1.json",
+    "bytes": 5121,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/bench-2.json",
+    "bytes": 5121,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/bench-3.json",
+    "bytes": 5107,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/bench-4.json",
+    "bytes": 5106,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-final/summary.json",
+    "bytes": 908,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-live/summary.json",
+    "bytes": 808,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-rolling200/bench-4.json",
+    "bytes": 5109,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-five-rolling200/summary.json",
+    "bytes": 935,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-0.json",
+    "bytes": 5119,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-1.json",
+    "bytes": 5115,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-2.json",
+    "bytes": 5116,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-3.json",
+    "bytes": 5117,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-4.json",
+    "bytes": 5112,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-5.json",
+    "bytes": 5117,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-6.json",
+    "bytes": 5122,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-7.json",
+    "bytes": 5118,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-8.json",
+    "bytes": 5116,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/bench-9.json",
+    "bytes": 5117,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-ten-final/summary.json",
+    "bytes": 951,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-200k/summary.json",
+    "bytes": 790,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-live/summary.json",
+    "bytes": 790,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-rolling100/bench-0.json",
+    "bytes": 5125,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-rolling100/bench-1.json",
+    "bytes": 5114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-rolling100/bench-2.json",
+    "bytes": 5107,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/personal-test/capacity-three-rolling100/summary.json",
+    "bytes": 894,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/browser-20260514T165914Z/summary.txt",
+    "bytes": 1210,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/browser-20260514T170018Z/summary.txt",
+    "bytes": 572,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/browser-watch-20260514T170216Z/summary.txt",
+    "bytes": 1085,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/9573d2d-checkpoint.md",
+    "bytes": 1839,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/local-exit-20260514T204040Z/multi5-100mb-c16/summary.txt",
+    "bytes": 837,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/local-exit-20260514T204125Z/multi5-100mb-c16/summary.txt",
+    "bytes": 800,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/multi5-100mb-c16-20260514T203815Z/summary.txt",
+    "bytes": 557,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/muxv7-candidate-20260515T025209Z/bench-live-100mb.json",
+    "bytes": 5068,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/protocol-findings-20260514T234133Z.md",
+    "bytes": 1456,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-bulkfloor-20260515T010548Z/summary.md",
+    "bytes": 921,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-flightaware-20260515T005301Z/summary.md",
+    "bytes": 973,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-http-partition-20260515T013523Z/summary.md",
+    "bytes": 1850,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-mailbag-20260515T002401Z/summary.txt",
+    "bytes": 604,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-manifest-muxv7-20260515T025507Z/muxv7-candidate-20260515T025209Z/bench-live-100mb.json",
+    "bytes": 5068,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-manifest-muxv7-20260515T025507Z/summary.md",
+    "bytes": 957,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-muxv10-20260515T012106Z/summary.md",
+    "bytes": 1017,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-muxv11-credit-20260515T021203Z/muxv11-100mb/bulk.txt",
+    "bytes": 103,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-muxv11-credit-20260515T021203Z/muxv4-samebin-100mb/bulk.txt",
+    "bytes": 109,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-muxv11-credit-20260515T021203Z/summary.md",
+    "bytes": 710,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-muxv8-split-prefix-20260515T000856Z/summary.txt",
+    "bytes": 756,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-rendezvous-and-optimistic-20260515T022457Z/summary.md",
+    "bytes": 1420,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-resumable-upload-20260515T015121Z/summary.md",
+    "bytes": 1177,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-v41e-20260514T232747Z/summary.txt",
+    "bytes": 392,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/rejected-v5b-bulk5-20260514T235549Z/summary.txt",
+    "bytes": 413,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-bulkfloor-mixed-100mb-20260515T005933Z/bulk.txt",
+    "bytes": 111,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-bulkfloor-mixed-1gb-20260515T010204Z/bulk.txt",
+    "bytes": 114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-coalesce-mixed-1gb-20260514T215613Z/bulk.txt",
+    "bytes": 149,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-coalesce2-mixed-1gb-20260514T222326Z/bulk.txt",
+    "bytes": 87,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-flightaware-clean-mixed-1gb-20260515T004509Z/bulk.txt",
+    "bytes": 153,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-flightaware-mixed-100mb-20260515T002721Z/bulk.txt",
+    "bytes": 113,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-flightaware-mixed-1gb-20260515T002921Z/bulk.txt",
+    "bytes": 114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-gaprepair-mixed-1gb-20260514T211726Z/bulk.txt",
+    "bytes": 208,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-gaprepair2-mixed-1gb-20260514T213837Z/bulk.txt",
+    "bytes": 239,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-http-partition-mixed-100mb-20260515T013310Z/bulk.txt",
+    "bytes": 111,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-http-partition-mixed-1gb-20260515T013523Z/bulk.txt",
+    "bytes": 113,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-mailbag-mixed-100mb-20260515T001757Z/bulk.txt",
+    "bytes": 110,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-mailbag-mixed-1gb-20260515T001956Z/bulk.txt",
+    "bytes": 111,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-mixed-1gb-postceil-20260514T210450Z/bulk.txt",
+    "bytes": 15379,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv10-mixed-100mb-20260515T012106Z/bulk.txt",
+    "bytes": 102,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv11-credit-mixed-100mb-20260515T020649Z/bulk.txt",
+    "bytes": 103,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv11-samebin-muxv4-mixed-100mb-20260515T020957Z/bulk.txt",
+    "bytes": 109,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv5b-mixed-1gb-20260514T233708Z/bulk.txt",
+    "bytes": 104,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv7-mixed-100mb-20260514T234538Z/bulk.txt",
+    "bytes": 101,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv8-mixed-100mb-20260515T000227Z/bulk.txt",
+    "bytes": 102,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-muxv8-mixed-1gb-20260515T000447Z/bulk.txt",
+    "bytes": 103,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-stable-control-mixed-100mb-20260515T013019Z/bulk.txt",
+    "bytes": 101,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-stable-rerun-mixed-100mb-20260515T005520Z/bulk.txt",
+    "bytes": 108,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41-mixed-1gb-20260514T225425Z/bulk.txt",
+    "bytes": 88,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41-single-1gb-20260514T225232Z/bulk.txt",
+    "bytes": 82,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41b-single-1gb-20260514T230112Z/bulk.txt",
+    "bytes": 82,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41c-single-1gb-20260514T230522Z/bulk.txt",
+    "bytes": 82,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41c-single-1gb-repeat-20260514T230744Z/bulk.txt",
+    "bytes": 82,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41d-mixed-1gb-20260514T231602Z/bulk.txt",
+    "bytes": 87,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41e-mixed-1gb-20260514T232340Z/bulk.txt",
+    "bytes": 87,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/server2-v41e-single-1gb-20260514T232122Z/bulk.txt",
+    "bytes": 75,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/stable-live-control-20260515T024838Z/bench-live-100mb.json",
+    "bytes": 4561,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/transport-matrix-20260514T232835Z/muxv4/bulk.txt",
+    "bytes": 101,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/transport-matrix-20260514T232835Z/muxv5a/bulk.txt",
+    "bytes": 102,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/transport-matrix-20260514T232835Z/muxv5b/bulk.txt",
+    "bytes": 102,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/transport-matrix-20260514T232835Z/muxv6/bulk.txt",
+    "bytes": 101,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-20260514/update-ring-primitive-20260515T030305Z/summary.md",
+    "bytes": 1601,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-browser-20260514T170820Z/summary.txt",
+    "bytes": 1055,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/final-mixed-20260514T170702Z/summary.txt",
+    "bytes": 238,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/live-observe-20260514T140801Z/bench-live.json",
+    "bytes": 2633,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/live-observe-20260514T140908Z-chunk16/bench-live.json",
+    "bytes": 2625,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/live-observe-20260514T141059Z-chunk16-window16/bench-live.json",
+    "bytes": 2634,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/live-observe-20260514T141330Z-default16/bench-live.json",
+    "bytes": 2634,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/mixed-20260514T164924Z/muxv4/summary.txt",
+    "bytes": 261,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/mixed-20260514T164924Z/muxv5a/summary.txt",
+    "bytes": 262,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/mixed-20260514T165154Z/muxv4/summary.txt",
+    "bytes": 261,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/mixed-20260514T165154Z/muxv5a/summary.txt",
+    "bytes": 262,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/mixed-20260514T165154Z/muxv5b/summary.txt",
+    "bytes": 262,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/multiclient-20260514T165626Z/summary.txt",
+    "bytes": 370,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-bulk8m-20260514T193533Z/bench-live-100m.json",
+    "bytes": 5345,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-cfc4e67-ab-20260514T191354Z/bench-live-100m.json",
+    "bytes": 5352,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-changes-discovery-20260514T193121Z/bench-live-100m.json",
+    "bytes": 5893,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-dl48-ul16-20260514T193642Z/bench-live-100m.json",
+    "bytes": 5358,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc32-20260514T193817Z/bench-live-100m.json",
+    "bytes": 5359,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc48-20260514T193927Z/bench-live-100m.json",
+    "bytes": 5344,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc64-20260514T194030Z/bench-live-100m.json",
+    "bytes": 5357,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc80-20260514T194613Z/bench-live-100m.json",
+    "bytes": 0,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc80-20260514T194643Z/bench-live-100m.json",
+    "bytes": 5356,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit-client-conc96-20260514T194440Z/bench-live-100m.json",
+    "bytes": 5347,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit48-clientdl96-20260514T195312Z/bench-live-100m.json",
+    "bytes": 5362,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit64-clientdl112-20260514T195526Z/bench-live-100m.json",
+    "bytes": 5358,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit64-clientdl128-20260514T194805Z/bench-live-100m.json",
+    "bytes": 5359,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit64-clientdl80-20260514T195402Z/bench-live-100m.json",
+    "bytes": 5357,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit64-clientdl96-20260514T194725Z/bench-live-100m.json",
+    "bytes": 5356,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-exit80-clientdl96-20260514T195444Z/bench-live-100m.json",
+    "bytes": 5358,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-fairfix-20260514T190931Z/bench-live-100m.json",
+    "bytes": 5362,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-fairfix-tailfix-20260514T191221Z/bench-live-100m.json",
+    "bytes": 5345,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-h1-full-20260514T192338Z/bench-live-100m.json",
+    "bytes": 4835,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-h1-route-20260514T191535Z/bench-live-100m.json",
+    "bytes": 0,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-h1-smoke-20260514T192319Z/bench-live-small.json",
+    "bytes": 3001,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-media-shards2-20260514T192730Z/bench-live-100m.json",
+    "bytes": 5331,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-media-shards4-20260514T192622Z/bench-live-100m.json",
+    "bytes": 5362,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-multi-exit64-client64-20260514T195632Z/bench-live-100m-x3.json",
+    "bytes": 5444,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-multi-exit64-clientdl80-20260514T195754Z/bench-live-100m-x3.json",
+    "bytes": 5445,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-multi-exit80-clientdl96-20260514T195920Z/bench-live-100m-x3.json",
+    "bytes": 5442,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-repeat-exit64-clientdl96-20260514T195225Z/bench-live-100m.json",
+    "bytes": 5343,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/muxv4-stripe-exit64-clientdl96-20260514T195105Z/bench-live-100m.json",
+    "bytes": 5362,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-checkpoint.md",
+    "bytes": 2379,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-live-measurements.md",
+    "bytes": 3900,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/protocol-lab/notes/2026-05-14-v6-ceiling-floor.md",
+    "bytes": 2510,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/quota-write-probe-20261115-02.json",
+    "bytes": 731,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/quota-write-probe-20261115.json",
+    "bytes": 654,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/server2-hammer-20260520T032005Z/summary.txt",
+    "bytes": 137,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-delivery-download-20261114-01/summary.json",
+    "bytes": 4905,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-delivery-upload-20261114-01/summary.json",
+    "bytes": 4898,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-mix-download-001/summary.json",
+    "bytes": 2447,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-mix-download-002/summary.json",
+    "bytes": 2446,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-mix-upload-001/summary.json",
+    "bytes": 1193,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-mix-upload-002/summary.json",
+    "bytes": 2444,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-mix-upload-003/summary.json",
+    "bytes": 2443,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-pools-download-20261114-01/summary.json",
+    "bytes": 5280,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-pools-download-32m-20261114-01/summary.json",
+    "bytes": 5282,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-pools-upload-20261114-01/summary.json",
+    "bytes": 5267,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/slot-shadow-download-20261114-01/summary.json",
+    "bytes": 4114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/v6-live-20260514T180938Z/bench-v4-latest-100mb.json",
+    "bytes": 4008,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/v6-live-20260514T180938Z/bench-v6-100mb.json",
+    "bytes": 4504,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp",
+    "path": ".skirk-runs/v6-live-20260514T180938Z/bench-v6-coalesce-100mb.json",
+    "bytes": 4514,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "repocomp-indexed-class-20261114",
+    "path": ".skirk-runs/indexed-class-pilot/summary.json",
+    "bytes": 2023,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  },
+  {
+    "worktree": "slot-mux-integration",
+    "path": ".skirk-runs/slot-shadow-download-20261114-01/summary.json",
+    "bytes": 4114,
+    "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
+  }
+]

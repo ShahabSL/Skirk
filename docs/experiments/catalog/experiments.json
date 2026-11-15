@@ -1,0 +1,2414 @@
+{
+  "schema_version": 1,
+  "compiled_date": "2026-11-15",
+  "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
+  "research_tip": "f9a2413970f1fbbbbea3c92ae274d30e644c20c8",
+  "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
+  "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
+  "coverage_limits": [
+    "An index is not a claim that every scaffolding run has been interpreted or every candidate tried. Some old binaries, configs and per-run cleanup records are absent from summaries.",
+    "Failed and incomplete arms stay separate; substrate, API primitive, simulation and full transport results are not pooled.",
+    "The 2026-05 archives include external-origin, shared-server and non-hash-verified notes; do not rank them against November local exact-body runs.",
+    "Live Google test account credentials and runtime profiles are excluded. Only aggregate fields explicitly whitelisted in the generator are imported."
+  ],
+  "records": [
+    {
+      "id": "OLD-001",
+      "candidate": "May stable muxv4 checkpoint",
+      "evidence_level": "historical_live_note",
+      "workload": "1 GiB single; five parallel100 MiB; mixed bulk+8 requests",
+      "latency": "mixed small8.3–9.5s",
+      "throughput_mbps": "single~61.9; five-client~90",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "note says zero quota errors; exact hash/byte checks not recorded in this note",
+      "cleanup": "not recorded",
+      "decision": "Positive historical envelope, not pooled with November exact-body runs",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-checkpoint.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-checkpoint.md"
+      ],
+      "revision_or_binary": "324ecbd",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-002",
+      "candidate": "Control-prefix list versus changes feed",
+      "evidence_level": "live_api_primitive",
+      "workload": "256KiB and1MiB,4objects,c2",
+      "latency": "control prefix visibility230/193ms; changes p95visibility4464/2625ms",
+      "throughput_mbps": "fullGET6.8/19.8; rangeGET1.8/7.1 per-request",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "generated IDs8/8 unique; conflict success; changes18/10calls, pollution0.545/0.6",
+      "cleanup": "not recorded in note",
+      "decision": "Prefix discovery beat polluted change feed in these cells",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-live-measurements.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-live-measurements.md"
+      ],
+      "revision_or_binary": "625b744/5d5bc3e",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-003",
+      "candidate": "Known-ID download ceiling",
+      "evidence_level": "live_api_primitive",
+      "workload": "8×4MiB,c4",
+      "latency": "32MiB/2.523s; c8 did not improve wall-clock",
+      "throughput_mbps": "~106–109",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "zero errors in note",
+      "cleanup": "not recorded",
+      "decision": "Large read primitive has more headroom than tunnel; not app throughput",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v6-ceiling-floor.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/primitive-ceiling-20260514T185647Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-004",
+      "candidate": "Byte-aware limiter and v4 read-buffer increase",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB external file;1GiB mixed12probes;5×100MiB",
+      "latency": "100MiB small5.08→4.52s;1GiB p95small6.19s",
+      "throughput_mbps": "100MiB37.95→39.21→50.05;1GiB45.7;five~29",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "1GiB12/12;five5/5;zero Drive errors reported",
+      "cleanup": "not recorded",
+      "decision": "Positive single-flow improvement, multi-client limited; different source workload",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v6-ceiling-floor.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v6-ceiling-floor.md"
+      ],
+      "revision_or_binary": "5d5bc3e;note stepping-stone",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-005",
+      "candidate": "Larger receive-window experiments",
+      "evidence_level": "historical_live_note",
+      "workload": "v4 8MiB objects/24MiB window;16MiB receive byte window",
+      "latency": "16MiB window small6.02s,download p953.33s",
+      "throughput_mbps": "8MiB/24MiB28.4;16MiBwindow36.34",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "no exact body validation recorded",
+      "cleanup": "not recorded",
+      "decision": "Rejected; throughput and latency regressions",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v5a-live-measurements.md",
+        ".skirk-runs/protocol-lab/notes/2026-05-14-v6-ceiling-floor.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/notes/"
+      ],
+      "revision_or_binary": "5d5bc3e",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-006",
+      "candidate": "Tiny-object collapse repair stable checkpoint",
+      "evidence_level": "historical_live_note",
+      "workload": "1GiB mixed18probes;5×100MB;YouTube+1GiB60s overlap",
+      "latency": "small18/18 roughly7.4–12.8s",
+      "throughput_mbps": "mixed~65.0;YouTube~65.6",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "video advanced28.7→88.8s,readyState4,drops flat;five files completed",
+      "cleanup": "797 oldobjects/96.6MB deleted;not exact session zero",
+      "decision": "Strong historical browsing/bulk evidence; external-byte hashes not recorded",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/9573d2d-checkpoint.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-coalesce2-mixed-1gb-20260514T222326Z/",
+        ".skirk-runs/protocol-lab/final-20260514/server2-coalesce2-browser-1gb-20260514T223452Z/"
+      ],
+      "revision_or_binary": "9573d2d;e57e7f87d27404291c9688e2eaba89fa242d68bdb1476c4e26ee7110b9555e0e",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-007",
+      "candidate": "muxv4/v5a/v5b/v6 same-day protocol matrix",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB+10small per protocol",
+      "latency": "small p95 v4/v5a/v5b/v6=9.957/9.414/8.973/8.953s",
+      "throughput_mbps": "32.745/26.785/35.724/25.666",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "all10/10;v5a receive gap repair",
+      "cleanup": "not recorded",
+      "decision": "v5b advanced;v5a/v6 rejected slower",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/protocol-findings-20260514T234133Z.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/transport-matrix-20260514T232835Z/"
+      ],
+      "revision_or_binary": "9573d2d baseline;5d2602a07501a3a981f3156727a5d4269ba060bf382c332d087ffc9e5fbe7541",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-008",
+      "candidate": "muxv5b bulk-prefix design",
+      "evidence_level": "historical_live_note",
+      "workload": "1GiB mixed18probes",
+      "latency": "small p9513.805s",
+      "throughput_mbps": "58.143",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "18/18;hundreds seen bulkprefix objects",
+      "cleanup": "not recorded",
+      "decision": "Rejected after100MiB win reversed at1GiB",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/protocol-findings-20260514T234133Z.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-muxv5b-mixed-1gb-20260514T233708Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-009",
+      "candidate": "Fixed5s v5b bulk lookback",
+      "evidence_level": "code_review",
+      "workload": "late-visible older object after newer cursor",
+      "latency": "not measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": null,
+      "correctness_and_errors": "can permanently skip late-visible objects",
+      "cleanup": "not applicable",
+      "decision": "Rejected before live promotion",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-v5b-bulk5-20260514T235549Z/summary.txt"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-v5b-bulk5-20260514T235549Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-010",
+      "candidate": "muxv7a8MiB single-publish slab",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB+10small",
+      "latency": "small p959.388s,bulkTTFB9.246s",
+      "throughput_mbps": "28.809",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "10/10;100MiBHTTP200",
+      "cleanup": "not recorded",
+      "decision": "Rejected;larger slab publication tail lost to v4/v5b",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-v7a-20260514T234747Z.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-muxv7-mixed-100mb-20260514T234538Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-011",
+      "candidate": "muxv7 manifest grouped known-ID data",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB mixed same-day v4/v7",
+      "latency": "small p95control9.658/v711.827s;manifest visibility245–363ms",
+      "throughput_mbps": "control33.73;v711.94",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "v7 gap repair;download60→99,list146→302,uploads20each",
+      "cleanup": "not recorded",
+      "decision": "Rejected;control overhead and large downloads",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-manifest-muxv7-20260515T025507Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/muxv7-candidate-20260515T025209Z/",
+        ".skirk-runs/protocol-lab/final-20260514/stable-live-control-20260515T024838Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-012",
+      "candidate": "muxv8 hot/bulk prefix split",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB then1GiB mixed",
+      "latency": "small p9510.082/15.331s",
+      "throughput_mbps": "100MiB34.06;1GiB52.76",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "small10/10,18/18;bulk infos286seen179,listtail3.775s",
+      "cleanup": "not recorded",
+      "decision": "Rejected;prefix sharding alone lost mixed gate",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-muxv8-split-prefix-20260515T000856Z/summary.txt"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-muxv8-mixed-1gb-20260515T000447Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-013",
+      "candidate": "muxv10 strict-priority microbundle",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB mixed10small",
+      "latency": "candidate max9.495s;v4max~9.386s",
+      "throughput_mbps": "candidate30.496;v4~37.89",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "10/10;42normal objects,5tiny",
+      "cleanup": "not recorded",
+      "decision": "Rejected;~24%bulk duration penalty",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-muxv10-20260515T012106Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-muxv10-mixed-100mb-20260515T012106Z/"
+      ],
+      "revision_or_binary": "aafba8caed516c72b0f4130ea825da8c6ca8fa85777db533ccb585b96710ebc8",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-014",
+      "candidate": "muxv11 receiver credit",
+      "evidence_level": "historical_live_note",
+      "workload": "same-binary100MiB mixed",
+      "latency": "small p959.371candidate/9.375control",
+      "throughput_mbps": "candidate34.53;control38.41",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "10/10;49normal7tiny versus38normal1tiny;11reversecredit objects;lostcredit deadlock risk",
+      "cleanup": "not recorded",
+      "decision": "Rejected;no actual creditwait and slower bulk",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-muxv11-credit-20260515T021203Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-muxv11-credit-20260515T021203Z/"
+      ],
+      "revision_or_binary": "2d0c4db398fbb2bd6b1851fede35c0eda344a8e1b611ad3a2e3f031a7abd7390",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-015",
+      "candidate": "Priority cross-stream mailbag",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB then1GiB mixed",
+      "latency": "100MiB p95~9.223s;1GiBtail exceeds stable",
+      "throughput_mbps": "100MiB35.19;1GiB53.38",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "100MiB10/10;1GiB16/18,two curl56",
+      "cleanup": "not recorded",
+      "decision": "Rejected;long mixed instability",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-mailbag-20260515T002401Z/summary.txt"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-mailbag-mixed-1gb-20260515T001956Z/"
+      ],
+      "revision_or_binary": "9257dd906bc9780c910e6dbe99329e5ab954a9bb3f8b2b38105a2c7db1a252cf",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-016",
+      "candidate": "Flight-aware receive/congestion",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB then1GiB mixed",
+      "latency": "18small succeed~8–10s;file timedout420s",
+      "throughput_mbps": "incomplete50.1MiB/420s",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "2294normal objects,2196under64KiB,no>1MiB",
+      "cleanup": "not recorded",
+      "decision": "Rejected;tiny-object collapse reintroduced",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-flightaware-20260515T005301Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-flightaware-clean-mixed-1gb-20260515T004509Z/"
+      ],
+      "revision_or_binary": "9573d2d base;uncommitted candidate",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-017",
+      "candidate": "Forced64KiB bulk coalescing floor",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB then1GiB mixed",
+      "latency": "1GiBsmallworst15.374s",
+      "throughput_mbps": "100MiB35.756;1GiB55.27",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "10/10,18/18;346normal341big",
+      "cleanup": "not recorded",
+      "decision": "Rejected;healthy object size but slower latency/rate",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-bulkfloor-20260515T010548Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-bulkfloor-mixed-1gb-20260515T010204Z/"
+      ],
+      "revision_or_binary": "d81d73a280b0e10ce4b3444082e4f5199dae298411a834694797316119229d8e",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-018",
+      "candidate": "HTTP operation partitioning",
+      "evidence_level": "historical_live_note",
+      "workload": "100MiB and1GiB mixed",
+      "latency": "100MiBsmallmax9.834vs9.688;1GiBmax12.761s",
+      "throughput_mbps": "100MiB34.222vs30.830;1GiB63.283",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "10/10,18/18;339objects333big",
+      "cleanup": "not recorded",
+      "decision": "Positive100MiB signal,not1GiB improvement;not promoted",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-http-partition-20260515T013523Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-http-partition-mixed-1gb-20260515T013523Z/"
+      ],
+      "revision_or_binary": "250f06e8dbdf438de6ce8008205d90330af96820bda827f5993293b6514a071f",
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-019",
+      "candidate": "v4.1e adaptive bulk window/gap repair",
+      "evidence_level": "historical_live_note",
+      "workload": "single1GiB;1GiBmixed18probes",
+      "latency": "mixed p9516.483s",
+      "throughput_mbps": "single76.117;mixed55.475",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "18/18;no gaprepair logged",
+      "cleanup": "not recorded",
+      "decision": "Bulk-only fast;rejected mixed tail",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-v41e-20260514T232747Z/summary.txt"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/server2-v41e-single-1gb-20260514T232122Z/",
+        ".skirk-runs/protocol-lab/final-20260514/server2-v41e-mixed-1gb-20260514T232340Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-020",
+      "candidate": "Known-ID per-object rendezvous",
+      "evidence_level": "live_api_primitive",
+      "workload": "generated data/control IDs,exact metadata polling",
+      "latency": "multi-second visibility tail",
+      "throughput_mbps": null,
+      "estimated_quota_units": "964metadata916404 versus48listcalls",
+      "correctness_and_errors": "exact control-ID poll pressure",
+      "cleanup": "not recorded",
+      "decision": "Rejected per-object polling;not equivalent to persistent slots",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-rendezvous-and-optimistic-20260515T022457Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/rendezvous-primitive-20260515T021603Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-021",
+      "candidate": "Optimistic overlapping control/data publication",
+      "evidence_level": "live_api_primitive",
+      "workload": "generated IDs,control/data upload overlap",
+      "latency": "control visibility multi-second tail",
+      "throughput_mbps": "slight4MiB micro gain only",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "optimisticdata404s,changespollution",
+      "cleanup": "not recorded",
+      "decision": "Rejected;no mixed path improvement",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-rendezvous-and-optimistic-20260515T022457Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/optimistic-v5-primitive-20260515T022109Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-022",
+      "candidate": "Multipart versus resumable bulk matrix",
+      "evidence_level": "live_api_primitive",
+      "workload": "1/4/8MiB,c4/c8",
+      "latency": "4MiBp95multipart/resumable12.322/10.574s(c4),20.751/17.701(c8);8MiB18.823/17.802,33.441/33.156s",
+      "throughput_mbps": null,
+      "estimated_quota_units": "96resumablecalls versus48multipart",
+      "correctness_and_errors": "zero raw upload errors;interruption recovery untested",
+      "cleanup": "not recorded in summary",
+      "decision": "<20%p95gain with2×calls;not wired runtime",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/rejected-resumable-upload-20260515T015121Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/resumable-upload-20260515T014619Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-023",
+      "candidate": "Mutable media update ring",
+      "evidence_level": "live_api_primitive",
+      "workload": "1/4/16MiB,c4/c8",
+      "latency": "uploadp951MiB4.222/10.240s;4MiB10.836/18.384s;16MiB43.173/74.220s",
+      "throughput_mbps": "8.90/7.85;12.26/13.75;12.08/13.87",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "no stale/mismatch;appData split403insufficientScopes",
+      "cleanup": "not recorded",
+      "decision": "Rejected media whole-file update;distinct from metadata slots",
+      "source_documents": [
+        ".skirk-runs/protocol-lab/final-20260514/update-ring-primitive-20260515T030305Z/summary.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/final-20260514/update-ring-primitive-20260515T030305Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "OLD-024",
+      "candidate": "May paired five-client run",
+      "evidence_level": "historical_live_note",
+      "workload": "5×64MiB plus40small;~78s",
+      "latency": "smallp95total9.44s",
+      "throughput_mbps": "aggregate34.44",
+      "estimated_quota_units": "147550 aligned both peers",
+      "correctness_and_errors": "5/5,40/40,zeroerrors",
+      "cleanup": "not recorded here",
+      "decision": "Archived bounded concurrency,not capacity",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/protocol-lab/multiclient-20260514T165626Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-001",
+      "candidate": "Bounded burst idle-tail scheduler",
+      "evidence_level": "memory_simulation",
+      "workload": "20msPUT12msLIST8msGET,short transfer",
+      "latency": "response157–160→193–195ms",
+      "throughput_mbps": null,
+      "estimated_quota_units": "15555–16255→6305–6655",
+      "correctness_and_errors": "local success;list138–140→43–44",
+      "cleanup": "memory only",
+      "decision": "69%fewer lists with35msresponse cost;live crosscheck worse",
+      "source_documents": [
+        "docs/polling-benchmark.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/",
+        "tools/skirk_memory_bench.go"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-002",
+      "candidate": "Burst scheduler mixed simulation",
+      "evidence_level": "memory_simulation",
+      "workload": "24small+32MiB",
+      "latency": "autop951.975–1.994s;oldburst170–191ms;bounded200–220ms",
+      "throughput_mbps": "auto132;old977–1000;bounded1054–1060",
+      "estimated_quota_units": "auto8255–8755;bounded9555–9655",
+      "correctness_and_errors": "localexact;noDrivevisibility",
+      "cleanup": "memory only",
+      "decision": "Simulation strong but not live estimate",
+      "source_documents": [
+        "docs/polling-benchmark.md"
+      ],
+      "raw_archive_paths": [
+        "tools/skirk_memory_bench.go"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-003",
+      "candidate": "Six-case polling matrix",
+      "evidence_level": "memory_simulation",
+      "workload": "18runs,12small+8MiB,PUT150msLIST60msGET100ms",
+      "latency": "medianrunp95:auto1000=1.317,fixed1000=1.316,fixed500=1.317,fixed250=.818,autoburst=.573,cap8=1.317s",
+      "throughput_mbps": "46.289/46.366/46.362/61.206/88.795/43.318",
+      "estimated_quota_units": "5255/5255/5555/6055/6505/5305",
+      "correctness_and_errors": "all18exactworkloads pass",
+      "cleanup": "memory only",
+      "decision": "No live promotion from synthetic matrix",
+      "source_documents": [
+        "docs/audit-experiments-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/audit-matrix-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-004",
+      "candidate": "Interaction epoch persistent echo",
+      "evidence_level": "memory_simulation",
+      "workload": "equal6MiB bulk+pipelinedpersistenttext",
+      "latency": "textp95default2.25→epoch1.03s",
+      "throughput_mbps": "7.33→7.20",
+      "estimated_quota_units": "epoch~10%more",
+      "correctness_and_errors": "exact6MiB;local scheduling",
+      "cleanup": "memory only",
+      "decision": "Supports testing,notDriveclaim",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        "tools/persistent_bench/"
+      ],
+      "revision_or_binary": "1359c0e harness",
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-005",
+      "candidate": "Epoch5/10client stress",
+      "evidence_level": "memory_simulation",
+      "workload": "eachclient8×4MiB;5/10clients,eighttextframes",
+      "latency": "5:p95default1.993vs1.493/1.742;10:1.894/1.997vs1.652/1.744s",
+      "throughput_mbps": "5:epoch4–5%lower;10overlap",
+      "estimated_quota_units": "5:+7–10%;10:+5–9%",
+      "correctness_and_errors": "all160/320MiB,alltexts,zerogaps/failures",
+      "cleanup": "zeroobjects;cleanup37–46sat10",
+      "decision": "Textsignal,budget/fairnesscost",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        "tools/persistent_bench/"
+      ],
+      "revision_or_binary": "1359c0e",
+      "live_comparable": false
+    },
+    {
+      "id": "SIM-006",
+      "candidate": "Normal2MiB versus4MiB batch cap",
+      "evidence_level": "memory_simulation",
+      "workload": "5clients16MiBupload;6PUTslots,1s/MiBdelay",
+      "latency": "textp951.48–1.83vs1.49–1.73s",
+      "throughput_mbps": "4MiB37.9–41.2;2MiB43.4–44.0",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "80MiBand30echoesperrunexact",
+      "cleanup": "memory only",
+      "decision": "Promising model;liveunmeasured",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        "tools/persistent_bench/UPLOAD_SIM.md"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "LIVE-001",
+      "candidate": "Route32MiB baseline",
+      "evidence_level": "live_full_transport",
+      "workload": "sequential32MiB+small",
+      "latency": "frontp953.025/2.682s;pinned3.881/3.444;H13.988;Direct2.266",
+      "throughput_mbps": "front35.793/36.434;pinned33.421/48.573;H114.514;Direct38.146",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "allrequestsverified;zeroAPIerrors",
+      "cleanup": "laterstaleruntimecleanup;notperrunexactinthisrecord",
+      "decision": "Route samples;Directreachabilityregional",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/{front-a,front-b,h2-a,h2-b,h1-a,direct-a}.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-002",
+      "candidate": "128MiB single transfer envelope",
+      "evidence_level": "live_full_transport",
+      "workload": "128MiB+24small,12overlap",
+      "latency": "overlapsmallp953.064s",
+      "throughput_mbps": "74.928",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "all24requests,exactbody,zeroerrors",
+      "cleanup": "latercleanup;notstandalonesoak",
+      "decision": "FastestNovemberreportedshortsinglefile;notmaximum",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/front-128.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-003",
+      "candidate": "Burst polling live32MiB",
+      "evidence_level": "live_full_transport",
+      "workload": "2×32MiBfronted,mixed",
+      "latency": "p953.452/3.596s",
+      "throughput_mbps": "22.939/26.981",
+      "estimated_quota_units": "morethancontrol",
+      "correctness_and_errors": "allrequests,zeroAPIerrors",
+      "cleanup": "laterexactcleanup",
+      "decision": "Rejectdefault;worsethannoburst35.793/36.434",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/{frontburst-a,frontburst-b}.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-004",
+      "candidate": "3/5/10 simultaneous clients",
+      "evidence_level": "live_full_transport",
+      "workload": "3/5/10×32MiB;12/20/40small",
+      "latency": "smallp953.519/3.281/4.941s",
+      "throughput_mbps": "aggregate28.655/60.690/78.244",
+      "estimated_quota_units": "67210/89110/209075 bothpeers",
+      "correctness_and_errors": "allfiles/texts;zeroerrors/backoff",
+      "cleanup": "laterexactcleanup",
+      "decision": "Largestlive10clients,not200k",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/capacity-{three-rolling100,five-final,ten-final}/summary.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-005",
+      "candidate": "Quota project and idle wake",
+      "evidence_level": "live_full_transport",
+      "workload": "smallHTTP,>60sidle,secondproject",
+      "latency": "first2.302s;idle2.147;pinned2.250",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "oldidleclient1list100units;exit63lists6300units/60s",
+      "correctness_and_errors": "HTTP200;disabledprojectSERVICE_DISABLEDcontrol",
+      "cleanup": "upload/read/deleteverified",
+      "decision": "Compatibilityandrequestwake,notquotaunitattribution",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/{client,exit}-quota-project-metrics.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-006",
+      "candidate": "Zero-stream client receive pause",
+      "evidence_level": "live_full_transport",
+      "workload": "18sidlethenrequest;70srepeat",
+      "latency": "requests5.436/6.044s;oldone4.272s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "initial18s0calls;clientlisttotal12after20sheldto70s",
+      "correctness_and_errors": "HTTP200;zeroerrors",
+      "cleanup": "delayedfinaldraintestaddedaftertraces",
+      "decision": "Idleunitreduction,notlatencygain",
+      "source_documents": [
+        "docs/validation-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/personal-test/{client,exit}-idle-zero-{final,tail}-metrics.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-007",
+      "candidate": "Dual inline sealed description primitive",
+      "evidence_level": "live_api_primitive",
+      "workload": "256/2048/8192B,4repeats,24records",
+      "latency": "metadata408–598ms;media1337–3834ms",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "coreobjectmedia400→metadata200 incldelete",
+      "correctness_and_errors": "all24exact",
+      "cleanup": "allIDsdeleted",
+      "decision": "Strongprimitive;dualruntime differsmetadata-only",
+      "source_documents": [
+        "docs/audit-experiments-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/audit-inline-probe.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "LIVE-008",
+      "candidate": "Dual inline description32MiBABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms32MiB+8small;newsessionperarm",
+      "latency": "overlaprequestp95baseline3.249→inline2.223s;scheduled6.572→4.092s",
+      "throughput_mbps": "baseline36.362→inline39.788",
+      "estimated_quota_units": "19905→12355",
+      "correctness_and_errors": "all4files32small;zeroAPIerrors;overlap6–8samples",
+      "cleanup": "exactlaterzero;preliminaryfailedbaselinealsoretained",
+      "decision": "Strongpositive31.6%requestp95,37.9%units,9.4%bulk;only2arms/mode",
+      "source_documents": [
+        "docs/audit-experiments-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/audit-live-inline-isolated-abba-repeat/"
+      ],
+      "revision_or_binary": "auditbranch93f4a75",
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-009",
+      "candidate": "Inline preliminary and interrupted repeats",
+      "evidence_level": "live_full_transport",
+      "workload": "earlierABBA sharedsession;isolatedrepeatfirstbaseline",
+      "latency": "firstbaselinebulkstall15s;8smallpass;earlieraccountingomittedcanceledhedges",
+      "throughput_mbps": "incomplete",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "preliminarynotpooled",
+      "cleanup": "laterexactcleanup",
+      "decision": "Retainfailed/preliminaryevidence;notbalancedclaim",
+      "source_documents": [
+        "docs/audit-experiments-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/audit-live-inline-abba/",
+        ".skirk-runs/audit-live-inline-isolated-abba/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-010",
+      "candidate": "Inline mixed-version compatibility",
+      "evidence_level": "live_full_transport",
+      "workload": "newexit/oldclient,oldexit/newclient,1900Bresponse",
+      "latency": "notreported",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "bothexact1900Bpass",
+      "cleanup": "4compatfilesdeleted",
+      "decision": "Twoexchangecompatibilityonly",
+      "source_documents": [
+        "docs/audit-experiments-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/audit-inline-compat/summary.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-011",
+      "candidate": "Astra64MiB baseline-inline failure",
+      "evidence_level": "live_full_transport",
+      "workload": "64MiB+24scheduledsmall",
+      "latency": "baseline2.958s;inline6.484sscheduled",
+      "throughput_mbps": "baseline67.454;inline0bulk",
+      "estimated_quota_units": "baseline39105",
+      "correctness_and_errors": "baselineall;inline24smallpassbutfile0;runnerstopped",
+      "cleanup": "explicitcleanup",
+      "decision": "Largecandidatefailed;doesnterase32MiBpositive",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-live-64m-24small/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-012",
+      "candidate": "Same-ID upload hedge primitives",
+      "evidence_level": "live_api_primitive",
+      "workload": "32uploads512KiB/4MiB;balancedmatrix",
+      "latency": "initial28/32,four20stimeouts;3smetadatacheck32/32slowest19.580;hedge32/32slowest4.000and4.061s",
+      "throughput_mbps": null,
+      "estimated_quota_units": "8840/9680/9840/10040",
+      "correctness_and_errors": "allhedged32/32;secondarywins4then8;initialbodywritten<2.94s",
+      "cleanup": "exactcleanupreported",
+      "decision": "Strongtailrescueprimitive;fullappnotuniversal",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-upload-*.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "LIVE-013",
+      "candidate": "Upload hedge64MiBABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms64MiB+24small",
+      "latency": "scheduled6.450/8.912/19.991s;lastbaseline17/24",
+      "throughput_mbps": "21.631/37.531/19.681/18.788",
+      "estimated_quota_units": "43355/38655/41355;lastincomplete",
+      "correctness_and_errors": "3complete;last7smallstall",
+      "cleanup": "exactcleanup",
+      "decision": "Incompletebalancedpair,nopromotion",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-hedge-abba-64m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-014",
+      "candidate": "Separate upload pool only",
+      "evidence_level": "live_full_transport",
+      "workload": "64MiB+24small,firstarmonly",
+      "latency": "scheduledsmallp952.627s",
+      "throughput_mbps": "0bulkbeforestall",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "24smallpass;bulkfail",
+      "cleanup": "exactcleanup",
+      "decision": "Control-pathpromisebutfailedfile",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-isolated-abba-64m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-015",
+      "candidate": "Separate upload pool+hedge",
+      "evidence_level": "live_full_transport",
+      "workload": "64MiBfirstarm",
+      "latency": "22/24small;2stall",
+      "throughput_mbps": "13.891",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "filereachedexact;nohedgeactuallytriggered",
+      "cleanup": "exactcleanup",
+      "decision": "Stoponfailure,notbalanced",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-isolated-hedge-repeat-64m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-016",
+      "candidate": "Main/current64MiBABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4×64MiB+24small",
+      "latency": "scheduledp95main2.648/17.548,current3.493/3.054s",
+      "throughput_mbps": "main70.988/21.309,current54.545/57.173",
+      "estimated_quota_units": "main36105/37255,current36155/35655",
+      "correctness_and_errors": "allfiles96small,zeroerrors",
+      "cleanup": "laterexactzero",
+      "decision": "Positivemedianscurrentbutmainvariancehuge;differentattemptaccounting",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-main-vs-current-64m/"
+      ],
+      "revision_or_binary": "main603ae01f9ea1a6685ed620fed40d445ec9cdc62353b09811dcab7538f61fb0c3;current9e33442115938f3be3c60c4a81971e4f305f908878b86e154786904d2d6e595d",
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-017",
+      "candidate": "HTTP3authenticatedfrontprimitive",
+      "evidence_level": "live_api_primitive",
+      "workload": "8metadatareads4/protocol,freshcurlconnections",
+      "latency": "H3median176.7ms(range158–198),H2246.5ms(173–260);nativeH3329.598ms",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "all8HTTP200exactfolderID;nativeHTTP3.0",
+      "cleanup": "readonly",
+      "decision": "Feasibilityandfreshconnectionlatencyonly",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-h3-authenticated.json",
+        ".skirk-runs/max-api-native-h3-authenticated.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "LIVE-018",
+      "candidate": "HTTP3fulltunnel64MiB",
+      "evidence_level": "live_full_transport",
+      "workload": "attemptedH2/H3ABBA",
+      "latency": "firstH23.300s;H33.397sscheduledp95",
+      "throughput_mbps": "H243.166;H332.762",
+      "estimated_quota_units": "35705/40405",
+      "correctness_and_errors": "first2armsverified;laterH3failed",
+      "cleanup": "4residualsremoved,delayedzero",
+      "decision": "Nojointwin;UDPregionalreachabilityuntested",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-h3-abba-64m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-019",
+      "candidate": "Separate bulk media pool32MiBABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4×32MiB+24small",
+      "latency": "controlscheduled10.477/4.787s;candidate3.970failedfile/4.281s",
+      "throughput_mbps": "control17.330/19.270;candidatefailed/21.226",
+      "estimated_quota_units": "31205/34605incomplete/32605/31705",
+      "correctness_and_errors": "onecandidatefilestall;smallall",
+      "cleanup": "exactzeroall4",
+      "decision": "No promotion,onefilefailed",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-bulk-pool-abba-32m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-020",
+      "candidate": "Separate bulk pool+hedge32MiBABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms32MiB+24small",
+      "latency": "candidate3.831/6.312s;closingcontrol8.802",
+      "throughput_mbps": "candidate16.347/13.647;control20.100",
+      "estimated_quota_units": "candidate36705/36455;control32905",
+      "correctness_and_errors": "openingcontrolfilestall;candidatebothpass",
+      "cleanup": "exactzeroall4",
+      "decision": "No completepair;extraunits,controlbulkfaster",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-bulk-pool-hedge-abba-32m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-021",
+      "candidate": "Multipart/dual description/metadata-only create",
+      "evidence_level": "live_api_primitive",
+      "workload": "9files/method",
+      "latency": "coremedian1163.9/872.0/508.3ms;ranges994–1727/710–1226/419–644ms",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "core350/150/150 excludesdelete",
+      "correctness_and_errors": "allpayloadsandidentitiesexact;zeroerrors",
+      "cleanup": "all27deleted",
+      "decision": "Metadata-only promisingprimitive;cap8KiBapplicationbound",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-metadata-only-probe.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "LIVE-022",
+      "candidate": "Metadata-only32MiBsmoke",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms32MiB+8small",
+      "latency": "unfairtimings",
+      "throughput_mbps": "notfaircomparison",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "allfiles/messages;metadata31mediaGET vscontrol59",
+      "cleanup": "exactcleanup",
+      "decision": "Functionalonly;differenttreatmentconfiguration",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-metadata-abba-32m/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "LIVE-023",
+      "candidate": "Metadata-only64MiBfirstattempt/retry",
+      "evidence_level": "live_full_transport",
+      "workload": "64MiB+24small",
+      "latency": "retrycandidate3.991failedfile/10.412s;controls4.602/15.745",
+      "throughput_mbps": "candidatefailed/25.944;control24.109/22.782",
+      "estimated_quota_units": "candidate29055incomplete/30005;controls40105/33605",
+      "correctness_and_errors": "firstattemptfailed;retryonecandidate~1MiBthenstall;all24smallpass",
+      "cleanup": "first46residuals;retry2;laterallzero",
+      "decision": "Realunit/mediareduction,largefilefailurepreventsdefault",
+      "source_documents": [
+        "docs/max-drive-research-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-metadata-abba-64m/",
+        ".skirk-runs/max-api-metadata-abba-64m-retry/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-001",
+      "candidate": "Inline metadata persistent new-stream text",
+      "evidence_level": "live_full_transport",
+      "workload": "32MiBupload+24newstream64BPOST,2ABBApairs",
+      "latency": "scheduledp95baseline5.613→candidate3.154s",
+      "throughput_mbps": "15.363→15.740",
+      "estimated_quota_units": "34405→20605",
+      "correctness_and_errors": "96messages4filesverified,zeroerrors",
+      "cleanup": "exactzero",
+      "decision": "Text-44%,units-40%;strongshortpositive",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-message-inline-up-32m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-002",
+      "candidate": "Inline metadata download and split polling pilots",
+      "evidence_level": "live_full_transport",
+      "workload": "32MiBmessageinline-down andsplitpoll-up",
+      "latency": "seeprivatearmresults",
+      "throughput_mbps": "seeprivatearmresults",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "archiveonlyhere;notpooled",
+      "cleanup": "seeprivatecleanup",
+      "decision": "Separatearchivedattempts;catalogcannotinfermissingmetrics",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-message-inline-down-32m-20261114/",
+        ".skirk-runs/architecture-message-splitpoll-up-32m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-003",
+      "candidate": "Sparse persistent priority reentry",
+      "evidence_level": "live_full_transport",
+      "workload": "128KiBdemotionprelude,16MiBupload,6serialechoes",
+      "latency": "controls24.589/29.615s;candidate11.466complete",
+      "throughput_mbps": "notreported",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "2ndcandidate28snormaluploadtimeouts",
+      "cleanup": "exactzero",
+      "decision": "Persistentdemotionblindspotconfirmed;incompletepair",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-persistent-sparse-up-16m-20261114/",
+        ".skirk-runs/architecture-persistent-sparse-up-32m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-004",
+      "candidate": "Interaction epoch pipelined16MiB",
+      "evidence_level": "live_full_transport",
+      "workload": "12echoes250msinterval,uploadABBA",
+      "latency": "controlcomplete7.436s;epoch7.045/3.924s",
+      "throughput_mbps": "control11.449;epoch7.598/11.355",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "48textverified;openingcontrolfilestall13.771/17.487smediaGET",
+      "cleanup": "exactzero",
+      "decision": "Incompletefilecontrol,nobulkwin",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-up-16m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-005",
+      "candidate": "Epoch versus epoch+metadata16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms,12persistent64Bechoes,16MiBfile",
+      "latency": "epoch4.050→combined2.829sscheduledp95",
+      "throughput_mbps": "13.501→10.448",
+      "estimated_quota_units": "20385→17135",
+      "correctness_and_errors": "all4files48echoes,zeroerrors",
+      "cleanup": "exactzero",
+      "decision": "Text/unitsgainbutfileloss",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-metadata-up-16m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-006",
+      "candidate": "Epoch+metadata16MiBdownloadbeforecapfix",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms,12persistent64Bechoes,16MiBfile",
+      "latency": "default6.857→candidate3.833sscheduledp95",
+      "throughput_mbps": "12.136→13.763",
+      "estimated_quota_units": "19460→16260",
+      "correctness_and_errors": "all4files48echoes,zeroerrors;epochbudgetbypasslaterfixed",
+      "cleanup": "exactzero",
+      "decision": "Strongpositive44%text,13%file,16%units;supersededcapfix",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-metadata-down-16m-20261114/"
+      ],
+      "revision_or_binary": "pre2a79afe",
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-007",
+      "candidate": "Corrected epoch+metadata16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "candidate/control/control/candidate,12persistent64Bechoes",
+      "latency": "default6.603→candidate2.608sscheduledp95",
+      "throughput_mbps": "10.671→16.600",
+      "estimated_quota_units": "20410→15835",
+      "correctness_and_errors": "all4files48echoes,zeroerrors/gaps",
+      "cleanup": "exactzero",
+      "decision": "Strongpositive60%text,56%file,22%units;shortsample",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-cap-down-16m-20261114/"
+      ],
+      "revision_or_binary": "2a79afeepochcapfix",
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-008",
+      "candidate": "Corrected epoch+metadata16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "candidate/control/control/candidate,12persistent64Bechoes",
+      "latency": "default7.911→candidate3.755sscheduledp95",
+      "throughput_mbps": "11.928→14.882",
+      "estimated_quota_units": "16510→16510",
+      "correctness_and_errors": "all4files48echoes,zeroerrors/gaps",
+      "cleanup": "exactzero",
+      "decision": "Strongpositive53%text,25%file,nounitgrowth;shortsample",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-cap-up-retry-16m-20261114/"
+      ],
+      "revision_or_binary": "2a79afeepochcapfix",
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-009",
+      "candidate": "Corrected epoch+metadata100MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "100MiBmixed,unhedged",
+      "latency": "controltextp955.953s;candidateincomplete",
+      "throughput_mbps": "control23.573;candidateincomplete",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "candidate2×4MiBuploadfinishedwrite~2.3s,noheaders30s;guardstop",
+      "cleanup": "exactzero",
+      "decision": "Failedlargefile;cannotpromoteshortwin",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-cap-up-100m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-010",
+      "candidate": "Corrected epoch+metadata+3shedge100MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "2controls2candidates",
+      "latency": "control7.015/7.796s;candidatecomplete3.778s",
+      "throughput_mbps": "control24.864/24.238;candidate1stallat66s/23.018",
+      "estimated_quota_units": "stalledarm42710",
+      "correctness_and_errors": "stallstarted28duplicate4MiBlegs;alltextverified",
+      "cleanup": "exactzero",
+      "decision": "Rejecteddefault;workamplificationandstall",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-cap-hedge-up-100m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-011",
+      "candidate": "Corrected epoch+metadata100MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "100MiBmixed",
+      "latency": "control17.132s;candidate6.294stextonly",
+      "throughput_mbps": "control16.485;candidatefilefail",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "alltextverified;candidateprogressguard;mediaGETp9514–15s",
+      "cleanup": "exactzero",
+      "decision": "Fastertextwithfailedfile,nopromotion",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-pipeline-epoch-cap-down-100m-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-012",
+      "candidate": "Epoch+metadata5clientupload25sstallguard",
+      "evidence_level": "live_full_transport",
+      "workload": "5×16MiB+30pipelinedechoes",
+      "latency": "eachmodeonefilecanceled~32safterfullPOSTbodytolocalSOCKS",
+      "throughput_mbps": "incomplete",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "real25snoresponsefailureinbothmodes;noattributiontomuxdeadlock",
+      "cleanup": "exactzero",
+      "decision": "Recordfailure;later60sstallwindowdifferentUXcriterion",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-five-client-live-20261114/",
+        ".skirk-runs/architecture-five-client-live-retry-20261114/",
+        ".skirk-runs/architecture-five-client-live-reverse-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "ARC-013",
+      "candidate": "Epoch+metadata5clientupload60sstallguard",
+      "evidence_level": "live_full_transport",
+      "workload": "2orderreversedpairs;5×16MiB+30echoes/arm",
+      "latency": "control8.214/7.320s,candidate5.211/4.984;medians7.767→5.098sscheduled",
+      "throughput_mbps": "control26.421/23.618,candidate22.293/18.594;median25.020→20.444",
+      "estimated_quota_units": "control73380/78630,candidate66730/72280",
+      "correctness_and_errors": "all20files120echoesverified;zeroerrors;rollingmax<79000",
+      "cleanup": "exactdelayedzero",
+      "decision": "Repeatedtext-34%,units-9%,file-18%;mixedtradeoff",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/architecture-five-client-longstall-20261114/",
+        ".skirk-runs/architecture-five-client-longstall-reverse-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-001",
+      "candidate": "Custompropertiesclassquery",
+      "evidence_level": "live_api_primitive",
+      "workload": "8p0+100newerp1productionshaped",
+      "latency": "3samples/cellinsufficientlatencyclaim",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "17190",
+      "correctness_and_errors": "legacy p1returns108in2pages,propertyp1100in1;untaggedoldpeersmissed",
+      "cleanup": "108IDsmissingimmediate/delayed",
+      "decision": "Classindexpromisingwithnegotiatedcompatibility",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/query-semantics-probe/"
+      ],
+      "revision_or_binary": "9f2bf7c",
+      "live_comparable": false
+    },
+    {
+      "id": "DISC-002",
+      "candidate": "Normalpage100/500/1000denseprobe",
+      "evidence_level": "live_api_primitive",
+      "workload": "528files16p0+512p1;24sweeps",
+      "latency": "p1100=1.54/1.67s;500=.66/.71s;1000=.53/.61s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "fullp1sweep600/200/100;total60645",
+      "correctness_and_errors": "p1fourpagecap100finds400/512,500/1000all;propertymisses8oldpeers",
+      "cleanup": "all528deleted404;3empty sweeps",
+      "decision": "Page1000boundedbacklogimprovement;runtimeusesrollback",
+      "source_documents": [
+        "docs/experiments/drive-list-page-size-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/list-page-live-20261114-a.json"
+      ],
+      "revision_or_binary": "ad1ea02probe",
+      "live_comparable": false
+    },
+    {
+      "id": "DISC-003",
+      "candidate": "Normalpage100versus1000sparse16MiB",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms16MiB+12newstreammessages",
+      "latency": "request6.386→4.468s;scheduled17.767→15.976s",
+      "throughput_mbps": "10.628→11.839",
+      "estimated_quota_units": "25455→26230",
+      "correctness_and_errors": "4files48messagesexitproofs,zeroerrors",
+      "cleanup": "9residualsdeleted,8prefixesemptyimmediate/delayed",
+      "decision": "Sparsepositivebutarmratevariation7.259–16.418largerthantreatment",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/page-size-sparse-16m-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-004",
+      "candidate": "Boundednormalpaginationcontinuation",
+      "evidence_level": "live_api_runtime",
+      "workload": "402p1objectsatpage100,targethiddenafter400",
+      "latency": "targetreachedpoll2;runtime520.37s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "43515",
+      "correctness_and_errors": "deterministicstarvationfixed;freshheadcheckran",
+      "cleanup": "all402deleted404,prefixzeroimmediate+30s",
+      "decision": "Correctnesswin;defaultpage1000andindexchurnnotliveproven",
+      "source_documents": [
+        "docs/experiments/dense-p1-live-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/dense-p1-live-20261114/"
+      ],
+      "revision_or_binary": "52cf03b",
+      "live_comparable": false
+    },
+    {
+      "id": "DISC-005",
+      "candidate": "Combineddiscovery16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "samebinary4arms16MiB+12messages",
+      "latency": "request7.065→4.233s;scheduled13.240→14.939s",
+      "throughput_mbps": "14.050→12.693",
+      "estimated_quota_units": "24480→22755",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "28residuals;8prefixeszeroimmediate/delayed",
+      "decision": "Requestgain-40%butscheduled+13%andfile-10%",
+      "source_documents": [
+        "docs/experiments/combined-list-discovery-ab-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/combined-list-down-16m-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-006",
+      "candidate": "Combineddiscovery16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "reverseorder4arms16MiB+12messages",
+      "latency": "request8.326→5.217s;scheduled18.530→15.074s",
+      "throughput_mbps": "9.429→11.778",
+      "estimated_quota_units": "24030→24455",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "17residuals;8prefixeszeroimmediate/delayed",
+      "decision": "Positivetiming/ratebut+2%units;densebacklognotmeasured",
+      "source_documents": [
+        "docs/experiments/combined-list-discovery-ab-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/combined-list-upload-16m-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-007",
+      "candidate": "Adaptive4broadpages+p0fallback8MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "samebinary4arms8MiB+12messages",
+      "latency": "request4.221→3.989s;scheduled15.252→11.717s",
+      "throughput_mbps": "7.100→9.269",
+      "estimated_quota_units": "25305→21305",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "6residuals;8prefixeszeroimmediate/delayed",
+      "decision": "Jointpositiveincl-16%units;densecaseunmeasured",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/adaptive-list-down-8m-20261114-01/"
+      ],
+      "revision_or_binary": "b0fb34b;6d9b89e;41688a9",
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-008",
+      "candidate": "Adaptive4broadpages+p0fallback8MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "reverseorder4arms8MiB+12messages",
+      "latency": "request5.721→3.086s;scheduled16.408→11.292s",
+      "throughput_mbps": "6.000→9.528",
+      "estimated_quota_units": "27030→21230",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors;bothcandidatefilesbeatbothcontrols",
+      "cleanup": "7residuals;8prefixeszeroimmediate+30s",
+      "decision": "Strongjointpositive-21%units;notdense/largesoak",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/adaptive-list-upload-8m-20261114-01/"
+      ],
+      "revision_or_binary": "b0fb34b;6d9b89e;41688a9",
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-009",
+      "candidate": "Stagedadaptive1+3download8MiB",
+      "evidence_level": "live_full_transport",
+      "workload": "samebinarycontrol/candidate/candidate/control",
+      "latency": "request3.145→4.127s;scheduled11.895→13.941s",
+      "throughput_mbps": "8.027→8.652",
+      "estimated_quota_units": "23230→20580",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "7residuals;8prefixeszeroimmediate+30s",
+      "decision": "Units-11%buttextregression;differentalgorithmfromfirstadaptive",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/adaptive-staged-down-8m-20261114-01/"
+      ],
+      "revision_or_binary": "a6dbea7;ac38998;b04bed2",
+      "live_comparable": true
+    },
+    {
+      "id": "DISC-010",
+      "candidate": "Stagedadaptive1+3uploadfirstfailure/retry",
+      "evidence_level": "live_full_transport",
+      "workload": "8MiB+12messages;first4thcandidatefails;retry4complete",
+      "latency": "retryrequest4.769→3.432s;scheduled14.212→13.100s",
+      "throughput_mbps": "retry6.584→7.981",
+      "estimated_quota_units": "retry24430→20755",
+      "correctness_and_errors": "first3files36messagespassthen10sclientuploaddeadline;retryall48proofs,zeroerrors",
+      "cleanup": "first33residuals,retry6;allprefixeszeroimmediate/delayed",
+      "decision": "Positiveretry-15%unitsbutfirstfailureanddowntextregression",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/adaptive-staged-upload-8m-20261114-{01,02}/"
+      ],
+      "revision_or_binary": "a6dbea7;ac38998;b04bed2",
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-001",
+      "candidate": "SequentialfixedmetadatadescriptionPATCH",
+      "evidence_level": "live_api_primitive",
+      "workload": "16×64Bupdatesonefile,independentreaderpool",
+      "latency": "PATCHmedian297ms,p95428ms;publish-observedmedian447ms,p95966ms",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "<=1945",
+      "correctness_and_errors": "all16exactversions,nostale/errors",
+      "cleanup": "exactIDdelete+2×404",
+      "decision": "Promisingpersistentknown-IDprimitive",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/mutable-slot-live-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-002",
+      "candidate": "Cumulativequeue/ACKtwometadatafiles",
+      "evidence_level": "live_api_substrate",
+      "workload": "20×64Bscheduled250ms,readerpause1safter10",
+      "latency": "onewayscheduledp50.859/p951.788s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "<=3240",
+      "correctness_and_errors": "all20orderedACKed;skipped9versions;largestqueue8frames",
+      "cleanup": "bothIDsdeleted2×absent",
+      "decision": "Queuefeasibilitywithskippedversions,notTCP",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/ack-slot-live-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-003",
+      "candidate": "Bidirectionalslotrequest-reply",
+      "evidence_level": "live_api_substrate",
+      "workload": "20×64Brequestecho;with/without1spause",
+      "latency": "pausedscheduledRTTp501.299/p952.145s;unpaused1.044/1.265s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "3780/3950",
+      "correctness_and_errors": "20/20each;skipped5/2versions;exact8192Bdescriptionreadback",
+      "cleanup": "bothIDsdeleted2×absent",
+      "decision": "StrongRTTsubstrate;notTCPbulk",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/ack-slot-roundtrip-{live,nopause-live}-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-004",
+      "candidate": "Known-IDpoll100versus200ms",
+      "evidence_level": "live_api_substrate",
+      "workload": "4orderreversednopausearms20requestreply",
+      "latency": "scheduledRTTp95median1.589vs1.681s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "4055vs3925;GET56vs40",
+      "correctness_and_errors": "allverified;variationoverlap",
+      "cleanup": "exactcleanup",
+      "decision": "200msretained;100msextraworknotmeaningfulgain",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/ack-slot-poll-sensitivity-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-005",
+      "candidate": "5/10simultaneousslotpairs",
+      "evidence_level": "live_api_substrate",
+      "workload": "5×20and10×20requestreply",
+      "latency": "scheduledRTTp952.382/1.515s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "17755/39565",
+      "correctness_and_errors": "100/100and200/200,zeroerrors",
+      "cleanup": "exactcleanup",
+      "decision": "Later10pairfaster,notmatchedcapacitycurve",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/ack-slot-{five,ten}-pair-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-006",
+      "candidate": "DriveStoregenerated-IDmetadataslotcompatibility",
+      "evidence_level": "live_api_primitive",
+      "workload": "onegeneratedfile,8192BdescriptionPATCH/readback",
+      "latency": "notreported",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "375",
+      "correctness_and_errors": "createversions1/2/3;zeroerrors",
+      "cleanup": "2×404;immediate+30sprefixzero",
+      "decision": "AdapterAPIfeasible,notdeliverysafety",
+      "source_documents": [
+        "docs/metadata-slot-compat-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/metadata-slot-compat-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-007",
+      "candidate": "Metadataqueuebeside16MiBupload",
+      "evidence_level": "live_api_substrate",
+      "workload": "2orderreversedpairs,20pipelined64Btext/arm,real16MiBSkirkfile",
+      "latency": "onewaytextp95control4.273/5.136,candidate1.312/1.382s;median4.705→1.347s",
+      "throughput_mbps": "control12.914/10.508,candidate13.987/12.556;median11.711→13.272",
+      "estimated_quota_units": "control18860/19110,candidate<=16265/15810",
+      "correctness_and_errors": "all40textand2files/mode;skipped8/6versions;zeroerrors;earliercontrol30sPUTfail",
+      "cleanup": "exactdelayedzero",
+      "decision": "Strongforgottenpositive:text-71%,file+13%,unitsbound-15%;slottextoutsideTCP",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-mix-upload-{001,002,003}/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-008",
+      "candidate": "Metadataqueuebeside16MiBdownload",
+      "evidence_level": "live_api_substrate",
+      "workload": "2orderreversedpairs,20pipelined64Btext/arm,real16MiBSkirkfile",
+      "latency": "onewaytextp95control4.016/5.563,candidate1.172/1.394;median4.789→1.283s",
+      "throughput_mbps": "control14.003/13.370,candidate16.452/15.262;median13.687→15.857",
+      "estimated_quota_units": "control20810/20410,candidate<=15790/15935",
+      "correctness_and_errors": "all40textand2files/mode;skipped7/8versions;zeroerrors",
+      "cleanup": "exactdelayedzero",
+      "decision": "Strongforgottenpositive:text-73%,file+16%,unitsbound-23%;outsideTCP",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-mix-download-{001,002}/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "SLOT-009",
+      "candidate": "Integratedslotshadow",
+      "evidence_level": "live_full_transport",
+      "workload": "control/shadow/shadow/control16MiB+12messages;notdelivery",
+      "latency": "latencynotcomparative",
+      "throughput_mbps": "control11.125;shadow14.953;2ndshadowstall",
+      "estimated_quota_units": "23855/26445/25025incomplete",
+      "correctness_and_errors": "control/shadow1files+messagespass;shadow2text12passfile0;21/17authenticatedobservations",
+      "cleanup": "generatedslot/muxzero",
+      "decision": "Lifecycleworked;mirroringcannotimproveappdelivery;incompletepair",
+      "source_documents": [
+        "docs/metadata-slot-shadow.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-shadow-download-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-010",
+      "candidate": "Integratedslotdelivery16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms16MiB+12newstreammessages",
+      "latency": "request3.365→4.552s;scheduled11.163→11.364s",
+      "throughput_mbps": "15.373→14.256",
+      "estimated_quota_units": "23355→22043",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "exactzero",
+      "decision": "Unitssavedbutrequest/fileworse;processingACKnotdestACK",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-delivery-download-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-011",
+      "candidate": "Integratedslotdelivery16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms16MiB+12newstreammessages",
+      "latency": "request3.175→4.124s;scheduled12.735→11.143s",
+      "throughput_mbps": "13.299→12.234",
+      "estimated_quota_units": "25105→22193",
+      "correctness_and_errors": "all4files48messagesproofs,zeroerrors",
+      "cleanup": "exactzero",
+      "decision": "Unitssavedbutrequest/fileworse",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-delivery-upload-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-012",
+      "candidate": "SeparateGET/PATCHpools16MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "slotdeliveryONboth,4arms16MiB+12messages",
+      "latency": "request4.787→3.227s;scheduled11.911→11.375s",
+      "throughput_mbps": "12.362→10.770",
+      "estimated_quota_units": "22653→21400",
+      "correctness_and_errors": "allfiles/messagesproofs,zeroerrors",
+      "cleanup": "exactdelayedzero",
+      "decision": "Text-33%,file-13%;poolisolationnotuniversal",
+      "source_documents": [
+        "docs/metadata-slot-pools-experiment.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-pools-download-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-013",
+      "candidate": "SeparateGET/PATCHpools16MiBupload",
+      "evidence_level": "live_full_transport",
+      "workload": "slotdeliveryONboth,4arms16MiB+12messages",
+      "latency": "request2.786→2.675s;scheduled11.119→10.624s",
+      "throughput_mbps": "10.342→10.543",
+      "estimated_quota_units": "24013→21520",
+      "correctness_and_errors": "allfiles/messagesproofs,zeroerrors",
+      "cleanup": "exactdelayedzero",
+      "decision": "Smallpositivebutfilecontrolrange8.35–12.334",
+      "source_documents": [
+        "docs/metadata-slot-pools-experiment.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-pools-upload-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "SLOT-014",
+      "candidate": "SeparateGET/PATCHpools32MiBdownload",
+      "evidence_level": "live_full_transport",
+      "workload": "slotdeliveryONboth,4arms32MiB+12messages",
+      "latency": "request4.997→2.788s;scheduled14.240→10.758s",
+      "throughput_mbps": "21.758→12.622",
+      "estimated_quota_units": "23443→25998",
+      "correctness_and_errors": "allfiles48messagesproofs,zeroerrors;bothcontrolsfilefaster",
+      "cleanup": "19residuals;8prefixeszeroimmediate/delayed",
+      "decision": "Text-44%,file-42%,units+11%;notdefault",
+      "source_documents": [
+        "docs/metadata-slot-pools-experiment.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/slot-pools-download-32m-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-001",
+      "candidate": "Defaultvsmaint16MiBfirstincomplete",
+      "evidence_level": "live_full_transport",
+      "workload": "main/current/current/main16MiB+12messages",
+      "latency": "scheduled14.877/12.219/15.301s;lastmainincomplete",
+      "throughput_mbps": "14.494/18.749/12.915;lastincomplete",
+      "estimated_quota_units": "26955/22405/25605",
+      "correctness_and_errors": "lastmain3×28suploadtimeouts;othersverified",
+      "cleanup": "11residuals;allprefixesimmediate/delayedzero",
+      "decision": "Incompletepair,nocausalclaim",
+      "source_documents": [
+        "docs/architecture-frontier-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/final-main-abba-16m-20261114/"
+      ],
+      "revision_or_binary": "main2c52ff85",
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-002",
+      "candidate": "Defaultvsmaint16MiBcomplete",
+      "evidence_level": "live_full_transport",
+      "workload": "main/current/current/main16MiB+12messages",
+      "latency": "request4.739→7.366s;scheduled15.461→19.674s",
+      "throughput_mbps": "11.712→8.994",
+      "estimated_quota_units": "24805→21980",
+      "correctness_and_errors": "4files48messagesverified,zeroerrors",
+      "cleanup": "18residuals;8prefixeszero",
+      "decision": "Currentrequest+55%,file-23%,units-11%;timingcauseunisolated",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/main-vs-current-16m-20261114-02/"
+      ],
+      "revision_or_binary": "main2c52ff85;seeperarmbinaryhashinraw",
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-003",
+      "candidate": "Reverse16MiBdownloadfailedattempts",
+      "evidence_level": "live_full_transport",
+      "workload": "firstunsupportedmainexitproof;retryfirstcurrentarm",
+      "latency": "nocleanpair",
+      "throughput_mbps": "incomplete",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "harnessincompatibilitythenHTTP502/28sPUTdeadlines",
+      "cleanup": "first3residuals,retry1;allprefixeszero",
+      "decision": "Retainederrors;notpooled",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/main-vs-current-download-reverse-16m-20261114-{01,02}/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-004",
+      "candidate": "Reverse16MiBdownloadcomplete",
+      "evidence_level": "live_full_transport",
+      "workload": "current/main/main/current16MiB+12messages",
+      "latency": "request3.994→6.329s;scheduled15.063→15.564s",
+      "throughput_mbps": "11.418→12.444",
+      "estimated_quota_units": "23480→24080",
+      "correctness_and_errors": "4files48messagesverified,zeroerrors",
+      "cleanup": "19residuals;8prefixesimmediate/delayedzero",
+      "decision": "Textworse,filedirectionreversed;nocausalattribution",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/main-vs-current-download-reverse-16m-20261114-03/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-005",
+      "candidate": "Reverse16MiBuploadcomplete",
+      "evidence_level": "live_full_transport",
+      "workload": "current/main/main/current16MiB+12messages",
+      "latency": "request5.609→6.709s;scheduled16.990→18.223s",
+      "throughput_mbps": "10.366→9.185",
+      "estimated_quota_units": "23905→23630",
+      "correctness_and_errors": "4files48messagesverified,zeroerrors",
+      "cleanup": "37residuals;8prefixeszero",
+      "decision": "Currentrequest+20%,file-11%;mainp95arms3.719–7.500s",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/main-vs-current-upload-16m-20261114-01/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-006",
+      "candidate": "Finaldefaultvsmaint16MiBrecheck",
+      "evidence_level": "live_full_transport",
+      "workload": "main/current/current/main16MiB+12messages",
+      "latency": "request6.015→5.690s;scheduled13.597→16.247s",
+      "throughput_mbps": "14.220→12.418",
+      "estimated_quota_units": "21405→22255",
+      "correctness_and_errors": "4files48messagesverified,zeroerrors",
+      "cleanup": "16residuals;8prefixeszeroimmediate+30s",
+      "decision": "Requestdirectionreversed;nojoint/stabledefaultspeedwin",
+      "source_documents": [
+        "docs/experiments/default-final-vs-main-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/default-perf-final-vs-main-16m-20261115-01/"
+      ],
+      "revision_or_binary": "main2c52ff85;integratedthenfinalcode",
+      "live_comparable": true
+    },
+    {
+      "id": "BASE-007",
+      "candidate": "Main/currentstageandmediaaudits",
+      "evidence_level": "trace_audit",
+      "workload": "same4arm16MiBlogs",
+      "latency": "bulkGETmediansmain.755/1.869s,current3.265/2.666s;priority/listcloser",
+      "throughput_mbps": "notaseparaterun",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "slowHTTP200TTFBafterwrite,connectionnear0;nodefaultmediaGETpathchangeidentified",
+      "cleanup": "inheritedrunexactcleanup",
+      "decision": "HypothesistimevaryingGoogle,notproven",
+      "source_documents": [
+        "docs/experiments/main-current-media-diagnostic-2026-11-14.md",
+        "docs/experiments/default-final-vs-main-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/max-api-main-vs-current-64m-stage.json",
+        ".skirk-runs/main-vs-current-16m-20261114-02/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-001",
+      "candidate": "Watchpreflightattempts",
+      "evidence_level": "not_run",
+      "workload": "twoQuickTunnelpublicHTTPSattempts",
+      "latency": "none",
+      "throughput_mbps": "none",
+      "estimated_quota_units": "0",
+      "correctness_and_errors": "publicHTTPSpreflightfailedbeforeanyDrivecall",
+      "cleanup": "notestfiles/channels;processesstopped",
+      "decision": "No notification measurement",
+      "source_documents": [
+        "docs/experiments/drive-watch-and-upload-mode-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/drive-watch-probe-20261114.json",
+        ".skirk-runs/drive-watch-probe-retry-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-002",
+      "candidate": "FileswatchknownfilePATCH",
+      "evidence_level": "live_api_primitive",
+      "workload": "6PATCHnotifications,immediateknownIDGETcontrol",
+      "latency": "pushmedian2.531safterPATCHresponse;GETmedian.188s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "755",
+      "correctness_and_errors": "6/6,zeroAPIerrors",
+      "cleanup": "channelstopped;exactIDdeletedrechecked;Worker/D1removed",
+      "decision": "Pushslowerknown-IDread;publiccallbacknotGooglefront-only",
+      "source_documents": [
+        "docs/experiments/drive-push-notification-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/drive-push-notification-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-003",
+      "candidate": "ChangeswatchPATCH",
+      "evidence_level": "live_api_primitive",
+      "workload": "6PATCHnotifications10swait",
+      "latency": "5/6within10s,pushobservedmedian5.450s;GET.159s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "860",
+      "correctness_and_errors": "zeroAPIerrors;needchangeslisttodiscoverID",
+      "cleanup": "channelstopped;exactIDdeletedrechecked;Worker/D1removed",
+      "decision": "Notinteractivewinner;idlewakeupcandidate",
+      "source_documents": [
+        "docs/experiments/drive-push-notification-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/drive-push-notification-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-004",
+      "candidate": "Multipartvsresumable1MiB8arms",
+      "evidence_level": "live_api_primitive",
+      "workload": "ABBArepeated,sequential8×1MiB",
+      "latency": "multipartmedian888.5ms;resumable1155.9ms(+30.1%);init322–348ms",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "2960total",
+      "correctness_and_errors": "all8exactSHA,HTTP200,noerrors/backoff",
+      "cleanup": "all8IDsdeleted2×404;prefixzeroimmediate+30s",
+      "decision": "Multipartretainedforhealthy1MiB;tailrecoveryuntested",
+      "source_documents": [
+        "docs/experiments/drive-watch-and-upload-mode-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/drive-upload-mode-20261114.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-005",
+      "candidate": "Selectedquotaproject100listburst",
+      "evidence_level": "live_api_primitive",
+      "workload": "100readonlyfiles.listheader-selectedsecondproject",
+      "latency": "notlatencystudy",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "notindependentlymeasured",
+      "correctness_and_errors": "100HTTP200;Console~100.02requestsselectedproject,noOAuthprojectpoints",
+      "cleanup": "readonly",
+      "decision": "Request-countattributiononly,notquotaunitsorcapacity",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/quota-attribution-header-burst-20261115.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "API-006",
+      "candidate": "Selectedquotaprojectwrite/read/delete",
+      "evidence_level": "live_api_primitive",
+      "workload": "2boundedrunscreate,metadataGET,mediaGET,list,delete",
+      "latency": "notlatencystudy",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "exactSHApassed;disabledAPIcontrolSERVICE_DISABLED",
+      "cleanup": "immediate/delayedprefixzero",
+      "decision": "APIcompatibilitynotunitattribution",
+      "source_documents": [
+        "docs/experiments/quota-project-write-read-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/quota-project-write-read-live-20261115.json"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "CF-001",
+      "candidate": "MayCloudflareopaqueDrivebridge",
+      "evidence_level": "live_alternate_exit",
+      "workload": "Driveopen→WorkerTCPexample443",
+      "latency": "failedconnect~6.9s",
+      "throughput_mbps": "none",
+      "estimated_quota_units": "~1700local",
+      "correctness_and_errors": "WorkerconnecterrorHTTPservicesusefetch",
+      "cleanup": "zerocfstreamleftovers",
+      "decision": "Oldblanketwebportbaninferenceinvalid;destination-specificfailure",
+      "source_documents": [
+        "docs/transport-research.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/cloudflare-opaque-20260525T071642Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "CF-002",
+      "candidate": "OpaqueWorkerWebSocket/TCPdirectrecheck",
+      "evidence_level": "live_alternate_exit",
+      "workload": "Google/GitHubfixed443TLS1.3;CloudflareIPcontrol",
+      "latency": "199.7/205.6msincludingTLS",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": "notDrive",
+      "correctness_and_errors": "bothHTTP200certificateverified;Cloudflarecontrolblocked",
+      "cleanup": "temporaryWorker/secretremoved",
+      "decision": "DirectWorkerfeasibility;notDrivepathorhostilenetworkcoverage",
+      "source_documents": [
+        "docs/astra-audit-2026.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/astra-cf-probe/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "CF-003",
+      "candidate": "FreeWorkerHTTPGET/HEADrelay",
+      "evidence_level": "implemented_not_comparable",
+      "workload": "DriveHTTPfetchrelay,DOstate;explicitCONNECT/SOCKS/VPN/UDPreject",
+      "latency": "notreported",
+      "throughput_mbps": "notreported",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "productscopefromsource;notgenericexit",
+      "cleanup": "archiveddeploycleanuprecords",
+      "decision": "HTTP-onlycarrieroption,notTCPtunnellatencyclaim",
+      "source_documents": [
+        "docs/transport-research.md"
+      ],
+      "raw_archive_paths": [
+        "experiments/cloudflare-worker-exit/",
+        ".skirk-runs/cloudflare-free-relay-20260525T054126Z/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-001",
+      "candidate": "AndroidPixel7VPNlive",
+      "evidence_level": "live_platform_smoke",
+      "workload": "fullVPNpinnedfront,text1MiBGET/POST",
+      "latency": "exitproof2.014s;GET4.298s;POST7.877s",
+      "throughput_mbps": "single1MiBrequestsnotmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "exacthashes;zeroerrors",
+      "cleanup": "exactcleanup,testprofileremoved",
+      "decision": "NativeAndroidpathverifiedbounded",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/android-vpn-session-20261114-*/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-002",
+      "candidate": "MacARMnativeSOCKS",
+      "evidence_level": "live_platform_smoke",
+      "workload": "pinnedfronttext1MiBGET/POST",
+      "latency": "exit3.494s;text2.050s;GET3.470s;POST5.084s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "exacthashes;zeroerrors",
+      "cleanup": "exactcleanup",
+      "decision": "Nativeproxybounded",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/macos-native-live-final-20261114/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-003",
+      "candidate": "MacSystemproxy",
+      "evidence_level": "live_platform_smoke",
+      "workload": "nativeTauriSystemmodeURLSessionunproxied1MiBGET/POST",
+      "latency": "exit3.927s;text2.232s;GET3.731s;POST5.530s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "exacthashes;zeroerrors;WiFiproxyrestored",
+      "cleanup": "59muxdeleted;prefixzeroimmediate+30s",
+      "decision": "Systemmodebounded;signingseparate",
+      "source_documents": [
+        "docs/experiments/macos-system-proxy-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/macos-system-proxy-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-004",
+      "candidate": "WindowsnativeCLISOCKS",
+      "evidence_level": "live_platform_smoke",
+      "workload": "nativeWindows1MiBGET/POST",
+      "latency": "exit5.509s;text3.860s;GET9.671s;POST29.500s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "exacthashes;zeroerrors",
+      "cleanup": "3muxdeleted;prefixzeroimmediate+30s",
+      "decision": "NativeCLIbounded;POSTslow",
+      "source_documents": [
+        "docs/experiments/windows-native-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/windows-native-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-005",
+      "candidate": "WindowsscopedTUN",
+      "evidence_level": "live_platform_smoke",
+      "workload": "1.1.1.1/32route,nocurlexplicitproxy",
+      "latency": "TUN12.000s;SOCKScontrol9.422s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "HTTP200;clientuploads+4,exitdownloads+5;zeroerrors",
+      "cleanup": "routesrestored,3muxdelete,prefixzero+30s",
+      "decision": "TargetedTCPpath;exitprocess-nameexemptionsamehost",
+      "source_documents": [
+        "docs/experiments/windows-native-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/windows-tun-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-006",
+      "candidate": "WindowsGUIbackenddefaultroute",
+      "evidence_level": "live_platform_smoke",
+      "workload": "RustConnectbackend,fullrouteTCP,noexplicitproxy",
+      "latency": "exitproof2.570s;HTTPS11.408s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "HTTP200206B;clientuploads+11;zeroerrors",
+      "cleanup": "routesadapterrestored;3muxdelete,prefixzero+30s",
+      "decision": "BackendpathnotvisualGUI;UDPrejected",
+      "source_documents": [
+        "docs/experiments/windows-native-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "GitHubActions43689331948"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-007",
+      "candidate": "LinuxARMnativeandcontainerTUN",
+      "evidence_level": "live_platform_smoke",
+      "workload": "separateclient/exitDocker,pinnedfront1MiBGET/POST,TUN",
+      "latency": "exit2.275s;text3.206s;GET3.442s;POST4.018s;TUNHTTPS5.299s",
+      "throughput_mbps": "notmaxrate",
+      "estimated_quota_units": "client7005,exit33405",
+      "correctness_and_errors": "allSHAexact;HTTP200;zeroerrors",
+      "cleanup": "routesrestored;exactprefixzeroimmediate+35s",
+      "decision": "NativeCLI/containerTUNbounded,notGUI",
+      "source_documents": [
+        "docs/experiments/linux-native-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/linux-native-live-20261115/"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "PLAT-008",
+      "candidate": "iPhoneSimulator26.5/27.0",
+      "evidence_level": "platform_test",
+      "workload": "app/profileKeychain/route/recoveryUIandConnect",
+      "latency": "ConnectCode11IPCfailedbeforeextension",
+      "throughput_mbps": "none",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "UI2pass1credentialskip;noactualpacketforwarding",
+      "cleanup": "syntheticprofilesremoved",
+      "decision": "Simulatorbuild/UIproofonly;physicalneeded",
+      "source_documents": [
+        "docs/experiments/ios-simulator-connect-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "GitHubActions43694516316",
+        ".skirk-runs/ios-ui-clock-final-20261115.xcresult"
+      ],
+      "revision_or_binary": null,
+      "live_comparable": false
+    },
+    {
+      "id": "COR-001",
+      "candidate": "DriveDateclockguard",
+      "evidence_level": "live_api_runtime",
+      "workload": "readonlypinned11+Direct1list;±2minsyntheticclock",
+      "latency": "realread.51–.71s",
+      "throughput_mbps": "notbulk",
+      "estimated_quota_units": null,
+      "correctness_and_errors": "allheadersusable;skew/missing/invalidDatefailsclosed",
+      "cleanup": "readonly",
+      "decision": "Correctnessguard,noextraAPIcalls;3stolerance",
+      "source_documents": [
+        "docs/experiments/final-engineering-evidence-2026-11-14.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/clock-live-probe*"
+      ],
+      "revision_or_binary": "f9a2413;9170957",
+      "live_comparable": false
+    },
+    {
+      "id": "V5-001",
+      "candidate": "Exitgenerationrecovery1MiBdownloadABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "separateopt-inbranch,4arms1MiB+4messages",
+      "latency": "firstcontrol3.427→v54.354s;warmrequestp953.603→3.268s;HELLO2.401/2.374s",
+      "throughput_mbps": "1.796→1.966",
+      "estimated_quota_units": "12805→13380",
+      "correctness_and_errors": "all4files16messages,zeroerrors",
+      "cleanup": "1residualmux;8prefixeszeroimmediate+31s",
+      "decision": "Coldtextslower,notdefault;nojointspeedclaim",
+      "source_documents": [
+        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/recovery-v5-live-down-20261115/"
+      ],
+      "revision_or_binary": "be0e788branch;ec2e15962ebe429a498501700881c899da211967b5edf4f417896568caca4e8d",
+      "live_comparable": true
+    },
+    {
+      "id": "V5-002",
+      "candidate": "Exitgenerationrecovery1MiBuploadABBA",
+      "evidence_level": "live_full_transport",
+      "workload": "4arms1MiB+4messages",
+      "latency": "first2.760→4.798s;warmrequestp953.333→3.282s;HELLO2.519/2.452s",
+      "throughput_mbps": "1.966→1.734",
+      "estimated_quota_units": "11830→13055",
+      "correctness_and_errors": "all4files16messages,zeroerrors",
+      "cleanup": "4residualmux;8prefixeszeroimmediate+31s",
+      "decision": "Cold/file/unitsworse;keepopt-in",
+      "source_documents": [
+        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/recovery-v5-live-up-20261115/"
+      ],
+      "revision_or_binary": "be0e788branch;ec2e15962ebe429a498501700881c899da211967b5edf4f417896568caca4e8d",
+      "live_comparable": true
+    },
+    {
+      "id": "V5-003",
+      "candidate": "Forced35sexitcrashafterPOST",
+      "evidence_level": "live_full_transport",
+      "workload": "oldexitwritesonce,SIGKILL,35soutage,newgeneration",
+      "latency": "clientreset~63safteropen;curl52",
+      "throughput_mbps": "notthroughputtest",
+      "estimated_quota_units": "13500",
+      "correctness_and_errors": "oldorigin1effect,newexit0opens,effectstays1;zeroerrors",
+      "cleanup": "5muxdeleted;prefixzeroimmediate+31s",
+      "decision": "Specificreplaypreventionproof;notexactlyonceorlease",
+      "source_documents": [
+        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/recovery-v5-restart-live-20261115/"
+      ],
+      "revision_or_binary": "be0e788experiment",
+      "live_comparable": true
+    },
+    {
+      "id": "V5-004",
+      "candidate": "Rebasedv5+clockguarddownloadsmoke",
+      "evidence_level": "live_full_transport",
+      "workload": "candidate/control/control/candidate4×1MiB+4messages",
+      "latency": "firstv55.303/5.342s,control3.322/2.331;requestp95arms2.959/3.973/2.849/3.543s",
+      "throughput_mbps": "arms1.857/.670/1.845/1.855",
+      "estimated_quota_units": "arms12905/14655/11205/14505",
+      "correctness_and_errors": "all4files16messages,zeroerrors",
+      "cleanup": "7muxdeleted;8prefixeszeroimmediate+31s",
+      "decision": "Combinedcodefunctional;coldpenaltypersists;controltailpreventsbulkclaim",
+      "source_documents": [
+        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/recovery-v5-rebased-down2-20261115/"
+      ],
+      "revision_or_binary": "af189bf;430ce679f94b88b252c54d26873bf60cd9b4aabf3a49f7ccc23300d663f511d4",
+      "live_comparable": true
+    }
+  ]
+}
