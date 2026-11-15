@@ -211,6 +211,9 @@ type relayResearchCountedBody struct {
 }
 
 func (r *relayResearchCountedBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	allowed := r.budget.claim(len(p))
 	if allowed == 0 {
 		return 0, errRelayResearchBounds
@@ -227,6 +230,9 @@ type relayResearchCountedWriter struct {
 
 func (w *relayResearchCountedWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *relayResearchCountedWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	allowed := w.budget.claim(len(p))
 	if allowed == 0 {
 		return 0, errRelayResearchBounds
@@ -263,6 +269,12 @@ func TestAppsScriptRelayOwnedExit(t *testing.T) {
 func rrRunOwnedExit(ctx context.Context, cancel context.CancelFunc, dir string, s relayResearchPrivateSettings, key []byte, epoch [16]byte) error {
 	rc, err := s.relayConfig()
 	if err != nil {
+		return err
+	}
+	// Never resume an in-memory exactly-once session after a process restart.
+	// A fresh campaign arm needs a fresh private directory, key and epoch;
+	// retain this marker even if the previous process crashed before ready.
+	if err = rrWritePrivateJSON(dir, "server-started.json", map[string]any{"pid": os.Getpid(), "started_utc": time.Now().UTC().Format(time.RFC3339Nano), "restart_policy": "fresh private directory, outer key and epoch required"}); err != nil {
 		return err
 	}
 	b, err := newRelayResearchBroker(ctx, key, epoch, rc)
@@ -441,5 +453,8 @@ func TestRelayOwnedExitFixtureValidatesPrivateSettingsAndJoinsHTTP(t *testing.T)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("owned fixture did not join HTTP shutdown")
+	}
+	if err = rrRunOwnedExit(ctx, cancel, dir, s, key, epoch); !errors.Is(err, os.ErrExist) {
+		t.Fatal("in-memory session could restart using consumed private directory", err)
 	}
 }
