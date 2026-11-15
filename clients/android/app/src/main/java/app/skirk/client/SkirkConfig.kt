@@ -35,7 +35,7 @@ data class SkirkConfig(
                 sessionId = root.optString("session_id"),
                 secret = root.optString("secret"),
                 oauthClientId = auth.optString("client_id"),
-                routeMode = route.optString("mode", "direct"),
+                routeMode = route.optString("mode", "google_front_pinned").ifBlank { "google_front_pinned" },
                 driveSpace = drive.optString("space"),
                 driveFolderId = drive.optString("folder_id"),
             )
