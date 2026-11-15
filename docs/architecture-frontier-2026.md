@@ -235,6 +235,55 @@ feasibility result, not a full Skirk, file-mix, or 200,000-user result. The
 proposed [opt-in lane design](fixed-metadata-lane-design-2026.md) specifies
 bootstrap, ACK, fallback, and cleanup gates before any mux integration.
 
+The next **mixed-substrate** test ran the two-slot probe beside a real,
+hash-verified 16 MiB Skirk upload on the same pinned-front account. Its
+matched control sent 20 pipelined text echoes on a persistent, demoted mux TCP
+stream during the same file workload. The slot text is still outside the TCP
+proxy, so this is a substrate comparison, not an app-level implementation.
+The slot probe's reader pause was disabled for this matched latency test;
+its separate forced-pause result above covers skipped-version recovery.
+
+| 16 MiB mixed upload, two order-reversed complete pairs | Mux text control | Fixed metadata slots |
+| --- | ---: | ---: |
+| Verified text / files | 40/40 echoes; 2/2 files | 40/40 frames and ACKs; 2/2 files |
+| One-way scheduled text p95, pair 1 / pair 2 | **4.273 / 5.136 s** | **1.312 / 1.382 s** |
+| File goodput, pair 1 / pair 2 | **12.914 / 10.508 Mb/s** | **13.987 / 12.556 Mb/s** |
+| Estimated units including cleanup, pair 1 / pair 2 | **18,860 / 19,110** | **≤16,265 / ≤15,810** |
+| Drive API errors / final session or slot objects | 0 / 0 | 0 / 0 |
+
+The pair-median one-way text p95 fell from **4.705 s to 1.347 s** (71% lower)
+and file goodput rose from **11.711 to 13.272 Mb/s** (13% higher) in these
+short samples. The slot figures include conservative setup, PATCH, GET, ACK,
+and cleanup accounting; their upper bound was about 15% below the control's
+estimated units. The live slot readers skipped eight and six intermediate
+Drive versions and still delivered all frames. An earlier control-first
+attempt stopped on a 30-second 4 MiB Drive upload timeout before its text/file
+workload completed; exact cleanup succeeded. The two complete pairs do not
+establish a sustained or integrated win, and setup timing differs slightly:
+the slot probe creates its files after the bulk worker starts. Raw private
+evidence is under `.skirk-runs/slot-mix-upload-{001,002,003}/`.
+
+The same mixed-substrate harness then ran **two order-reversed 16 MiB
+downloads** with all 40 text frames and ACKs per mode and both file bodies
+verified:
+
+| 16 MiB mixed download, two complete pairs | Mux text control | Fixed metadata slots |
+| --- | ---: | ---: |
+| One-way scheduled text p95, pair 1 / pair 2 | **4.016 / 5.563 s** | **1.172 / 1.394 s** |
+| File goodput, pair 1 / pair 2 | **14.003 / 13.370 Mb/s** | **16.452 / 15.262 Mb/s** |
+| Estimated units including cleanup, pair 1 / pair 2 | **20,810 / 20,410** | **≤15,790 / ≤15,935** |
+| Drive API errors / final session or slot objects | 0 / 0 | 0 / 0 |
+
+Pair-median one-way text p95 was **1.283 s** for slots versus **4.789 s** for
+the mux control (73% lower). Pair-median file goodput was **15.857 versus
+13.687 Mb/s** (16% higher), and the conservative slot-unit bound was 23%
+lower. The slot reader skipped seven and eight intermediate Drive versions
+with no missing frame. Delayed exact-session sweeps found zero objects from
+all four download arms. These short substrate results are the strongest
+reason to build an opt-in integrated prototype, but they do not measure app
+TCP behavior, bootstrap cost, sustained capacity, or a 100 MiB mixed file.
+Raw private evidence is under `.skirk-runs/slot-mix-download-{001,002}/`.
+
 At 4 Hz polling in both directions, the two known-ID GETs alone would cost
 2,400 units per minute per active pair. Four one-way metadata PATCHes per
 second add 12,000 units per minute before acknowledgements, retries, or other
