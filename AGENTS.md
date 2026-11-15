@@ -3,6 +3,15 @@
 This file is the operating context for coding agents working in this repository.
 Read it before changing code, tests, docs, packaging, or release automation.
 
+## GitHub identity for this checkout
+
+Use `ShahabSL` for this repository. Its local Git identity, origin, and HTTPS
+credential helper select that personal account; the machine's global `gh`
+account may still be a work profile. For `gh` commands, select the personal
+token for that invocation with `gh auth token --user ShahabSL` and `GH_TOKEN`;
+do not switch the global active account. Keep experimental work off `main`
+unless the user explicitly asks to merge or release it.
+
 ## Product Summary
 
 Skirk is a Google Drive backed TCP transport for hostile networks where the
@@ -18,9 +27,10 @@ The exit runs on a server with normal Internet access. Both ends share a Google
 Drive mailbox, exchange encrypted mux objects, and the exit opens outbound TCP
 connections on behalf of the client.
 
-The main network constraint is intentional: preserve the Google-fronted,
-pinned-Google-IP route behavior used by `google_front_pinned`. Do not replace it
-with a design that assumes direct raw access from the hostile network.
+The main network constraint is intentional: preserve the user-selected Direct
+Google or Google-fronted route. `google_front_pinned` with `www.google.com` is
+the default; do not replace it with a design that assumes direct raw access
+from the hostile network.
 
 ## Non-Negotiable Security Rules
 
