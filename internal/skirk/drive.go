@@ -34,6 +34,7 @@ type DriveStore struct {
 	quotaProject           string
 	inlineSmallObjects     bool
 	metadataOnlyPriority   bool
+	metadataOnlyMaxBytes   int
 	metadataSlotV1         bool
 	indexedClassProperties bool
 	normalListPageSize     int
@@ -61,6 +62,16 @@ const driveQuotaBackoffMax = 64 * time.Second
 const driveQuotaBackoffJitter = time.Second
 const driveQuotaBackoffLogInterval = 5 * time.Second
 const driveInlineMaxBytes = 8192
+const driveMetadataOnlyLargeMaxBytes = 16384
+const driveLargeMetadataListMaxBytes = 8 * 1024 * 1024
+
+func metadataOnlyByteLimit(configured int) int {
+	if configured == driveMetadataOnlyLargeMaxBytes {
+		return configured
+	}
+	return driveInlineMaxBytes
+}
+
 const driveInlineMarker = "skirk-sealed-v1:"
 const driveMetadataOnlyMarker = "skirk-sealed-v2:"
 const driveMetadataOnlyNameSuffix = ".mo1"
@@ -134,11 +145,15 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 	if normalListPageSize != 100 && normalListPageSize != 500 && normalListPageSize != 1000 {
 		normalListPageSize = 100 // Direct constructor calls still fail safe without Config.Validate.
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataOnlyMaxBytes: metadataOnlyByteLimit(cfg.MetadataOnlyMaxBytes), metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
 	return d != nil && d.metadataOnlyPriority
+}
+
+func (d *DriveStore) MetadataOnlyPriorityLimit() int {
+	return metadataOnlyByteLimit(d.metadataOnlyMaxBytes)
 }
 
 func indexedMuxClass(name string) string {
@@ -168,8 +183,8 @@ func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sea
 	if !d.MetadataOnlyPriorityEnabled() || !isMetadataOnlyPriorityName(name) {
 		return ObjectInfo{}, errors.New("metadata-only priority upload is disabled or name is invalid")
 	}
-	if len(sealed) == 0 || len(sealed) > driveInlineMaxBytes {
-		return ObjectInfo{}, fmt.Errorf("metadata-only sealed size must be 1-%d bytes", driveInlineMaxBytes)
+	if len(sealed) == 0 || len(sealed) > metadataOnlyByteLimit(d.metadataOnlyMaxBytes) {
+		return ObjectInfo{}, fmt.Errorf("metadata-only sealed size must be 1-%d bytes", metadataOnlyByteLimit(d.metadataOnlyMaxBytes))
 	}
 	metadata := map[string]any{
 		"name":        name,
@@ -192,6 +207,9 @@ func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sea
 	}
 	if err := require2xx(result, "drive metadata-only create"); err != nil {
 		return ObjectInfo{}, err
+	}
+	if d.Logger != nil && len(sealed) > driveInlineMaxBytes {
+		d.Logger.Printf("drive large metadata publication sealed_bytes=%d configured_limit=%d", len(sealed), metadataOnlyByteLimit(d.metadataOnlyMaxBytes))
 	}
 	var payload struct {
 		ID   string `json:"id"`
@@ -875,6 +893,9 @@ func (d *DriveStore) ListChanges(ctx context.Context, pageToken string, includeR
 }
 
 func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
+	if d.metadataOnlyPriority && metadataOnlyByteLimit(d.metadataOnlyMaxBytes) > driveInlineMaxBytes {
+		ctx = withGoogleResponseLimit(ctx, driveLargeMetadataListMaxBytes)
+	}
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
@@ -942,6 +963,10 @@ func (d *DriveStore) ListFreshIndexedClassPageStatus(ctx context.Context, prefix
 }
 
 func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string, since time.Time, pageToken string, maxPages int, pageSize string, matches func(string) bool) (ObjectListInfo, error) {
+	if d.metadataOnlyPriority && metadataOnlyByteLimit(d.metadataOnlyMaxBytes) > driveInlineMaxBytes {
+		pageSize = driveListPageSize
+		ctx = withGoogleResponseLimit(ctx, driveLargeMetadataListMaxBytes)
+	}
 	if maxPages <= 0 {
 		maxPages = driveMuxFreshListMaxPages
 	}
@@ -1242,11 +1267,12 @@ func (d *DriveStore) decodeInlineData(name, description string, size int64) []by
 			return nil
 		}
 		encoded := strings.TrimPrefix(description, driveMetadataOnlyMarker)
-		if len(encoded) > base64.StdEncoding.EncodedLen(driveInlineMaxBytes) {
+		limit := metadataOnlyByteLimit(d.metadataOnlyMaxBytes)
+		if len(encoded) > base64.StdEncoding.EncodedLen(limit) {
 			return nil
 		}
 		data, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || len(data) == 0 || len(data) > driveInlineMaxBytes {
+		if err != nil || len(data) == 0 || len(data) > limit {
 			return nil
 		}
 		return data

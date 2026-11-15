@@ -110,6 +110,7 @@ type DriveConfig struct {
 	QuotaProject              string `json:"quota_project,omitempty"`
 	InlineSmallObjects        bool   `json:"inline_small_objects,omitempty"`
 	MetadataOnlyPriority      bool   `json:"metadata_only_priority,omitempty"`
+	MetadataOnlyMaxBytes      int    `json:"metadata_only_max_bytes,omitempty"`
 	MetadataSlotV1            bool   `json:"metadata_slot_v1,omitempty"`
 	MetadataSlotDeliveryV1    bool   `json:"metadata_slot_delivery_v1,omitempty"`
 	MetadataSlotAsyncV1       bool   `json:"metadata_slot_async_v1,omitempty"`
@@ -387,6 +388,9 @@ func (c *Config) Validate() error {
 	}
 	if size := c.Drive.NormalListPageSize; size != 0 && size != 100 && size != 500 && size != 1000 {
 		return errors.New("config.drive.normal_list_page_size must be 100, 500, or 1000")
+	}
+	if size := c.Drive.MetadataOnlyMaxBytes; size != 0 && size != 8192 && size != 16384 {
+		return errors.New("config.drive.metadata_only_max_bytes must be 0, 8192, or 16384")
 	}
 	switch strings.TrimSpace(c.Route.Mode) {
 	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned":

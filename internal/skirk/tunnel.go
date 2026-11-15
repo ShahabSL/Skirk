@@ -89,6 +89,7 @@ type Tunnel struct {
 	InteractionEpoch       bool
 	Observe                bool
 	MetadataOnlyPriority   bool
+	MetadataOnlyMaxBytes   int
 	MetadataSlotV1         bool
 	MetadataSlotDeliveryV1 bool
 	MetadataSlotAsyncV1    bool
@@ -143,6 +144,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		InteractionEpoch:       cfg.Tunnel.InteractionEpoch,
 		Observe:                cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
 		MetadataOnlyPriority:   cfg.Drive.MetadataOnlyPriority,
+		MetadataOnlyMaxBytes:   cfg.Drive.MetadataOnlyMaxBytes,
 		MetadataSlotV1:         cfg.Drive.MetadataSlotV1,
 		MetadataSlotDeliveryV1: cfg.Drive.MetadataSlotDeliveryV1,
 		MetadataSlotAsyncV1:    cfg.Drive.MetadataSlotAsyncV1,

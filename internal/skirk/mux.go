@@ -2273,7 +2273,7 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 		minSeq, maxSeq = 0, 0
 	}
 	name := muxObjectNameWithStreamIDs(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, streamIDs, l.idx, seq, len(frames), minSeq, maxSeq, len(raw), priority)
-	metadataOnly := priority && len(sealed) <= muxInlineSealedMaxBytes && l.mux.metadataCanSendFrames(frames)
+	metadataOnly := priority && len(sealed) <= l.mux.metadataBatchLimit(frames)
 	if metadataOnly {
 		name += driveMetadataOnlyNameSuffix
 	}
@@ -4634,7 +4634,7 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 
 func (m *driveMux) downloadMuxObject(ctx context.Context, meta muxObjectMeta) ([]byte, error) {
 	if meta.MetadataOnly {
-		if len(meta.InlineData) == 0 || len(meta.InlineData) > muxInlineSealedMaxBytes {
+		if len(meta.InlineData) == 0 || len(meta.InlineData) > m.metadataOnlyLimit() {
 			return nil, errors.New("metadata-only mux object has missing or invalid sealed description")
 		}
 		return bytes.Clone(meta.InlineData), nil
@@ -5864,7 +5864,7 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 		updated, _ = time.Parse(time.RFC3339Nano, info.Updated)
 	}
 	var inlineData []byte
-	if len(info.InlineData) > 0 && len(info.InlineData) <= muxInlineSealedMaxBytes {
+	if len(info.InlineData) > 0 && len(info.InlineData) <= driveMetadataOnlyLargeMaxBytes {
 		inlineData = bytes.Clone(info.InlineData)
 	}
 	if metadataOnly && class != "p0" {

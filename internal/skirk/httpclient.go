@@ -38,6 +38,12 @@ type HTTPResult struct {
 	ResponseReceived time.Time
 }
 
+type googleResponseLimitKey struct{}
+
+func withGoogleResponseLimit(ctx context.Context, limit int64) context.Context {
+	return context.WithValue(ctx, googleResponseLimitKey{}, limit)
+}
+
 // Failed network attempts may have reached Google even without a response.
 // Preserve their count so quota estimates include the complete retry path.
 type httpAttemptError struct {
@@ -500,9 +506,16 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		bodyReader = gzipReader
 		resp.Header.Del("Content-Encoding")
 	}
+	responseLimit, _ := ctx.Value(googleResponseLimitKey{}).(int64)
+	if responseLimit > 0 {
+		bodyReader = io.NopCloser(io.LimitReader(bodyReader, responseLimit+1))
+	}
 	responseBody, err := io.ReadAll(bodyReader)
 	if err != nil {
 		return nil, err
+	}
+	if responseLimit > 0 && int64(len(responseBody)) > responseLimit {
+		return nil, errors.New("Google response exceeded configured byte limit")
 	}
 	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header, Proto: resp.Proto}, nil
 }

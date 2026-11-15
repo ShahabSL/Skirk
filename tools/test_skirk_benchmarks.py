@@ -377,6 +377,20 @@ class MainComparisonSafetyTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in control.items() if k != "session_id"},
                          {k: v for k, v in candidate.items() if k != "session_id"})
 
+    def test_metadata_16k_comparison_isolates_cap_and_common_page_size(self):
+        original={"session_id":"old","drive":{"metadata_only_max_bytes":16384,"metadata_only_priority":False,"normal_list_page_size":1000},"tunnel":{"interaction_epoch":True}}
+        control=arm_config(original,"control","one",0,True,candidate_metadata_16k=True)
+        candidate=arm_config(original,"candidate","two",0,True,candidate_metadata_16k=True)
+        self.assertTrue(control["drive"]["metadata_only_priority"])
+        self.assertTrue(candidate["drive"]["metadata_only_priority"])
+        self.assertEqual(control["drive"]["normal_list_page_size"],100)
+        self.assertEqual(candidate["drive"]["normal_list_page_size"],100)
+        self.assertEqual(control["drive"]["metadata_only_max_bytes"],8192)
+        self.assertEqual(candidate["drive"]["metadata_only_max_bytes"],16384)
+        candidate["drive"]["metadata_only_max_bytes"]=8192
+        candidate["session_id"]="one"
+        self.assertEqual(candidate,control)
+
     def test_bulk_pool_arm_is_opt_in_and_leaves_default_route(self):
         original = {"session_id": "old", "route": {"mode": "google_front_pinned"}, "drive": {}}
         self.assertFalse(arm_config(original, "baseline", "a", 0, False)["drive"]["separate_bulk_media_pool"])

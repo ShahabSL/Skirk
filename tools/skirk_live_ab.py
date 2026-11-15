@@ -10,6 +10,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import socket
 import socketserver
 import struct
@@ -55,7 +56,8 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
                candidate_combined_mux_discovery: bool = False,
                candidate_adaptive_mux_discovery: bool = False,
                candidate_metadata_slot_async_v1: bool = False,
-               shared_interaction_epoch: bool = False) -> dict:
+               shared_interaction_epoch: bool = False,
+               candidate_metadata_16k: bool = False) -> dict:
     """Give each arm a fresh mailbox identity without modifying the saved kit."""
     config = json.loads(json.dumps(original))
     config["session_id"] = session_id
@@ -68,6 +70,7 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
     drive.pop("separate_metadata_slot_pools", None)
     drive.pop("combined_mux_discovery", None)
     drive.pop("adaptive_mux_discovery", None)
+    drive.pop("metadata_only_max_bytes", None)
     if candidate_metadata_slot_async_v1 or candidate_separate_metadata_slot_pools or (mode == "candidate" and
             (candidate_metadata_slot_v1 or candidate_metadata_slot_delivery_v1)):
         drive["metadata_slot_v1"] = True
@@ -113,6 +116,10 @@ def arm_config(original: dict, mode: str, session_id: str, chunk_size: int, bina
         config["tunnel"]["interaction_epoch"] = mode in ("epoch", "epoch_inline", "epoch_metadata", "epoch_metadata_hedge")
     if shared_interaction_epoch:
         config.setdefault("tunnel", {})["interaction_epoch"] = True
+    if candidate_metadata_16k:
+        drive["metadata_only_priority"] = True
+        drive["metadata_only_max_bytes"] = 16384 if mode == "candidate" else 8192
+        drive["normal_list_page_size"] = 100
     return config
 
 
@@ -147,6 +154,8 @@ def main():
                         help="compare default split p0/p1 discovery against one combined prefix list on the same binary")
     parser.add_argument("--candidate-adaptive-mux-discovery", action="store_true",
                         help="compare default split discovery against bounded combined discovery with partial-list p0 fallback")
+    parser.add_argument("--candidate-metadata-16k", action="store_true",
+                        help="compare negotiated16KiB against8KiB metadata caps; both use100-file pages")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
@@ -158,6 +167,8 @@ def main():
     parser.add_argument("--bulk-mib", type=int, default=32)
     parser.add_argument("--bulk-direction", choices=("download", "upload"), default="download")
     parser.add_argument("--small-count", type=int, default=8)
+    parser.add_argument("--small-response-bytes", type=int, default=0,
+                        help="0 preserves tiny reply;1..16384 returns exact random bytes for GET/POST replies")
     parser.add_argument("--small-interval-ms", type=int, default=500)
     parser.add_argument("--small-workers", type=int, default=2)
     parser.add_argument("--small-traffic", choices=("get", "message", "persistent"), default="get",
@@ -187,7 +198,8 @@ def main():
     candidate_modes = (args.candidate_metadata_slot_v1, args.candidate_metadata_slot_delivery_v1,
                        args.candidate_separate_metadata_slot_pools, args.candidate_normal_list_page_size_100,
                        args.candidate_combined_mux_discovery, args.candidate_adaptive_mux_discovery,
-                       args.candidate_metadata_slot_async_v1)
+                       args.candidate_metadata_slot_async_v1,
+                       args.candidate_metadata_16k)
     if sum(candidate_modes) > 1:
         parser.error("choose only one candidate mode")
     if any(candidate_modes):
@@ -197,10 +209,14 @@ def main():
             (args.main_binary is not None and not args.main_binary.is_file()) or
             (args.control_binary is not None and not args.control_binary.is_file())):
         parser.error("binary path does not exist")
-    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
+    if (args.candidate_normal_list_page_size_100 or args.candidate_combined_mux_discovery or args.candidate_adaptive_mux_discovery or args.candidate_metadata_16k) and binary_sha256(args.binary) != binary_sha256(args.control_binary):
         parser.error("discovery comparison requires the same binary in both arms")
     if not 1 <= args.bulk_mib <= 128 or not 1 <= args.small_count <= 100:
         parser.error("bulk size must be 1..128 MiB and small count 1..100")
+    if not 0 <= args.small_response_bytes <= 16384 or (args.small_response_bytes and args.small_traffic == "persistent"):
+        parser.error("--small-response-bytes must be0..16384 and cannot resize persistent echo frames")
+    if args.candidate_metadata_16k and args.small_response_bytes <= 8192:
+        parser.error("metadata16k comparison requires --small-response-bytes8193..16384")
     if not 1 <= args.small_interval_ms <= 5000 or not 1 <= args.small_workers <= 8 or not 8 <= args.tail_seconds <= 60:
         parser.error("invalid small schedule or cleanup tail")
     if args.chunk_size != 0 and not 512 <= args.chunk_size <= 16 * 1024 * 1024:
@@ -217,7 +233,7 @@ def main():
     if args.bulk_direction == "upload":
         upload_file.write_bytes(payload)
         upload_file.chmod(0o600)
-    small_payload = b"skirk-audit-small"
+    small_payload = os.urandom(args.small_response_bytes) if args.small_response_bytes else b"skirk-audit-small"
     message_body = b"skirk-message-probe:" + os.urandom(44)
     message_file = args.out / "synthetic-message.bin"
     if args.small_traffic == "message":
@@ -325,7 +341,8 @@ def main():
                              args.candidate_combined_mux_discovery,
                              args.candidate_adaptive_mux_discovery,
                              args.candidate_metadata_slot_async_v1,
-                             args.shared_interaction_epoch)
+                             args.shared_interaction_epoch,
+                             args.candidate_metadata_16k)
             path = run_dir / "config.json"
             path.write_text(json.dumps(cfg))
             path.chmod(0o600)
@@ -335,12 +352,14 @@ def main():
             row = {"run": run_dir.name, "inline": candidate, "upload_hedge_delay_ms": cfg["drive"].get("upload_hedge_delay_ms", 0),
                    "ok": False, "session_id": cfg["session_id"], "chunk_size_override": args.chunk_size,
                    "small_traffic": args.small_traffic, "bulk_direction": args.bulk_direction,
+                   "small_response_bytes": len(small_payload),
                    "persistent_pipeline": args.persistent_pipeline,
                    "persistent_bulk_lead_ms": args.persistent_bulk_lead_ms,
                    "sparse_priority": cfg.get("tunnel", {}).get("sparse_priority", False),
                    "interaction_epoch": cfg.get("tunnel", {}).get("interaction_epoch", False),
                    "separate_upload_pool": cfg["drive"].get("separate_upload_pool", False),
                    "metadata_only_priority": cfg["drive"].get("metadata_only_priority", False),
+                   "metadata_only_max_bytes": cfg["drive"].get("metadata_only_max_bytes",8192),
                    "metadata_slot_v1": cfg["drive"].get("metadata_slot_v1", False),
                    "metadata_slot_delivery_v1": cfg["drive"].get("metadata_slot_delivery_v1", False),
                    "metadata_slot_async_v1": cfg["drive"].get("metadata_slot_async_v1", False),
@@ -460,6 +479,14 @@ def main():
                 result = json.loads(report_path.read_text())
                 quotas = {role: snapshot["quota"] for role, snapshot in guarded_metrics().items()}
                 completed = workload_completed(result, args.small_count, bench.returncode)
+                if args.candidate_metadata_16k:
+                    logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace") for role in ("client", "exit"))
+                    large_sizes = [int(value) for value in re.findall(r"drive large metadata publication sealed_bytes=(\d+)", logs_text)]
+                    row["large_metadata_publications"] = len(large_sizes)
+                    row["large_metadata_max_sealed_bytes"] = max(large_sizes,default=0)
+                    if (mode == "candidate" and not large_sizes) or any(n <= 8192 or n > 16384 for n in large_sizes) or (mode == "control" and large_sizes):
+                        completed = False
+                        row["failure"] = "metadata_size_path_not_exercised_or_out_of_bounds"
                 if args.candidate_metadata_slot_v1 and mode == "candidate":
                     logs_text = "\n".join((run_dir / f"{role}.log").read_text(errors="replace")
                                           for role in ("client", "exit"))
@@ -490,6 +517,8 @@ def main():
                        "small_stalls": result["small"]["stalls"], "bulk_stalls": result["bulk"]["stalls"],
                        "all_small_scheduled_p95_ms": result["small"]["metrics"]["scheduled_ttfb_ms"]["p95"] if completed else None,
                        "all_small_request_p95_ms": result["small"]["metrics"]["ttfb_ms"]["p95"] if completed else None,
+                       "all_small_request_total_p95_ms": result["small"]["metrics"]["total_ms"]["p95"] if completed else None,
+                       "all_small_scheduled_total_p95_ms": result["small"]["metrics"]["scheduled_total_ms"]["p95"] if completed else None,
                        "small_overlap_count": result["small_during_bulk"]["successes"],
                        "small_overlap_p95_ms": result["small_during_bulk"]["metrics"]["ttfb_ms"]["p95"],
                        "small_overlap_scheduled_p95_ms": result["small_during_bulk"]["metrics"]["scheduled_ttfb_ms"]["p95"],
