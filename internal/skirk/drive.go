@@ -22,21 +22,22 @@ import (
 )
 
 type DriveStore struct {
-	http                 *GoogleHTTPClient
-	normalUploadHTTP     *GoogleHTTPClient
-	normalDownloadHTTP   *GoogleHTTPClient
-	tokenSource          *AccessTokenSource
-	folderID             string
-	space                string
-	quotaProject         string
-	inlineSmallObjects   bool
-	metadataOnlyPriority bool
-	uploadHedgeDelay     time.Duration
-	uploadHedgeSlots     chan struct{}
-	newHedgeHTTPClient   func() *GoogleHTTPClient
-	quota                *driveQuotaStats
-	backoff              *driveQuotaBackoff
-	Logger               *log.Logger
+	http                   *GoogleHTTPClient
+	normalUploadHTTP       *GoogleHTTPClient
+	normalDownloadHTTP     *GoogleHTTPClient
+	tokenSource            *AccessTokenSource
+	folderID               string
+	space                  string
+	quotaProject           string
+	inlineSmallObjects     bool
+	metadataOnlyPriority   bool
+	indexedClassProperties bool
+	uploadHedgeDelay       time.Duration
+	uploadHedgeSlots       chan struct{}
+	newHedgeHTTPClient     func() *GoogleHTTPClient
+	quota                  *driveQuotaStats
+	backoff                *driveQuotaBackoff
+	Logger                 *log.Logger
 }
 
 const driveListPageSize = "100"
@@ -55,6 +56,7 @@ const driveInlineMaxBytes = 8192
 const driveInlineMarker = "skirk-sealed-v1:"
 const driveMetadataOnlyMarker = "skirk-sealed-v2:"
 const driveMetadataOnlyNameSuffix = ".mo1"
+const driveIndexedClassProperty = "skirkClass"
 const driveUploadHedgeMinBytes = 128 * 1024
 const driveUploadHedgeMaxConcurrent = 4
 
@@ -104,11 +106,32 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 			normalDownloadHTTP = normalUploadHTTP
 		}
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
 	return d != nil && d.metadataOnlyPriority
+}
+
+func indexedMuxClass(name string) string {
+	parts := strings.Split(name, "/")
+	if len(parts) < 9 || parts[0] != "muxv4" || !strings.HasPrefix(parts[len(parts)-2], "l") {
+		return ""
+	}
+	class := parts[len(parts)-4]
+	if class == "p0" || class == "p1" {
+		return class
+	}
+	return ""
+}
+
+func (d *DriveStore) addIndexedClassProperty(metadata map[string]any, name string) {
+	if d == nil || !d.indexedClassProperties {
+		return
+	}
+	if class := indexedMuxClass(name); class != "" {
+		metadata["properties"] = map[string]string{driveIndexedClassProperty: class}
+	}
 }
 
 // PutMetadataOnlyObject uses files.create metadata rather than an upload URL.
@@ -125,6 +148,7 @@ func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sea
 		"mimeType":    "application/octet-stream",
 		"description": driveMetadataOnlyMarker + base64.StdEncoding.EncodeToString(sealed),
 	}
+	d.addIndexedClassProperty(metadata, name)
 	if d.isAppData() {
 		metadata["parents"] = []string{"appDataFolder"}
 	} else if d.folderID != "" {
@@ -223,6 +247,7 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 		"name":     name,
 		"mimeType": "application/octet-stream",
 	}
+	d.addIndexedClassProperty(metadata, name)
 	if d.inlineSmallObjects && len(data) > 0 && len(data) <= driveInlineMaxBytes && strings.HasPrefix(name, "muxv4/") && strings.Contains(name, "/p0/") {
 		// Retain the media body so existing readers can read the same file.
 		metadata["description"] = driveInlineMarker + base64.StdEncoding.EncodeToString(data)
@@ -797,11 +822,36 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 }
 
 func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	return d.listFreshQueryPageStatus(ctx, d.containsQuery(contains), since, pageToken, maxPages, func(name string) bool {
+		for _, value := range contains {
+			if strings.TrimSpace(value) != "" && !strings.Contains(name, value) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// ListFreshIndexedClassPageStatus is a probe path. The mux keeps legacy
+// discovery until mixed-version peers have a negotiated rollout path.
+func (d *DriveStore) ListFreshIndexedClassPageStatus(ctx context.Context, prefix, class string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	if d == nil || !d.indexedClassProperties {
+		return ObjectListInfo{}, errors.New("indexed class properties are disabled")
+	}
+	if !strings.HasPrefix(prefix, "muxv4/") || (class != "p0" && class != "p1") {
+		return ObjectListInfo{}, errors.New("indexed class query requires a muxv4 prefix and p0 or p1 class")
+	}
+	query := d.containsQuery([]string{prefix}) + fmt.Sprintf(" and properties has { key='%s' and value='%s' }", driveIndexedClassProperty, class)
+	return d.listFreshQueryPageStatus(ctx, query, since, pageToken, maxPages, func(name string) bool {
+		return strings.HasPrefix(name, prefix) && indexedMuxClass(name) == class
+	})
+}
+
+func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string, since time.Time, pageToken string, maxPages int, matches func(string) bool) (ObjectListInfo, error) {
 	if maxPages <= 0 {
 		maxPages = driveMuxFreshListMaxPages
 	}
 	values := url.Values{}
-	query := d.containsQuery(contains)
 	if !since.IsZero() {
 		query += fmt.Sprintf(" and modifiedTime >= '%s'", escapeDriveQuery(since.UTC().Format(time.RFC3339Nano)))
 	}
@@ -821,17 +871,7 @@ func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains [
 	var infos []ObjectInfo
 	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
-			matched := true
-			for _, value := range contains {
-				if strings.TrimSpace(value) == "" {
-					continue
-				}
-				if !strings.Contains(item.Name, value) {
-					matched = false
-					break
-				}
-			}
-			if !matched {
+			if !matches(item.Name) {
 				continue
 			}
 			if !since.IsZero() && item.ModifiedTime != "" {

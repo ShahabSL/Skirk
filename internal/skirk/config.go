@@ -105,14 +105,16 @@ type RouteConfig struct {
 }
 
 type DriveConfig struct {
-	FolderID              string `json:"folder_id,omitempty"`
-	Space                 string `json:"space,omitempty"`
-	QuotaProject          string `json:"quota_project,omitempty"`
-	InlineSmallObjects    bool   `json:"inline_small_objects,omitempty"`
-	MetadataOnlyPriority  bool   `json:"metadata_only_priority,omitempty"`
-	UploadHedgeDelayMS    int    `json:"upload_hedge_delay_ms,omitempty"`
-	SeparateUploadPool    bool   `json:"separate_upload_pool,omitempty"`
-	SeparateBulkMediaPool bool   `json:"separate_bulk_media_pool,omitempty"`
+	FolderID             string `json:"folder_id,omitempty"`
+	Space                string `json:"space,omitempty"`
+	QuotaProject         string `json:"quota_project,omitempty"`
+	InlineSmallObjects   bool   `json:"inline_small_objects,omitempty"`
+	MetadataOnlyPriority bool   `json:"metadata_only_priority,omitempty"`
+	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
+	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
+	UploadHedgeDelayMS     int  `json:"upload_hedge_delay_ms,omitempty"`
+	SeparateUploadPool     bool `json:"separate_upload_pool,omitempty"`
+	SeparateBulkMediaPool  bool `json:"separate_bulk_media_pool,omitempty"`
 }
 
 // ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
