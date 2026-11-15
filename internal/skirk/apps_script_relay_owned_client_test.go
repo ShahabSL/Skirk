@@ -254,7 +254,7 @@ func rrRunOwnedClient(parent context.Context, dir string, s relayResearchPrivate
 	}
 	echo := tls.Client(raw, tlsConfig.Clone())
 	defer echo.Close()
-	stopEcho := context.AfterFunc(ctx, func() { _ = echo.Close() })
+	stopEcho := rrCloseConnOnCancel(ctx, echo)
 	defer stopEcho()
 	_ = echo.SetDeadline(time.Now().Add(180 * time.Second))
 	if err = echo.HandshakeContext(ctx); err != nil {
@@ -304,6 +304,18 @@ func rrRunOwnedClient(parent context.Context, dir string, s relayResearchPrivate
 }
 
 func rrMillis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+func rrCloseConnOnCancel(ctx context.Context, conn net.Conn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(done); _ = conn.Close() })
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if !stop() {
+				<-done
+			}
+		})
+	}
+}
 func rrOwnedMessage(phase string, index int) []byte {
 	v := bytes.Repeat([]byte{byte(len(phase) + index + 1)}, 64)
 	binary.BigEndian.PutUint64(v, uint64(index+1))
@@ -361,7 +373,7 @@ func rrOwnedMixedPhase(parent context.Context, dir, phase, origin string, payloa
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	_ = echo.SetDeadline(time.Now().Add(180 * time.Second))
-	stopPhase := context.AfterFunc(ctx, func() { _ = echo.Close() })
+	stopPhase := rrCloseConnOnCancel(ctx, echo)
 	defer stopPhase()
 	bulkDone := make(chan error, 1)
 	var finished atomic.Bool
@@ -451,6 +463,7 @@ func rrOwnedMixedPhase(parent context.Context, dir, phase, origin string, payloa
 			desired := start.Add(time.Duration(i) * 250 * time.Millisecond)
 			if e := relayClientDelay(ctx, time.Until(desired)); e != nil {
 				writerDone <- e
+				cancel()
 				return
 			}
 			timesMu.Lock()
@@ -459,6 +472,7 @@ func rrOwnedMixedPhase(parent context.Context, dir, phase, origin string, payloa
 			timesMu.Unlock()
 			if e := rrWriteOwnedEcho(ctx, echo, origin, rrOwnedMessage(phase, i)); e != nil {
 				writerDone <- e
+				cancel()
 				return
 			}
 		}
