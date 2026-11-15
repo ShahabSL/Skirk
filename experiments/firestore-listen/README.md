@@ -8,9 +8,12 @@ exact deletion checks. It is not a TCP or messenger benchmark.
 
 Current status: the first live run verified all six ciphertext states through
 the pinned Google front but **failed overall during observer teardown**. Its
-samples and failed outcome remain unchanged. A local shutdown repair is being
-validated before a fresh database/run can retry; no production transport is
-promoted by this probe.
+samples and failed outcome remain unchanged. The repaired source passed a
+fresh six-state live retry, acknowledged target removal and joined its child
+with zero pending work. Both exact databases were deleted, preceding API state
+restored, and copied authorization removed. See the
+[two-attempt report](../../docs/experiments/firestore-listen-front-2026-11-15.md).
+No production transport is promoted by this primitive.
 
 The [official RPC reference](https://firebase.google.com/docs/firestore/reference/rpc/google.firestore.v1#firestore)
 limits Listen to gRPC or WebChannel. The [browser SDK implementation](https://github.com/firebase/firebase-js-sdk/blob/main/packages/firestore/src/platform/browser/webchannel_connection.ts)
@@ -159,6 +162,9 @@ Completed repair validation (all synthetic/local, with no Google calls):
   4.1 s; Go permits five seconds before its separately recorded forced-stop
   fallback and a further bounded join.
 
-A new frozen binary and a fresh owned database/run are required for another
-live probe. The six successful payload samples above and the original failed
-teardown remain the first run's result.
+The successful retry used clean source `f60802f` and binary SHA-256
+`12e411069143e13ffc00d0defa1c5461308a99d7a5cc3e9869662aeddea86d40`.
+Its warm median callback was 248.227 ms; the joined observer exited in
+418.681 ms without forced termination. These are separate observations, not a
+latency comparison against the first failed lifecycle. Full timing, dispatch,
+cancellation and cleanup evidence is in the linked two-attempt report.

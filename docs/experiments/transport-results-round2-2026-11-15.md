@@ -17,8 +17,10 @@ account, then published usage charges. Billing remains disabled for these
 bounded probes; Pub/Sub is not a required dependency or a promoted free-product
 transport. The primary work remains Drive within its free API/account limits.
 The temporary Apps Script echo passed the same pinned front on both its POST
-and response redirect. A reliable full relay is now an isolated test-only
-implementation; the echo alone is not a full transport result.
+and response redirect. Its separate reliable full relay subsequently completed
+all four real SOCKS/TLS mixed workloads. It remains a research implementation;
+its best observed file rate is below the completed Drive examples, and it has
+no same-cohort Drive control or multi-client capacity result.
 
 ## What the evidence supports
 
@@ -70,6 +72,7 @@ nearest-rank p95 values are descriptive samples, not population percentiles.
 | Fronted Pub/Sub pull-pool experiment | Eighteen verified records; most later records 170–836 ms, restart tails 30.756–30.930 s | Worker-count medians conceal tails. Canceled pulls retaining a broker lease are an inference, not a proven cause. [All samples](pubsub-drive-hybrid-2026-11-15.md). |
 | Fronted Pub/Sub priority + Drive bulk, full SOCKS | Twenty text responses verified; download-phase median 443 ms/max 1.664 s; upload-phase median 705 ms/max 1.333 s; 16 MiB upload 23.469 s | Download timed out at 180 s after 10,485,358 of 16,777,216 bytes. Seventeen Drive upload timeouts; visible transport reservations 25,570 units, below the local 40,000 active guard. An outer RoundTrip wrapper does not count hidden HTTP/2 retries or prove billed wire units. Failed full transport, despite fast text. Detailed raw report is retained in the hybrid worktree. |
 | Fronted Apps Script opaque echo | Five warm 64-byte round trips: median 625 ms, range 529–914 ms; two 1 MiB echoes: 1.077/1.061 s | Twelve of twelve authenticated payloads verified through the pinned `www.google.com` front on both hops. No external fetch or TCP node was involved. This is an unloaded carrier primitive, not mixed messenger latency or sustained file throughput. [Exact report](apps-script-front-echo-live-2026-11-15.md). |
+| Reliable Apps Script full SOCKS/TLS relay, 2 MiB frame scalar → packed | Download 3.498 → 4.116 Mb/s; upload 2.001 → 2.700 Mb/s; download full-echo request median 5.359 → 1.873 s; upload 14.229 → 5.811 s | All four frame/packing cells passed: eight exact 16 MiB files and 100 echoes. One observation/cell, no demotion prelude, no same-cohort Drive control. Packing increased download first-byte time at both frame sizes, and upload echo maximum was still 10.169 s in the best packed sample. [All cells, costs and cleanup](apps-script-relay-full-live-2026-11-15.md). |
 | Historical throughput envelope | November single 128 MiB 74.928 Mb/s; ten × 32 MiB 78.244 Mb/s aggregate | Short, different workloads. May notes around 90 Mb/s aggregate are weaker historical evidence. These are neither the final mixed candidate's speed nor 200,000-user capacity. |
 | Fronted Firestore document primitive | Warm 2 KiB create + known-ID read: 331/346 ms | Six exact AEAD states through the selected front, including 16/256 KiB cases. Discovery and a reliable queue are excluded. Fresh database removed and preceding API state restored. [Report](firestore-front-primitive-2026-11-15.md). |
 | Fronted Firestore WebChannel notification, repaired observer | Five warm 2 KiB write-to-listener callbacks: median 248 ms, range 233–331 ms; cold 1.361 s | Six exact AEAD states; target removal acknowledged, child joined without forced termination, zero pending calls/events/timers. This is an API primitive, not TCP RTT. The first six-state run failed local teardown and remains separate. [Source, first failure and repair](../../experiments/firestore-listen/README.md). |
@@ -181,8 +184,20 @@ Three paired scalar/batched simulations are retained in the
 [sample data](apps-script-relay-packing-local-2026-11-15.json). Batching reduced
 queue growth, but did not eliminate it; download coalescing also changed the
 actual object sizes in one pair. Both remain outside the product binary and
-default transport. Live full-relay measurements require the separately
-approved deployment and completed Google identity verification.
+default transport. The subsequently approved full live relay completed all
+four cells with exact file hashes, successful origin request counts and all
+echoes. All 96 mixed echoes completed during their file transfer. These are
+small-priority-flow tests; the Drive ABBA's 128 KiB demotion prelude was not
+present. Comparisons between those protocols must retain that difference.
+
+The four live variants consumed 510 Script POSTs and 1,016 visible dispatches;
+1,012 returned HTTP/2 responses. Each frozen executable recorded one closing
+transport-error counter whose final trace showed owned cancellation. All four
+raw counters remain unchanged. The deployment was archived, the project moved
+to recoverable Trash, its exact temporary external-request grant revoked, and
+the owned exit tunnel, connector token and DNS record removed. A separate
+fronted inactive check returned 404; twenty copied private research files were
+removed. No temporary public relay remains.
 
 Google currently documents 20,000 URL Fetch calls/day per consumer account,
 30 simultaneous executions/user and six minutes/execution. These limits are
