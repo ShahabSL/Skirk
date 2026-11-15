@@ -205,6 +205,16 @@ class FinalizeTests(unittest.TestCase):
         self.assertTrue(self.finalizer.processes[0]["writer"])
         self.assertTrue(self.finalizer.finalize({"failure": "original_probe_timeout"})["writers_stopped"])
 
+    def test_post_stop_proof_is_private_and_requires_all_children_stopped(self):
+        with self.assertRaisesRegex(ValueError, "requires_all"):
+            self.finalizer.persist_post_stop_proof({"public_count": 1})
+        self.register("exit", writer=True)
+        self.finalizer.finalize({"failure": "public_primary"})
+        self.finalizer.persist_post_stop_proof({"public_count": 1})
+        path = self.directory / "post-stop-origin-proof.json"
+        self.assertEqual(json.loads(path.read_text()), {"public_count": 1})
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     def test_reused_child_pid_is_not_signaled(self):
         parent = self.register("bench")
         journal = self.directory / "curl.jsonl"

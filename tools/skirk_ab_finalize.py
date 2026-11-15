@@ -94,6 +94,11 @@ class ArmFinalizer:
         result.check_returncode()
         return result
 
+    def persist_post_stop_proof(self, value: Any) -> None:
+        if self.result is None or not self.result.get("all_stopped"):
+            raise ValueError("post_stop_proof_requires_all_owned_children_stopped")
+        _atomic_private_json(self.directory / "post-stop-origin-proof.json", value)
+
     @staticmethod
     def _poll_state(process: subprocess.Popen[Any]) -> str:
         try:
