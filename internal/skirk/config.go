@@ -115,9 +115,12 @@ type DriveConfig struct {
 	SeparateMetadataSlotPools bool   `json:"separate_metadata_slot_pools,omitempty"`
 	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
 	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
-	UploadHedgeDelayMS     int  `json:"upload_hedge_delay_ms,omitempty"`
-	SeparateUploadPool     bool `json:"separate_upload_pool,omitempty"`
-	SeparateBulkMediaPool  bool `json:"separate_bulk_media_pool,omitempty"`
+	// NormalListPageSize applies only to the broad mux p1 discovery query.
+	// Zero uses the measured default of 1000; 500 and 100 remain available.
+	NormalListPageSize    int  `json:"normal_list_page_size,omitempty"`
+	UploadHedgeDelayMS    int  `json:"upload_hedge_delay_ms,omitempty"`
+	SeparateUploadPool    bool `json:"separate_upload_pool,omitempty"`
+	SeparateBulkMediaPool bool `json:"separate_bulk_media_pool,omitempty"`
 }
 
 // ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
@@ -376,6 +379,9 @@ func (c *Config) Validate() error {
 	}
 	if delay := c.Drive.UploadHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
 		return errors.New("config.drive.upload_hedge_delay_ms must be 0 or between 1000 and 10000")
+	}
+	if size := c.Drive.NormalListPageSize; size != 0 && size != 100 && size != 500 && size != 1000 {
+		return errors.New("config.drive.normal_list_page_size must be 100, 500, or 1000")
 	}
 	switch strings.TrimSpace(c.Route.Mode) {
 	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned":

@@ -954,6 +954,41 @@ func TestDriveStoreListUsesDocumentedPageSize(t *testing.T) {
 	}
 }
 
+func TestNormalMuxListUsesIndependentPageSize(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		configured int
+		contains   []string
+		want       string
+	}{
+		{"normal-default", 0, []string{"muxv4/session/down/client/run/", "/p1/"}, "1000"},
+		{"normal-500", 500, []string{"muxv4/session/down/client/run/", "/p1/"}, "500"},
+		{"normal-100", 100, []string{"muxv4/session/down/client/run/", "/p1/"}, "100"},
+		{"priority-stays-100", 0, []string{"muxv4/session/down/client/run/", "/p0/"}, "100"},
+		{"targeted-p1-stays-100", 0, []string{"muxv4/session/down/client/run/", "client/run", "stream", "/p1/"}, "100"},
+		{"unrelated-p1-stays-100", 0, []string{"control/session/", "/p1/"}, "100"},
+		{"invalid-direct-constructor-fails-safe", 2000, []string{"muxv4/session/down/client/run/", "/p1/"}, "100"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var got url.Values
+			httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				got = req.URL.Query()
+				return stringResponse(http.StatusOK, `{"files":[]}`), nil
+			})}}
+			store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{NormalListPageSize: test.configured})
+			if _, err := store.ListFreshContainsPageStatus(context.Background(), test.contains, time.Time{}, "", 4); err != nil {
+				t.Fatal(err)
+			}
+			if got.Get("pageSize") != test.want {
+				t.Fatalf("pageSize = %q, want %q", got.Get("pageSize"), test.want)
+			}
+			if got.Get("orderBy") != "modifiedTime desc" || !strings.Contains(got.Get("q"), "name contains '") {
+				t.Fatalf("query options changed: %v", got)
+			}
+		})
+	}
+}
+
 func TestDriveStoreListFreshFiltersByModifiedTime(t *testing.T) {
 	var gotQuery url.Values
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

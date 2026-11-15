@@ -35,6 +35,7 @@ type DriveStore struct {
 	metadataOnlyPriority   bool
 	metadataSlotV1         bool
 	indexedClassProperties bool
+	normalListPageSize     int
 	uploadHedgeDelay       time.Duration
 	uploadHedgeSlots       chan struct{}
 	newHedgeHTTPClient     func() *GoogleHTTPClient
@@ -46,6 +47,7 @@ type DriveStore struct {
 }
 
 const driveListPageSize = "100"
+const driveNormalListDefaultPageSize = 1000
 const driveListMaxPages = 16
 const driveMuxFreshListMaxPages = 4
 const defaultDriveCleanupMaxPages = 256
@@ -118,7 +120,14 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 		slotReadHTTP = NewGoogleHTTPClient(httpClient.route)
 		slotWriteHTTP = NewGoogleHTTPClient(httpClient.route)
 	}
-	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	normalListPageSize := cfg.NormalListPageSize
+	if normalListPageSize == 0 {
+		normalListPageSize = driveNormalListDefaultPageSize
+	}
+	if normalListPageSize != 100 && normalListPageSize != 500 && normalListPageSize != 1000 {
+		normalListPageSize = 100 // Direct constructor calls still fail safe without Config.Validate.
+	}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
 }
 
 func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
@@ -834,7 +843,11 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 }
 
 func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
-	return d.listFreshQueryPageStatus(ctx, d.containsQuery(contains), since, pageToken, maxPages, func(name string) bool {
+	pageSize := driveListPageSize
+	if len(contains) == 2 && strings.HasPrefix(contains[0], "muxv4/") && contains[1] == "/p1/" {
+		pageSize = strconv.Itoa(d.normalListPageSize)
+	}
+	return d.listFreshQueryPageStatus(ctx, d.containsQuery(contains), since, pageToken, maxPages, pageSize, func(name string) bool {
 		for _, value := range contains {
 			if strings.TrimSpace(value) != "" && !strings.Contains(name, value) {
 				return false
@@ -854,12 +867,12 @@ func (d *DriveStore) ListFreshIndexedClassPageStatus(ctx context.Context, prefix
 		return ObjectListInfo{}, errors.New("indexed class query requires a muxv4 prefix and p0 or p1 class")
 	}
 	query := d.containsQuery([]string{prefix}) + fmt.Sprintf(" and properties has { key='%s' and value='%s' }", driveIndexedClassProperty, class)
-	return d.listFreshQueryPageStatus(ctx, query, since, pageToken, maxPages, func(name string) bool {
+	return d.listFreshQueryPageStatus(ctx, query, since, pageToken, maxPages, driveListPageSize, func(name string) bool {
 		return strings.HasPrefix(name, prefix) && indexedMuxClass(name) == class
 	})
 }
 
-func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string, since time.Time, pageToken string, maxPages int, matches func(string) bool) (ObjectListInfo, error) {
+func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string, since time.Time, pageToken string, maxPages int, pageSize string, matches func(string) bool) (ObjectListInfo, error) {
 	if maxPages <= 0 {
 		maxPages = driveMuxFreshListMaxPages
 	}
@@ -872,7 +885,7 @@ func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string,
 	if d.inlineSmallObjects || d.metadataOnlyPriority {
 		values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime,description)")
 	}
-	values.Set("pageSize", driveListPageSize)
+	values.Set("pageSize", pageSize)
 	values.Set("orderBy", "modifiedTime desc")
 	if strings.TrimSpace(pageToken) != "" {
 		values.Set("pageToken", strings.TrimSpace(pageToken))

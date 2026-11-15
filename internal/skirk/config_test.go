@@ -245,6 +245,23 @@ func TestValidateGoogleProjectID(t *testing.T) {
 	}
 }
 
+func TestConfigNormalListPageSizeChoices(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64)}
+	cfg.ApplyDefaults()
+	for _, size := range []int{0, 100, 500, 1000} {
+		cfg.Drive.NormalListPageSize = size
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("page size %d rejected: %v", size, err)
+		}
+	}
+	for _, size := range []int{-1, 1, 999, 1001} {
+		cfg.Drive.NormalListPageSize = size
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.drive.normal_list_page_size") {
+			t.Errorf("page size %d error = %v", size, err)
+		}
+	}
+}
+
 func TestConfigUploadHedgeDelayIsOptInAndBounded(t *testing.T) {
 	cfg := &Config{Secret: strings.Repeat("a", 64)}
 	cfg.ApplyDefaults()
