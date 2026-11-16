@@ -182,10 +182,35 @@ simultaneous revision races or every possible clock granularity.
 Two additional test functions cover the successful three-revision sequence,
 constant tags, a nonadjacent tag alias, ignored If-Match, missing/header-only tags,
 wrong-version/method rejection and exact bounded cleanup. The complete focused
-16-function local race run passed in 1.438 seconds; vet passed. No rapid live result is
-recorded at this source checkpoint.
+16-function local race run passed in 1.438 seconds; vet passed.
 
 The distinct opt-in is `SKIRK_DRIVE_ETAG_V2_RAPID_ACCOUNT=isolated-secondary`
 and `SKIRK_DRIVE_ETAG_V2_RAPID_PRIVATE_DIR=<fresh-private-directory>`, running
 `-test.run '^TestLiveDriveV2MetadataETagRapidCAS$'` on a new frozen test binary.
 It cannot select PUT or reuse either earlier private directory.
+
+The separately owned rapid live run subsequently completed all three PATCH
+revisions with four globally distinct strong resource ETags. Every old-tag
+challenge returned 412, followed by the exact expected value/tag readback.
+The nine-call revision phase took 3.247 seconds on the client, without
+inserted sleeps. Observed valid-PATCH request durations were 997.900, 335.216
+and 326.852 milliseconds; stale 412 requests were 151.408, 152.590 and 161.579
+milliseconds; exact GETs were 130.469, 699.450 and 136.891 milliseconds. This
+single run establishes uniqueness/rejection at its measured cadence, not an
+application RTT distribution or proof for arbitrarily fast/competing writes.
+
+All 18 visible calls returned HTTP/2. The report retained 18 reservations,
+144 conservative attempt upper, 3,600 quota-unit upper and 14,208 encoded-request
+byte upper reservations. It recorded no errors, verified exact DELETE 204,
+two immediate and two delayed 31-second 404s, and removed the borrowed profile.
+No raw tag, ID or nonce name is tracked.
+
+Rapid source: `ffa07d3dd168dc4f532410293562cae4b7320b07`.
+Frozen binary:
+`.skirk-runs/drive-etag-probe-20261115/drive-etag-v2-rapid-probe.test`, SHA-256
+`681b0f1054ae655fdf360f7a7ad77a41df3d249883e73eccd4d27d4af7ce907f`.
+The ignored private report is
+`.skirk-runs/drive-etag-v2-rapid-live-20261116-0019/etag-probe-result.json`,
+SHA-256 `98c73365af293bfbe27ee9f0cfcc212d317f37fe94ae2a92637e57bbf3467bf9`.
+As with the basic v2 executable, this is a test binary with retained clean
+source/hash provenance, not a production CLI change.
