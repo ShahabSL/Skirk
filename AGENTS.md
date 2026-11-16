@@ -20,8 +20,9 @@ or more local frontends:
 
 - SOCKS5 proxy
 - HTTP proxy
-- Windows desktop proxy/system-proxy/VPN modes
+- Windows and macOS desktop proxy/system-proxy modes, plus Windows VPN mode
 - Android `VpnService` mode
+- iOS packet-tunnel mode
 
 The exit runs on a server with normal Internet access. Both ends share a Google
 Drive mailbox, exchange encrypted mux objects, and the exit opens outbound TCP
@@ -48,9 +49,13 @@ from the hostile network.
 - Run `scripts/preflight.sh` before release. It intentionally checks for common
   tracked runtime artifacts, personal email residue, and generated credentials.
 
-## Current Production Transport
+## Transport in this research branch
 
-Mux v4 is the production transport. The implementation is in
+The released `main` still uses mux v4. New kits in this draft branch default to
+`muxv5`; explicit `muxv4` remains for existing kits during migration. Mux v5
+keeps the four-lane Drive transport but binds a fresh sender generation into
+its encryption keys and uses a separate object namespace. The exit and every
+client must upgrade together. See `docs/mux-v5-migration-2026-11-16.md` and
 `internal/skirk/mux.go`.
 
 Key properties:
@@ -68,9 +73,10 @@ Key properties:
 - Processed objects are cleaned up by deferred cleanup so foreground traffic is
   not blocked by delete calls.
 
-Do not resurrect old transports or experimental protocols as defaults unless a
-new design beats mux v4 on mixed browser plus bulk traffic. Synthetic
-single-stream download speed is not enough.
+Do not promote an experimental carrier on single-stream speed alone. Compare
+it with the shipped transport on mixed interactive and bulk traffic, quota,
+cleanup, restart and multi-client behavior. Security fixes may require a
+versioned migration even without a speed win.
 
 ## Performance Model
 
@@ -127,7 +133,7 @@ Core package:
 - `internal/skirk/httpclient.go`: route-aware HTTP transport and Google-fronted
   dialing behavior.
 - `internal/skirk/tunnel.go`: client and exit tunnel orchestration.
-- `internal/skirk/mux.go`: mux v4 framing, queues, lanes, fairness, receive
+- `internal/skirk/mux.go`: mux v4/v5 framing, queues, lanes, fairness, receive
   ordering, cleanup scheduling, and observability logs.
 - `internal/skirk/socksserver.go`: local SOCKS server, UDP DNS handling, and
   VPN-facing UDP policy.
@@ -276,6 +282,9 @@ Run targeted commands when touching the corresponding area:
 
 - Go core or CLI: `go test ./...` and `go vet ./...`.
 - Android debug smoke: `cd clients/android && ./gradlew :app:assembleDebug --console=plain`.
+- iOS Simulator app and extension: `clients/ios/build.sh`; use a fresh
+  Simulator for first-run UI tests. A Simulator pass does not verify a physical
+  iPhone's packet tunnel.
 - Android release asset: build `:app:assembleRelease` with
   `SKIRK_ANDROID_KEYSTORE_FILE`, `SKIRK_ANDROID_KEYSTORE_PASSWORD`,
   `SKIRK_ANDROID_KEY_ALIAS`, and `SKIRK_ANDROID_KEY_PASSWORD` set, then verify
