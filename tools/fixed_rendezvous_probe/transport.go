@@ -155,10 +155,12 @@ func (p *probe) request(ctx context.Context, cleanup bool, who actor, method, pa
 	if headers == nil {
 		headers = map[string]string{}
 	}
-	headers["Cache-Control"] = "no-cache"
+	if method == http.MethodGet {
+		headers["Cache-Control"] = "no-cache"
+	}
 	headers["Accept-Encoding"] = "identity"
 	if len(body) != 0 {
-		headers["Content-Type"] = "application/json; charset=UTF-8"
+		headers["Content-Type"] = "application/json"
 	}
 	p.mu.Lock()
 	if cleanup {
