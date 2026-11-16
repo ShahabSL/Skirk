@@ -1,9 +1,9 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 240 documented findings,
+The [catalog](catalog/experiments.json) contains 241 documented findings,
 including 70 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
-not 240 equally controlled protocol races. A universal throughput or latency
+not 241 equally controlled protocol races. A universal throughput or latency
 limit has **not** been demonstrated. The exact current v5 versus clean `main`
 cohorts are [reported separately](current-v5-vs-main-live-2026-11-16.md):
 15 of 16 mixed arms completed, but two complete upload orders disagreed on
@@ -36,10 +36,12 @@ priority and bulk scheduling. It does not depend on Firestore, Pub/Sub, Apps
 Script, a reusable ring, or a paid carrier. The selected route remains a user
 choice: pinned `www.google.com` front by default or Direct Google. The v5
 namespace and generation-bound key repair a reproduced restart nonce/key
-collision; v4 peers need a coordinated upgrade. Local fixes bound deferred
-receive data and prevent a stalled destination or local reader from holding
-unrelated streams. [Migration](../mux-v5-migration-2026-11-16.md) ·
-[receive cap](deferred-inbound-global-budget-2026-11-16.md).
+collision; v4 peers need a coordinated upgrade. Local fixes bound queued
+primary and deferred receive data and prevent a stalled destination or local
+reader from holding unrelated streams. A dequeued frame per active writer
+remains outside those queue budgets. [Migration](../mux-v5-migration-2026-11-16.md) ·
+[deferred cap](deferred-inbound-global-budget-2026-11-16.md) ·
+[inbound cap](inbound-queue-global-budget-2026-11-16.md).
 
 The attractive reusable metadata ring cannot be promoted from this evidence.
 Four fresh pinned-front v2 conditional-write preflights returned HTTP 500,

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 240 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders; local full-mux known-ID train negative quota/bootstrap gate",
+  "research_tip": "Retained 241 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders; local full-mux known-ID train negative quota/bootstrap gate; mux-wide primary inbound queue budget local check",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -4838,6 +4838,24 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "separate branch codex/skirk-id-train-full-mux-20261116 at a723b1c",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-101",
+      "candidate": "Mux-wide primary inbound-channel memory budget",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Eight or more stalled local streams saturate primary channels by bytes/frames, unrelated stream and deferred fallback, close/read race, FIN and normal-pause checks; focused race x10 and vet",
+      "latency": "No live Google latency or speed measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Drive method change; local-only memory accounting",
+      "correctness_and_errors": "Primary channel occupancy capped at64 MiB/8192 frames across mux; on global cap, ordered deferred tail used; budget released on consume/close and closed receiver drops race-won frame. One frame per active socket writer remains outside queued cap.",
+      "cleanup": "Memory-store streams close and release budget; no Google object or OAuth used",
+      "decision": "Product receive-memory correctness fix; does not establish fixed total memory or 200000-user support; full preflight and live speed gate tracked separately",
+      "source_documents": [
+        "docs/experiments/inbound-queue-global-budget-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "ed46a9f",
       "live_comparable": false
     }
   ]
