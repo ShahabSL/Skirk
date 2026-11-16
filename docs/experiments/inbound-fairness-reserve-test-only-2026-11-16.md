@@ -8,7 +8,8 @@ first frame: primary and deferred each hold exactly 64 MiB. This is a
 capacity/fairness failure under artificial saturation, not a live Google
 failure.
 
-The isolated `codex/skirk-inbound-fairness-20261116` branch at `62d919f`
+The isolated [research branch](https://github.com/ShahabSL/Skirk/tree/codex/skirk-inbound-fairness-20261116)
+at `62d919f`
 keeps 8 MiB and 256 frames *inside* the existing deferred hard
 cap for sockets with no primary backlog, limited to 1 MiB and 32 frames per
 eligible stream. The older stalled sockets may use 56 MiB and 7,936 frames

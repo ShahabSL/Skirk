@@ -4894,7 +4894,7 @@
         "docs/experiments/inbound-fairness-reserve-test-only-2026-11-16.md"
       ],
       "raw_archive_paths": [],
-      "revision_or_binary": "separate local branch codex/skirk-inbound-fairness-20261116 at 62d919f; not product PR",
+      "revision_or_binary": "separate research branch codex/skirk-inbound-fairness-20261116 at 62d919f; not product PR",
       "live_comparable": false
     }
   ]
