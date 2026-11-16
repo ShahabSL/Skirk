@@ -213,6 +213,7 @@ fun ConfigScreen() {
     var advancedSettingsOpen by remember { mutableStateOf(false) }
     var vpnAppsDialogOpen by remember { mutableStateOf(false) }
     var exitProbeStatus by remember { mutableStateOf("") }
+    var exitProbeVerified by remember { mutableStateOf(false) }
     var exitProbeRunning by remember { mutableStateOf(false) }
     var exitProbeGeneration by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
@@ -259,6 +260,7 @@ fun ConfigScreen() {
     LaunchedEffect(connectionState.running, connectionState.profileId) {
         exitProbeGeneration += 1
         exitProbeStatus = ""
+        exitProbeVerified = false
         exitProbeRunning = false
     }
 
@@ -549,6 +551,7 @@ fun ConfigScreen() {
             onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
             onDisconnect = { disconnectActive() },
             exitProbeStatus = exitProbeStatus,
+            exitProbeVerified = exitProbeVerified,
             exitProbeRunning = exitProbeRunning,
             canTestExit = activeProbeProfile != null,
             onTestExit = {
@@ -557,11 +560,13 @@ fun ConfigScreen() {
                     val generation = exitProbeGeneration
                     exitProbeRunning = true
                     exitProbeStatus = ""
+                    exitProbeVerified = false
                     coroutineScope.launch {
                         val result = withContext(Dispatchers.IO) {
                             runCatching { probeExit(context.applicationContext, profile) }
                         }
                         if (exitProbeGeneration == generation && connectionStore.read().running) {
+                            exitProbeVerified = result.getOrNull()?.verified == true
                             exitProbeStatus = result.fold(
                                 onSuccess = { check -> if (check.verified)
                                     "Exit responded through Google Drive in ${check.roundTripMs} ms. This is one sample; website access is not checked."
@@ -708,17 +713,19 @@ fun ConfigScreen() {
                 item { connectionPanelContent() }
             }
 
-            item {
-                DiagnosticsPanel(
-                    logText = logText,
-                    expanded = diagnosticsExpanded,
-                    onToggleExpanded = { diagnosticsExpanded = !diagnosticsExpanded },
-                    onRefresh = { refreshLogs() },
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(logText))
-                        Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
-                    },
-                )
+            if (profiles.isNotEmpty() || running || connectionState.phase == ConnectionPhase.FAILED) {
+                item {
+                    DiagnosticsPanel(
+                        logText = logText,
+                        expanded = diagnosticsExpanded,
+                        onToggleExpanded = { diagnosticsExpanded = !diagnosticsExpanded },
+                        onRefresh = { refreshLogs() },
+                        onCopy = {
+                            clipboard.setText(AnnotatedString(logText))
+                            Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                }
             }
         }
         if (advancedSettingsOpen) {
@@ -820,6 +827,7 @@ private fun ConnectionPanel(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     exitProbeStatus: String,
+    exitProbeVerified: Boolean,
     exitProbeRunning: Boolean,
     canTestExit: Boolean,
     onTestExit: () -> Unit,
@@ -834,6 +842,18 @@ private fun ConnectionPanel(
             "${uiState.title}. $it"
         } ?: uiState.title
         else -> uiState.title
+    }
+    if (selected == null && !running) {
+        GoogleAccessCard(
+            hasProfile = false,
+            needsRenewal = false,
+            exitProbeVerified = false,
+            onReplaceProfile = onReplaceProfile,
+            onCopyRenewalCommand = onCopyRenewalCommand,
+            onCopyPersonalSetupCommand = onCopyPersonalSetupCommand,
+            onOpenOAuthSettings = onOpenOAuthSettings,
+        )
+        return
     }
     Panel {
         Row(
@@ -910,6 +930,7 @@ private fun ConnectionPanel(
         GoogleAccessCard(
             hasProfile = selected != null,
             needsRenewal = googleGrantExpired,
+            exitProbeVerified = exitProbeVerified,
             onReplaceProfile = onReplaceProfile,
             onCopyRenewalCommand = onCopyRenewalCommand,
             onCopyPersonalSetupCommand = onCopyPersonalSetupCommand,
@@ -997,6 +1018,7 @@ private fun ConnectionPanel(
 private fun GoogleAccessCard(
     hasProfile: Boolean,
     needsRenewal: Boolean,
+    exitProbeVerified: Boolean,
     onReplaceProfile: () -> Unit,
     onCopyRenewalCommand: () -> Unit,
     onCopyPersonalSetupCommand: () -> Unit,
@@ -1013,33 +1035,35 @@ private fun GoogleAccessCard(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("Google authorization", fontWeight = FontWeight.SemiBold)
-            }
-            Text(
-                when {
-                    needsRenewal -> "Renewal needed"
-                    !hasProfile -> "No profile"
-                    else -> "Expiry date unknown"
-                },
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                when {
-                    needsRenewal -> "Google rejected this device's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk."
-                    !hasProfile -> "Import a client profile from your exit. The exit owner sets up Google access."
-                    else -> "A saved profile cannot show a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting to check this session."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (needsRenewal) {
-                TextButton(onClick = onCopyRenewalCommand) { Text("Copy command for exit owner") }
-                TextButton(onClick = onReplaceProfile) { Text("Import renewed profile") }
+            if (hasProfile) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("Google authorization", fontWeight = FontWeight.SemiBold)
+                }
+                Text(
+                    when {
+                        needsRenewal -> "Renewal needed"
+                        exitProbeVerified -> "Exit reachable in this session"
+                        else -> "Google access not checked yet"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    when {
+                        needsRenewal -> "Google rejected this device's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk."
+                        exitProbeVerified -> "The exit responded to a test through Google Drive. This check does not guarantee future token validity."
+                        else -> "Connect, then tap Test exit to check this session. Google does not provide a guaranteed refresh-token expiry date here."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (needsRenewal) {
+                    TextButton(onClick = onCopyRenewalCommand) { Text("Copy command for exit owner") }
+                    TextButton(onClick = onReplaceProfile) { Text("Import renewed profile") }
+                }
             }
             TextButton(onClick = { showOwnerGuide = !showOwnerGuide }) {
-                Text(if (showOwnerGuide) "Hide personal OAuth guide" else "Personal OAuth and renewal guide")
+                Text(if (showOwnerGuide) "Hide personal OAuth guide" else if (hasProfile) "Personal OAuth and renewal guide" else "Setting up your own exit?")
             }
             if (showOwnerGuide) {
                 Text(
