@@ -330,6 +330,10 @@ func TestFSHybridWatchOfficialSDKRealLoopbackJoins(t *testing.T) {
 			return nil, r.Context().Err()
 		}
 	})
+	// Exercise real SDK POST ContentLength and aggregate admission on the
+	// authenticated loopback -> pinned GoogleHTTPClient path as well.
+	liveBudget := fsHybridLiveNewBudget("firestore", func() {})
+	fsHybridLiveAttach(c.client, liveBudget, false)
 	got := make(chan fsPriorityDocument, 1)
 	done := make(chan error, 1)
 	go func() {
@@ -351,6 +355,9 @@ func TestFSHybridWatchOfficialSDKRealLoopbackJoins(t *testing.T) {
 	}
 	if err = c.Close(); err != nil {
 		t.Fatal("owned SDK close did not prove clean join", err)
+	}
+	if liveBudget.Denials != 0 || liveBudget.Calls == 0 {
+		t.Fatal("real SDK violated aggregate request/body guard", liveBudget.snapshot())
 	}
 	select {
 	case err = <-done:

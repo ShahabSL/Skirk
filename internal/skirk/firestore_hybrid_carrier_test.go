@@ -218,6 +218,9 @@ func (c *fsHybridGoogleCarrier) call(ctx context.Context, operation, method, pat
 	defer c.requestWG.Done()
 	requestCtx, cancel := context.WithTimeout(withGoogleResponseLimit(ctx, int64(c.cfg.MaxResponseBytes)), 15*time.Second)
 	defer cancel()
+	if cleanup {
+		requestCtx = context.WithValue(requestCtx, fsHybridLiveCleanupKey{}, true)
+	}
 	if !cleanup {
 		limited, stop := context.WithDeadline(requestCtx, c.deadline)
 		defer stop()

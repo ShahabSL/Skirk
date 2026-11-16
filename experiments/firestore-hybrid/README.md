@@ -178,9 +178,102 @@ Current component evidence (2026-11-15; not a live transport result):
   mux poll still executes normal discovery; after release all 81 identities are
   dispatched once. This is a counter-controlled offline proof, not a latency
   benchmark.
-- The actual full mixed SOCKS proof and OPEN replay/dial proof are still being
-  built. These component results do not authorize a live hybrid performance or
-  production-security claim.
+- The actual owned TLS/SOCKS proof passed with independent random 16 MiB GET and
+  POST, 40 text echoes during held bulk requests, a real physical normal object
+  larger than 64 KiB, notification loss/fallback and watch reconnect. Both OPEN
+  arrival orders passed after explicitly clearing the core's closed/seen caches,
+  with one dial/initial write and no second enqueue. The focused proof passed
+  twice under the race detector in 17.167 seconds; combined hybrid tests passed
+  in 9.666 seconds. These are offline correctness results, not Google speed.
+
+## Guarded live entry (not run)
+
+`TestLivePinnedFirestoreHybrid` requires all three explicit environment values:
+
+```text
+SKIRK_FIRESTORE_HYBRID_LIVE=1
+SKIRK_FIRESTORE_HYBRID_ACCOUNT=isolated-secondary
+SKIRK_FIRESTORE_HYBRID_PRIVATE_DIR=/absolute/.skirk-runs/fresh-arm
+```
+
+Use the same frozen test binary for `drive` and `hybrid` arms. Each arm has an
+exclusive 0700 private directory, fresh session/epoch/RunID and 0600 regular
+non-symlink files. `settings.json` contains these exact keys:
+
+```json
+{
+  "mode": "hybrid",
+  "session_id": "32 lowercase hexadecimal characters",
+  "epoch": "32 lowercase hexadecimal characters",
+  "secret": "fresh 32-to-256-character encryption secret",
+  "client_id": "research",
+  "run_id": "fresh-arm-run",
+  "payload_seed_hex": "64 hexadecimal characters shared only across the comparison",
+  "tokens_valid_until": "RFC3339 UTC time at least ten minutes in the future",
+  "client_config": "client.json",
+  "exit_config": "exit.json",
+  "client_token_file": "client-access-token",
+  "exit_token_file": "exit-access-token",
+  "owner_token_file": "owner-access-token",
+  "database": "projects/skirk-p/databases/skirk-hybrid-probe-12hexcharacters",
+  "up_document": "database above/documents/mailboxes/up",
+  "down_document": "database above/documents/mailboxes/down",
+  "campaign_ledger": "/absolute/.skirk-runs/campaign.json",
+  "arm_id": "arm-1"
+}
+```
+
+The three token values reside only in their private files. The copied Drive
+configs supply the same pinned Google IP and explicit secondary-owned Drive
+folder. The entry replaces authentication in memory with the supplied static
+access token and executes no token command or refresh. `drive.file` remains
+insufficient for Firestore: the separate research-only Cloud-owner token is
+required for `hybrid`. A pinned `webchannel_blob_es2018.js` with the documented
+SHA is copied into the arm directory before launch. Root precreates exactly two
+documents containing only `sealed: {bytesValue: ""}`, after independently
+confirming billing disabled and free-tier eligibility. The test creates no
+database, API, rules, IAM, billing or OAuth grant.
+
+The campaign ledger contains `campaign_id`, `timeout_limit: 64`, and one to four
+`arms` with `arm_id` (3–64 safe characters) and `mode`. An O_EXCL active file and
+per-arm consumed markers prevent concurrent/repeated arms. Every observed
+timeout is appended and fsynced to the campaign timeout journal; cancellation
+thresholds are 64 for the cohort, 32 for an arm and 16 in a rolling minute.
+Already exposed concurrent terminal results remain recorded. A stale active
+file requires root recovery, never a reset/refund of a failed arm.
+
+The workload is one warm 64-byte POST, independent seeded 16 MiB GET and POST,
+and 20 further 64-byte POSTs scheduled every 250 ms during each bulk direction.
+A dedicated persistent one-connection text HTTP pool and a separate bulk pool
+both use the actual local SOCKS/mux and trust only the owned TLS certificate.
+Rows retain actual RTT, scheduled-to-completion latency, first headers, exact
+size/hash, offered/completed bulk overlap and every failure. Offline invocation
+of this exact workload passed under the race detector in 11.836 seconds; that
+time is not a Google performance measurement.
+
+Fixed per-arm bounds are five active minutes; Drive 500 visible calls / 4,000
+opaque attempt upper / 280,000 estimated unit upper / 1 GiB encoded request
+upper / 256 MiB response bytes. Active Drive traffic leaves 32 calls, 40,000
+units, 1 MiB request and 4 MiB response headroom for cleanup. Firestore has a
+shared pair bound of 512 calls / 4,096 attempt upper / 128 MiB encoded request
+upper / 128 MiB actual response bytes, alongside each carrier's stricter local
+limits and one-MiB response limit. Firestore compressed responses fail closed
+so decoded bodies cannot evade the aggregate byte counter. Every dispatch
+reserves eight opaque H2 attempts before exposure; those are upper reservations,
+not claims about exact Google acceptance or billable work.
+
+Every unclassified transport error, auth/quota/API failure, integrity failure or
+guard rejection stops the workload. A conditional-write precondition rejection
+and cleanup 404 remain explicitly counted expected cases. The recovery ledger
+is durable before the first call. Cleanup first cancels/joins mux, store, Node,
+bridge and HTTP owners and fences all active pools, then uses separate cleanup
+Drive clients/gates to delete only exact fresh run objects and generated IDs.
+Immediate and 31-second-delayed prefix and exact-ID absence checks must pass.
+An unsuccessful writer join prevents cleanup and preserves the recovery state.
+Root separately deletes/verifies the exact Firestore documents/whole database,
+restores the prior API state, removes copied authorization files, and only then
+releases a hybrid arm's campaign active file. `summary.json` deliberately keeps
+`firestore_cleanup_required: true`; it is not a complete Cloud-cleanup proof.
 
 ## Official API references
 
