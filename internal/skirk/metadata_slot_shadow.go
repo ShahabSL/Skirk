@@ -514,7 +514,16 @@ func (m *driveMux) validateSlotShadowDirection(record metadataSlotRecord, link *
 	if !ok || !meta.Priority || meta.ClientID != link.key.clientID || meta.RunID != link.key.runID || len(meta.StreamIDs) != 1 {
 		return errors.New("shadow record mux name invalid")
 	}
-	key, err := DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, direction, meta.ClientID, meta.RunID, meta.Lane)
+	if meta.Transport != m.transport {
+		return errors.New("shadow record mux transport mismatch")
+	}
+	var key []byte
+	var err error
+	if m.transport == "muxv5" {
+		key, err = DeriveMuxLaneKeyV5(m.t.Secret, m.t.SessionID, direction, meta.ClientID, meta.RunID, meta.Lane, meta.Epoch)
+	} else {
+		key, err = DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, direction, meta.ClientID, meta.RunID, meta.Lane)
+	}
 	if err != nil {
 		return err
 	}

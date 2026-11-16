@@ -465,7 +465,10 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 	if value := strings.TrimSpace(t.Transport); value != "" && value != "muxv4" && value != "muxv5" {
 		return nil, fmt.Errorf("unsupported mux transport %q", value)
 	}
-	transport := normalizeMuxTransport(t.Transport)
+	transport := strings.TrimSpace(t.Transport)
+	if transport == "" {
+		transport = "muxv5"
+	}
 	epoch, err := randomMuxEpochForTransport(transport)
 	if err != nil {
 		return nil, err

@@ -45,7 +45,7 @@ func (s *muxReceiptTestStore) count() int { s.mu.Lock(); defer s.mu.Unlock(); re
 func muxReceiptFixture(t *testing.T, store BlobStore, bad bool) (*driveMux, *muxStream, muxObjectMeta, []byte) {
 	t.Helper()
 	sid := [16]byte{1}
-	m, err := newDriveMux(&Tunnel{Data: store, Secret: "public-receipt-fixture", SessionID: sid, ClientID: "client", RunID: "run", Concurrency: 4, PollInterval: time.Second, CleanupProcessed: true, Logger: log.New(io.Discard, "", 0)}, "exit", DirectionDown, DirectionUp)
+	m, err := newDriveMux(&Tunnel{Data: store, Secret: "public-receipt-fixture", SessionID: sid, Transport: "muxv4", ClientID: "client", RunID: "run", Concurrency: 4, PollInterval: time.Second, CleanupProcessed: true, Logger: log.New(io.Discard, "", 0)}, "exit", DirectionDown, DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -159,7 +159,7 @@ func shadowSlotTestMux(t *testing.T, store *shadowSlotMemoryStore, role string, 
 		sendDir, recvDir = DirectionDown, DirectionUp
 	}
 	mux, err := newDriveMux(&Tunnel{
-		Data: store, Secret: "slot-integration-test-secret", SessionID: sid,
+		Data: store, Secret: "slot-integration-test-secret", SessionID: sid, Transport: "muxv4",
 		ClientID: "client.one", RunID: "run.two", MetadataSlotV1: enabled,
 		Concurrency: 4, PollInterval: time.Second,
 	}, role, sendDir, recvDir)

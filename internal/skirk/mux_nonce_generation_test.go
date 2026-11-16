@@ -260,6 +260,48 @@ func TestNewTunnelDefaultsToMuxV5ButHonorsExplicitLegacy(t *testing.T) {
 	}
 }
 
+func TestDirectDriveMuxDefaultsToMuxV5(t *testing.T) {
+	mux, err := newDriveMux(&Tunnel{Secret: "nonce-generation-test-secret", SessionID: [16]byte{1, 2, 3}}, "exit", DirectionDown, DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mux.transport != "muxv5" || len(mux.epoch) != 32 || !strings.HasPrefix(mux.recvPrefix(), "muxv5/") {
+		t.Fatalf("direct tunnel selected legacy transport: %q / %q / %q", mux.transport, mux.epoch, mux.recvPrefix())
+	}
+}
+
+func TestMuxV5MetadataSlotShadowUsesGenerationKey(t *testing.T) {
+	ctx := context.Background()
+	sid := [16]byte{1, 2, 3, 4, 5}
+	secret := "nonce-generation-test-secret"
+	client, err := newDriveMux(&Tunnel{Data: NewMemoryStore(), Secret: secret, SessionID: sid, Transport: "muxv5", ClientID: "client-a", RunID: "run-a"}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit, err := newDriveMux(&Tunnel{Secret: secret, SessionID: sid, Transport: "muxv5"}, "exit", DirectionDown, DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := muxFrame{Kind: muxFrameData, ClientID: "client-a", RunID: "run-a", StreamID: 7, Seq: 1, Payload: []byte("slot shadow"), Priority: true}
+	batch, err := client.lanes[0].prepareUploadBatchV4(ctx, []muxFrame{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := &muxSlotLink{key: muxSlotRunKey{clientID: "client-a", runID: "run-a"}}
+	record := metadataSlotRecord{SlotSeq: 1, MuxName: batch.name, MuxSealed: batch.sealed}
+	if err := exit.validateSlotShadowDirection(record, link, DirectionUp); err != nil {
+		t.Fatalf("v5 slot shadow could not authenticate its generation-bound mux batch: %v", err)
+	}
+	record.MuxName = strings.Replace(batch.name, "muxv5/", "muxv4/", 1)
+	if err := exit.validateSlotShadowDirection(record, link, DirectionUp); err == nil {
+		t.Fatal("v5 slot shadow accepted a legacy object name")
+	}
+	record.MuxName = strings.Replace(batch.name, client.epoch, "00000000000000000000000000000001", 1)
+	if err := exit.validateSlotShadowDirection(record, link, DirectionUp); err == nil {
+		t.Fatal("v5 slot shadow accepted a mismatched sender generation")
+	}
+}
+
 func TestMuxV5MetadataSlotAndDriveClassUseVersionedNamespace(t *testing.T) {
 	sid := [16]byte{1, 2, 3, 4, 5}
 	generation := [16]byte{9, 8, 7, 6}

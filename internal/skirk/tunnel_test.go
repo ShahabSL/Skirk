@@ -3083,6 +3083,7 @@ func TestMuxUploadStorageQuotaRunsEmergencyStaleCleanup(t *testing.T) {
 	mux, err := newDriveMux(&Tunnel{
 		Data:             store,
 		SessionID:        sid,
+		Transport:        "muxv4",
 		ClientID:         "client-a",
 		RunID:            "run-a",
 		PollInterval:     time.Second,
