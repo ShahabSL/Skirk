@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,11 @@ const fsHybridPublicTime = "2026-11-15T22:30:01.123456Z"
 
 func fsHybridCarrierFixture(t *testing.T) *fsHybridGoogleCarrier {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// This owned research fixture enforces POSIX group/other permissions.
+		// Go's Chmod on Windows controls only the read-only attribute.
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir := filepath.Join(t.TempDir(), ".skirk-runs", "carrier")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -510,6 +516,9 @@ func TestFSHybridWatchThreeSequentialOwnersJoinWithoutResettingSharedBudgets(t *
 }
 
 func TestFSHybridCarrierRejectsPrivateDirectoryReuseAndSharedLifetimeExpiry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX private-file permission fixture")
+	}
 	c := fsHybridCarrierFixture(t)
 	if _, err := newFSHybridGoogleCarrier(context.Background(), c.cfg); !errors.Is(err, errFSHybridBounds) {
 		t.Fatal("research allocation reused")

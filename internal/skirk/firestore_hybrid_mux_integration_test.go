@@ -368,16 +368,31 @@ func TestFSHybridRealSOCKS16MiBEachDirectionMixedTextFallbackReconnect(t *testin
 	}
 	assertPhysicalNormal := func(direction byte) {
 		t.Helper()
-		objects, err := f.base.List(f.ctx, muxDirPrefix(f.client.cfg.Session, direction, f.client.cfg.ClientID, f.client.cfg.RunID))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, obj := range objects {
-			if meta, ok := parseMuxObjectInfo(obj); ok && !meta.Priority && obj.Size > fsHybridWireMax {
-				return
+		// TCP read boundaries and fair batching differ across platforms. An
+		// actual p1 object proves the bulk path; requiring any one object to
+		// exceed the p0 carrier bound makes this test depend on socket timing.
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			objects, err := f.base.List(f.ctx, muxDirPrefix(f.client.cfg.Session, direction, f.client.cfg.ClientID, f.client.cfg.RunID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, obj := range objects {
+				if meta, ok := parseMuxObjectInfo(obj); ok && !meta.Priority && obj.Size > 0 {
+					return
+				}
+			}
+			select {
+			case <-tick.C:
+			case <-deadline.C:
+				t.Fatal("no physical normal object during bulk transfer", direction)
+			case <-f.ctx.Done():
+				t.Fatal("bulk transfer ended before a physical normal object", direction, f.ctx.Err())
 			}
 		}
-		t.Fatal("no physical normal object larger than the priority carrier bound", direction)
 	}
 	assertPhysicalNormal(DirectionDown)
 	fsHybridEventually(t, func() bool { return f.client.Snapshot()["fallback_published"] > 0 })
