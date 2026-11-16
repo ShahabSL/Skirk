@@ -83,7 +83,9 @@ func (cfg driveV2PriorityConfig) normalized() (driveV2PriorityConfig, error) {
 	if cfg.OwnID == cfg.PeerID || cfg.OwnName == cfg.PeerName || !driveV2PriorityName.MatchString(cfg.OwnName) || !driveV2PriorityName.MatchString(cfg.PeerName) || strings.TrimSuffix(strings.TrimSuffix(cfg.OwnName, "-up"), "-down") != strings.TrimSuffix(strings.TrimSuffix(cfg.PeerName, "-up"), "-down") {
 		return cfg, errFSHybridBounds
 	}
-	if cfg.Route.Mode != "google_front_pinned" || cfg.Route.Proxy != "" || net.ParseIP(cfg.Route.GoogleIP) == nil || cfg.Token == nil || cfg.BeforeDispatch == nil || len(cfg.QuotaProject) > 128 || strings.ContainsAny(cfg.QuotaProject, "\r\n\x00") {
+	selectedRoute := cfg.Route.Mode == "direct" && cfg.Route.GoogleIP == "" ||
+		cfg.Route.Mode == "google_front_pinned" && net.ParseIP(cfg.Route.GoogleIP) != nil
+	if !selectedRoute || cfg.Route.Proxy != "" || cfg.Token == nil || cfg.BeforeDispatch == nil || len(cfg.QuotaProject) > 128 || strings.ContainsAny(cfg.QuotaProject, "\r\n\x00") {
 		return cfg, errFSHybridBounds
 	}
 	return cfg, nil

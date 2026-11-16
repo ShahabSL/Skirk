@@ -31,6 +31,7 @@ type driveV2PriorityFake struct {
 	mu                                        sync.Mutex
 	docs                                      map[string]*driveV2PriorityFakeDoc
 	calls                                     []driveV2PriorityFakeCall
+	expectedURLHost                           string
 	honor, constantTag, omitTag               bool
 	nextWriteBefore, nextWriteAfter, nextRead error
 	nextReadStatus                            int
@@ -40,7 +41,7 @@ type driveV2PriorityFake struct {
 }
 
 func newDriveV2PriorityFake() *driveV2PriorityFake {
-	return &driveV2PriorityFake{honor: true, docs: map[string]*driveV2PriorityFakeDoc{
+	return &driveV2PriorityFake{honor: true, expectedURLHost: "www.google.com", docs: map[string]*driveV2PriorityFakeDoc{
 		"public-v2-up-owned-file":   {name: "skirk-v2-priority-0123456789abcdef0123456789abcdef-up", revision: 1},
 		"public-v2-down-owned-file": {name: "skirk-v2-priority-0123456789abcdef0123456789abcdef-down", revision: 1},
 	}}
@@ -55,7 +56,7 @@ func (f *driveV2PriorityFake) tag(d *driveV2PriorityFakeDoc) string {
 func (f *driveV2PriorityFake) RoundTrip(r *http.Request) (*http.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.URL.Host != "www.google.com" || r.Host != "www.googleapis.com" || r.Header.Get("Authorization") != "Bearer public-v2-fixture-token" || r.URL.Query().Get("fields") != "id,title,description,version,etag" || len(r.URL.Query()) != 1 {
+	if r.URL.Host != f.expectedURLHost || r.Host != "www.googleapis.com" || r.Header.Get("Authorization") != "Bearer public-v2-fixture-token" || r.URL.Query().Get("fields") != "id,title,description,version,etag" || len(r.URL.Query()) != 1 {
 		return nil, errFSHybridIntegrity
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/drive/v2/files/")
@@ -193,6 +194,50 @@ func TestDriveV2PriorityCarrierFeatureDetectionAndExactConditionalWrites(t *test
 	}
 	if err = c.ProbeOwnCAS(context.Background()); !errors.Is(err, errFSHybridBounds) {
 		t.Fatal("feature probe reused live application document")
+	}
+}
+
+func TestDriveV2PriorityCarrierRespectsUserSelectedDirectRoute(t *testing.T) {
+	b := newDriveV2PriorityFake()
+	b.expectedURLHost = "www.googleapis.com"
+	c := driveV2PriorityFixture(t, b, true, func(cfg *driveV2PriorityConfig) {
+		cfg.Route = RouteConfig{Mode: "direct"}
+	})
+	if err := c.ProbeOwnCAS(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := c.ReadOwn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := c.WriteOwn(context.Background(), previous.fence(), []byte("authenticated direct-route fixture"))
+	if err != nil || updated.sameFence(previous) {
+		t.Fatal("direct-route CAS mutation failed", err)
+	}
+	if _, err := c.ReadPeer(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s := c.Snapshot(); s.ProbePassed != 1 || s.Visible != 10 || s.Errors != 0 {
+		t.Fatal("direct route did not preserve feature probe and exact reads", s)
+	}
+}
+
+func TestDriveV2PriorityCarrierRejectsUnselectedRouteFallback(t *testing.T) {
+	b := newDriveV2PriorityFake()
+	for _, route := range []RouteConfig{
+		{Mode: "direct", GoogleIP: "203.0.113.1"},
+		{Mode: "google_front_pinned"},
+		{Mode: "google_front", GoogleIP: "203.0.113.1"},
+		{Mode: "direct", Proxy: "http://127.0.0.1:8080"},
+	} {
+		t.Run(fmt.Sprintf("%s-%s-%s", route.Mode, route.GoogleIP, route.Proxy), func(t *testing.T) {
+			c := driveV2PriorityFixture(t, b, true)
+			cfg := c.cfg
+			cfg.Route = route
+			if _, err := cfg.normalized(); err == nil {
+				t.Fatal("unselected route was admitted")
+			}
+		})
 	}
 }
 
