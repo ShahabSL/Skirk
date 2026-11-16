@@ -19,8 +19,9 @@ import (
 
 const (
 	fsHybridLiveDuration          = 5 * time.Minute
-	fsHybridLiveDriveCalls        = int64(500)
-	fsHybridLiveDriveUnits        = int64(280000)
+	fsHybridLiveDriveCalls        = int64(1000)
+	fsHybridLiveDriveUnits        = int64(800000)
+	fsHybridLiveDriveMinuteUnits  = int64(280000)
 	fsHybridLiveDriveRequestUpper = int64(1 << 30)
 	fsHybridLiveDriveResponse     = int64(256 << 20)
 	fsHybridLiveFSCalls           = int64(512)
@@ -147,7 +148,9 @@ type fsHybridLiveBudget struct {
 	Service                                                                                                              string
 	Calls, Attempts, Units, RequestUpper, Response, PendingResponse                                                      int64
 	CleanupCalls, Canceled, Timeouts, APIError, ExpectedPreconditions, ExpectedNotFound, TransportErrors, HTTP2, Denials int64
-	MaxCalls, MaxUnits, MaxRequest, MaxResponse                                                                          int64
+	MaxCalls, MaxUnits, MaxMinuteUnits, MaxRequest, MaxResponse                                                          int64
+	MinuteUnits                                                                                                          int64
+	MinuteReservations                                                                                                   []fsHybridLiveMinuteReservation
 	TimeoutTimes                                                                                                         []time.Time
 	Statuses                                                                                                             map[int]int64
 	Events                                                                                                               []map[string]any
@@ -155,11 +158,17 @@ type fsHybridLiveBudget struct {
 	onTimeout                                                                                                            func() error
 }
 
+type fsHybridLiveMinuteReservation struct {
+	At    time.Time
+	Units int64
+}
+
 func fsHybridLiveNewBudget(service string, cancel context.CancelFunc) *fsHybridLiveBudget {
 	b := &fsHybridLiveBudget{Service: service, cancel: cancel, Statuses: make(map[int]int64)}
 	if service == "drive" {
 		b.MaxCalls = fsHybridLiveDriveCalls
 		b.MaxUnits = fsHybridLiveDriveUnits
+		b.MaxMinuteUnits = fsHybridLiveDriveMinuteUnits
 		b.MaxRequest = fsHybridLiveDriveRequestUpper
 		b.MaxResponse = fsHybridLiveDriveResponse
 	} else {
@@ -177,7 +186,7 @@ func (b *fsHybridLiveBudget) snapshot() map[string]any {
 		statuses[k] = v
 	}
 	events := append([]map[string]any(nil), b.Events...)
-	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events}
+	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "minute_units_upper": b.MinuteUnits, "minute_limit_upper": b.MaxMinuteUnits, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events}
 }
 func (b *fsHybridLiveBudget) addEventLocked(kind string, status int) {
 	if len(b.Events) < 128 {
@@ -224,13 +233,37 @@ func (b *fsHybridLiveBudget) reserve(r *http.Request, cleanup bool) error {
 			cost = 50
 		}
 	}
-	if b.Calls+1 > calls || b.Units+cost*8 > units && units > 0 || r.ContentLength > (request-b.RequestUpper)/8 || b.Response+b.PendingResponse >= response {
+	minuteLimit := b.MaxMinuteUnits
+	if minuteLimit > 0 {
+		// The provider's per-user quota is a one-minute window. Preserve a
+		// separate cleanup reserve in that same window, while keeping the
+		// finite whole-arm budget and its durable attempt upper intact.
+		cutoff := time.Now().Add(-time.Minute)
+		retained := b.MinuteReservations[:0]
+		b.MinuteUnits = 0
+		for _, reserved := range b.MinuteReservations {
+			if reserved.At.After(cutoff) {
+				retained = append(retained, reserved)
+				b.MinuteUnits += reserved.Units
+			}
+		}
+		b.MinuteReservations = retained
+		if !cleanup {
+			minuteLimit -= 40000
+		}
+	}
+	if b.Calls+1 > calls || b.Units+cost*8 > units && units > 0 || b.MaxMinuteUnits > 0 && b.MinuteUnits+cost*8 > minuteLimit || r.ContentLength > (request-b.RequestUpper)/8 || b.Response+b.PendingResponse >= response {
 		b.denyLocked("aggregate_call_unit_or_byte_limit")
 		return errFSHybridBounds
 	}
 	b.Calls++
 	b.Attempts += 8
 	b.Units += cost * 8
+	if b.MaxMinuteUnits > 0 {
+		reserved := fsHybridLiveMinuteReservation{At: time.Now(), Units: cost * 8}
+		b.MinuteReservations = append(b.MinuteReservations, reserved)
+		b.MinuteUnits += reserved.Units
+	}
 	b.RequestUpper += r.ContentLength * 8
 	if cleanup {
 		b.CleanupCalls++

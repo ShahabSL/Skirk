@@ -74,6 +74,43 @@ func TestFSHybridLiveAggregateGuardsPreserveCleanupReserve(t *testing.T) {
 		t.Fatal("opaqueattemptupper notreserved", got)
 	}
 }
+
+func TestFSHybridLiveDriveQuotaUsesOneMinuteWindowAndRetainsWholeArmBound(t *testing.T) {
+	request := fsHybridLiveFakeRequest("www.googleapis.com")
+	active := fsHybridLiveNewBudget("drive", nil)
+	active.MaxMinuteUnits = 40080 // 80 active units, with 40,000 reserved.
+	for i := 0; i < 2; i++ {
+		if err := active.reserve(request, false); err != nil {
+			t.Fatal("initial per-minute admission", err)
+		}
+	}
+	active.mu.Lock()
+	for i := range active.MinuteReservations {
+		active.MinuteReservations[i].At = time.Now().Add(-61 * time.Second)
+	}
+	active.mu.Unlock()
+	if err := active.reserve(request, false); err != nil {
+		t.Fatal("older-than-one-minute units were not released", err)
+	}
+	if active.Units != 120 || active.MinuteUnits != 40 {
+		t.Fatal("whole-arm and minute upper reservations diverged", active.Units, active.MinuteUnits)
+	}
+	limitedCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	limited := fsHybridLiveNewBudget("drive", cancel)
+	limited.MaxMinuteUnits = 40080
+	for i := 0; i < 2; i++ {
+		if err := limited.reserve(request, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := limited.reserve(request, false); err == nil || limitedCtx.Err() == nil {
+		t.Fatal("same-minute upper bound admitted third active request")
+	}
+	if err := limited.reserve(request, true); err != nil {
+		t.Fatal("same-minute cleanup reserve was unavailable", err)
+	}
+}
 func TestFSHybridLiveAggregateResponseBoundAndDirectOriginRejection(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

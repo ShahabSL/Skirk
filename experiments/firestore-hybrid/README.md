@@ -251,10 +251,13 @@ size/hash, offered/completed bulk overlap and every failure. Offline invocation
 of this exact workload passed under the race detector in 11.836 seconds; that
 time is not a Google performance measurement.
 
-Fixed per-arm bounds are five active minutes; Drive 500 visible calls / 4,000
-opaque attempt upper / 280,000 estimated unit upper / 1 GiB encoded request
-upper / 256 MiB response bytes. Active Drive traffic leaves 32 calls, 40,000
-units, 1 MiB request and 4 MiB response headroom for cleanup. Firestore has a
+Fixed per-arm bounds are five active minutes; Drive 1,000 visible calls / 8,000
+opaque attempt upper / 800,000 estimated unit upper across the whole arm / 1
+GiB encoded request upper / 256 MiB response bytes. A separate rolling
+one-minute Drive ceiling is 280,000 estimated unit upper, below the published
+325,000 per-user-project minute quota. Active Drive traffic leaves 32 lifetime
+calls, 40,000 lifetime and same-minute units, 1 MiB request and 4 MiB response
+headroom for cleanup. Firestore has a
 shared pair bound of 512 calls / 4,096 attempt upper / 128 MiB encoded request
 upper / 128 MiB actual response bytes, alongside each carrier's stricter local
 limits and one-MiB response limit. Firestore compressed responses fail closed
