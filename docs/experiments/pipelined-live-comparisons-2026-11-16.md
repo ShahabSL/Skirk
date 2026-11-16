@@ -83,7 +83,7 @@ during their respective file; the second had 6 and 5. Control A had 5 and 0;
 control B had 7 and 4. The twenty-frame scheduled p95 includes later replies.
 
 V2 remains test-only. Before product use it needs peer capability negotiation,
-feature-loss fallback, full Direct-route support, epoch rotation, fair
+feature-loss fallback, product Direct-route wiring, epoch rotation, fair
 multi-client budgets, crash-durable exact-object cleanup and platform-specific
 validation. The [official v2/v3 comparison](https://developers.google.com/workspace/drive/api/guides/v3versusv2)
 recommends v3 as the current API; an observed v2 ETag fence is not a future

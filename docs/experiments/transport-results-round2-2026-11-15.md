@@ -90,6 +90,10 @@ nearest-rank p95 values are descriptive samples, not population percentiles.
 | Firestore-priority/Drive-bulk first full live attempt | Exact 16 MiB down/up in 8.681/7.829 s; warm 64-byte echo 1.359 s; 20/20 download and 17/20 upload text echoes | The last three text requests were canceled when the harness's 120-active-Listen cap blocked cleanup. No complete mixed result or paired Drive control. All five residual Drive objects and the free-tier database were deleted and checked after 31 s; prior API state restored. [Failure and cleanup](firestore-hybrid-first-live-2026-11-15.md). |
 | Five simultaneous clients, actual same-binary default | 80 MiB exact files + 60 echoes; aggregate 27.456 Mb/s; scheduled full-echo p95 11.342 s | Zero API errors in the completed baseline. Async candidate stopped on metadata timeouts and exposed a harness teardown bug; it has no valid aggregate or latency comparison. Exact cleanup completed, and the ownership bug is fixed. [Report](bounded-recovery-and-capacity-2026-11-15.md). |
 
+The later test-only v2 carrier supports the user's explicit Direct choice as
+well as the default pinned front; [product integration](drive-v2-product-integration-plan-2026-11-16.md)
+is still required before any client can select it.
+
 The frozen async-versus-default upload ABBA was interrupted in its fourth
 candidate arm by one 1,048,631-byte normal upload timeout after 28 seconds.
 The first candidate and both controls completed; the last arm has no completed
