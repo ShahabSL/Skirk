@@ -61,10 +61,10 @@ known-ID ring with read-ahead. The result cannot rank that ring.
   exact or delayed cleanup cannot be proved. Do not rerun while that ledger
   remains; inspect it and complete cleanup first.
 
-The clean path reserves 23 exact IDs. Cleanup then costs at most 1,895
+The clean path reserves 23 exact IDs. Cleanup then costs at most 1,695
 nominal units (23 × [GET 5 + DELETE 50 + two verification GETs 10] + two
-lists 200), or 15,160 eightfold units. Failed or uncertain requests can
-consume the 840-unit reserve; an incomplete result leaves the recovery ledger
+lists 200), or 13,560 eightfold units. Failed or uncertain requests can
+consume the 2,440-unit reserve; an incomplete result leaves the recovery ledger
 for manual inspection. The four-minute top-level deadline covers experiment
 only; cleanup has its own two-minute deadline.
 
