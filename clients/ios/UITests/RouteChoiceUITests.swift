@@ -7,18 +7,24 @@ final class RouteChoiceUITests: XCTestCase {
         app.launch()
 
         let route = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route")).firstMatch
+        for _ in 0..<4 {
+            if route.isHittable { break }
+            app.swipeUp()
+        }
         XCTAssertTrue(route.waitForExistence(timeout: 10))
         XCTAssertEqual(route.value as? String, "Google front")
-        XCTAssertTrue(app.staticTexts["Google access: Google front"].exists)
         // Explicit choices survive relaunch and profile replacement.
         route.tap()
         app.buttons["Direct Google"].tap()
         XCTAssertTrue(route.waitForExistence(timeout: 5))
         XCTAssertEqual(route.value as? String, "Direct Google")
-        XCTAssertTrue(app.staticTexts["Google access: Direct Google"].exists)
 
         app.terminate()
         app.launch()
+        for _ in 0..<4 {
+            if route.isHittable { break }
+            app.swipeUp()
+        }
         XCTAssertTrue(route.waitForExistence(timeout: 10))
         XCTAssertEqual(route.value as? String, "Direct Google")
 

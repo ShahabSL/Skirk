@@ -126,7 +126,9 @@ final class TunnelController: ObservableObject {
             manager = try await Self.existingManager()
             refreshStatus()
         } catch {
-            show(error)
+            // Import is the only actionable first step without a profile.
+            // Report VPN-service failures when a profile can actually connect.
+            if hasProfile { show(error) }
         }
     }
 

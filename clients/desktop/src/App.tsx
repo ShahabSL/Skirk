@@ -76,6 +76,7 @@ function App() {
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<ClientProfile | null>(null);
   const importPanelRef = useRef<HTMLDetailsElement>(null);
   const profileFileRef = useRef<HTMLInputElement>(null);
+  const chooseProfileFileButtonRef = useRef<HTMLButtonElement>(null);
   const maskedProfileRef = useRef<HTMLInputElement>(null);
   const revealedProfileRef = useRef<HTMLTextAreaElement>(null);
   const pendingProfileFocus = useRef<{ start: number; end: number } | null>(null);
@@ -365,6 +366,15 @@ function App() {
     });
   }
 
+  function beginProfileImport() {
+    setReplaceProfileId(null);
+    setImportOpen(true);
+    window.requestAnimationFrame(() => {
+      importPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      chooseProfileFileButtonRef.current?.focus();
+    });
+  }
+
   async function copyRenewCommand() {
     try {
       await copyText("skirk setup renew-oauth --kit skirk-kit");
@@ -602,6 +612,7 @@ function App() {
               <ol>
                 <li>For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and run <code>skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal</code> on the exit.</li>
                 <li>The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.</li>
+                <li>Only the Google Cloud project owner can publish it; this desktop app cannot change that setting.</li>
                 <li>After publishing or a rejected grant, run <code>skirk setup renew-oauth --kit skirk-kit</code> using the actual kit directory, restart the exit, and send an updated <code>client.skirk</code> if the client's saved access was rejected.</li>
               </ol>
               <div className="button-row">
@@ -641,22 +652,23 @@ function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
-                aria-disabled={runtimeBusy || !selectedProfile || (!googleGrantExpired && vpnNeedsAdmin)}
+                disabled={!snapshot || (!selectedProfile ? runtimeBusy : (!googleGrantExpired && vpnNeedsAdmin))}
+                aria-disabled={runtimeBusy || !snapshot || (Boolean(selectedProfile) && !googleGrantExpired && vpnNeedsAdmin)}
                 onClick={() => {
                   if (runtimeBusy) return;
-                  if (googleGrantExpired) beginProfileReplacement();
+                  if (!selectedProfile) beginProfileImport();
+                  else if (googleGrantExpired) beginProfileReplacement();
                   else void run("connect", () => desktopApi.connect());
                 }}
               >
-                {googleGrantExpired ? (
+                {!selectedProfile || googleGrantExpired ? (
                   <Upload />
                 ) : vpnNeedsAdmin ? (
                   <ShieldCheck />
                 ) : (
                   <Play />
                 )}
-                {googleGrantExpired ? "Import renewed profile" : vpnNeedsAdmin ? "Admin required" : "Connect"}
+                {!selectedProfile ? "Import profile" : googleGrantExpired ? "Import renewed profile" : vpnNeedsAdmin ? "Admin required" : "Connect"}
               </button>
             )}
             <button
@@ -815,7 +827,7 @@ function App() {
                     if (file) void readProfileFile(file);
                   }}
                 />
-                <button type="button" disabled={runtimeBusy || connected} onClick={() => profileFileRef.current?.click()}>
+                <button ref={chooseProfileFileButtonRef} type="button" disabled={runtimeBusy || connected} onClick={() => profileFileRef.current?.click()}>
                   <FileText /> Choose client.skirk file
                 </button>
                 <button type="button" disabled={busy} onClick={() => void pasteConfig()}>

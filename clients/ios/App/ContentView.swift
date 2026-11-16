@@ -26,13 +26,13 @@ struct ContentView: View {
                             .foregroundStyle(tunnel.status == .connected ? .green : .secondary)
                             .font(.title2)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(tunnel.statusText)
+                            Text(tunnel.hasProfile ? tunnel.statusText : "Set up Skirk")
                                 .font(.headline)
                                 .accessibilityAddTraits(.isHeader)
                                 .accessibilityFocused($statusFocused)
                             Text(tunnel.status == .connected
                                  ? tunnel.exitProbeMessage ?? "Exit reachability has not been tested"
-                                 : "Google Drive transport")
+                                 : (tunnel.hasProfile ? "Google Drive transport" : "Import client.skirk to connect"))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             Text("Google access: \(tunnel.routeMode.title)")
@@ -53,7 +53,7 @@ struct ContentView: View {
                             }
                             .disabled(tunnel.isTestingExit)
                         }
-                    } else {
+                    } else if tunnel.hasProfile {
                         if tunnel.googleAuthorizationNeedsRenewal {
                             Button("Import renewed profile") {
                                 copiedRenewalCommand = false
@@ -72,62 +72,6 @@ struct ContentView: View {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
                     }
-                }
-
-                Section {
-                    if tunnel.googleAuthorizationNeedsRenewal {
-                        Label("Renewal needed", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .accessibilityAddTraits(.isHeader)
-                        Text("Google rejected this iPhone's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk.")
-                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy command for exit owner") {
-                            UIPasteboard.general.string = Self.renewalCommand
-                            copiedRenewalCommand = true
-                        }
-                    } else if tunnel.hasProfile {
-                        Label("Expiry date unknown", systemImage: "questionmark.circle")
-                            .foregroundStyle(.secondary)
-                        Text("A saved profile cannot show a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting to check this session.")
-                    } else {
-                        Label("No profile", systemImage: "key")
-                            .foregroundStyle(.secondary)
-                        Text("Import a client profile from your exit. The exit owner sets up Google access.")
-                    }
-                    DisclosureGroup("Personal OAuth and renewal guide") {
-                        Text("1. For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and choose Personal OAuth during setup.")
-                        Button(copiedPersonalSetupCommand ? "Personal setup command copied" : "Copy personal setup command") {
-                            UIPasteboard.general.string = Self.personalSetupCommand
-                            copiedPersonalSetupCommand = true
-                        }
-                        Text("2. The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.")
-                        Text("3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this iPhone's grant was rejected. Other revocations remain possible.")
-                        Link("Open Google Cloud Audience", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
-                        if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {
-                            Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
-                                UIPasteboard.general.string = Self.renewalCommand
-                                copiedRenewalCommand = true
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Google authorization")
-                }
-
-                Section {
-                    Picker("Route", selection: Binding(
-                        get: { tunnel.routeMode },
-                        set: { tunnel.selectRoute($0) }
-                    )) {
-                        ForEach(GoogleRouteMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.navigationLink)
-                    .disabled(!tunnel.canChangeRoute)
-                } header: {
-                    Text("Google access route")
-                } footer: {
-                    Text(tunnel.routeMode.detail)
                 }
 
                 Section {
@@ -179,6 +123,63 @@ struct ContentView: View {
                     } else if !tunnel.hasProfile {
                         Text("Import client.skirk from your Skirk exit. iOS stores it in this device's Keychain.")
                     }
+                }
+
+                Section {
+                    if tunnel.googleAuthorizationNeedsRenewal {
+                        Label("Renewal needed", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Google rejected this iPhone's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk.")
+                        Button(copiedRenewalCommand ? "Renewal command copied" : "Copy command for exit owner") {
+                            UIPasteboard.general.string = Self.renewalCommand
+                            copiedRenewalCommand = true
+                        }
+                    } else if tunnel.hasProfile {
+                        Label("Expiry date unknown", systemImage: "questionmark.circle")
+                            .foregroundStyle(.secondary)
+                        Text("A saved profile cannot show a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting to check this session.")
+                    } else {
+                        Label("No profile", systemImage: "key")
+                            .foregroundStyle(.secondary)
+                        Text("Import a client profile from your exit. The exit owner sets up Google access.")
+                    }
+                    DisclosureGroup("Personal OAuth and renewal guide") {
+                        Text("1. For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and choose Personal OAuth during setup.")
+                        Button(copiedPersonalSetupCommand ? "Personal setup command copied" : "Copy personal setup command") {
+                            UIPasteboard.general.string = Self.personalSetupCommand
+                            copiedPersonalSetupCommand = true
+                        }
+                        Text("2. The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.")
+                        Text("Only the Google Cloud project owner can publish it; this iPhone cannot change that setting.")
+                        Text("3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this iPhone's grant was rejected. Other revocations remain possible.")
+                        Link("Open Google Cloud Audience", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
+                        if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {
+                            Button(copiedRenewalCommand ? "Renewal command copied" : "Copy exit renewal command") {
+                                UIPasteboard.general.string = Self.renewalCommand
+                                copiedRenewalCommand = true
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Google authorization")
+                }
+
+                Section {
+                    Picker("Route", selection: Binding(
+                        get: { tunnel.routeMode },
+                        set: { tunnel.selectRoute($0) }
+                    )) {
+                        ForEach(GoogleRouteMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    .disabled(!tunnel.canChangeRoute)
+                } header: {
+                    Text("Google access route")
+                } footer: {
+                    Text(tunnel.routeMode.detail)
                 }
 
                 if let message = tunnel.message {

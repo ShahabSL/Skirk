@@ -1054,6 +1054,11 @@ private fun GoogleAccessCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
+                    "Only the Google Cloud project owner can publish it; this phone cannot change that setting.",
+                    color = guideColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
                     "3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this device's grant was rejected. Other revocations remain possible.",
                     color = guideColor,
                     style = MaterialTheme.typography.bodySmall,
@@ -1701,6 +1706,7 @@ private fun ImportPanel(
     onImport: () -> Unit,
 ) {
     var profileTextVisible by remember { mutableStateOf(false) }
+    var showLocalPorts by remember { mutableStateOf(socksPort != "18080" || httpPort != "18081") }
     Panel {
         SectionHeader(Icons.Rounded.Add, "Import profile", "File or one-line config")
         OutlinedButton(onClick = {
@@ -1761,22 +1767,33 @@ private fun ImportPanel(
             label = { Text("Profile name") },
             singleLine = true,
         )
-        OutlinedTextField(
-            value = socksPort,
-            onValueChange = onSocksPortChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Local SOCKS port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
-        OutlinedTextField(
-            value = httpPort,
-            onValueChange = onHttpPortChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Local HTTP proxy port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
+        TextButton(onClick = { showLocalPorts = !showLocalPorts }) {
+            Text(if (showLocalPorts) "Hide local ports" else "Change local ports")
+        }
+        if (showLocalPorts) {
+            OutlinedTextField(
+                value = socksPort,
+                onValueChange = onSocksPortChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Local SOCKS port") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            OutlinedTextField(
+                value = httpPort,
+                onValueChange = onHttpPortChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Local HTTP proxy port") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+        } else {
+            Text(
+                "Local proxy ports use defaults. Change them only if another app uses those ports.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 
@@ -2080,7 +2097,7 @@ private fun connectionUiState(phase: ConnectionPhase, selected: ClientProfile?):
 
 private fun connectionDetail(selected: ClientProfile?, selectedMode: String, proxyShareLan: Boolean): String {
     if (selected == null) {
-        return "Import a profile below to enable connection."
+        return "Import a profile to enable connection."
     }
     return "${selected.name} · ${googleRouteLabel(selected.routeMode)} · " +
         connectionRouteDetail(selected, selectedMode, proxyShareLan)

@@ -1,0 +1,35 @@
+import XCTest
+
+@MainActor
+final class FirstRunGuidanceUITests: XCTestCase {
+    func testImportIsVisibleBeforeOwnerSettings() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let importFile = app.buttons["Choose client.skirk file"]
+        XCTAssertTrue(importFile.waitForExistence(timeout: 10))
+        XCTAssertTrue(importFile.isHittable, "First-run import should be visible without scrolling")
+        XCTAssertTrue(app.staticTexts["Set up Skirk"].exists)
+        XCTAssertFalse(app.buttons["Connect"].exists)
+        let prematureVpnError = app.staticTexts[
+            "This Simulator cannot reach iOS VPN services. Test profile import here; use a signed iPhone to test the packet tunnel."
+        ]
+        XCTAssertFalse(prematureVpnError.waitForExistence(timeout: 2))
+
+        let guide = app.buttons["Personal OAuth and renewal guide"]
+        for _ in 0..<3 {
+            if guide.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(guide.isHittable)
+        guide.tap()
+        let ownerOnly = app.staticTexts[
+            "Only the Google Cloud project owner can publish it; this iPhone cannot change that setting."
+        ]
+        for _ in 0..<5 {
+            if ownerOnly.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(ownerOnly.waitForExistence(timeout: 5))
+    }
+}
