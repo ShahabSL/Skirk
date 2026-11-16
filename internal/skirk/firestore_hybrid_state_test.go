@@ -96,7 +96,7 @@ func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time
 	// never evicted; closing this finite session is the only cap transition.
 	limit := fsHybridCacheMax
 	if len(sealed) > fsHybridInlineMax {
-		limit -= fsHybridWireMax
+		limit -= s.outgoing.wireLimit()
 	}
 	if s.outRetained+len(sealed) > limit {
 		return nil, false, errFSHybridBusy
@@ -137,7 +137,7 @@ func (s *fsHybridState) enqueue(r *fsHybridOutbound) bool {
 	// Check exact encoding size without generating a second ciphertext or
 	// consuming a revision. Only prepare creates the cached retry identity.
 	raw, err := json.Marshal(s.outgoing.snapshot(s.revision+1, s.rxProcessed, s.grantedSeq, s.grantedBytes, records))
-	if err != nil || len(raw)+len(fsHybridMagic)+s.outgoing.aead.NonceSize()+s.outgoing.aead.Overhead() > fsHybridWireMax {
+	if err != nil || len(raw)+len(fsHybridMagic)+s.outgoing.aead.NonceSize()+s.outgoing.aead.Overhead() > s.outgoing.wireLimit() {
 		return false
 	}
 	r.record = record
@@ -164,7 +164,7 @@ func (s *fsHybridState) credit() (uint64, uint64) {
 	}
 	// At most one cumulative document of unseen inline data is promised. The
 	// physical fallback cache reserves that same space separately below.
-	byteCredit := s.rxProcessedBytes + fsHybridWireMax
+	byteCredit := s.rxProcessedBytes + uint64(s.incoming.wireLimit())
 	if byteCredit < s.grantedBytes {
 		byteCredit = s.grantedBytes
 	}
@@ -364,7 +364,7 @@ func (s *fsHybridState) normalizePhysical(info ObjectInfo, sealed []byte, now ti
 	if len(s.rxNames)+int(s.grantedSeq-s.rxHigh) >= fsHybridClaimsMax {
 		return nil, errFSHybridClosed
 	}
-	if s.rxBytes+len(sealed) > fsHybridCacheMax-fsHybridWireMax {
+	if s.rxBytes+len(sealed) > fsHybridCacheMax-s.incoming.wireLimit() {
 		return nil, errFSHybridBusy
 	}
 	entry = &fsHybridInbound{info: ObjectInfo{Name: info.Name, ID: fsHybridID(info.Name, sealed), Size: int64(len(sealed)), Updated: now.UTC().Format(time.RFC3339Nano)}, digest: digest, sealed: bytes.Clone(sealed), physicalIDs: map[string]struct{}{info.ID: {}}}

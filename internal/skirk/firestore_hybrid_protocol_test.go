@@ -86,6 +86,14 @@ type fsHybridCodec struct {
 	sid       [16]byte
 	clientID  string
 	runID     string
+	wireMax   int
+}
+
+func (c *fsHybridCodec) wireLimit() int {
+	if c.wireMax == 0 {
+		return fsHybridWireMax
+	}
+	return c.wireMax
 }
 
 func newFSHybridCodec(secret string, sid, epoch [16]byte, direction byte, clientID, runID string) (*fsHybridCodec, error) {
@@ -234,7 +242,7 @@ func (c *fsHybridCodec) seal(s fsHybridSnapshot) ([]byte, error) {
 		return nil, err
 	}
 	raw, err := json.Marshal(s)
-	if err != nil || len(raw)+len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() > fsHybridWireMax {
+	if err != nil || len(raw)+len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() > c.wireLimit() {
 		return nil, errFSHybridBounds
 	}
 	nonce := make([]byte, c.aead.NonceSize())
@@ -247,7 +255,7 @@ func (c *fsHybridCodec) seal(s fsHybridSnapshot) ([]byte, error) {
 
 func (c *fsHybridCodec) open(wire []byte) (fsHybridSnapshot, error) {
 	var snapshot fsHybridSnapshot
-	if len(wire) < len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() || len(wire) > fsHybridWireMax || string(wire[:len(fsHybridMagic)]) != fsHybridMagic {
+	if len(wire) < len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() || len(wire) > c.wireLimit() || string(wire[:len(fsHybridMagic)]) != fsHybridMagic {
 		return snapshot, errFSHybridBounds
 	}
 	nonce := wire[len(fsHybridMagic) : len(fsHybridMagic)+c.aead.NonceSize()]
@@ -275,9 +283,18 @@ func (c *fsHybridCodec) snapshot(revision, processed, creditSeq, creditBytes uin
 	return fsHybridSnapshot{Epoch: hex.EncodeToString(c.epoch[:]), Direction: c.direction, Revision: revision, Processed: processed, CreditSeq: creditSeq, CreditBytes: creditBytes, Records: records}
 }
 
+type fsPriorityFenceKind byte
+
+const (
+	fsPriorityFirestoreFence fsPriorityFenceKind = iota
+	fsPriorityDriveV2Fence
+)
+
 type fsPriorityDocument struct {
-	Ciphertext []byte
-	UpdateTime string
+	Ciphertext  []byte
+	UpdateTime  string
+	FenceKind   fsPriorityFenceKind
+	OpaqueFence string
 }
 
 // Watch notifications may coalesce. The current cumulative snapshot, not the
@@ -292,6 +309,32 @@ type fsPriorityCarrier interface {
 
 // Server timestamps remain opaque strings; no floating point round trip.
 func (d fsPriorityDocument) valid() bool {
+	if len(d.Ciphertext) > fsHybridWireMax {
+		return false
+	}
+	if d.FenceKind == fsPriorityDriveV2Fence {
+		if d.UpdateTime != "" || len(d.OpaqueFence) < 3 || len(d.OpaqueFence) > 1024 || d.OpaqueFence[0] != '"' || d.OpaqueFence[len(d.OpaqueFence)-1] != '"' {
+			return false
+		}
+		for _, v := range []byte(d.OpaqueFence[1 : len(d.OpaqueFence)-1]) {
+			if v < 0x21 || v > 0x7e || v == '"' {
+				return false
+			}
+		}
+		return true
+	}
+	if d.FenceKind != fsPriorityFirestoreFence || d.OpaqueFence != "" || len(d.UpdateTime) > 64 {
+		return false
+	}
 	t, err := time.Parse(time.RFC3339Nano, d.UpdateTime)
-	return err == nil && t.Nanosecond()%1000 == 0 && len(d.Ciphertext) <= fsHybridWireMax
+	return err == nil && t.Nanosecond()%1000 == 0
+}
+func (d fsPriorityDocument) fence() string {
+	if d.FenceKind == fsPriorityDriveV2Fence {
+		return d.OpaqueFence
+	}
+	return d.UpdateTime
+}
+func (d fsPriorityDocument) sameFence(other fsPriorityDocument) bool {
+	return d.valid() && other.valid() && d.FenceKind == other.FenceKind && d.fence() == other.fence()
 }

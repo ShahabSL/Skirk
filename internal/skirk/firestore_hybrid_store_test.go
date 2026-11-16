@@ -17,10 +17,17 @@ type fsHybridStoreConfig struct {
 	Session, Epoch                                                         [16]byte
 	Direction                                                              byte
 	ClientID, RunID                                                        string
+	MaxSnapshotBytes                                                       int
 	FallbackAfter, OperationTimeout, ACKDelay, Duration, DiscoveryInterval time.Duration
 }
 
 func (c fsHybridStoreConfig) normalized() (fsHybridStoreConfig, error) {
+	if c.MaxSnapshotBytes == 0 {
+		c.MaxSnapshotBytes = fsHybridWireMax
+	}
+	if c.MaxSnapshotBytes < 1024 || c.MaxSnapshotBytes > fsHybridWireMax {
+		return c, errFSHybridBounds
+	}
 	if c.FallbackAfter == 0 {
 		c.FallbackAfter = 2 * time.Second
 	}
@@ -111,6 +118,7 @@ func newFSHybridPriorityStore(parent context.Context, base BlobStore, carrier fs
 	if err != nil {
 		return nil, err
 	}
+	out.wireMax, in.wireMax = cfg.MaxSnapshotBytes, cfg.MaxSnapshotBytes
 	ctx, cancel := context.WithTimeout(parent, cfg.Duration)
 	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{})}
 	readCtx, stop := context.WithTimeout(ctx, cfg.OperationTimeout)
@@ -212,7 +220,7 @@ func (s *fsHybridPriorityStore) ingest(doc fsPriorityDocument) error {
 		s.mu.Unlock()
 		return errFSHybridClosed
 	}
-	if !doc.valid() {
+	if !doc.valid() || doc.FenceKind != s.own.FenceKind {
 		s.mu.Unlock()
 		return errFSHybridIntegrity
 	}
@@ -321,8 +329,11 @@ func (s *fsHybridPriorityStore) retireWriter(err error) {
 }
 
 func fsHybridDocumentAfter(doc, previous fsPriorityDocument, wire []byte) bool {
-	if !doc.valid() || !bytes.Equal(doc.Ciphertext, wire) {
+	if !doc.valid() || !previous.valid() || doc.FenceKind != previous.FenceKind || !bytes.Equal(doc.Ciphertext, wire) {
 		return false
+	}
+	if doc.FenceKind == fsPriorityDriveV2Fence {
+		return doc.OpaqueFence != previous.OpaqueFence
 	}
 	newTime, e1 := time.Parse(time.RFC3339Nano, doc.UpdateTime)
 	oldTime, e2 := time.Parse(time.RFC3339Nano, previous.UpdateTime)
@@ -366,7 +377,7 @@ func (s *fsHybridPriorityStore) writePrepared(previous fsPriorityDocument, wire 
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithTimeout(s.ctx, s.cfg.OperationTimeout)
-		doc, err := s.carrier.WriteOwn(ctx, previous.UpdateTime, wire)
+		doc, err := s.carrier.WriteOwn(ctx, previous.fence(), wire)
 		cancel()
 		if err == nil {
 			if !fsHybridDocumentAfter(doc, previous, wire) {
@@ -400,7 +411,7 @@ func (s *fsHybridPriorityStore) writePrepared(previous fsPriorityDocument, wire 
 				s.mu.Unlock()
 				return readback, nil
 			}
-			if !readback.valid() || readback.UpdateTime != previous.UpdateTime || !bytes.Equal(readback.Ciphertext, previous.Ciphertext) {
+			if !readback.sameFence(previous) || !bytes.Equal(readback.Ciphertext, previous.Ciphertext) {
 				return fsPriorityDocument{}, errFSHybridIntegrity
 			}
 		}
