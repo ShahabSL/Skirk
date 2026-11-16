@@ -31,8 +31,10 @@ real persistent TCP workload. Its initial comparison is against synchronous
 slots, however; it cannot be presented as a win over default mux or `main`.
 The completed frozen-binary comparisons keep those controls separate. Against
 clean `main`, the short mixed tests improved text latency while slightly
-reducing file rate and increasing estimated units. Longer and multi-client
-tests have not established a reliable joint win.
+reducing file rate and increasing estimated units. Earlier longer and
+multi-client tests did not establish a reliable joint win. The later complete
+burst-recovery cohort was positive in a small sample, with an error and
+estimated-unit cost.
 
 A different priority carrier, REST Pub/Sub through the selected Google front,
 also works. Its full SOCKS trial delivered twenty text responses and a 16 MiB
@@ -106,6 +108,36 @@ observed; it has no completed file or full-workload p95. There is no balanced
 candidate median. All eight prefixes were empty immediately and after 31 s;
 34 mux files and two slot files were removed.
 [All arms and lifetime strata](sustained-read-upload-recovery-2026-11-15.md).
+
+The separately labelled burst-recovery cohort completed four exact 100 MiB
+downloads and 400 scheduled echoes in candidate/main/main/candidate order.
+The candidate's two-arm descriptive medians were 25.484 versus 19.686 Mb/s
+file goodput and 9.016 versus 20.545 seconds scheduled full-echo p95. Its
+estimated API units were 14.40% higher and its first arm recorded six real
+RPC errors, compared with zero in both controls. Both candidate arms continued
+delivering messages after finite metadata-slot retirement. The controls varied
+widely; two arms per side do not establish a general winner. The preceding
+strict and v1/v2 incomplete or guard-stopped cohorts remain separate.
+[Complete burst report](sustained-end-to-end-burst-recovery-2026-11-15.md).
+
+A guarded Drive v3 metadata write-fence probe returned no ETag response header
+for either projected fields or explicit `fields=*`. An impossible `If-Match`
+on PATCH returned 200 and changed the exact owned ciphertext. This tested v3
+path therefore supplied no observed server CAS; valid/stale provider-tag
+phases could not run. Both test-file attempts were deleted and verified absent
+immediately and after 31 seconds. The first attempt stopped on a corrected
+fixture projection error and is not counted as a CAS negative. A distinct v2
+ETag hypothesis is being tested separately.
+[ETag report](drive-metadata-etag-cas-2026-11-15.md).
+
+The Firestore-priority/Drive-bulk research prototype passed an offline real
+TLS/SOCKS/mux integration: independent random 16 MiB GET and POST, 40
+distinct overlapping text echoes, lost-watch fallback, reconnect, processing
+receipts, both OPEN arrival orders, and joined exact cleanup. Its fake carrier
+timings are not Google measurements. The owner-token/IAM setup and finite
+Firestore free quotas keep it experimental; a controlled live hybrid versus
+same-binary Drive comparison is required before any performance claim.
+[Design and proof](../../experiments/firestore-hybrid/README.md).
 
 The prior exact-default versus clean-main recheck also remains visible:
 request p95 6.015 → 5.690 s, scheduled p95 13.597 → 16.247 s and file
