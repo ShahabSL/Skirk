@@ -2521,7 +2521,7 @@ func TestMuxWriterClosesBeforeBestEffortRSTWhenUrgentQueueBlocked(t *testing.T) 
 	stream := mux.registerStream(42, "client-a", "run-a", left)
 	mux.startWriter(stream)
 
-	stream.inbound <- []byte("x")
+	prefillMuxInbound(t, stream, []byte("x"))
 	select {
 	case <-stream.done:
 	case <-time.After(250 * time.Millisecond):
@@ -4044,7 +4044,7 @@ func TestNormalMuxSchedulerPausesOnInboundBacklog(t *testing.T) {
 	stream := mux.registerStream(7, "client-a", "run-a", nil)
 	key := stream.key()
 	for i := 0; i < muxStreamInboundPause; i++ {
-		stream.inbound <- []byte("x")
+		prefillMuxInbound(t, stream, []byte("x"))
 	}
 
 	if !mux.enqueueNormalMuxObject(ctx, muxObjectMeta{ClientID: key.ClientID, RunID: key.RunID, StreamID: key.StreamID, Seq: 1}) {
@@ -5890,7 +5890,7 @@ func TestNormalReceivePausedCountsInboundBacklog(t *testing.T) {
 	mux := &driveMux{t: &Tunnel{}}
 	stream := mux.registerStream(1, "client-a", "run-a", nil)
 	for i := 0; i < muxStreamInboundPause; i++ {
-		stream.inbound <- []byte("x")
+		prefillMuxInbound(t, stream, []byte("x"))
 	}
 	if !normalReceivePausedForTest(mux, stream.key()) {
 		t.Fatal("normal receive should pause when inbound writer backlog reaches threshold")

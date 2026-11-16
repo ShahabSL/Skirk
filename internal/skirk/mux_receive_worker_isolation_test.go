@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+func prefillMuxInbound(t *testing.T, stream *muxStream, data []byte) {
+	t.Helper()
+	stream.deliverMu.Lock()
+	ok := stream.queueInboundLocked(data)
+	stream.deliverMu.Unlock()
+	if !ok {
+		t.Fatal("test fixture could not enqueue inbound payload")
+	}
+}
+
 // A stalled local socket can fill a stream's inbound channel. The shared
 // priority workers must still deliver an unrelated stream's authenticated
 // packet without waiting for that socket to become readable.
@@ -42,7 +52,7 @@ func TestMuxPriorityReceiveWorkersDoNotBlockBehindStalledLocalReaders(t *testing
 	}
 	for _, stream := range streams[:2] {
 		for range cap(stream.inbound) {
-			stream.inbound <- []byte("stalled")
+			prefillMuxInbound(t, stream, []byte("stalled"))
 		}
 	}
 
@@ -95,7 +105,7 @@ func TestMuxDeferredInboundPreservesOrderAndPausesNormalScheduling(t *testing.T)
 	stream := mux.registerStream(7, "client", "run", nil)
 	defer stream.close()
 	for i := range cap(stream.inbound) {
-		stream.inbound <- []byte{byte(i)}
+		prefillMuxInbound(t, stream, []byte{byte(i)})
 	}
 	for i := uint64(1); i <= 5; i++ {
 		stream.acceptFrame(context.Background(), muxFrame{
@@ -142,7 +152,7 @@ func TestMuxDeferredInboundOverflowClosesOnlyStalledStream(t *testing.T) {
 	defer stalled.close()
 	defer live.close()
 	for range cap(stalled.inbound) {
-		stalled.inbound <- []byte("filled")
+		prefillMuxInbound(t, stalled, []byte("filled"))
 	}
 	payload := make([]byte, 2<<20)
 	for seq := uint64(1); seq <= 5; seq++ {
@@ -183,7 +193,7 @@ func TestMuxDeferredInboundGlobalByteBudgetAndReclaim(t *testing.T) {
 	registerStalled := func(id uint64) *muxStream {
 		stream := mux.registerStream(id, "client", "run", nil)
 		for range cap(stream.inbound) {
-			stream.inbound <- []byte("filled")
+			prefillMuxInbound(t, stream, []byte("filled"))
 		}
 		return stream
 	}
@@ -252,7 +262,7 @@ func TestMuxDeferredInboundGlobalFrameBudget(t *testing.T) {
 	for id := uint64(1); id <= 16; id++ {
 		stream := mux.registerStream(id, "client", "run", nil)
 		for range cap(stream.inbound) {
-			stream.inbound <- []byte("filled")
+			prefillMuxInbound(t, stream, []byte("filled"))
 		}
 		for seq := uint64(1); seq <= muxStreamDeferredFrames; seq++ {
 			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: []byte{1}})
@@ -265,7 +275,7 @@ func TestMuxDeferredInboundGlobalFrameBudget(t *testing.T) {
 	}
 	overflow := mux.registerStream(17, "client", "run", nil)
 	for range cap(overflow.inbound) {
-		overflow.inbound <- []byte("filled")
+		prefillMuxInbound(t, overflow, []byte("filled"))
 	}
 	overflow.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: overflow.id, Seq: 1, Payload: []byte{1}})
 	select {
@@ -284,7 +294,7 @@ func TestMuxDeferredInboundBudgetConcurrentCloseAndDelivery(t *testing.T) {
 		stream := mux.registerStream(uint64(i+1), "client", "run", nil)
 		streams[i] = stream
 		for range cap(stream.inbound) {
-			stream.inbound <- []byte("filled")
+			prefillMuxInbound(t, stream, []byte("filled"))
 		}
 		progress := make(chan struct{})
 		workers.Add(1)
@@ -339,7 +349,7 @@ func TestMuxDeferredInboundDrainsToLocalSocketInFrameOrder(t *testing.T) {
 	want := make([]byte, 0, muxStreamInbound+300)
 	for i := range cap(stream.inbound) {
 		value := byte(i)
-		stream.inbound <- []byte{value}
+		prefillMuxInbound(t, stream, []byte{value})
 		want = append(want, value)
 	}
 	mux.startWriter(stream)
@@ -363,6 +373,199 @@ func TestMuxDeferredInboundDrainsToLocalSocketInFrameOrder(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("local socket byte %d = %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func inboundBudgetSnapshot(m *driveMux) (int, int, int) {
+	m.inboundBudgetMu.Lock()
+	defer m.inboundBudgetMu.Unlock()
+	return m.inboundBudgetFrames, m.inboundBudgetBytes, len(m.inboundByStream)
+}
+
+func TestMuxInboundGlobalByteBudgetDefersNewStreamAndReclaims(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+	defer mux.closeAll()
+	payload := make([]byte, 1<<20)
+	streams := make([]*muxStream, 8)
+	for i := range streams {
+		stream := mux.registerStream(uint64(i+1), "client", "run", nil)
+		streams[i] = stream
+		for seq := uint64(1); seq <= 8; seq++ {
+			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: payload})
+		}
+		if got := stream.deferredInboundCount.Load(); got != 0 {
+			t.Fatalf("stream %d deferred before global channel cap: %d", i, got)
+		}
+	}
+	frames, bytes, owners := inboundBudgetSnapshot(mux)
+	if frames != 64 || bytes != muxGlobalInboundBytes || owners != 8 {
+		t.Fatalf("channel budget = %d frames/%d bytes/%d owners", frames, bytes, owners)
+	}
+
+	// The global channel cap cannot let one group of stalled local sockets
+	// block an unrelated stream while the separate deferred reserve is free.
+	live := mux.registerStream(9, "client", "run", nil)
+	live.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: live.id, Seq: 1, Payload: []byte("live")})
+	select {
+	case <-live.done:
+		t.Fatal("global inbound cap closed an unrelated stream with deferred headroom")
+	default:
+	}
+	if got := live.deferredInboundCount.Load(); got != 1 {
+		t.Fatalf("new stream deferred frames = %d, want 1", got)
+	}
+	if data, ok := live.nextInbound(); !ok || string(data) != "live" {
+		t.Fatalf("deferred live payload = %q, ok=%t", data, ok)
+	}
+
+	streams[0].close()
+	frames, bytes, owners = inboundBudgetSnapshot(mux)
+	if frames != 56 || bytes != 56<<20 || owners != 7 {
+		t.Fatalf("budget after one close = %d frames/%d bytes/%d owners", frames, bytes, owners)
+	}
+	replacement := mux.registerStream(10, "client", "run", nil)
+	replacement.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: replacement.id, Seq: 1, Payload: payload})
+	if len(replacement.inbound) != 1 {
+		t.Fatal("reclaimed channel budget was not reusable")
+	}
+	mux.closeAll()
+	frames, bytes, owners = inboundBudgetSnapshot(mux)
+	if frames != 0 || bytes != 0 || owners != 0 {
+		t.Fatalf("budget leaked after closeAll: %d frames/%d bytes/%d owners", frames, bytes, owners)
+	}
+}
+
+func TestMuxInboundGlobalFrameBudgetDefersWithoutClosingLiveStream(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+	defer mux.closeAll()
+	for id := uint64(1); id <= muxGlobalInboundFrames/muxStreamInbound; id++ {
+		stream := mux.registerStream(id, "client", "run", nil)
+		for seq := uint64(1); seq <= muxStreamInbound; seq++ {
+			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: id, Seq: seq, Payload: []byte{1}})
+		}
+		if got := stream.deferredInboundCount.Load(); got != 0 {
+			t.Fatalf("stream %d deferred before frame cap: %d", id, got)
+		}
+	}
+	frames, bytes, _ := inboundBudgetSnapshot(mux)
+	if frames != muxGlobalInboundFrames || bytes != muxGlobalInboundFrames {
+		t.Fatalf("frame cap = %d frames/%d bytes", frames, bytes)
+	}
+	live := mux.registerStream(129, "client", "run", nil)
+	live.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: live.id, Seq: 1, Payload: []byte("hello")})
+	if data, ok := live.nextInbound(); !ok || string(data) != "hello" {
+		t.Fatalf("frame-cap fallback payload = %q, ok=%t", data, ok)
+	}
+	select {
+	case <-live.done:
+		t.Fatal("frame budget closed an unrelated stream")
+	default:
+	}
+}
+
+func TestMuxInboundBudgetTracksQueuedDataAndFIN(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+	defer mux.closeAll()
+	stream := mux.registerStream(1, "client", "run", nil)
+	prefillMuxInbound(t, stream, []byte("test-preload"))
+	stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: 1, Payload: []byte("tracked")})
+	stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameFIN, StreamID: stream.id, Seq: 2})
+	frames, bytes, _ := inboundBudgetSnapshot(mux)
+	if frames != 3 || bytes != len("test-preload")+len("tracked") {
+		t.Fatalf("tracked budget before drain = %d frames/%d bytes", frames, bytes)
+	}
+	for _, want := range []string{"test-preload", "tracked"} {
+		data, ok := stream.nextInbound()
+		if !ok || string(data) != want {
+			t.Fatalf("inbound order = %q, want %q, ok=%t", data, want, ok)
+		}
+	}
+	if data, ok := stream.nextInbound(); !ok || data != nil {
+		t.Fatalf("FIN = %v, ok=%t", data, ok)
+	}
+	frames, bytes, _ = inboundBudgetSnapshot(mux)
+	if frames != 0 || bytes != 0 {
+		t.Fatalf("tracked budget after drain = %d frames/%d bytes", frames, bytes)
+	}
+}
+
+func TestMuxInboundBudgetConcurrentCloseAndDelivery(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+	defer mux.closeAll()
+	var workers sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		stream := mux.registerStream(uint64(i+1), "client", "run", nil)
+		ready := make(chan struct{})
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			for seq := uint64(1); seq <= 100; seq++ {
+				stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: make([]byte, 4096)})
+				if seq == 32 {
+					close(ready)
+				}
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			<-ready
+			for j := 0; j < 20; j++ {
+				if _, ok := stream.nextInbound(); !ok {
+					break
+				}
+			}
+			stream.close()
+		}()
+	}
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent close/delivery did not finish")
+	}
+	mux.closeAll()
+	frames, bytes, owners := inboundBudgetSnapshot(mux)
+	if frames != 0 || bytes != 0 || owners != 0 {
+		t.Fatalf("concurrent close leaked channel budget: %d frames/%d bytes/%d owners", frames, bytes, owners)
+	}
+}
+
+func TestMuxInboundBudgetBlockedReaderCloseRace(t *testing.T) {
+	for run := 0; run < 100; run++ {
+		mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+		stream := mux.registerStream(1, "client", "run", nil)
+		started := make(chan struct{})
+		readerDone := make(chan struct{})
+		go func() {
+			close(started)
+			_, _ = stream.nextInbound()
+			close(readerDone)
+		}()
+		<-started
+		// No payload exists when nextInbound starts, so it normally enters
+		// the select outside deliverMu. Race publication against close and
+		// require both paths to converge to an empty shared budget.
+		var writers sync.WaitGroup
+		writers.Add(2)
+		go func() {
+			defer writers.Done()
+			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: 1, Seq: 1, Payload: []byte("raced")})
+		}()
+		go func() {
+			defer writers.Done()
+			stream.close()
+		}()
+		writers.Wait()
+		select {
+		case <-readerDone:
+		case <-time.After(time.Second):
+			t.Fatal("blocked nextInbound did not wake on close")
+		}
+		frames, bytes, owners := inboundBudgetSnapshot(mux)
+		if frames != 0 || bytes != 0 || owners != 0 {
+			t.Fatalf("run %d leaked budget: %d frames/%d bytes/%d owners", run, frames, bytes, owners)
 		}
 	}
 }
