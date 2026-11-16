@@ -97,7 +97,7 @@ func (e *GoogleAPIError) IsStorageQuotaExceeded() bool {
 	if e == nil {
 		return false
 	}
-	return strings.EqualFold(e.Reason, "storageQuotaExceeded")
+	return normalizeGoogleErrorReason(e.Reason) == "storagequotaexceeded"
 }
 
 type GoogleHTTPClient struct {

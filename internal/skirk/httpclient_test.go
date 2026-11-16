@@ -22,6 +22,31 @@ import (
 	"golang.org/x/net/http2"
 )
 
+func TestGoogleStructuredErrorReasonClassifications(t *testing.T) {
+	notFound := require2xx(&HTTPResult{
+		Status: http.StatusNotFound,
+		Body:   []byte(`{"error":{"status":"NOT_FOUND"}}`),
+	}, "download")
+	if !isDriveNotFound(notFound) {
+		t.Fatalf("structured Drive 404 was not recognized: %v", notFound)
+	}
+	storageFull := require2xx(&HTTPResult{
+		Status: http.StatusForbidden,
+		Body: []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","details":[` +
+			`{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"STORAGE_QUOTA_EXCEEDED"}]}}`),
+	}, "upload")
+	if !isDriveStorageQuotaExceeded(storageFull) {
+		t.Fatalf("structured storage quota 403 was not recognized: %v", storageFull)
+	}
+	permissionDenied := require2xx(&HTTPResult{
+		Status: http.StatusForbidden,
+		Body:   []byte(`{"error":{"status":"PERMISSION_DENIED"}}`),
+	}, "upload")
+	if isDriveNotFound(permissionDenied) || isDriveStorageQuotaExceeded(permissionDenied) {
+		t.Fatalf("permission error misclassified: %v", permissionDenied)
+	}
+}
+
 func TestHTTPDiagnosticTimingOmitsCredentialsAndRequestDetails(t *testing.T) {
 	t.Setenv("SKIRK_HTTP_TRACE", "1")
 	var output bytes.Buffer

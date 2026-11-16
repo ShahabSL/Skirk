@@ -2348,7 +2348,8 @@ func isDriveStorageQuotaExceeded(err error) bool {
 
 func isDriveNotFound(err error) bool {
 	var googleErr *GoogleAPIError
-	return errors.As(err, &googleErr) && strings.EqualFold(strings.TrimSpace(googleErr.Reason), "notFound")
+	return errors.As(err, &googleErr) &&
+		(googleErr.Status == http.StatusNotFound || normalizeGoogleErrorReason(googleErr.Reason) == "notfound")
 }
 
 func (l *muxLane) receiveUploadBatch(ctx context.Context, priorityOnly bool, preferNormal bool) ([]muxFrame, bool) {
