@@ -42,7 +42,7 @@ func fsHybridLiveBeginCohort(settings fsHybridLiveSettings) (*fsHybridLiveCohort
 	matched := false
 	seen := make(map[string]bool)
 	for _, arm := range campaign.Arms {
-		if arm.ArmID == "" || len(arm.ArmID) > 64 || !isSafeObjectSegment(arm.ArmID) || seen[arm.ArmID] || arm.Mode != "drive" && arm.Mode != "hybrid" {
+		if len(arm.ArmID) < 3 || len(arm.ArmID) > 64 || !isSafeObjectSegment(arm.ArmID) || seen[arm.ArmID] || arm.Mode != "drive" && arm.Mode != "hybrid" {
 			return nil, errFSHybridBounds
 		}
 		seen[arm.ArmID] = true

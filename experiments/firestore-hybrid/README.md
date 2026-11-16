@@ -179,8 +179,8 @@ Current component evidence (2026-11-15; not a live transport result):
   dispatched once. This is a counter-controlled offline proof, not a latency
   benchmark.
 - The actual owned TLS/SOCKS proof passed with independent random 16 MiB GET and
-  POST, 40 text echoes during held bulk requests, a real physical normal object
-  larger than 64 KiB, notification loss/fallback and watch reconnect. Both OPEN
+  POST, 40 text echoes during held bulk requests, real physical normal objects,
+  notification loss/fallback and watch reconnect. Both OPEN
   arrival orders passed after explicitly clearing the core's closed/seen caches,
   with one dial/initial write and no second enqueue. The focused proof passed
   twice under the race detector in 17.167 seconds; combined hybrid tests passed

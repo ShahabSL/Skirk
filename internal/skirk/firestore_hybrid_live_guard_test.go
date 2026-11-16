@@ -88,7 +88,7 @@ func fsHybridLoadLiveSettings(dir string) (fsHybridLiveSettings, error) {
 	if s.Mode != "hybrid" && s.Mode != "drive" {
 		return s, errFSHybridBounds
 	}
-	if len(s.ArmID) < 1 || len(s.ArmID) > 64 || !isSafeObjectSegment(s.ArmID) || !filepath.IsAbs(s.CampaignLedger) || !strings.Contains(filepath.Clean(s.CampaignLedger), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {
+	if len(s.ArmID) < 3 || len(s.ArmID) > 64 || !isSafeObjectSegment(s.ArmID) || !filepath.IsAbs(s.CampaignLedger) || !strings.Contains(filepath.Clean(s.CampaignLedger), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {
 		return s, errFSHybridBounds
 	}
 	sid, e1 := hex.DecodeString(s.SessionID)
