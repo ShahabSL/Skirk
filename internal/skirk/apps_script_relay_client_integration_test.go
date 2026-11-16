@@ -674,16 +674,43 @@ func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig, muxChunk in
 	want := sha256.Sum256(payload)
 	var uploadSideEffects atomic.Int64
 	bulkReached := make(chan string, 4)
+	// Verify text completes after 256 KiB of a bulk request has transferred
+	// while the rest remains pending. On fast CI hosts an ungated 16 MiB
+	// loopback POST can finish before the first text request is scheduled.
+	// This proves pending-transfer overlap, not fairness under continuous load.
+	bulkTextDone := map[string]chan struct{}{
+		"/download": make(chan struct{}),
+		"/upload":   make(chan struct{}),
+	}
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/download":
-			bulkReached <- r.URL.Path
 			w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
-			_, _ = w.Write(payload)
-		case "/upload":
+			if _, err := w.Write(payload[:256<<10]); err != nil {
+				return
+			}
 			bulkReached <- r.URL.Path
+			select {
+			case <-bulkTextDone[r.URL.Path]:
+			case <-f.ctx.Done():
+				return
+			}
+			_, _ = w.Write(payload[256<<10:])
+		case "/upload":
 			h := sha256.New()
-			n, e := io.Copy(h, io.LimitReader(r.Body, int64(len(payload))+1))
+			first, e := io.CopyN(h, r.Body, 256<<10)
+			if e != nil {
+				http.Error(w, "short upload", 400)
+				return
+			}
+			bulkReached <- r.URL.Path
+			select {
+			case <-bulkTextDone[r.URL.Path]:
+			case <-f.ctx.Done():
+				return
+			}
+			rest, e := io.Copy(h, io.LimitReader(r.Body, int64(len(payload))+1-first))
+			n := first + rest
 			if e != nil || n != int64(len(payload)) || !bytes.Equal(h.Sum(nil), want[:]) {
 				http.Error(w, "mismatch", 400)
 				return
@@ -765,6 +792,9 @@ func relayClientSOCKSExercise(t *testing.T, cfg relayResearchConfig, muxChunk in
 			}
 			if !finished.Load() {
 				completedWhileBulkActive++
+			}
+			if i == 0 {
+				close(bulkTextDone[path])
 			}
 		}
 		if err := <-bulkDone; err != nil {
