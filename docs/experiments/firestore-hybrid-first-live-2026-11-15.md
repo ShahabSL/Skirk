@@ -77,3 +77,8 @@ The next controlled run needs a proved native SDK cleanup reserve, a larger
 per-carrier watch allowance within the unchanged shared aggregate limit, and
 the same frozen binary for both modes. A failed arm stays failed even when its
 resources are cleaned.
+
+The subsequent adaptive Drive-only control attempts are recorded separately
+in [adaptive Drive live control](drive-adaptive-live-control-2026-11-16.md).
+They did not complete the full text workload either; neither converts these
+first two campaigns into a paired result.
