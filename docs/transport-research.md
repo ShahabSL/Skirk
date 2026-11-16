@@ -18,7 +18,10 @@ or pinned path. The target is:
 
 ## Current Answer
 
-Mux v4 is the best proven default under the current constraints:
+New kits default to Mux v5. It keeps V4's immutable-object batching and Drive
+API operations, but uses a separate namespace and a fresh generation-bound key
+after sender restart to avoid a reproduced key/nonce collision. The operating
+constraints remain:
 
 - one Google Drive mailbox;
 - current credential scope and setup model;
@@ -27,27 +30,28 @@ Mux v4 is the best proven default under the current constraints:
 - no inbound connectivity requirement for clients;
 - Google-fronted/pinned client API route when needed.
 
-That does not mean muxv4 is theoretically optimal forever. It means the tested
-alternatives have not beaten it on the workload that matters: normal browsing
-and media behavior while bulk downloads are active.
+Exact live V5 versus clean `main` V4 comparisons completed mixed file and
+short-message transfers, but the upload orders disagreed on which build was
+faster. V5's default is a correctness choice; no stable speed win or universal
+Drive limit has been established. See the [current comparison](experiments/current-v5-vs-main-live-2026-11-16.md)
+and [V5 migration guide](mux-v5-migration-2026-11-16.md).
 
-## Why Large muxv4-Only Gains Are Unlikely
+## What Current Mux Tuning Cannot Remove
 
-Mux v4 already spends most of its engineering budget on the two things that
-matter most for Drive:
+V4 and V5 both address two important Drive costs:
 
 1. reduce object count by coalescing many streams into a few lane objects;
 2. keep discovery simple by listing one direction prefix and downloading by
    file ID.
 
-Pushing muxv4 harder can still move the ceiling, but the expected gains are
-incremental because the carrier still requires whole-object upload, Drive
-visibility, prefix list, media download, and cleanup. Larger objects can improve
-bulk throughput, but they increase head-of-line delay and reassembly pressure.
-Smaller objects improve interactivity, but they add Drive calls and can collapse
-throughput.
+Further tuning can still improve results, but it cannot remove the carrier's
+whole-object upload, Drive visibility, prefix list, media download, and cleanup
+steps. Larger objects can improve bulk throughput while increasing head-of-line
+delay and reassembly pressure. Smaller objects can improve interactivity while
+adding Drive calls and reducing throughput. The size of any gain needs a
+controlled mixed-workload comparison.
 
-A "way above" result is more likely to require changing a core constraint:
+A larger gain might require changing a core constraint or the discovery path:
 
 - multiple independent Drive mailboxes or credentials;
 - a broader OAuth scope with separate visible data objects and appData control;
@@ -55,7 +59,7 @@ A "way above" result is more likely to require changing a core constraint:
 - a public webhook or inbound control plane;
 - a different storage provider with lower object visibility latency.
 
-Those are valid future product choices, but they are not muxv4-only tuning.
+These are research options, not proven product improvements.
 
 ## Rejected Protocol Shapes
 
