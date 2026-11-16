@@ -108,7 +108,14 @@ const (
 const (
 	muxStreamDeferredFrames = muxMaxFrames
 	muxStreamDeferredBytes  = 8 * 1024 * 1024
+	muxGlobalDeferredFrames = muxReceiveQueue
+	muxGlobalDeferredBytes  = 64 * 1024 * 1024
 )
+
+type muxDeferredBudget struct {
+	frames int
+	bytes  int
+}
 
 const (
 	muxPriorityRetryProbeLimit    = 4
@@ -382,6 +389,10 @@ type driveMux struct {
 	recvNormalActiveBytes       map[muxStreamKey]int
 	recvNormalSent              map[muxStreamKey]bool
 	recvGaps                    map[muxStreamKey]muxReceiveGapState
+	deferredBudgetMu            sync.Mutex
+	deferredByStream            map[*muxStream]muxDeferredBudget
+	deferredBudgetFrames        int
+	deferredBudgetBytes         int
 	cleanupQueue                chan cleanupTask
 	cleanupKick                 chan struct{}
 	cleanupOverflow             chan struct{}
@@ -1488,6 +1499,9 @@ func (s *muxStream) nextInbound() ([]byte, bool) {
 			}
 			s.deferredInboundBytes -= len(data)
 			s.deferredInboundCount.Add(-1)
+			if s.mux != nil {
+				s.mux.releaseDeferredBudget(s, len(data))
+			}
 			s.deliverMu.Unlock()
 			return data, true
 		}
@@ -1536,6 +1550,14 @@ func (s *muxStream) close() bool {
 			s.mux.dropInteractionWaiter(s)
 		}
 		close(s.done)
+		s.deliverMu.Lock()
+		s.deferredInbound = nil
+		s.deferredInboundBytes = 0
+		s.deferredInboundCount.Store(0)
+		if s.mux != nil {
+			s.mux.releaseAllDeferredBudget(s)
+		}
+		s.deliverMu.Unlock()
 		s.observeClose()
 		if s.mux != nil {
 			s.mux.unregisterStream(s)
@@ -5306,7 +5328,17 @@ func (s *muxStream) acceptFrame(ctx context.Context, frame muxFrame) {
 	}
 
 	s.deliverMu.Lock()
-	defer s.deliverMu.Unlock()
+	closeAfterDelivery := false
+	resetAfterDelivery := false
+	defer func() {
+		s.deliverMu.Unlock()
+		if closeAfterDelivery {
+			s.close()
+			if resetAfterDelivery && s.mux != nil {
+				s.mux.sendRSTBestEffort(ctx, s.key(), []byte("local_receiver_backpressure"))
+			}
+		}
+	}()
 
 	var ready []muxFrame
 	closeStream := false
@@ -5353,7 +5385,7 @@ func (s *muxStream) acceptFrame(ctx context.Context, frame muxFrame) {
 		if s.mux != nil && s.mux.t != nil && s.mux.t.Logger != nil {
 			s.mux.t.Logger.Printf("mux stream reassembly overflow role=%s stream=%016x pending_frames=%d pending_bytes=%d", s.mux.role, s.id, pendingFrames, pendingBytes)
 		}
-		s.close()
+		closeAfterDelivery = true
 		return
 	}
 
@@ -5376,10 +5408,8 @@ func (s *muxStream) acceptFrame(ctx context.Context, frame muxFrame) {
 			// A local socket that cannot consume the finite handoff fails only
 			// its own TCP stream. Shared Drive receive workers remain available
 			// to other streams. The sender gets a bounded best-effort RST.
-			s.close()
-			if s.mux != nil {
-				s.mux.sendRSTBestEffort(ctx, s.key(), []byte("local_receiver_backpressure"))
-			}
+			closeAfterDelivery = true
+			resetAfterDelivery = true
 			return
 		}
 		if next.Kind == muxFrameFIN {
@@ -5405,6 +5435,9 @@ func (s *muxStream) queueInboundLocked(data []byte) bool {
 	if len(s.deferredInbound) >= muxStreamDeferredFrames || s.deferredInboundBytes+len(data) > muxStreamDeferredBytes {
 		return false
 	}
+	if s.mux != nil && !s.mux.reserveDeferredBudget(s, len(data)) {
+		return false
+	}
 	s.deferredInbound = append(s.deferredInbound, data)
 	s.deferredInboundBytes += len(data)
 	s.deferredInboundCount.Add(1)
@@ -5413,6 +5446,59 @@ func (s *muxStream) queueInboundLocked(data []byte) bool {
 	default:
 	}
 	return true
+}
+
+// The normal receive queue's byte cap ends when an object is delivered. Keep
+// the additional per-stream deferred tails bounded across all streams too.
+// Calls from queueInboundLocked and nextInbound hold the stream's deliverMu.
+func (m *driveMux) reserveDeferredBudget(stream *muxStream, bytes int) bool {
+	m.deferredBudgetMu.Lock()
+	defer m.deferredBudgetMu.Unlock()
+	select {
+	case <-stream.done:
+		return false
+	default:
+	}
+	if m.deferredBudgetFrames >= muxGlobalDeferredFrames || m.deferredBudgetBytes+bytes > muxGlobalDeferredBytes {
+		return false
+	}
+	if m.deferredByStream == nil {
+		m.deferredByStream = make(map[*muxStream]muxDeferredBudget)
+	}
+	used := m.deferredByStream[stream]
+	used.frames++
+	used.bytes += bytes
+	m.deferredByStream[stream] = used
+	m.deferredBudgetFrames++
+	m.deferredBudgetBytes += bytes
+	return true
+}
+
+func (m *driveMux) releaseDeferredBudget(stream *muxStream, bytes int) {
+	m.deferredBudgetMu.Lock()
+	defer m.deferredBudgetMu.Unlock()
+	used := m.deferredByStream[stream]
+	if used.frames == 0 {
+		return
+	}
+	used.frames--
+	used.bytes -= bytes
+	m.deferredBudgetFrames--
+	m.deferredBudgetBytes -= bytes
+	if used.frames == 0 {
+		delete(m.deferredByStream, stream)
+	} else {
+		m.deferredByStream[stream] = used
+	}
+}
+
+func (m *driveMux) releaseAllDeferredBudget(stream *muxStream) {
+	m.deferredBudgetMu.Lock()
+	defer m.deferredBudgetMu.Unlock()
+	used := m.deferredByStream[stream]
+	delete(m.deferredByStream, stream)
+	m.deferredBudgetFrames -= used.frames
+	m.deferredBudgetBytes -= used.bytes
 }
 
 func (s *muxStream) reassemblyBacklog() (int, int) {

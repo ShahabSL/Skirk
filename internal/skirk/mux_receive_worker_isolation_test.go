@@ -124,6 +124,12 @@ func TestMuxDeferredInboundPreservesOrderAndPausesNormalScheduling(t *testing.T)
 	if got := stream.deferredInboundCount.Load(); got != 0 {
 		t.Fatalf("deferred frames after drain = %d", got)
 	}
+	mux.deferredBudgetMu.Lock()
+	frames, bytes := mux.deferredBudgetFrames, mux.deferredBudgetBytes
+	mux.deferredBudgetMu.Unlock()
+	if frames != 0 || bytes != 0 {
+		t.Fatalf("shared budget after drain = %d frames/%d bytes", frames, bytes)
+	}
 	if _, paused := normalReceivePauseStateForStream(stream); paused {
 		t.Fatal("normal receive stayed paused after handoff drained")
 	}
@@ -164,6 +170,162 @@ func TestMuxDeferredInboundOverflowClosesOnlyStalledStream(t *testing.T) {
 		}
 	default:
 		t.Fatal("unrelated stream stopped delivering after overflow")
+	}
+}
+
+func TestMuxDeferredInboundGlobalByteBudgetAndReclaim(t *testing.T) {
+	mux, err := newDriveMux(&Tunnel{Data: NewMemoryStore(), Secret: "deferred-budget", SessionID: [16]byte{1}, ClientID: "client", RunID: "run"}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.closeAll()
+	payload := make([]byte, 1<<20)
+	registerStalled := func(id uint64) *muxStream {
+		stream := mux.registerStream(id, "client", "run", nil)
+		for range cap(stream.inbound) {
+			stream.inbound <- []byte("filled")
+		}
+		return stream
+	}
+	streams := make([]*muxStream, 8)
+	for i := range streams {
+		stream := registerStalled(uint64(i + 1))
+		streams[i] = stream
+		for seq := uint64(1); seq <= 8; seq++ {
+			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: payload})
+		}
+		select {
+		case <-stream.done:
+			t.Fatalf("stream %d closed before the 64 MiB shared budget filled", i)
+		default:
+		}
+	}
+	mux.deferredBudgetMu.Lock()
+	bytes, frames := mux.deferredBudgetBytes, mux.deferredBudgetFrames
+	mux.deferredBudgetMu.Unlock()
+	if bytes != muxGlobalDeferredBytes || frames != 64 {
+		t.Fatalf("shared deferred usage = %d bytes/%d frames", bytes, frames)
+	}
+
+	overflow := registerStalled(9)
+	overflow.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: overflow.id, Seq: 1, Payload: payload})
+	select {
+	case <-overflow.done:
+	default:
+		t.Fatal("ninth stalled stream exceeded the shared deferred byte budget")
+	}
+	live := mux.registerStream(11, "client", "run", nil)
+	live.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: live.id, Seq: 1, Payload: []byte("live")})
+	select {
+	case data := <-live.inbound:
+		if string(data) != "live" {
+			t.Fatalf("unrelated live stream payload = %q", data)
+		}
+	default:
+		t.Fatal("global deferred budget blocked unrelated local delivery")
+	}
+	streams[0].close()
+	replacement := registerStalled(10)
+	for seq := uint64(1); seq <= 8; seq++ {
+		replacement.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: replacement.id, Seq: seq, Payload: payload})
+	}
+	select {
+	case <-replacement.done:
+		t.Fatal("closing one stalled stream did not return its shared budget")
+	default:
+	}
+	mux.closeAll()
+	mux.deferredBudgetMu.Lock()
+	bytes, frames, streamCount := mux.deferredBudgetBytes, mux.deferredBudgetFrames, len(mux.deferredByStream)
+	mux.deferredBudgetMu.Unlock()
+	if bytes != 0 || frames != 0 || streamCount != 0 {
+		t.Fatalf("shared deferred budget leaked after close: %d bytes/%d frames/%d streams", bytes, frames, streamCount)
+	}
+}
+
+func TestMuxDeferredInboundGlobalFrameBudget(t *testing.T) {
+	mux, err := newDriveMux(&Tunnel{Data: NewMemoryStore(), Secret: "deferred-frames", SessionID: [16]byte{2}, ClientID: "client", RunID: "run"}, "client", DirectionUp, DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.closeAll()
+	for id := uint64(1); id <= 16; id++ {
+		stream := mux.registerStream(id, "client", "run", nil)
+		for range cap(stream.inbound) {
+			stream.inbound <- []byte("filled")
+		}
+		for seq := uint64(1); seq <= muxStreamDeferredFrames; seq++ {
+			stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: []byte{1}})
+		}
+		select {
+		case <-stream.done:
+			t.Fatalf("stream %d closed before shared frame budget filled", id)
+		default:
+		}
+	}
+	overflow := mux.registerStream(17, "client", "run", nil)
+	for range cap(overflow.inbound) {
+		overflow.inbound <- []byte("filled")
+	}
+	overflow.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: overflow.id, Seq: 1, Payload: []byte{1}})
+	select {
+	case <-overflow.done:
+	default:
+		t.Fatal("seventeenth stalled stream exceeded the shared deferred frame budget")
+	}
+}
+
+func TestMuxDeferredInboundBudgetConcurrentCloseAndDelivery(t *testing.T) {
+	mux := &driveMux{t: &Tunnel{}, streams: map[muxStreamKey]*muxStream{}, pending: map[muxStreamKey][]muxFrame{}}
+	defer mux.closeAll()
+	streams := make([]*muxStream, 32)
+	var workers sync.WaitGroup
+	for i := range streams {
+		stream := mux.registerStream(uint64(i+1), "client", "run", nil)
+		streams[i] = stream
+		for range cap(stream.inbound) {
+			stream.inbound <- []byte("filled")
+		}
+		progress := make(chan struct{})
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for seq := uint64(1); seq <= muxStreamDeferredFrames; seq++ {
+				stream.acceptFrame(context.Background(), muxFrame{Kind: muxFrameData, StreamID: stream.id, Seq: seq, Payload: []byte{1}})
+				if seq == 16 {
+					close(progress)
+				}
+			}
+		}()
+		if i%2 == 0 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				<-progress
+				stream.close()
+			}()
+		}
+	}
+	workers.Wait()
+	frames, bytes := 0, 0
+	for _, stream := range streams {
+		stream.deliverMu.Lock()
+		frames += len(stream.deferredInbound)
+		bytes += stream.deferredInboundBytes
+		stream.deliverMu.Unlock()
+	}
+	mux.deferredBudgetMu.Lock()
+	budgetFrames, budgetBytes := mux.deferredBudgetFrames, mux.deferredBudgetBytes
+	mux.deferredBudgetMu.Unlock()
+	if frames != budgetFrames || bytes != budgetBytes || frames > muxGlobalDeferredFrames || bytes > muxGlobalDeferredBytes {
+		t.Fatalf("shared budget %d frames/%d bytes, stream totals %d frames/%d bytes", budgetFrames, budgetBytes, frames, bytes)
+	}
+	mux.closeAll()
+	mux.deferredBudgetMu.Lock()
+	budgetFrames, budgetBytes, streamCount := mux.deferredBudgetFrames, mux.deferredBudgetBytes, len(mux.deferredByStream)
+	mux.deferredBudgetMu.Unlock()
+	if budgetFrames != 0 || budgetBytes != 0 || streamCount != 0 {
+		t.Fatalf("concurrent close leaked budget: %d frames/%d bytes/%d streams", budgetFrames, budgetBytes, streamCount)
 	}
 }
 
