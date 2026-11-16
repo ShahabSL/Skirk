@@ -14,6 +14,10 @@ func driveV2PriorityStores(t *testing.T, traces ...*fsHybridPhaseTrace) (*fsHybr
 }
 
 func driveV2PriorityStoresWindow(t *testing.T, window int, traces ...*fsHybridPhaseTrace) (*fsHybridPriorityStore, *fsHybridPriorityStore, *driveV2PriorityFake, *driveV2PriorityCarrier, *driveV2PriorityCarrier, *MemoryStore) {
+	return driveV2PriorityStoresVersion(t, window, false, traces...)
+}
+
+func driveV2PriorityStoresVersion(t *testing.T, window int, selective bool, traces ...*fsHybridPhaseTrace) (*fsHybridPriorityStore, *fsHybridPriorityStore, *driveV2PriorityFake, *driveV2PriorityCarrier, *driveV2PriorityCarrier, *MemoryStore) {
 	t.Helper()
 	if len(traces) > 1 {
 		t.Fatal("one shared trace at most")
@@ -34,7 +38,7 @@ func driveV2PriorityStoresWindow(t *testing.T, window int, traces ...*fsHybridPh
 		t.Fatal(err)
 	}
 	base := NewMemoryStore()
-	cfg := fsHybridStoreConfig{Secret: "public-drive-v2-fixture", Session: [16]byte{1}, Epoch: [16]byte{2}, Direction: DirectionUp, ClientID: "client", RunID: "run", FallbackAfter: time.Second, ACKDelay: time.Millisecond, DiscoveryInterval: time.Millisecond, OperationTimeout: time.Second, Duration: 20 * time.Second, MaxSnapshotBytes: driveV2PriorityCipherMax, InlinePerStream: window}
+	cfg := fsHybridStoreConfig{Secret: "public-drive-v2-fixture", Session: [16]byte{1}, Epoch: [16]byte{2}, Direction: DirectionUp, ClientID: "client", RunID: "run", FallbackAfter: time.Second, ACKDelay: time.Millisecond, DiscoveryInterval: time.Millisecond, OperationTimeout: time.Second, Duration: 20 * time.Second, MaxSnapshotBytes: driveV2PriorityCipherMax, InlinePerStream: window, SelectiveReceipts: selective}
 	if len(traces) == 1 {
 		cfg.PhaseTrace = traces[0]
 	}

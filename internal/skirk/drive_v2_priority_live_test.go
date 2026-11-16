@@ -167,7 +167,9 @@ func (r *fsHybridLiveRun) setupDriveV2(client, exit *DriveStore, cc, ec *Config,
 			FallbackAfter: 2 * time.Second, OperationTimeout: 10 * time.Second,
 			ACKDelay: 10 * time.Millisecond, Duration: fsHybridLiveDuration,
 			DiscoveryInterval: time.Second, PhaseTrace: r.v2PhaseTrace,
-			InlinePerStream: r.settings.PriorityStreamWindow,
+			MaxSnapshotBytes:  driveV2PriorityCipherMax,
+			InlinePerStream:   r.settings.PriorityStreamWindow,
+			SelectiveReceipts: r.settings.PrioritySelectiveReceipts,
 		})
 		if err != nil {
 			return err

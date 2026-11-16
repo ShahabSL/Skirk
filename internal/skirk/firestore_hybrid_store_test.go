@@ -21,6 +21,7 @@ type fsHybridStoreConfig struct {
 	FallbackAfter, OperationTimeout, ACKDelay, Duration, DiscoveryInterval time.Duration
 	PhaseTrace                                                             *fsHybridPhaseTrace
 	InlinePerStream                                                        int
+	SelectiveReceipts                                                      bool
 }
 
 func (c fsHybridStoreConfig) normalized() (fsHybridStoreConfig, error) {
@@ -124,6 +125,15 @@ func newFSHybridPriorityStore(parent context.Context, base BlobStore, carrier fs
 		return nil, err
 	}
 	out.wireMax, in.wireMax = cfg.MaxSnapshotBytes, cfg.MaxSnapshotBytes
+	if cfg.SelectiveReceipts {
+		if cfg.MaxSnapshotBytes != driveV2PriorityCipherMax {
+			return nil, errFSHybridBounds
+		}
+		if _, ok := carrier.(*driveV2PriorityCarrier); !ok {
+			return nil, errFSHybridBounds
+		}
+		out.selective, in.selective = true, true
+	}
 	ctx, cancel := context.WithTimeout(parent, cfg.Duration)
 	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{})}
 	s.state.outPerStreamMax = cfg.InlinePerStream

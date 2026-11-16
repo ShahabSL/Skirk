@@ -821,6 +821,7 @@ func runPinnedHybridLiveArm(t *testing.T, dir string, settings fsHybridLiveSetti
 			window = 4
 		}
 		report["priority_stream_window"] = window
+		report["priority_selective_receipts"] = settings.PrioritySelectiveReceipts
 	}
 	if err = fsHybridLiveExclusiveJSON(filepath.Join(dir, "summary.json"), report); err != nil {
 		runErr = errors.Join(runErr, err)

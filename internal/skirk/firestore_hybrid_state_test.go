@@ -55,6 +55,7 @@ type fsHybridState struct {
 	outBytes        uint64
 	offered         uint64
 	acked           uint64
+	peerDone        [fsHybridReceiptBytes]byte
 	outByStream     map[uint64]int
 	outPerStreamMax int
 	outRetained     int
@@ -67,6 +68,7 @@ type fsHybridState struct {
 	rxHigh           uint64
 	rxProcessed      uint64
 	rxProcessedBytes uint64
+	rxDone           [fsHybridReceiptBytes]byte
 	rxBytes          int
 	peerRevision     uint64
 	peerCreditSeq    uint64
@@ -78,6 +80,14 @@ type fsHybridState struct {
 
 func newFSHybridState(outgoing, incoming *fsHybridCodec) *fsHybridState {
 	return &fsHybridState{outgoing: outgoing, incoming: incoming, outNames: make(map[string]*fsHybridOutbound), outCipher: make(map[[32]byte]*fsHybridOutbound), outByStream: make(map[uint64]int), outPerStreamMax: 4, rxNames: make(map[string]*fsHybridInbound), rxIDs: make(map[string]*fsHybridInbound), rxSeq: make(map[uint64]*fsHybridInbound), rxCipher: make(map[[32]byte]*fsHybridInbound), rxPhysical: make(map[string]*fsHybridInbound)}
+}
+
+func (s *fsHybridState) snapshot(revision, processed, creditSeq, creditBytes uint64, records []fsHybridRecord) fsHybridSnapshot {
+	snapshot := s.outgoing.snapshot(revision, processed, creditSeq, creditBytes, records)
+	if s.outgoing.selective {
+		snapshot.SelectiveDone = bytes.Clone(s.rxDone[:])
+	}
+	return snapshot
 }
 
 func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time) (*fsHybridOutbound, bool, error) {
@@ -142,8 +152,8 @@ func (s *fsHybridState) enqueue(r *fsHybridOutbound) bool {
 	records = append(records, record)
 	// Check exact encoding size without generating a second ciphertext or
 	// consuming a revision. Only prepare creates the cached retry identity.
-	raw, err := json.Marshal(s.outgoing.snapshot(s.revision+1, s.rxProcessed, s.grantedSeq, s.grantedBytes, records))
-	if err != nil || len(raw)+len(fsHybridMagic)+s.outgoing.aead.NonceSize()+s.outgoing.aead.Overhead() > s.outgoing.wireLimit() {
+	raw, err := json.Marshal(s.snapshot(s.revision+1, s.rxProcessed, s.grantedSeq, s.grantedBytes, records))
+	if err != nil || len(raw)+len(s.outgoing.magic())+s.outgoing.aead.NonceSize()+s.outgoing.aead.Overhead() > s.outgoing.wireLimit() {
 		return false
 	}
 	r.record = record
@@ -156,6 +166,9 @@ func (s *fsHybridState) enqueue(r *fsHybridOutbound) bool {
 }
 
 func (s *fsHybridState) credit() (uint64, uint64) {
+	if s.outgoing.selective {
+		return s.selectiveCredit()
+	}
 	seq := min(uint64(fsHybridClaimsMax), s.rxProcessed+fsHybridQueueMax)
 	// Reserve lifetime claims for every sequence already promised but unseen.
 	outstanding := s.grantedSeq - s.rxHigh
@@ -177,6 +190,42 @@ func (s *fsHybridState) credit() (uint64, uint64) {
 	return seq, byteCredit
 }
 
+func (s *fsHybridState) selectiveCredit() (uint64, uint64) {
+	// Already promised identities and bytes remain reserved even when their
+	// snapshot has not yet reached this reader. Completed identities free only
+	// occupancy; their lifetime tombstones remain in rxSeq and rxNames.
+	outstanding := int(s.grantedSeq - s.rxHigh)
+	active, activeBytes := 0, uint64(0)
+	for seq := s.rxProcessed + 1; seq <= s.rxHigh; seq++ {
+		entry := s.rxSeq[seq]
+		if entry != nil && !entry.done {
+			active++
+			activeBytes += fsHybridEntryCost(entry)
+		}
+	}
+	free := min(fsHybridQueueMax-active-outstanding, fsHybridClaimsMax-len(s.rxNames)-outstanding)
+	if free < 0 {
+		free = 0
+	}
+	seq := min(uint64(fsHybridClaimsMax), s.grantedSeq+uint64(free))
+	lastByte := uint64(0)
+	if s.rxHigh > 0 {
+		lastByte = s.rxSeq[s.rxHigh].byteEnd
+	}
+	byteCredit := s.grantedBytes
+	if activeBytes <= uint64(s.incoming.wireLimit()) {
+		byteCredit = max(byteCredit, lastByte+uint64(s.incoming.wireLimit())-activeBytes)
+	}
+	return seq, byteCredit
+}
+
+func fsHybridEntryCost(entry *fsHybridInbound) uint64 {
+	if entry.sequence == 0 {
+		return 0
+	}
+	return uint64(len(entry.info.Name)) + uint64(entry.info.Size) + 64
+}
+
 func (s *fsHybridState) prepare() ([]byte, uint64, error) {
 	if s.revision == math.MaxUint64 {
 		return nil, 0, errFSHybridClosed
@@ -186,7 +235,7 @@ func (s *fsHybridState) prepare() ([]byte, uint64, error) {
 	for _, r := range s.outQueue {
 		records = append(records, r.record)
 	}
-	wire, err := s.outgoing.seal(s.outgoing.snapshot(s.revision+1, s.rxProcessed, creditSeq, creditBytes, records))
+	wire, err := s.outgoing.seal(s.snapshot(s.revision+1, s.rxProcessed, creditSeq, creditBytes, records))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -237,18 +286,34 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 	if snapshot.Processed < s.acked || snapshot.Processed > s.offered || snapshot.CreditSeq < s.peerCreditSeq || snapshot.CreditBytes < s.peerCreditBytes {
 		return nil, false, errFSHybridIntegrity
 	}
-	if len(snapshot.Records) == 0 && s.rxHigh > s.rxProcessed {
-		return nil, false, errFSHybridIntegrity
-	}
-	if len(snapshot.Records) > 0 && (snapshot.Records[0].Sequence > s.rxProcessed+1 || snapshot.Records[len(snapshot.Records)-1].Sequence < s.rxHigh) {
-		return nil, false, errFSHybridIntegrity
+	if s.incoming.selective {
+		for i, b := range snapshot.SelectiveDone {
+			if s.peerDone[i]&^b != 0 {
+				return nil, false, errFSHybridIntegrity
+			}
+		}
+		for seq := uint64(1); seq <= fsHybridClaimsMax; seq++ {
+			if fsHybridReceiptHas(snapshot.SelectiveDone, seq) && seq > s.offered ||
+				seq <= snapshot.Processed && !fsHybridReceiptHas(snapshot.SelectiveDone, seq) {
+				return nil, false, errFSHybridIntegrity
+			}
+		}
+	} else {
+		if len(snapshot.Records) == 0 && s.rxHigh > s.rxProcessed {
+			return nil, false, errFSHybridIntegrity
+		}
+		if len(snapshot.Records) > 0 && (snapshot.Records[0].Sequence > s.rxProcessed+1 || snapshot.Records[len(snapshot.Records)-1].Sequence < s.rxHigh) {
+			return nil, false, errFSHybridIntegrity
+		}
 	}
 	freshNames, extraBytes, high := 0, 0, s.rxHigh
+	seenSeq := make(map[uint64]struct{}, len(snapshot.Records))
 	var tailBytes uint64
 	if high > 0 {
 		tailBytes = s.rxSeq[high].byteEnd
 	}
 	for _, r := range snapshot.Records {
+		seenSeq[r.Sequence] = struct{}{}
 		digest := fsHybridIdentity(r.Name, r.Sealed)
 		entry := s.rxNames[r.Name]
 		if prior := s.rxCipher[sha256.Sum256(r.Sealed)]; prior != nil && prior != entry {
@@ -276,6 +341,15 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 			extraBytes += len(r.Sealed)
 		}
 	}
+	if s.incoming.selective {
+		for seq := s.rxProcessed + 1; seq <= s.rxHigh; seq++ {
+			if entry := s.rxSeq[seq]; entry != nil && !entry.done {
+				if _, retained := seenSeq[seq]; !retained {
+					return nil, false, errFSHybridIntegrity
+				}
+			}
+		}
+	}
 	if len(s.rxNames)+freshNames > fsHybridClaimsMax {
 		return nil, false, errFSHybridClosed
 	}
@@ -286,8 +360,10 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 	s.peerRevision = snapshot.Revision
 	s.peerCreditSeq, s.peerCreditBytes = snapshot.CreditSeq, snapshot.CreditBytes
 	s.acked = snapshot.Processed
-	for len(s.outQueue) > 0 && s.outQueue[0].record.Sequence <= s.acked {
-		r := s.outQueue[0]
+	if s.incoming.selective {
+		copy(s.peerDone[:], snapshot.SelectiveDone)
+	}
+	release := func(r *fsHybridOutbound) {
 		r.processed = true
 		fsHybridMarkPublished(r, ObjectInfo{Name: r.name, ID: fsHybridID(r.name, r.sealed), Size: int64(len(r.sealed))})
 		for _, stream := range r.streams {
@@ -298,9 +374,26 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 			r.sealed = nil
 			r.record.Sealed = nil
 		}
-		s.outQueue = s.outQueue[1:]
+	}
+	if s.incoming.selective {
+		kept := s.outQueue[:0]
+		for _, r := range s.outQueue {
+			if fsHybridReceiptHas(snapshot.SelectiveDone, r.record.Sequence) {
+				release(r)
+			} else {
+				kept = append(kept, r)
+			}
+		}
+		s.outQueue = kept
+	} else {
+		for len(s.outQueue) > 0 && s.outQueue[0].record.Sequence <= s.acked {
+			r := s.outQueue[0]
+			release(r)
+			s.outQueue = s.outQueue[1:]
+		}
 	}
 	var ready []*fsHybridInbound
+	newDoneAssociation := false
 	for _, r := range snapshot.Records {
 		entry := s.rxNames[r.Name]
 		if entry == nil {
@@ -312,13 +405,17 @@ func (s *fsHybridState) receive(wire []byte, now time.Time) ([]*fsHybridInbound,
 		if entry.sequence == 0 {
 			entry.sequence, entry.byteEnd = r.Sequence, r.ByteEnd
 			s.rxSeq[r.Sequence] = entry
+			if s.incoming.selective && entry.done {
+				fsHybridReceiptSet(s.rxDone[:], r.Sequence)
+				newDoneAssociation = true
+			}
 		}
 		if !entry.done {
 			ready = append(ready, entry)
 		}
 	}
 	s.rxHigh = high
-	advanced := s.advanceProcessed()
+	advanced := s.advanceProcessed() || newDoneAssociation
 	return ready, advanced, nil
 }
 
@@ -386,15 +483,20 @@ func (s *fsHybridState) markProcessed(id string) (*fsHybridInbound, []string, bo
 	if entry == nil {
 		return nil, nil, false, errFSHybridIntegrity
 	}
-	if !entry.done {
+	newlyDone := !entry.done
+	if newlyDone {
 		entry.done = true
 		s.rxBytes -= len(entry.sealed)
 		entry.sealed = nil
+		if s.incoming.selective {
+			fsHybridReceiptSet(s.rxDone[:], entry.sequence)
+		}
 	}
 	ids := make([]string, 0, len(entry.physicalIDs))
 	for id := range entry.physicalIDs {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	return entry, ids, s.advanceProcessed(), nil
+	advanced := s.advanceProcessed()
+	return entry, ids, advanced || s.incoming.selective && newlyDone && entry.sequence != 0, nil
 }

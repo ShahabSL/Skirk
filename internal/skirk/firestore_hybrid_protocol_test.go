@@ -22,14 +22,16 @@ import (
 )
 
 const (
-	fsHybridWireMax     = 64 << 10
-	fsHybridInlineMax   = 16 << 10
-	fsHybridPhysicalMax = (4 << 20) + (64 << 10)
-	fsHybridNameMax     = 1024
-	fsHybridClaimsMax   = 4096
-	fsHybridQueueMax    = 32
-	fsHybridCacheMax    = 8 << 20
-	fsHybridMagic       = "FSH1"
+	fsHybridWireMax        = 64 << 10
+	fsHybridInlineMax      = 16 << 10
+	fsHybridPhysicalMax    = (4 << 20) + (64 << 10)
+	fsHybridNameMax        = 1024
+	fsHybridClaimsMax      = 4096
+	fsHybridQueueMax       = 32
+	fsHybridCacheMax       = 8 << 20
+	fsHybridMagic          = "FSH1"
+	fsHybridSelectiveMagic = "FSH2"
+	fsHybridReceiptBytes   = fsHybridClaimsMax / 8
 )
 
 var (
@@ -69,13 +71,14 @@ func fsHybridID(name string, sealed []byte) string {
 // Credit is a cumulative admission watermark, not a reusable free-slot count.
 // A sender debits Sequence and ByteEnd for every new offered identity.
 type fsHybridSnapshot struct {
-	Epoch       string           `json:"epoch"`
-	Direction   byte             `json:"direction"`
-	Revision    uint64           `json:"revision"`
-	Processed   uint64           `json:"processed"`
-	CreditSeq   uint64           `json:"credit_seq"`
-	CreditBytes uint64           `json:"credit_bytes"`
-	Records     []fsHybridRecord `json:"records"`
+	Epoch         string           `json:"epoch"`
+	Direction     byte             `json:"direction"`
+	Revision      uint64           `json:"revision"`
+	Processed     uint64           `json:"processed"`
+	CreditSeq     uint64           `json:"credit_seq"`
+	CreditBytes   uint64           `json:"credit_bytes"`
+	Records       []fsHybridRecord `json:"records"`
+	SelectiveDone []byte           `json:"selective_done,omitempty"`
 }
 
 type fsHybridCodec struct {
@@ -87,6 +90,24 @@ type fsHybridCodec struct {
 	clientID  string
 	runID     string
 	wireMax   int
+	selective bool
+}
+
+func (c *fsHybridCodec) magic() string {
+	if c.selective {
+		return fsHybridSelectiveMagic
+	}
+	return fsHybridMagic
+}
+
+func fsHybridReceiptHas(bits []byte, seq uint64) bool {
+	return len(bits) == fsHybridReceiptBytes && seq > 0 && seq <= fsHybridClaimsMax && bits[(seq-1)/8]&(1<<((seq-1)%8)) != 0
+}
+
+func fsHybridReceiptSet(bits []byte, seq uint64) {
+	if len(bits) == fsHybridReceiptBytes && seq > 0 && seq <= fsHybridClaimsMax {
+		bits[(seq-1)/8] |= 1 << ((seq - 1) % 8)
+	}
 }
 
 func (c *fsHybridCodec) wireLimit() int {
@@ -210,6 +231,9 @@ func (c *fsHybridCodec) validate(s fsHybridSnapshot) error {
 	if s.Epoch != hex.EncodeToString(c.epoch[:]) || s.Direction != c.direction || s.Revision == 0 || s.Processed > fsHybridClaimsMax || s.CreditSeq > fsHybridClaimsMax || s.CreditBytes > fsHybridClaimsMax*(fsHybridInlineMax+fsHybridNameMax+64)+fsHybridCacheMax || len(s.Records) > fsHybridQueueMax {
 		return errFSHybridBounds
 	}
+	if c.selective && len(s.SelectiveDone) != fsHybridReceiptBytes || !c.selective && len(s.SelectiveDone) != 0 {
+		return errFSHybridBounds
+	}
 	seen := make(map[string]struct{}, len(s.Records))
 	seenCipher := make(map[[32]byte]struct{}, len(s.Records))
 	for i, record := range s.Records {
@@ -229,7 +253,11 @@ func (c *fsHybridCodec) validate(s fsHybridSnapshot) error {
 		}
 		if i > 0 {
 			prior := s.Records[i-1]
-			if prior.Sequence == math.MaxUint64 || record.Sequence != prior.Sequence+1 || prior.ByteEnd > math.MaxUint64-record.cost() || record.ByteEnd != prior.ByteEnd+record.cost() {
+			if c.selective {
+				if record.Sequence <= prior.Sequence || record.ByteEnd <= prior.ByteEnd || prior.ByteEnd > math.MaxUint64-record.cost() || record.ByteEnd < prior.ByteEnd+record.cost() {
+					return errFSHybridIntegrity
+				}
+			} else if prior.Sequence == math.MaxUint64 || record.Sequence != prior.Sequence+1 || prior.ByteEnd > math.MaxUint64-record.cost() || record.ByteEnd != prior.ByteEnd+record.cost() {
 				return errFSHybridIntegrity
 			}
 		}
@@ -242,24 +270,25 @@ func (c *fsHybridCodec) seal(s fsHybridSnapshot) ([]byte, error) {
 		return nil, err
 	}
 	raw, err := json.Marshal(s)
-	if err != nil || len(raw)+len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() > c.wireLimit() {
+	if err != nil || len(raw)+len(c.magic())+c.aead.NonceSize()+c.aead.Overhead() > c.wireLimit() {
 		return nil, errFSHybridBounds
 	}
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err = rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	wire := append([]byte(fsHybridMagic), nonce...)
-	return c.aead.Seal(wire, nonce, raw, []byte(fsHybridMagic)), nil
+	wire := append([]byte(c.magic()), nonce...)
+	return c.aead.Seal(wire, nonce, raw, []byte(c.magic())), nil
 }
 
 func (c *fsHybridCodec) open(wire []byte) (fsHybridSnapshot, error) {
 	var snapshot fsHybridSnapshot
-	if len(wire) < len(fsHybridMagic)+c.aead.NonceSize()+c.aead.Overhead() || len(wire) > c.wireLimit() || string(wire[:len(fsHybridMagic)]) != fsHybridMagic {
+	magic := c.magic()
+	if len(wire) < len(magic)+c.aead.NonceSize()+c.aead.Overhead() || len(wire) > c.wireLimit() || string(wire[:len(magic)]) != magic {
 		return snapshot, errFSHybridBounds
 	}
-	nonce := wire[len(fsHybridMagic) : len(fsHybridMagic)+c.aead.NonceSize()]
-	raw, err := c.aead.Open(nil, nonce, wire[len(fsHybridMagic)+c.aead.NonceSize():], []byte(fsHybridMagic))
+	nonce := wire[len(magic) : len(magic)+c.aead.NonceSize()]
+	raw, err := c.aead.Open(nil, nonce, wire[len(magic)+c.aead.NonceSize():], []byte(magic))
 	if err != nil {
 		return snapshot, errFSHybridIntegrity
 	}
