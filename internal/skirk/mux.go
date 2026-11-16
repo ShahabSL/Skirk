@@ -67,6 +67,7 @@ const (
 	muxAdaptiveCombinedListPages = 4
 	muxTargetedGapRepairPages    = 16
 	muxClosedStreamTTL           = 2 * time.Minute
+	muxClosedStreamLimit         = 100000
 	muxRetryDelayMax             = 5 * time.Second
 	muxNormalStreamInflight      = 6
 	muxNormalStreamInflightBytes = muxNormalStreamInflight * muxNormalBulkBatch
@@ -326,37 +327,41 @@ type driveMux struct {
 
 	lanes []*muxLane
 
-	streamsMu          sync.Mutex
-	streams            map[muxStreamKey]*muxStream
-	metadataCapsMu     sync.Mutex
-	metadataCaps       map[muxStreamKey]muxMetadataCapability
-	slotsMu            sync.Mutex
-	slots              map[muxSlotRunKey]*muxSlotLink
-	slotPending        map[muxSlotRunKey]struct{}
-	slotStopped        bool
-	slotAsyncMu        sync.Mutex
-	slotAsyncPending   map[muxStreamKey]int
-	slotAsyncCount     int
-	slotSetupDone      chan struct{}
-	opening            map[muxStreamKey]struct{}
-	closed             map[muxStreamKey]time.Time
-	pendingMu          sync.Mutex
-	pending            map[muxStreamKey][]muxFrame
-	pendingBytes       map[muxStreamKey]int
-	pendingFirstSeen   map[muxStreamKey]time.Time
-	pendingLastRepair  map[muxStreamKey]time.Time
-	pendingRepairs     map[muxStreamKey]int
-	pendingRepairAt    time.Time
-	pendingRepairUsed  int
-	pendingTimeoutAt   time.Time
-	pendingTimeoutUsed int
-	pendingTotalBytes  int
-	active             atomic.Int64
-	largeReadMu        sync.Mutex
-	largeReadBytes     int
+	streamsMu           sync.Mutex
+	streams             map[muxStreamKey]*muxStream
+	metadataCapsMu      sync.Mutex
+	metadataCaps        map[muxStreamKey]muxMetadataCapability
+	slotsMu             sync.Mutex
+	slots               map[muxSlotRunKey]*muxSlotLink
+	slotPending         map[muxSlotRunKey]struct{}
+	slotStopped         bool
+	slotAsyncMu         sync.Mutex
+	slotAsyncPending    map[muxStreamKey]int
+	slotAsyncCount      int
+	slotSetupDone       chan struct{}
+	opening             map[muxStreamKey]struct{}
+	closed              map[muxStreamKey]time.Time
+	closedLastPrune     time.Time
+	closedOverflowUntil time.Time
+	pendingMu           sync.Mutex
+	pending             map[muxStreamKey][]muxFrame
+	pendingBytes        map[muxStreamKey]int
+	pendingFirstSeen    map[muxStreamKey]time.Time
+	pendingLastRepair   map[muxStreamKey]time.Time
+	pendingRepairs      map[muxStreamKey]int
+	pendingRepairAt     time.Time
+	pendingRepairUsed   int
+	pendingTimeoutAt    time.Time
+	pendingTimeoutUsed  int
+	pendingTotalBytes   int
+	active              atomic.Int64
+	largeReadMu         sync.Mutex
+	largeReadBytes      int
 
 	seenMu           sync.Mutex
 	seen             map[string]struct{}
+	seenOrder        []string
+	seenHead         int
 	queued           map[string]struct{}
 	queuedSlot       map[string]struct{}
 	deferredPhysical map[string]map[string]muxObjectMeta
@@ -905,6 +910,9 @@ func (m *driveMux) claimExitOpen(key muxStreamKey) bool {
 	if _, ok := m.opening[key]; ok {
 		return false
 	}
+	if now.Before(m.closedOverflowUntil) {
+		return false
+	}
 	if until, ok := m.closed[key]; ok {
 		if now.Before(until) {
 			return false
@@ -994,6 +1002,10 @@ func (m *driveMux) registerStreamInternal(id uint64, clientID, runID string, con
 	key := stream.key()
 	if rejectClosed {
 		now := time.Now()
+		if now.Before(m.closedOverflowUntil) {
+			m.streamsMu.Unlock()
+			return nil, false
+		}
 		if until, ok := m.closed[key]; ok {
 			if now.Before(until) {
 				m.streamsMu.Unlock()
@@ -1078,8 +1090,35 @@ func (m *driveMux) rememberClosedStreamLocked(key muxStreamKey, now time.Time) {
 	if m.closed == nil {
 		m.closed = map[muxStreamKey]time.Time{}
 	}
-	if len(m.closed) > 100000 {
-		m.closed = map[muxStreamKey]time.Time{}
+	if len(m.closed) >= muxClosedStreamLimit && (m.closedLastPrune.IsZero() || now.Sub(m.closedLastPrune) >= time.Second) {
+		for old, until := range m.closed {
+			if !now.Before(until) {
+				delete(m.closed, old)
+			}
+		}
+		m.closedLastPrune = now
+	}
+	_, exists := m.closed[key]
+	for len(m.closed) > muxClosedStreamLimit || (!exists && len(m.closed) >= muxClosedStreamLimit) {
+		for old, until := range m.closed {
+			delete(m.closed, old)
+			if old == key {
+				exists = false
+			}
+			if now.Before(until) {
+				// A hard cap cannot retain every live tombstone during an
+				// extreme close burst. Reject new OPENs until every
+				// evicted tombstone would have expired.
+				fence := now.Add(muxClosedStreamTTL)
+				if until.After(fence) {
+					fence = until
+				}
+				if fence.After(m.closedOverflowUntil) {
+					m.closedOverflowUntil = fence
+				}
+			}
+			break
+		}
 	}
 	m.closed[key] = now.Add(muxClosedStreamTTL)
 }
@@ -1093,6 +1132,13 @@ func (m *driveMux) isClosedStream(key muxStreamKey) bool {
 			return true
 		}
 		delete(m.closed, key)
+	}
+	if now.Before(m.closedOverflowUntil) {
+		if _, active := m.streams[key]; !active {
+			if _, opening := m.opening[key]; !opening {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -4360,7 +4406,15 @@ func (m *driveMux) dropStaleMuxObject(ctx context.Context, meta muxObjectMeta, e
 	if m.t != nil && m.t.Logger != nil {
 		m.t.Logger.Printf("mux process stale object=%s lane=%d seq=%d priority=%t attempts=%d error=%s", muxShortName(meta.Name), meta.Lane, meta.Seq, meta.Priority, meta.Attempts, errorSummary(err))
 	}
-	m.markSeen(meta.Name)
+	m.seenMu.Lock()
+	_, processed := m.processed[meta.Name]
+	m.markSeenLocked(meta.Name)
+	m.seenMu.Unlock()
+	if processed {
+		// A late list can outlive cleanup of an object already delivered by
+		// another physical copy. A missing duplicate must not reset its stream.
+		return
+	}
 	for _, key := range meta.streamKeys() {
 		m.terminalCloseStreamKey(ctx, key, "mux_stale_object", []byte("mux_stale_object"), true)
 	}
@@ -5873,31 +5927,42 @@ func (m *driveMux) rememberSlotDigestLocked(name string, digest [32]byte) {
 }
 
 func (m *driveMux) markSeenLocked(name string) {
+	if m.seen == nil {
+		m.seen = map[string]struct{}{}
+	}
+	// Tests and older callers may seed seen directly. Rebuild ordering once
+	// before the next insertion so incremental eviction remains bounded.
+	if len(m.seenOrder)-m.seenHead != len(m.seen) {
+		m.seenOrder = m.seenOrder[:0]
+		m.seenHead = 0
+		for old := range m.seen {
+			m.seenOrder = append(m.seenOrder, old)
+		}
+	}
 	delete(m.queued, name)
 	delete(m.queuedSlot, name)
 	delete(m.deferredPhysical, name)
 	delete(m.deferredOverflow, name)
+	if _, exists := m.seen[name]; !exists {
+		m.seenOrder = append(m.seenOrder, name)
+	}
 	m.seen[name] = struct{}{}
 	if len(m.seen) > 200000 {
-		m.seen = map[string]struct{}{name: struct{}{}}
-		keepIDs := map[string]map[string]struct{}{}
-		keepPrimary := map[string]string{}
-		if ids := m.knownIDs[name]; ids != nil {
-			keepIDs[name] = ids
-			keepPrimary[name] = m.primaryIDs[name]
+		for len(m.seen) > 200000 && m.seenHead < len(m.seenOrder) {
+			old := m.seenOrder[m.seenHead]
+			m.seenOrder[m.seenHead] = ""
+			m.seenHead++
+			delete(m.seen, old)
+			delete(m.processed, old)
+			delete(m.knownIDs, old)
+			delete(m.primaryIDs, old)
 		}
-		for queuedName := range m.queued {
-			if ids := m.knownIDs[queuedName]; ids != nil {
-				keepIDs[queuedName] = ids
-				keepPrimary[queuedName] = m.primaryIDs[queuedName]
-			}
-		}
-		m.knownIDs = keepIDs
-		m.primaryIDs = keepPrimary
-		if _, ok := m.processed[name]; ok {
-			m.processed = map[string]struct{}{name: {}}
-		} else {
-			m.processed = map[string]struct{}{}
+		if m.seenHead > 4096 && m.seenHead*2 >= len(m.seenOrder) {
+			remaining := len(m.seenOrder) - m.seenHead
+			copy(m.seenOrder, m.seenOrder[m.seenHead:])
+			clear(m.seenOrder[remaining:])
+			m.seenOrder = m.seenOrder[:remaining]
+			m.seenHead = 0
 		}
 	}
 }
