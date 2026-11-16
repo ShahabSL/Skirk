@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ShahabSL/Skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/tools/internal/probeledger"
 )
 
 const (
@@ -336,11 +337,7 @@ func (p *probe) persistRecovery() error {
 	if err = os.Rename(tmp, path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
+	return probeledger.SyncParent(path)
 }
 
 func (p *probe) reserve(ctx context.Context, index int) error {

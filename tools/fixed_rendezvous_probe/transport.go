@@ -12,13 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ShahabSL/Skirk/internal/skirk"
+	"github.com/ShahabSL/Skirk/tools/internal/probeledger"
 )
 
 const (
@@ -258,11 +258,7 @@ func (p *probe) persistRecovery() error {
 	if err := os.Rename(tmp, p.recoveryPath()); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(tmp))
-	if err != nil {
-		return err
-	}
-	return errors.Join(dir.Sync(), dir.Close())
+	return probeledger.SyncParent(p.recoveryPath())
 }
 
 func (p *probe) reserve(ctx context.Context, title string) (ownedTarget, error) {
