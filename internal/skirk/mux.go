@@ -115,6 +115,9 @@ const (
 	muxGlobalDeferredBytes  = 64 * 1024 * 1024
 	muxGlobalInboundFrames  = muxReceiveQueue
 	muxGlobalInboundBytes   = 64 * 1024 * 1024
+	muxSmallReadBuffer      = 32 * 1024
+	muxLargeReadBudgetBytes = 64 * 1024 * 1024
+	muxLargeReadIdleTimeout = 2 * time.Second
 )
 
 type muxBufferedBudget struct {
@@ -349,6 +352,8 @@ type driveMux struct {
 	pendingTimeoutUsed int
 	pendingTotalBytes  int
 	active             atomic.Int64
+	largeReadMu        sync.Mutex
+	largeReadBytes     int
 
 	seenMu           sync.Mutex
 	seen             map[string]struct{}
@@ -1148,17 +1153,19 @@ func (m *driveMux) closeAll() {
 }
 
 func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
-	buffer := make([]byte, m.readBufferSize())
+	buffer := newMuxSocketReadBuffer(m)
+	defer buffer.close()
 	for {
-		var n int
+		var data []byte
 		var err error
 		if m.t.SparsePriority || m.t.InteractionEpoch {
-			n, err = readChunkWithPolicyFunc(stream.conn, buffer, stream.bulkSendCoalescing)
+			data, err = buffer.read(stream.conn, stream.bulkSendCoalescing)
 		} else {
-			n, err = readChunkWithPolicy(stream.conn, buffer, stream.bulkSendCoalescing())
+			bulk := stream.bulkSendCoalescing()
+			data, err = buffer.read(stream.conn, func() bool { return bulk })
 		}
-		if n > 0 {
-			if sendErr := m.sendDataPayload(ctx, stream, buffer[:n]); sendErr != nil {
+		if len(data) > 0 {
+			if sendErr := m.sendDataPayload(ctx, stream, data); sendErr != nil {
 				if m.role == "client" && ctx.Err() != nil {
 					m.cancelClientStream(stream)
 				} else if m.role == "client" && stream.close() {
@@ -1168,8 +1175,9 @@ func (m *driveMux) readLoop(ctx context.Context, stream *muxStream) {
 				}
 				return
 			}
-			stream.noteSentPayloadBytes(n)
-			stream.observeFirstSend(n)
+			stream.noteSentPayloadBytes(len(data))
+			stream.observeFirstSend(len(data))
+			buffer.demoteAfterSend(len(data))
 		}
 		if err == nil {
 			continue
@@ -5945,9 +5953,114 @@ func isDrivePageTokenRejected(err error) bool {
 		(strings.Contains(text, "invalid") || strings.Contains(text, "rejected") || strings.Contains(text, "expired"))
 }
 
+// A socket reader needs a buffer while blocked in Read. Only streams that
+// actually send a full small buffer may claim a large one. Idle readers return
+// that claim so a long-lived quiet connection cannot hoard bulk capacity.
+type muxSocketReadBuffer struct {
+	mux         *driveMux
+	small       []byte
+	data        []byte
+	largeBytes  int
+	idleTimeout time.Duration
+}
+
+func newMuxSocketReadBuffer(m *driveMux) *muxSocketReadBuffer {
+	small := make([]byte, muxSmallReadBuffer)
+	return &muxSocketReadBuffer{mux: m, small: small, data: small, idleTimeout: muxLargeReadIdleTimeout}
+}
+
+func (b *muxSocketReadBuffer) read(conn net.Conn, forceBulk func() bool) ([]byte, error) {
+	for {
+		if b.largeBytes > 0 {
+			if err := conn.SetReadDeadline(time.Now().Add(b.idleTimeout)); err != nil {
+				b.demote()
+			}
+		}
+		n, err := readChunkWithPolicyFunc(conn, b.data, forceBulk)
+		if b.largeBytes > 0 {
+			_ = conn.SetReadDeadline(time.Time{})
+			if isMuxReadTimeout(err) {
+				if n > 0 {
+					return b.data[:n], nil
+				}
+				b.demote()
+				continue
+			}
+		}
+		if b.largeBytes == 0 && n == len(b.data) && err == nil {
+			b.promoteAfterRead(n, err)
+			if b.largeBytes > 0 {
+				copy(b.data, b.small[:n])
+				n, err = coalesceChunkWithPolicyFunc(conn, b.data, n, forceBulk)
+			}
+		}
+		return b.data[:n], err
+	}
+}
+
+func isMuxReadTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func (b *muxSocketReadBuffer) promoteAfterRead(n int, err error) {
+	if b.largeBytes > 0 || n != len(b.data) || err != nil || b.mux == nil {
+		return
+	}
+	size := b.mux.readBufferSize()
+	if size <= len(b.data) || !b.mux.reserveLargeReadBuffer(size) {
+		return
+	}
+	b.data = make([]byte, size)
+	b.largeBytes = size
+}
+
+func (b *muxSocketReadBuffer) demoteAfterSend(n int) {
+	if n <= muxPriorityStreamBytes {
+		b.demote()
+	}
+}
+
+func (b *muxSocketReadBuffer) demote() {
+	if b.largeBytes == 0 {
+		return
+	}
+	b.data = b.small
+	b.mux.releaseLargeReadBuffer(b.largeBytes)
+	b.largeBytes = 0
+}
+
+func (b *muxSocketReadBuffer) close() {
+	b.demote()
+	b.data = nil
+	b.small = nil
+}
+
+func (m *driveMux) reserveLargeReadBuffer(size int) bool {
+	if m == nil || size <= muxSmallReadBuffer || size > muxLargeReadBudgetBytes {
+		return false
+	}
+	m.largeReadMu.Lock()
+	defer m.largeReadMu.Unlock()
+	if m.largeReadBytes > muxLargeReadBudgetBytes-size {
+		return false
+	}
+	m.largeReadBytes += size
+	return true
+}
+
+func (m *driveMux) releaseLargeReadBuffer(size int) {
+	if m == nil || size == 0 {
+		return
+	}
+	m.largeReadMu.Lock()
+	m.largeReadBytes -= size
+	m.largeReadMu.Unlock()
+}
+
 func (m *driveMux) readBufferSize() int {
 	if m == nil || m.t == nil {
-		return 32 * 1024
+		return muxSmallReadBuffer
 	}
 	if batch := m.normalBatchBytes(); batch > muxNormalFairBatch {
 		payload := m.normalFramePayloadBytes()
@@ -5959,17 +6072,17 @@ func (m *driveMux) readBufferSize() int {
 			frames = muxMaxFrames
 		}
 		size := frames * payload
-		if size >= 32*1024 {
+		if size >= muxSmallReadBuffer {
 			return size
 		}
 	}
 	size := m.t.ChunkSize / 4
-	if size < 32*1024 {
-		size = 32 * 1024
+	if size < muxSmallReadBuffer {
+		size = muxSmallReadBuffer
 	}
 	maxPayload := m.normalFramePayloadBytes()
-	if maxPayload < 32*1024 {
-		maxPayload = 32 * 1024
+	if maxPayload < muxSmallReadBuffer {
+		maxPayload = muxSmallReadBuffer
 	}
 	if size > maxPayload {
 		size = maxPayload

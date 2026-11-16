@@ -896,12 +896,21 @@ func readChunkWithPolicyFunc(reader io.Reader, buffer []byte, forceBulk func() b
 	if n <= 0 || err != nil || n == len(buffer) {
 		return n, err
 	}
+	return coalesceChunkWithPolicyFunc(reader, buffer, n, forceBulk)
+}
+
+// Continue a read after its first bytes have been placed in a larger buffer.
+// This keeps the same deadline and size policy as an ordinary partial read.
+func coalesceChunkWithPolicyFunc(reader io.Reader, buffer []byte, n int, forceBulk func() bool) (int, error) {
+	if n <= 0 || n >= len(buffer) {
+		return n, nil
+	}
 	bulk := forceBulk()
 	deadlineConn, ok := reader.(interface {
 		SetReadDeadline(time.Time) error
 	})
 	if !ok {
-		return n, err
+		return n, nil
 	}
 	defer deadlineConn.SetReadDeadline(time.Time{})
 	started := time.Now()
