@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 215 cataloged experiment families/cells through bounded Drive v2 and Firestore pipelined full-transport pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 218 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -16,7 +16,9 @@
     "The Drive v2 resource ETag was observed to fence PATCH/PUT on three owned-file probes. That API capability does not establish full tunnel speed, durability across restarts, other accounts, or a permanent v2 contract.",
     "Four Drive v2/control pipelined arms share one frozen binary; two Firestore/Drive hybrid pairs share a workload but the second uses a diagnostic-only source/binary revision. Their arm results are not pooled with clean-main HTTP-serial comparisons.",
     "Both completed Firestore hybrid arms recorded one HTTP400 during shutdown. The later diagnostic classifies its own event as a canceled owned-cleanup GET Listen; the first event remains unclassified. Workload success does not erase provider errors.",
-    "Firestore service-propagation setup failures A/B/C produced no tunnel performance sample. Exact resource recovery and disabled API restoration were separately verified."
+    "Firestore service-propagation setup failures A/B/C produced no tunnel performance sample. Exact resource recovery and disabled API restoration were separately verified.",
+    "The Drive v2 phase trace is a single diagnostic arm: priority claims can contain multiple TLS frames; the trace identifies the four-unacknowledged per-stream admission bound for ten small text-stream physical fallbacks but does not prove per-frame latency causality.",
+    "The four-arm window 8/4/4/8 comparison shares one frozen binary and exact workload. Both window-8 arms improved text p95 and conservative units while upload file rate and warm-frame medians were worse; only two arms per setting and no saturated multi-stream fairness proof."
   ],
   "records": [
     {
@@ -4349,6 +4351,65 @@
         "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116e/"
       ],
       "revision_or_binary": "c5d52c4/3a5a5ebb",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-076",
+      "candidate": "Drive v2 bounded priority phase trace: one live attribution arm",
+      "evidence_level": "live_full_transport_complete_single_diagnostic",
+      "workload": "One frozen 16MiB down+up and 41 pipelined TLS echoes; 1024-event HMAC phase trace; pinned front",
+      "latency": "Text p95 down2.290s/up2.481s; 56 inline claim queue→ACK median1.037s,p951.590s; 10 physical-only claim admission→processing median1.580s,p952.119s",
+      "throughput_mbps": "Down9.489, up31.778, single variable diagnostic arm",
+      "estimated_quota_units": "651 Drive calls; whole-arm eight-attempt upper244160; rolling-minute upper199480; 4 expected412 and32 cleanup404",
+      "correctness_and_errors": "Exact files/41 echoes; trace385 events,dropped0; ten physical-only small text-stream claims each met per-stream-four unacknowledged cap; zero inline fallback starts; zero unexpected provider errors/timeouts/guard denials",
+      "cleanup": "Writers joined; exact owned prefixes absent immediate+31s; borrowed tokens removed",
+      "decision": "Identifies per-stream admission reason, not individual TLS-frame cause or speed winner. Different binary/workload cohort not pooled with old arms",
+      "source_documents": [
+        "docs/experiments/drive-v2-priority-latency-attribution-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-trace-20261116f/"
+      ],
+      "revision_or_binary": "ef080d8/35af8a37",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-077",
+      "candidate": "Drive v2 4-versus-8 inline window with fixed encoded/global bounds",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Explicit test-only priority_stream_window 4 or8; same v2 carrier; second stream and encoded-cap fake-Drive tests",
+      "latency": "No Google speed from offline cases",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Unchanged 16KiB encoded snapshot cap, queue32, lifetime4096, 280000 rolling-minute upper and cleanup reserve",
+      "correctness_and_errors": "5th–8th same-stream claims admitted only at8; second stream admitted while room; excess/oversized claims use immutable fallback; focused Go race/vet/diff checks pass",
+      "cleanup": "No provider resources from offline tests",
+      "decision": "Safe bounded research selector; saturated multi-stream fairness and product rotation/negotiation remain unproved",
+      "source_documents": [
+        "docs/experiments/drive-v2-priority-latency-attribution-2026-11-16.md",
+        "internal/skirk/drive_v2_priority_window_cases_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "5c1039b",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-078",
+      "candidate": "Drive v2 per-stream inline window 8 versus 4, four-arm ABBA",
+      "evidence_level": "live_full_transport_complete_small_ABBA",
+      "workload": "Same binary 5c1039b window8/window4/window4/window8; exact 16MiB down+up and 1 warm+40 pipelined text frames per arm; pinned front",
+      "latency": "Two-arm median scheduled text p95 4→8: down2.223→1.455s (-34.6%), up2.140→1.498s (-30.0%); warm1.234→1.429s (+15.7%)",
+      "throughput_mbps": "Down24.301→24.406Mb/s (+0.4%); up37.101→35.737 (-3.7%)",
+      "estimated_quota_units": "Visible calls median631.5→577 (-8.6%); whole-arm eight-attempt upper232400→208360 (-10.3%); rolling-minute upper224720→205260 (-8.7%)",
+      "correctness_and_errors": "All 4 arms passed exact files/41echoes, 4 expected412 each; 7/8 control physical fallbacks→0/0; zero unexpected provider errors/timeouts/guard denials/trace drops",
+      "cleanup": "All writers joined; exact owned prefixes absent immediate+31s each arm; borrowed credentials removed; ledger complete true",
+      "decision": "Better research text-tail/unit setting in this single-client workload; small two-arm medians, slower upload/warm observations, no saturated fairness or 200k scale proof",
+      "source_documents": [
+        "docs/experiments/drive-v2-priority-latency-attribution-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-window-20261116g/"
+      ],
+      "revision_or_binary": "5c1039b/11e4b9ad",
       "live_comparable": true
     }
   ]

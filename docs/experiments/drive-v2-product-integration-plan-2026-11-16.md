@@ -17,10 +17,16 @@ peer negotiation. The carrier and queue use test-only types and cannot be
 selected through `Config` or `StoresFromConfig`. Moving files out of the test
 build would not solve these gaps.
 
-The measured v2 file improvement is a bounded same-binary result, while its
-interactive advantage over the same-binary Drive control was small or
-variable across two pairs. It does not justify changing the default. The
-Drive v2 API exists for the observed conditional resource ETag behavior; Google
+The initial measured v2 file improvement is a bounded same-binary result,
+while its interactive advantage over the same-binary Drive control was small
+or variable across two pairs. A later four-arm, same-binary test of the v2
+carrier's per-stream inline window found a 34.6%/30.0% descriptive reduction
+in scheduled text p95 at window eight, with about 10% lower conservative
+unit upper, essentially equal download file rate, 3.7% lower upload file
+rate, and an untested saturated multi-stream fairness case. This remains
+test-only and does not justify changing the product default.
+[Attribution and paired window test](drive-v2-priority-latency-attribution-2026-11-16.md).
+The Drive v2 API exists for the observed conditional resource ETag behavior; Google
 recommends v3 for new work where v2-only features are unnecessary.
 [Google's v2/v3 guide](https://developers.google.com/workspace/drive/api/guides/v3versusv2)
 and [v2 file resource](https://developers.google.com/workspace/drive/api/reference/rest/v2/files)
