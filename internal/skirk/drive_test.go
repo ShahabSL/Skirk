@@ -276,7 +276,7 @@ func TestDriveStoreRateLimitBackoffDelaysNextRequest(t *testing.T) {
 
 func TestDriveStoreQuotaBackoffSnapshotReportsCooldown(t *testing.T) {
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}],"message":"Rate Limit Exceeded"}}`), nil
+		return stringResponse(http.StatusForbidden, `{"error":{"code":403,"message":"Rate Limit Exceeded","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
 	store.backoff.base = time.Minute
@@ -288,7 +288,7 @@ func TestDriveStoreQuotaBackoffSnapshotReportsCooldown(t *testing.T) {
 		t.Fatal("expected Drive rate-limit error")
 	}
 	snapshot := store.QuotaBackoffSnapshot()
-	if !snapshot.Active || snapshot.Reason != "rateLimitExceeded" || snapshot.Op != "upload" || snapshot.Failures != 1 || snapshot.WaitSeconds <= 0 {
+	if !snapshot.Active || snapshot.Reason != "RATE_LIMIT_EXCEEDED" || snapshot.Op != "upload" || snapshot.Failures != 1 || snapshot.WaitSeconds <= 0 {
 		t.Fatalf("backoff snapshot = %+v, want active upload cooldown", snapshot)
 	}
 }

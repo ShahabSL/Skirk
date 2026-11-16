@@ -658,13 +658,24 @@ func googleAPIErrorDetails(body []byte) (string, string) {
 		Error struct {
 			Status  string `json:"status"`
 			Message string `json:"message"`
-			Errors  []struct {
+			Details []struct {
+				Type   string `json:"@type"`
+				Reason string `json:"reason"`
+			} `json:"details"`
+			Errors []struct {
 				Reason string `json:"reason"`
 			} `json:"errors"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return "", ""
+	}
+	// ErrorInfo is the specific cause; the top-level status can be the generic
+	// PERMISSION_DENIED even when the request was rate limited.
+	for _, detail := range payload.Error.Details {
+		if detail.Type == "type.googleapis.com/google.rpc.ErrorInfo" && detail.Reason != "" {
+			return detail.Reason, payload.Error.Message
+		}
 	}
 	if len(payload.Error.Errors) > 0 && payload.Error.Errors[0].Reason != "" {
 		return payload.Error.Errors[0].Reason, payload.Error.Message

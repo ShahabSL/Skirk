@@ -2191,29 +2191,15 @@ func driveQuotaUnits(op string) int {
 }
 
 func driveErrorReason(body []byte) string {
-	var payload struct {
-		Error struct {
-			Status  string `json:"status"`
-			Message string `json:"message"`
-			Errors  []struct {
-				Reason string `json:"reason"`
-			} `json:"errors"`
-		} `json:"error"`
+	reason, message := googleAPIErrorDetails(body)
+	if reason != "" {
+		return reason
 	}
-	if err := json.Unmarshal(body, &payload); err == nil {
-		if len(payload.Error.Errors) > 0 && payload.Error.Errors[0].Reason != "" {
-			return payload.Error.Errors[0].Reason
+	if message != "" {
+		if len(message) > 80 {
+			message = message[:80]
 		}
-		if payload.Error.Status != "" {
-			return payload.Error.Status
-		}
-		if payload.Error.Message != "" {
-			message := payload.Error.Message
-			if len(message) > 80 {
-				message = message[:80]
-			}
-			return message
-		}
+		return message
 	}
 	return "unknown"
 }

@@ -297,6 +297,7 @@ func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
 	for _, body := range []string{
 		`{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}`,
 		`{"error":{"code":403,"message":"Rate Limit Exceeded","status":"RATE_LIMIT_EXCEEDED"}}`,
+		`{"error":{"code":403,"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"}]}}`,
 	} {
 		if !shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(body)}) {
 			t.Fatalf("expected Drive rate-limit response %s to be retried", body)
@@ -311,6 +312,12 @@ func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
 	}
 	if shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(`{"error":{"status":"PERMISSION_DENIED","message":"rateLimitExceeded is not the reason"}}`)}) {
 		t.Fatal("expected a 403 with a non-rate-limit status not to be retried")
+	}
+	if shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(`{"error":{"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"IAM_PERMISSION_DENIED"}]}}`)}) {
+		t.Fatal("expected an ordinary ErrorInfo permission denial not to be retried")
+	}
+	if shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(`{"error":{"errors":[{"reason":"rateLimitExceeded"}],"details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"IAM_PERMISSION_DENIED"}]}}`)}) {
+		t.Fatal("expected a specific ErrorInfo permission denial to take precedence over a legacy rate-limit reason")
 	}
 	if !shouldRetryResult(&HTTPResult{Status: http.StatusTooManyRequests}) {
 		t.Fatal("expected 429 response to be retried")
