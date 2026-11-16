@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 227 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 228 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -23,7 +23,8 @@
     "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win.",
     "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts.",
     "The known-comment carrier was only a same-OAuth-grant API primitive, overlapped a local full Go suite, and failed at an 8 KiB reply HTTP403 after four 8-record arms; its visible latency is not a CPU-quiet full-tunnel comparison. The 403 reason and cross-account access are unproved.",
-    "The selected-project zero-limit contrast demonstrated independent Drive quota enforcement for one pinned-front metadata GET and one test grant, with final override removal and recovered read. It does not measure method unit weights, billing, sustained rate or 200,000-user capacity."
+    "The selected-project zero-limit contrast demonstrated independent Drive quota enforcement for one pinned-front metadata GET and one test grant, with final override removal and recovered read. It does not measure method unit weights, billing, sustained rate or 200,000-user capacity.",
+    "The v2 About and v3 start-page-token watermark primitive completed on one same-account pinned-front kit. In five of six mutations the exact list showed the change while a confirming signal read remained old. Both eventually advanced; neither is a sole correctness or low-latency discovery gate."
   ],
   "records": [
     {
@@ -4590,6 +4591,26 @@
         "repocomp/.skirk-runs/quota-enforcement-restored-20261116-b.json"
       ],
       "revision_or_binary": "b50ec3d plus test-only probe",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-088",
+      "candidate": "Drive v2 About.largestChangeId and v3 startPageToken as cheap idle signals",
+      "evidence_level": "live_api_primitive_complete_negative_gate",
+      "workload": "Same shahabpre grant in two process configs; pinned front; 8 quiet samples each, then primary and unrelated-prefix create/update/delete with exact-list correlation and 31s cleanup",
+      "latency": "First exact list 0.502–0.678s; v2 signal 0.786–2.574s; v3 token 0.882–2.674s after mutation start; five of six list-visible/unchanged witnesses for both",
+      "throughput_mbps": null,
+      "estimated_quota_units": "53 About+53 token+36 list and small mutation/cleanup calls; 4470 nominal,35760 eight-attempt upper; no provider billing telemetry",
+      "correctness_and_errors": "Both methods passed drive.file/front preflight and eventually advanced 6/6; quiet8/8 stable; unrelated prefix caused account-wide false wake; no unexpected statuses or guard denial",
+      "cleanup": "Both exact owned IDs 404 twice; both exact-name prefixes empty immediate+31s; private recovery ledger removed",
+      "decision": "Neither can gate active discovery alone. Both are possible advisory idle hints with mandatory list reconciliation and measured cold-start penalty; no full-tunnel speed win.",
+      "source_documents": [
+        "docs/experiments/drive-change-watermark-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/about-watermark-probe-20261116-a.json"
+      ],
+      "revision_or_binary": "88ee1c8/test-only tool",
       "live_comparable": false
     }
   ]

@@ -1,9 +1,10 @@
 # Fronted carrier gap review: idle cost versus interactive delay
 
-This is an independent source and documentation review of the 219-entry
+This began as an independent source and documentation review of the now 228-entry
 [experiment catalog](catalog/experiments.json) and [twenty-design matrix](../drive-architecture-candidates-2026-11-15.md).
-It adds **no new live samples** and does not rank incomparable primitive and
-full-tunnel workloads as if they were the same test. The client must retain
+The original review added no live samples; subsequent linked primitives are
+reported separately and incomparable primitive and full-tunnel workloads are
+not ranked as if they were the same test. The client must retain
 the user-selected pinned `www.google.com` route by default, explicit Direct
 choice, and free-service requirements.
 
@@ -49,17 +50,33 @@ window), against immediate known-ID GET medians **0.188/0.159 s** in those
 arms. Thus watch may save idle units but worsens a cold interactive wakeup
 on present evidence. It cannot deliver an unknown object to a phone without
 a reachable callback; Google-front client reachability and exit webhook
-reachability are different properties. Missed/duplicate notifications,
+reachability are different properties. Missed or duplicate notifications,
 channel renewal and periodic reconciliation remain mandatory.
+
+The subsequent [pinned-front change-watermark probe](drive-change-watermark-live-2026-11-16.md)
+tested 5-unit v2 `about.get(largestChangeId)` and v3
+`changes.getStartPageToken` against exact `files.list`. Both eventually
+advanced on six same-account file mutations, but in five phases the exact
+list was already current while a confirming read of **both** signals still
+returned the old value. They first changed around 2.3–2.7 s in those phases,
+versus list visibility around 0.5–0.7 s. They may reduce idle list calls only
+as advisory signals with periodic reconciliation; neither preserves the
+fastest cold OPEN as a sole gate. A fixed known-ID mailbox GET is a distinct
+candidate because it directly reads mailbox state rather than an account
+change signal.
 
 ## Why no new general carrier was promoted
 
-The untested comment/reply append-log idea pays a 50-unit create and a
-100-unit list to discover a new comment. That is more discovery quota than
-the 50-unit v2 metadata PATCH plus 5-unit known-ID GET research path, before
-pagination, retained-comment growth, polling and deletion. The official
+The older fresh-comment/reply idea pays a 50-unit create and a 100-unit list
+to discover a new comment. A **known** precreated comment can instead be
+read for 5 units while replies append for 50; the [bounded pinned-front
+primitive](drive-known-comment-live-2026-11-16.md) delivered 32 small records
+but saw p95 start-to-visible rise from 1.16 s at one writer to 7.60 s at
+eight, then stopped on an unclassified 8 KiB HTTP 403. Its run overlapped a
+local Go suite and was not a matched full-tunnel ranking. Retained reply
+growth, polling, cross-account access and cleanup still matter. The official
 [quota table](https://developers.google.com/workspace/drive/api/guides/limits)
-supports those operation costs, but not a latency advantage. Filename and
+supports those method costs, not a latency advantage. Filename and
 property payloads, immutable ID trains, changes feeds, Apps Script, Pub/Sub,
 Firestore, Drive watch and v2 conditional metadata all have recorded
 primitive or mixed evidence in the catalog. None establishes a universally
