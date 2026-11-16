@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "257 documented findings across historical notes, local fault models, API primitives and live full-tunnel cohorts. Current muxv5 versus clean-main 16/64/128 MiB results disagree by workload and direction; 128 MiB upload stopped on two client upload timeouts. Opt-in muxv6 replay fence has one live crash gate but corrected same-generation ledger is local-only. Metadata-only known-ID and known-comment WAKE remain quota/correctness research, not product defaults. No universal architecture optimum or 200000-user shared-free capacity is established.",
+  "research_tip": "259 documented findings across historical notes, local fault models, API primitives and live full-tunnel cohorts. Current muxv5 versus clean-main 16/64/128 MiB results disagree by workload and direction; 128 MiB upload stopped on two client upload timeouts. Opt-in muxv6 replay fence has one live crash gate but corrected same-generation ledger is local-only. Metadata-only known-ID, generated-ID doorbell and known-comment WAKE remain quota/correctness research, not product defaults. A real receiver-path local fixture reproduces a two-stream flow-control reset. No universal architecture optimum or 200000-user shared-free capacity is established.",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -5160,6 +5160,42 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "root commit 3faf6f6",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-118",
+      "candidate": "Generated-ID metadata doorbell ladder contract audit",
+      "evidence_level": "official_documentation_and_read_only_architecture_audit",
+      "workload": "Pre-generated IDs, metadata-only files.create encrypted description, duplicate create409, multi-device conflict/readback, finite ladder rollover, distinct OAuth app drive.file visibility, idle quota arithmetic; no new Google call",
+      "latency": "No live ladder latency; fallback-only list/30s can add nearly30s cold delay; prior eight-record known-ID primitive p95 list0.775s versus known-ID0.829s",
+      "throughput_mbps": null,
+      "estimated_quota_units": "One 5-unit GET/s plus one100-unit list/30s =500/min or720000/day/idle mailbox lower bound, before writes/retries/cleanup; 200000 shared 1Hz GET users require60M/min",
+      "correctness_and_errors": "409 documents idempotent retry, not fair queue; different OAuth app may receive appNotAuthorizedToFile; finite ID vector needs durable crash-safe rotation; unused IDs after24h and fronted multiuser behavior unproved",
+      "cleanup": "Read-only audit; no owned Drive object",
+      "decision": "Research prototype only, no product speed/capacity claim or default change",
+      "source_documents": [
+        "docs/experiments/generated-id-doorbell-ladder-audit-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "independent read-only source/official API audit 2026-11-16",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-119",
+      "candidate": "Two slow mux receive streams expose per-stream deferred admission gap",
+      "evidence_level": "real_receiver_path_local_reproduction_race",
+      "workload": "MemoryStore actual sealed ~3MiB muxv5 objects, six normal objects admitted per stream, blocked net.Pipe consumers, auto-profile eight physical GET permits, unrelated priority DATA/FIN; focused race5/5 and vet",
+      "latency": "No live Drive latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google call or carrier change",
+      "correctness_and_errors": "A fills64MiB primary plus1MiB deferred and stays alive; B resets after its own8MiB deferred cap though global deferred ≤9MiB; priority flow stays ordered; disproves claim that two streams exhaust global64MiB deferred budget",
+      "cleanup": "MemoryStore only; no Google object",
+      "decision": "Unresolved product flow-control defect; preserve red fixture on isolated research branch, no speculative fixed-window/reserve patch",
+      "source_documents": [
+        "docs/experiments/mux-receive-budget-two-stream-local-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "separate pushed branch codex/mux-receive-budget-20261116 at 1800b8a; not product PR source",
       "live_comparable": false
     }
   ]

@@ -1,6 +1,6 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 257 documented findings,
+The [catalog](catalog/experiments.json) contains 259 documented findings,
 including 73 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
 not 246 equally controlled protocol races. A universal throughput or latency
@@ -123,6 +123,15 @@ stream: the unchanged product test failed and the reserve candidate passed.
 The reserve can still fill and may reset legitimate large streams earlier, so
 it remains test-only.
 
+A later [full receiver-path local reproduction](mux-receive-budget-two-stream-local-2026-11-16.md)
+narrowed a related failure: one blocked stream filled the 64 MiB primary
+pool, then a second stream's six already admitted ~3 MiB normal objects
+exceeded **its own 8 MiB deferred cap** and reset. An unrelated priority
+DATA/FIN flow still delivered in order. The global 64 MiB deferred pool was
+not exhausted. A safe fix needs per-stream capacity reservation before
+physical reads, close-race proof, and matched speed/latency testing; reducing
+the six-object window or raising a cap alone is not established as better.
+
 The existing pre-OPEN pending-frame guard had a separate isolation bug: when
 its global 256 MiB budget filled, it discarded and reset **all** pending
 streams. The product fix now rejects the stream that attempted to exceed the
@@ -164,6 +173,16 @@ unfenced rotation pointer. At one head poll per second, idle reads alone cost
 300 units/min per mailbox, or 60 million/min for 200,000 centrally hosted
 mailboxes; periodic reconciliation adds quota and wake delay. This remains a
 local research model, not a live full tunnel or product path.
+
+An independent [generated-ID doorbell audit](generated-id-doorbell-ladder-audit-2026-11-16.md)
+confirmed that Drive documents pre-generated IDs, metadata-only creates,
+and retry 409s. It did **not** find a documented multi-device queue or a
+bounded forever-rotation rule. A same-app idle floor of one 5-unit head
+GET/s plus one list/30s is 500 units/min, but a fallback-only discovery
+can wait nearly 30 seconds, and separate OAuth apps may lack `drive.file`
+visibility. Even one 5-unit GET/s for each of 200,000 users requires
+60 million units/min under a shared project. No full-tunnel speed or scale
+win follows from this audit.
 
 The next discovery design must remove or amortize dynamic bootstrap without
 giving up cold-open latency or crash safety. Kit-time generated rendezvous IDs
