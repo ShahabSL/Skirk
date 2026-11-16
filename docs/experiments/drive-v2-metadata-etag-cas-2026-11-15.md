@@ -1,8 +1,8 @@
 # Drive v2 metadata ETag write-fence discriminator
 
-Status: test-only bounded probe prepared and checked offline. No v2 live
-result exists yet. The separate v3 fixture failure and corrected negative
-result remain unchanged in the v3 companion report.
+Status: separate bounded v2 PATCH and PUT probes both observed the tested
+write fence and completed exact cleanup. The separate v3 fixture failure and
+corrected negative result remain unchanged in the v3 companion report.
 
 ## Official contract and remaining uncertainty
 
@@ -85,7 +85,7 @@ Together with the ten existing guard/cleanup test functions, the focused race
 final snapshot passed in 1.371 seconds; vet passed. These are local fake HTTP tests, not
 Google evidence or transport speed measurements.
 
-Root must independently review and serialize any live call. The prepared
+Root independently reviewed and serialized each live call. The
 entrypoint is:
 
 ```sh
@@ -100,3 +100,63 @@ The fresh 0700 directory must be below an ignored `.skirk-runs` directory and
 contain only the approved copied 0600 `config.json` before launch. Select PUT
 only as a separate fresh run and lease. No API token or Cloud owner credential
 is exported to an application profile.
+
+## Observed separate PATCH and PUT results
+
+The two fresh owned-file experiments used the same frozen test executable,
+with one explicit method and one separate private fixture per run. Both made
+16 visible HTTP/2 client dispatches and completed this sequence:
+
+| Phase | PATCH experiment | PUT experiment |
+| --- | --- | --- |
+| Generated-ID create and exact projected metadata read | 200, resource ETag present | 200, resource ETag present |
+| Conditional cache GET with current resource tag | 304 | 304 |
+| Impossible quoted If-Match writing D | 412, exact readback remained A | 412, exact readback remained A |
+| Current resource tag writing B | 200, exact readback B | 200, exact readback B |
+| Same now-old resource tag writing C | 412, exact readback still B | 412, exact readback still B |
+| Exact identity check, owned deletion, absence proof | GET200, DELETE204, two immediate404 and two delayed31-second404 | GET200, DELETE204, two immediate404 and two delayed31-second404 |
+
+The projected resource `etag` supplied the write fence. The metadata GETs did
+not expose an HTTP ETag header; the resource field and the HTTP response header
+are not interchangeable assumptions. Both reports have
+`WriteCASObserved=true`, `BogusRejected=true`, `Cache304=true`,
+`ValidAccepted=true`, `StaleRejected=true` and `StalePreserved=true`. Every
+listed phase was actually executed. Both have an empty controlled failure,
+verified cleanup and removed borrowed configuration, with zero report-write
+errors. No raw tag, ID, nonce name, token, ciphertext or full report is tracked.
+
+Each run retained 16 reservations, 128 conservative HTTP/2 attempt upper,
+2,440 quota-unit upper and 8,784 encoded-request-byte upper reservations. Token
+acquisition was one separate setup call each. These upper figures are not
+physical HTTP-attempt counts, actual billed quota or raw network bytes. This
+was a capability/correctness primitive, not a latency or throughput benchmark.
+
+Both results establish observed server-enforced write fencing for these
+specific v2 metadata operations and fresh owned files on the pinned
+`www.google.com` route. They do not yet establish rapid-revision ETag uniqueness,
+lost-response recovery under concurrent completion, an indefinitely safe slot,
+cross-account behavior, or full-transport performance. A separate rapid-revision
+discriminator and deterministic transport fault tests remain required.
+
+The official [v2/v3 guide](https://developers.google.com/workspace/drive/api/guides/v3versusv2)
+continues to describe v3 as the latest version and recommends it unless a
+needed v2 collection warrants v2. No explicit shutdown was found in the
+consulted reference, but continued v2 behavior is a support risk, not a
+promise. Any research transport must feature-detect the actual fence, fail
+closed on its loss, and retain immutable Drive fallback. This primitive does
+not authorize silently assuming v2 CAS forever or changing the product default.
+
+## Live provenance
+
+Clean source: `28d10bde8621772fb002f02a18eb1f84e0bdf089`.
+Frozen test executable:
+`.skirk-runs/drive-etag-probe-20261115/drive-etag-v2-probe.test`.
+Its SHA-256 is
+`21682216b2c72d3c4095a517d851bf96f6bfe1a7e2d8ff3f77cc8d62feaaf678`.
+This Go1.26.4 darwin/arm64 test executable has no embedded linked-worktree VCS
+stamp; retained clean source and binary hashes provide its provenance.
+
+| Separate selected method | Ignored private report suffix | Private report SHA-256 |
+| --- | --- | --- |
+| PATCH | `.skirk-runs/drive-etag-v2-patch-live-20261116-0010/etag-probe-result.json` | `a0d55f2e0ea84f6d6f1e103588e3bf3ef9eec52ddef55ba924fd118e9f7c195a` |
+| PUT | `.skirk-runs/drive-etag-v2-put-live-20261116-0012/etag-probe-result.json` | `a30ddbcdc0fbb28c9f3b96d583698772df4de6538413d26776758d11b5f83f22` |
