@@ -95,6 +95,7 @@ const (
 	muxPendingOpenRepairWindow   = time.Second
 	muxPendingOpenTimeoutBudget  = 8
 	muxExitOpenDialConcurrency   = 64
+	muxExitInitialWriteTimeout   = 10 * time.Second
 	muxClientFinalDrainDelay     = 5 * time.Second
 	cleanupRetryMaxAttempts      = 5
 	cleanupRetryQueueMax         = muxReceiveQueue
@@ -780,16 +781,20 @@ func (m *driveMux) openClaimedExitStream(ctx context.Context, frame muxFrame) {
 		m.terminalCloseStreamKey(ctx, key, "open_canceled", nil, false)
 		return
 	}
-	defer releaseDialSlot()
 	started := time.Now()
 	var remote net.Conn
-	if target == exitProbeTarget {
-		remote, err = newExitProbeConnection(m.t.Secret)
-	} else if m.dialExit != nil {
-		remote, err = m.dialExit(ctx, target)
-	} else {
-		remote, err = m.t.dialExitTarget(ctx, target)
-	}
+	func() {
+		// Only dialing owns the shared permit. A successful target can stop
+		// reading at any time, so its initial write must not block other OPENs.
+		defer releaseDialSlot()
+		if target == exitProbeTarget {
+			remote, err = newExitProbeConnection(m.t.Secret)
+		} else if m.dialExit != nil {
+			remote, err = m.dialExit(ctx, target)
+		} else {
+			remote, err = m.t.dialExitTarget(ctx, target)
+		}
+	}()
 	dialDuration := time.Since(started)
 	if m.t.Logger != nil {
 		if err != nil || dialDuration >= time.Second {
@@ -818,13 +823,26 @@ func (m *driveMux) openClaimedExitStream(ctx context.Context, frame muxFrame) {
 	m.finishExitOpenClaim(key, false)
 	m.startWriter(stream)
 	if len(initial) > 0 {
-		if err := writeAll(remote, initial); err != nil {
+		if err := writeExitOpenInitial(ctx, remote, initial, muxExitInitialWriteTimeout); err != nil {
 			m.terminalCloseStreamKey(ctx, key, "initial_write_failed", []byte(sanitizeTransportErrorText(err.Error())), true)
 			return
 		}
 	}
 	m.flushPendingFrames(ctx, stream)
 	go m.readLoop(ctx, stream)
+}
+
+func writeExitOpenInitial(ctx context.Context, remote net.Conn, initial []byte, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := remote.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	writeErr := writeAll(remote, initial)
+	resetErr := remote.SetWriteDeadline(time.Time{})
+	return errors.Join(writeErr, resetErr)
 }
 
 func (m *driveMux) acquireExitOpenDialSlot(ctx context.Context) (func(), error) {

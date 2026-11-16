@@ -73,6 +73,103 @@ func TestMuxExitWritesInlineInitialBeforeFollowOnData(t *testing.T) {
 	}
 }
 
+func TestMuxExitDialPermitReleasedBeforeBlockedInitialWrite(t *testing.T) {
+	tunnel := &Tunnel{Data: NewMemoryStore(), ClientID: "client-test", RunID: "run-test"}
+	mux, err := newDriveMux(tunnel, "exit", DirectionDown, DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux.exitOpenSlots = make(chan struct{}, 1)
+	firstLocal, firstPeer := net.Pipe()
+	secondLocal, secondPeer := net.Pipe()
+	gate := &firstWriteGateConn{Conn: firstLocal, entered: make(chan struct{}), release: make(chan struct{})}
+	secondDialed := make(chan struct{})
+	mux.dialExit = func(_ context.Context, target string) (net.Conn, error) {
+		switch target {
+		case "first.test:80":
+			return gate, nil
+		case "second.test:80":
+			close(secondDialed)
+			return secondLocal, nil
+		default:
+			return nil, errors.New("unexpected target")
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	firstDone, secondDone := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		close(gate.release)
+		_ = firstPeer.Close()
+		_ = secondPeer.Close()
+		mux.closeAll()
+		for _, done := range []<-chan struct{}{firstDone, secondDone} {
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Error("exit Open handler did not join")
+			}
+		}
+	})
+	first := muxFrame{Kind: muxFrameOpen, ClientID: tunnel.ClientID, RunID: tunnel.RunID, StreamID: 1, Payload: encodeMuxOpenPayload("first.test:80", []byte("initial"))}
+	second := muxFrame{Kind: muxFrameOpen, ClientID: tunnel.ClientID, RunID: tunnel.RunID, StreamID: 2, Payload: encodeMuxOpenPayload("second.test:80", nil)}
+	if !mux.claimExitOpenFrame(first) || !mux.claimExitOpenFrame(second) {
+		t.Fatal("could not claim distinct Open frames")
+	}
+	go func() { mux.openClaimedExitStream(ctx, first); close(firstDone) }()
+	select {
+	case <-gate.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first initial write did not begin")
+	}
+	go func() { mux.openClaimedExitStream(ctx, second); close(secondDone) }()
+	select {
+	case <-secondDialed:
+	case <-time.After(750 * time.Millisecond):
+		t.Fatal("stalled initial write retained the only exit dial permit")
+	}
+}
+
+func TestMuxExitInitialWriteHasFiniteDeadlineAndClearsIt(t *testing.T) {
+	t.Run("stalled target", func(t *testing.T) {
+		local, peer := net.Pipe()
+		defer local.Close()
+		defer peer.Close()
+		started := time.Now()
+		err := writeExitOpenInitial(context.Background(), local, []byte("initial"), 50*time.Millisecond)
+		if !isNetTimeout(err) || time.Since(started) > time.Second {
+			t.Fatalf("stalled initial write was not bounded: %v", err)
+		}
+	})
+	t.Run("successful write", func(t *testing.T) {
+		local, peer := net.Pipe()
+		defer local.Close()
+		defer peer.Close()
+		read := make(chan error, 1)
+		go func() {
+			buf := make([]byte, len("initiallater"))
+			_, err := io.ReadFull(peer, buf[:len("initial")])
+			if err == nil {
+				_, err = io.ReadFull(peer, buf[len("initial"):])
+			}
+			if err == nil && string(buf) != "initiallater" {
+				err = errors.New("wrong data after initial write")
+			}
+			read <- err
+		}()
+		if err := writeExitOpenInitial(context.Background(), local, []byte("initial"), 50*time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(75 * time.Millisecond)
+		if err := writeAll(local, []byte("later")); err != nil {
+			t.Fatalf("initial write left deadline on connection: %v", err)
+		}
+		if err := <-read; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func isNetTimeout(err error) bool {
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
