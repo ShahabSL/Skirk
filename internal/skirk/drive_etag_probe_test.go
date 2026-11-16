@@ -23,12 +23,14 @@ import (
 
 type driveETagCall struct {
 	Phase, Method, IfMatch, IfNoneMatch, ETag, Protocol, Error string
+	MetadataETag                                               string
 	MetadataVersion                                            string
 	Status                                                     int
 	Finished                                                   bool
 }
 type driveETagReport struct {
 	Schema                                                                         int `json:"schema"`
+	APIVersion, WriteMethod, SelectedETagSource                                    string
 	Route, Front, AccountBinding, FileID, FileName, Projection, Failure            string
 	Calls                                                                          []driveETagCall
 	VisibleCalls, ReservedCalls, AttemptsUpper, QuotaUnitsUpper, RequestBytesUpper int
@@ -50,8 +52,40 @@ type driveETagProbe struct {
 	report        driveETagReport
 	parent, space string
 	full          bool
+	apiVersion    int // Zero preserves the original v3 fixture dialect.
+	writeMethod   string
 	values        map[string]string
 	save          func(driveETagReport) error
+}
+
+func (p *driveETagProbe) apiBase() string {
+	if p.apiVersion == 2 {
+		return "/drive/v2/files"
+	}
+	return "/drive/v3/files"
+}
+func (p *driveETagProbe) projection() string {
+	if p.apiVersion == 2 {
+		return "id,title,description,version,etag"
+	}
+	return "id,name,description,version"
+}
+func (p *driveETagProbe) updateMethod() string {
+	if p.apiVersion == 2 && p.writeMethod == http.MethodPut {
+		return http.MethodPut
+	}
+	return http.MethodPatch
+}
+func (p *driveETagProbe) generationQuery() url.Values {
+	key := "count"
+	if p.apiVersion == 2 {
+		key = "maxResults"
+	}
+	query := url.Values{key: []string{"1"}, "fields": []string{"ids"}}
+	if p.space == "appDataFolder" {
+		query.Set("space", "appDataFolder")
+	}
+	return query
 }
 
 func (p *driveETagProbe) persist() error {
@@ -61,13 +95,13 @@ func (p *driveETagProbe) persist() error {
 	return nil
 }
 func (p *driveETagProbe) filePath(full bool) string {
-	path := "/drive/v3/files/" + url.PathEscape(p.report.FileID)
+	path := p.apiBase() + "/" + url.PathEscape(p.report.FileID)
 	if full {
 		// Omitting fields requests Drive's default projection, which does not
 		// include description. A wildcard explicitly requests the full resource.
 		path += "?fields=*"
 	} else {
-		path += "?fields=id,name,description,version"
+		path += "?fields=" + p.projection()
 	}
 	return path
 }
@@ -77,7 +111,7 @@ func (p *driveETagProbe) call(ctx context.Context, phase, method, path string, h
 		limit = 20
 	}
 	cost := 5
-	if method == http.MethodPatch || method == http.MethodPost || method == http.MethodDelete {
+	if method == http.MethodPatch || method == http.MethodPut || method == http.MethodPost || method == http.MethodDelete {
 		cost = 50
 	}
 	if p.report.ReservedCalls >= limit || p.report.QuotaUnitsUpper+cost*8 > 8000 || p.report.RequestBytesUpper+8*len(body) > 1<<20 {
@@ -86,16 +120,12 @@ func (p *driveETagProbe) call(ctx context.Context, phase, method, path string, h
 	// The fixture can address only its reserved ID, its one create, and ID
 	// generation. Never accept an arbitrary existing Drive path.
 	valid := false
-	if strings.HasPrefix(path, "/drive/v3/files/generateIds?") {
-		query := url.Values{"count": []string{"1"}, "fields": []string{"ids"}}
-		if p.space == "appDataFolder" {
-			query.Set("space", "appDataFolder")
-		}
-		valid = phase == "generate" && method == http.MethodGet && p.report.FileID == "" && path == "/drive/v3/files/generateIds?"+query.Encode()
-	} else if strings.HasPrefix(path, "/drive/v3/files?") {
-		valid = phase == "create" && method == http.MethodPost && p.report.FileID != "" && path == "/drive/v3/files?fields=id,name,description,version"
+	if strings.HasPrefix(path, p.apiBase()+"/generateIds?") {
+		valid = phase == "generate" && method == http.MethodGet && p.report.FileID == "" && path == p.apiBase()+"/generateIds?"+p.generationQuery().Encode()
+	} else if strings.HasPrefix(path, p.apiBase()+"?") {
+		valid = phase == "create" && method == http.MethodPost && p.report.FileID != "" && path == p.apiBase()+"?fields="+p.projection()
 	} else {
-		valid = p.report.FileID != "" && (path == p.filePath(false) || path == p.filePath(true)) && (method == http.MethodGet || method == http.MethodPatch || method == http.MethodDelete)
+		valid = p.report.FileID != "" && (path == p.filePath(false) || path == p.filePath(true)) && (method == http.MethodGet || method == p.updateMethod() || method == http.MethodDelete)
 	}
 	if !valid {
 		return nil, errors.New("etag_probe_owned_path_only")
@@ -130,9 +160,12 @@ func (p *driveETagProbe) call(ctx context.Context, phase, method, path string, h
 			entry.ETag = tag
 		}
 		if r.Status == 200 {
-			var metadata struct{ Version string }
+			var metadata struct{ Version, ETag string }
 			if json.Unmarshal(r.Body, &metadata) == nil {
 				entry.MetadataVersion = metadata.Version
+				if p.apiVersion == 2 && driveETagTagValid(metadata.ETag) {
+					entry.MetadataETag = metadata.ETag
+				}
 			}
 		}
 	}
@@ -155,11 +188,61 @@ func driveETagHash(value string) string {
 	return hex.EncodeToString(hash[:])
 }
 func (p *driveETagProbe) metadata(r *HTTPResult) (string, error) {
-	var value struct{ ID, Name, Description string }
-	if r == nil || r.Status != 200 || json.Unmarshal(r.Body, &value) != nil || value.ID != p.report.FileID || value.Name != p.report.FileName {
+	var value struct{ ID, Name, Title, Description string }
+	if r == nil || r.Status != 200 || json.Unmarshal(r.Body, &value) != nil || value.ID != p.report.FileID {
+		return "", errors.New("etag_probe_metadata_identity")
+	}
+	name := value.Name
+	if p.apiVersion == 2 {
+		name = value.Title
+	}
+	if name != p.report.FileName {
 		return "", errors.New("etag_probe_metadata_identity")
 	}
 	return value.Description, nil
+}
+
+func driveETagTagValid(tag string) bool {
+	if tag == "" {
+		return true
+	}
+	if len(tag) > 512 {
+		return false
+	}
+	value := strings.TrimPrefix(tag, "W/")
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return false
+	}
+	for _, c := range value[1 : len(value)-1] {
+		if c < 0x21 || c > 0x7e || c == '"' {
+			return false
+		}
+	}
+	return true
+}
+
+// V2 documents an etag resource field. Record header and resource separately;
+// refuse to infer a single write fence from inconsistent values.
+func (p *driveETagProbe) currentTag(r *HTTPResult) (string, error) {
+	header := r.Header.Get("ETag")
+	if p.apiVersion != 2 {
+		return header, nil
+	}
+	var metadata struct{ ETag string }
+	if json.Unmarshal(r.Body, &metadata) != nil || !driveETagTagValid(header) || !driveETagTagValid(metadata.ETag) {
+		return "", errors.New("etag_probe_invalid_v2_etag")
+	}
+	if header != "" && metadata.ETag != "" && header != metadata.ETag {
+		return "", errors.New("etag_probe_v2_header_resource_etag_conflict")
+	}
+	if metadata.ETag != "" {
+		p.report.SelectedETagSource = "v2_resource_etag"
+		return metadata.ETag, nil
+	}
+	if header != "" {
+		p.report.SelectedETagSource = "http_header"
+	}
+	return header, nil
 }
 func (p *driveETagProbe) get(ctx context.Context, phase string, full bool, headers map[string]string) (*HTTPResult, string, error) {
 	if headers == nil {
@@ -175,7 +258,7 @@ func (p *driveETagProbe) get(ctx context.Context, phase string, full bool, heade
 }
 func (p *driveETagProbe) patch(ctx context.Context, phase, value, tag string) (*HTTPResult, error) {
 	body, _ := json.Marshal(map[string]string{"description": value})
-	r, err := p.call(ctx, phase, http.MethodPatch, p.filePath(p.full), map[string]string{"Content-Type": "application/json", "If-Match": tag}, body, false)
+	r, err := p.call(ctx, phase, p.updateMethod(), p.filePath(p.full), map[string]string{"Content-Type": "application/json", "If-Match": tag}, body, false)
 	if err != nil {
 		return r, err
 	}
@@ -185,11 +268,7 @@ func (p *driveETagProbe) patch(ctx context.Context, phase, value, tag string) (*
 	return r, nil
 }
 func (p *driveETagProbe) run(ctx context.Context) error {
-	query := url.Values{"count": []string{"1"}, "fields": []string{"ids"}}
-	if p.space == "appDataFolder" {
-		query.Set("space", "appDataFolder")
-	}
-	r, err := p.call(ctx, "generate", http.MethodGet, "/drive/v3/files/generateIds?"+query.Encode(), nil, nil, false)
+	r, err := p.call(ctx, "generate", http.MethodGet, p.apiBase()+"/generateIds?"+p.generationQuery().Encode(), nil, nil, false)
 	if err != nil {
 		return err
 	}
@@ -204,11 +283,21 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 		return err
 	} // Recovery identity exists BEFORE create.
 	metadata := map[string]any{"id": p.report.FileID, "name": p.report.FileName, "mimeType": "application/octet-stream", "description": p.values["A"]}
-	if p.parent != "" {
+	if p.apiVersion == 2 {
+		delete(metadata, "name")
+		metadata["title"] = p.report.FileName
+		if p.parent != "" {
+			parent := p.parent
+			if parent == "appDataFolder" {
+				parent = "appdata" // V2's documented application-data alias.
+			}
+			metadata["parents"] = []map[string]string{{"id": parent}}
+		}
+	} else if p.parent != "" {
 		metadata["parents"] = []string{p.parent}
 	}
 	body, _ := json.Marshal(metadata)
-	r, err = p.call(ctx, "create", http.MethodPost, "/drive/v3/files?fields=id,name,description,version", map[string]string{"Content-Type": "application/json"}, body, false)
+	r, err = p.call(ctx, "create", http.MethodPost, p.apiBase()+"?fields="+p.projection(), map[string]string{"Content-Type": "application/json"}, body, false)
 	if err != nil {
 		return err
 	}
@@ -219,19 +308,28 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 	if err != nil || initial != p.values["A"] {
 		return errors.New("etag_probe_initial_readback")
 	}
-	tag := r.Header.Get("ETag")
+	tag, err := p.currentTag(r)
+	if err != nil {
+		return err
+	}
 	full := false
-	p.report.Projection = "id,name,description,version"
+	p.report.Projection = p.projection()
 	p.report.InitialHash = driveETagHash(initial)
 	if tag == "" {
 		r, initial, err = p.get(ctx, "get_full_A", true, nil)
 		if err != nil || initial != p.values["A"] {
 			return errors.New("etag_probe_full_readback")
 		}
-		tag = r.Header.Get("ETag")
+		tag, err = p.currentTag(r)
+		if err != nil {
+			return err
+		}
 		full = true
 		p.full = true
 		p.report.Projection = "fields_star_metadata_header_only"
+		if p.apiVersion == 2 {
+			p.report.Projection = "fields_star_metadata_resource_and_header_etag"
+		}
 	}
 	if tag != "" {
 		r, err = p.call(ctx, "if_none_match_A", http.MethodGet, p.filePath(full), map[string]string{"If-None-Match": tag, "Cache-Control": "no-cache"}, nil, false)
@@ -259,7 +357,10 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 	}
 	// A GET cache ETag is not yet a write fence. It must accept a valid
 	// description update, then reject that SAME now-stale value without C.
-	tag = r.Header.Get("ETag")
+	tag, err = p.currentTag(r)
+	if err != nil {
+		return err
+	}
 	if tag == "" {
 		p.report.Failure = "no_metadata_etag_for_valid_stale_test"
 		return p.persist()
@@ -419,11 +520,29 @@ func driveETagSave(dir string, report driveETagReport) error {
 }
 
 func TestLiveDriveMetadataETagCAS(t *testing.T) {
-	dir := os.Getenv("SKIRK_DRIVE_ETAG_PRIVATE_DIR")
+	runLiveDriveMetadataETag(t, 3, http.MethodPatch, "SKIRK_DRIVE_ETAG")
+}
+
+// PATCH and PUT are independent owned-file experiments, never alternated under
+// one tag or inferred from each other's result. The caller must select one.
+func TestLiveDriveV2MetadataETagCAS(t *testing.T) {
+	if os.Getenv("SKIRK_DRIVE_ETAG_V2_PRIVATE_DIR") == "" {
+		t.Skip("explicit bounded owned Drive v2 ETag research")
+	}
+	method := os.Getenv("SKIRK_DRIVE_ETAG_V2_METHOD")
+	if method != http.MethodPatch && method != http.MethodPut {
+		t.Fatal("select exactly PATCH or PUT for this fresh v2 fixture")
+	}
+	runLiveDriveMetadataETag(t, 2, method, "SKIRK_DRIVE_ETAG_V2")
+}
+
+func runLiveDriveMetadataETag(t *testing.T, version int, method, envPrefix string) {
+	t.Helper()
+	dir := os.Getenv(envPrefix + "_PRIVATE_DIR")
 	if dir == "" {
 		t.Skip("explicit bounded owned Drive metadata ETag research")
 	}
-	if os.Getenv("SKIRK_DRIVE_ETAG_ACCOUNT") != "isolated-secondary" || !filepath.IsAbs(dir) || !strings.Contains(filepath.Clean(dir), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {
+	if os.Getenv(envPrefix+"_ACCOUNT") != "isolated-secondary" || !filepath.IsAbs(dir) || !strings.Contains(filepath.Clean(dir), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {
 		t.Fatal("explicit secondary-account private fixture required")
 	}
 	configPath := filepath.Join(dir, "config.json")
@@ -469,11 +588,14 @@ func TestLiveDriveMetadataETagCAS(t *testing.T) {
 	}
 	block, _ := aes.NewCipher(key)
 	aead, _ := cipher.NewGCM(block)
-	p := &driveETagProbe{parent: cfg.Drive.FolderID, space: cfg.Drive.Space, values: make(map[string]string)}
+	p := &driveETagProbe{parent: cfg.Drive.FolderID, space: cfg.Drive.Space, values: make(map[string]string), apiVersion: version, writeMethod: method}
 	if p.space == "appDataFolder" {
 		p.parent = "appDataFolder"
 	}
-	p.report = driveETagReport{Schema: 1, Route: cfg.Route.Mode, Front: "www.google.com", AccountBinding: "operator_asserted_isolated_secondary_profile", FileName: "skirk-etag-probe-" + hex.EncodeToString(nameNonce), TokenSourceCalls: 1}
+	p.report = driveETagReport{Schema: 1, APIVersion: "v3", WriteMethod: method, Route: cfg.Route.Mode, Front: "www.google.com", AccountBinding: "operator_asserted_isolated_secondary_profile", FileName: "skirk-etag-probe-" + hex.EncodeToString(nameNonce), TokenSourceCalls: 1}
+	if version == 2 {
+		p.report.APIVersion = "v2"
+	}
 	for _, phase := range []string{"A", "B", "C", "D"} {
 		nonce := make([]byte, aead.NonceSize())
 		plain := make([]byte, 128)
