@@ -15,8 +15,10 @@ units/day/project threshold before charges**, and **1 TB/day/project egress**.
 It also documents a **750 GB/day upload limit per Google Workspace user**
 across My Drive and shared drives. This is an additional account-level ceiling
 for a shared exit; splitting project headers does not remove it.
-Examples in its method table are `files.get` **5**, `files.list` **100**,
-`files.update` **50**, and `files.download` **200** units. Google says older
+Examples in its method table are metadata `files.get` **5**, `files.list`
+**100**, `files.update` **50**, and file-content download **200** units.
+The five-unit polling arithmetic below applies only to metadata GETs, not
+to reading file bodies. Google says older
 projects that used the API between November 2025 and April 2026 retain their
 previous quotas for a transition period; inspect each actual project's quota
 page. It may return `403` or `429` under rate limits and recommends exponential
