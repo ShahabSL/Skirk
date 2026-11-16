@@ -52,6 +52,7 @@ terminal path. A larger protocol-level replay watermark or durable receipt
 would be a separate, versioned design.
 
 The tests prove local map/fence invariants and the two distinct 404 cases.
-They do not measure Drive visibility, speed, or capacity. Full `make
-preflight` is deferred until the Mac is CPU-quiet so it does not perturb the
-matched live transport benchmark running in parallel.
+They do not measure Drive visibility, speed, or capacity. After the live
+benchmark ended, the merged root branch passed focused race tests and full
+`SKIRK_FULL_PREFLIGHT=1 make preflight` with the installed Android NDK
+selected through `SKIRK_ANDROID_NDK_VERSION=27.1.12297006`.

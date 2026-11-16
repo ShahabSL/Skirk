@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 241 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders; local full-mux known-ID train negative quota/bootstrap gate; mux-wide primary inbound queue budget local check",
+  "research_tip": "257 documented findings across historical notes, local fault models, API primitives and live full-tunnel cohorts. Current muxv5 versus clean-main 16/64/128 MiB results disagree by workload and direction; 128 MiB upload stopped on two client upload timeouts. Opt-in muxv6 replay fence has one live crash gate but corrected same-generation ledger is local-only. Metadata-only known-ID and known-comment WAKE remain quota/correctness research, not product defaults. No universal architecture optimum or 200000-user shared-free capacity is established.",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -4953,6 +4953,214 @@
       ],
       "revision_or_binary": "hardened binary SHA256 6f1b18f869f71d390243a5cbbd7b546481f1f07b8e3e2560169b9bc1d11ed727; clean main SHA256 34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
       "live_comparable": true
+    },
+    {
+      "id": "R3-107",
+      "candidate": "Matched sustained muxv5 versus Drive v2 window8 stopped at quota guard",
+      "evidence_level": "live_incomplete_prespecified_quota_stop",
+      "workload": "First of planned four same-binary matched full SOCKS/TLS arms:384KiB mature-stream prelude,16MiB download/upload,80 scheduled text echoes, pinned www.google.com front; only first v2 arm ran",
+      "latency": "No valid p95 or product-versus-v2 comparison: first arm stopped during upload with61/80 client echoes",
+      "throughput_mbps": null,
+      "estimated_quota_units": "239720 of240000 active rolling-minute upper units reserved; next800 denied;40000 cleanup reserve intact;261800 whole-arm conservative upper",
+      "correctness_and_errors": "Pinned preflights200/200 over H2; exact prelude and16MiB download passed; upload canceled before exact hash; origin68 valid echoes, client61; one guard denial, zero timeout/transport errors; expected412 and cleanup404 accounted",
+      "cleanup": "All writers joined; exact mux namespace and two owned v2 files absent immediately and after31s; no control arm launched",
+      "decision": "Negative sustained quota gate and incomplete speed campaign; do not rank v2 versus product or relax cap",
+      "source_documents": [
+        "docs/experiments/matched-muxv5-drive-v2-window8-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "../repocomp-matched-window8/.skirk-runs/matched-v5-v2-window8-20261116a/arm-v2-first/"
+      ],
+      "revision_or_binary": "isolated branch codex/skirk-matched-window8-20261116 at 5b0f453; test binary SHA256 f56831901420df5ea01551a606d4930d79f27bde2888e4ce022721269592976a",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-108",
+      "candidate": "Metadata-only generated-ID full-mux priority carrier (test-only)",
+      "evidence_level": "local_full_mux_socks_tls_and_quota_model",
+      "workload": "Fake Drive exact1MiB down/up,17 verified text replies during held bulk; lost response, late create, dynamic boot, deleted head, HMAC tamper and cleanup; five isolated full-tunnel repeats, focused race x3, vet and full Go suite",
+      "latency": "No live Google latency; modeled dynamic cold-bootstrap p95 0.95s at1s list,1.90s at2s list before RPC time",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Metadata-only tiny GET5 units, no tiny media GET200; local run18440 modeled units; dynamic idle four heads/s plus boot list/s7200 units/min versus current v5 6000 (+20%)",
+      "correctness_and_errors": "Exact local SOCKS/TLS files and text passed; one repeat had EOF under competing broad suite and five isolated repeats passed; public properties HMAC used, cross-app drive.file visibility and durable cursor unproved",
+      "cleanup": "Exact fake session sweep empty; real Drive cleanup untested",
+      "decision": "Negative product quota gate at equal cold-open cadence; keep isolated and do not spend quota on full live A/B without better bootstrap",
+      "source_documents": [
+        "docs/experiments/metadata-known-id-mux-local-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "separate research branch codex/metadata-known-id-mux-20261116 at 9cd6514; not product PR",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-109",
+      "candidate": "Authenticated record streaming within committed immutable bulk object (test-only)",
+      "evidence_level": "local_fake_drive_and_paced_http_prototype",
+      "workload": "Fake Drive held response and exact cleanup, corruption/truncation/retry/identity/terminal tests,16 concurrent objects,three paced4MiB loopback pairs; full Go suite, vet and focused race x3",
+      "latency": "Paced loopback median first authenticated byte whole envelope166ms versus64KiB record3ms; total both166ms; not live Drive",
+      "throughput_mbps": "No live or full-mux throughput measured",
+      "estimated_quota_units": "Same one media GET200 units on success; full GET retry costs another200; no provider measurement",
+      "correctness_and_errors": "Early verified record delivery and retry without duplicate callback passed locally; durable partial application effects, negotiated mux format, generated-ID fallback, streaming HTTP integration and actual Drive progressive response unproved",
+      "cleanup": "Exact fake Drive object deleted only after authenticated terminal/EOF; no live object",
+      "decision": "Keep codec test-only; local staged-response head-of-line improvement is not a product or Google speed claim",
+      "source_documents": [
+        "docs/experiments/record-authenticated-bulk-stream-local-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "separate research branch codex/record-streaming-bulk-20261116 at 8a3d3d2; not product PR",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-110",
+      "candidate": "Known-comment projected WAKE rendezvous (test-only)",
+      "evidence_level": "deterministic_fault_model_and_official_API_contract",
+      "workload": "Copied-profile encrypted WAKE/ACK registration, ambiguous append, exit/client crash, creator-only deletion, timestamp coalescing, pagination churn, stale rotation pointer; focused race/vet; no new Google call",
+      "latency": "No live full-tunnel latency; previous same-grant comment primitive p95 1.156 to 7.604s as writers 1 to 8, not comparable",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Projected comments.get 5 units at 1Hz =300/min and432000/day/mailbox; required replies.list reconciliation100/page; 200000 centralized idle mailboxes60M units/min",
+      "correctness_and_errors": "Fake durable ledger dedupes retries, but contract-permitted equal modifiedTime can permanently miss WAKE without reconciliation; unfenced rotated pointer can roll back; cross-app drive.file and tombstone longevity unproved",
+      "cleanup": "Fake exact owned-comment cleanup only; no new real Drive objects",
+      "decision": "Research only; no product promotion or 200000-user free shared-scale claim",
+      "source_documents": [
+        "docs/experiments/comment-wake-rendezvous-fault-model-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "isolated branch codex/comment-wake-rendezvous-20261116 at 0687721; model copied into root tools/comment_wake_model",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-111",
+      "candidate": "Global pre-OPEN pending overflow isolates offending stream",
+      "evidence_level": "code_and_deterministic_regression",
+      "workload": "Synthetic 256MiB global pending budget saturation with two existing streams and third offending stream; focused race x2",
+      "latency": "No live Google latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Drive API method or normal-path quota change",
+      "correctness_and_errors": "Old path reset all pending streams; new path releases and terminal-closes only stream trying to grow full budget, preserving two unrelated pending streams and total cap",
+      "cleanup": "Memory-only state; no Google object",
+      "decision": "Product correctness fix, separate from unresolved global primary/deferred queue fairness and v5 restart replay",
+      "source_documents": [
+        "docs/experiments/final-architecture-assessment-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root commit b597624",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-112",
+      "candidate": "Native route choice and scoped Drive activity UX",
+      "evidence_level": "simulator_emulator_build_and_ui",
+      "workload": "iOS simulator app+Packet Tunnel extension build, four runnable iOS UI tests; Android 320dp/130% and411dp fresh emulator first-run/import/Direct-front toggle/relaunch, unit tests and Debug APK build",
+      "latency": "No live tunnel latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "iOS quota activity reads local counters only; no extra Drive API request",
+      "correctness_and_errors": "Google front remains default and user can select Direct before connect; Android hides stale metrics; iOS activity JSON v1 excludes secrets and shows unavailable/measuring when disconnected; real iOS provider IPC blocked by Simulator nehelper",
+      "cleanup": "Dedicated Android AVD removed; no Google object",
+      "decision": "Promote cross-platform UX improvement; physical signed iPhone needed for live iOS Packet Tunnel IPC proof",
+      "source_documents": [
+        "docs/experiments/native-first-run-final-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "../native-ux-audit-wt/.skirk-runs/android-native-ux-20261116/"
+      ],
+      "revision_or_binary": "root cherry-pick a675e8e from isolated d844218",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-113",
+      "candidate": "Opt-in muxv6 exit generation fence and same-generation OPEN ledger",
+      "evidence_level": "live_crash_gate_and_local_fault_model",
+      "workload": "Fake Drive v5 replay and four same-generation physical-copy modes incl AEAD-valid .bN alias; one pinned-front exit kill/restart/reupload, four-arm earlier-source v5/v6 16MiB+20 text exploratory ABBA; corrected-source focused race and full preflight",
+      "latency": "Earlier flawed-source v5/v6 download text p95 6.886/7.174s; not a corrected-source or product ranking",
+      "throughput_mbps": "Earlier flawed-source v5/v6 download25.460/21.011 Mb/s; not a corrected-source ranking",
+      "estimated_quota_units": "Earlier flawed-source v5/v6 local units23960/24260 per arm median; HELLO/ACK adds structural 400-800 units plus polling per exchange; not billed units",
+      "correctness_and_errors": "v5 replay reproduced; live v6 crash/reupload case rejected stale OPEN and accepted fresh once, exact cleanup; pre-ledger v6 failed alias replay locally; generation-lifetime ledger plus 60s authenticated cache refresh passed local race/preflight; corrected source not live tested, quiet established stream and multi-host unresolved",
+      "cleanup": "One live crash gate and earlier ABBA exact owned muxv5/v6 namespaces empty immediately and after31s; no live calls on corrected ledger",
+      "decision": "Keep opt-in research branch; no release/default promotion or corrected-source performance claim",
+      "source_documents": [
+        "docs/experiments/exit-generation-fence-v6-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "../exit-generation-recovery-wt/.skirk-runs/exit-generation-v6/"
+      ],
+      "revision_or_binary": "isolated branch codex/exit-generation-recovery-20261116 at cf3f30b; corrected ledger not in product PR",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-114",
+      "candidate": "Bounded mux seen and closed histories at capacity",
+      "evidence_level": "code_and_deterministic_fault_tests_full_preflight",
+      "workload": "200001 seen objects,100001 closed streams, processed duplicate404 versus unique404, live-tombstone eviction and finite OPEN fence; focused race x2, vet and full merged-root preflight",
+      "latency": "No live Google latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Drive method change in ordinary path",
+      "correctness_and_errors": "Old thresholds wiped whole history; new FIFO seen200k and hard closed100k preserve recent state, 2-minute global new-OPEN fence on live tombstone eviction; already-processed duplicate404 does not reset established stream; v5 replay beyond finite retention remains",
+      "cleanup": "Memory/fake Drive only; no new Google object",
+      "decision": "Product correctness fix; extreme close churn can temporarily reject new OPENs; merged root full preflight passed with installed Android NDK",
+      "source_documents": [
+        "docs/experiments/mux-bounded-state-audit-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root cherry-pick eb583a5 from isolated 1587869",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-115",
+      "candidate": "Current v5 versus clean main 128MiB mixed download",
+      "evidence_level": "live_product_four_arm_download",
+      "workload": "Pinned www.google.com front, approved secondary account, current/main/main/current exact-hash128MiB download plus40 verified persistent pipelined text echoes at250ms, two arms per binary, serial CPU-quiet",
+      "latency": "Median scheduled text p95 main7.284s -> v5 6.963s (-4.4%)",
+      "throughput_mbps": "Median exact file main78.785 -> v5 67.644 (-14.1%)",
+      "estimated_quota_units": "Local warmup+tail median main39835 -> v5 40785 (+2.4%); not billed units; rolling125k/arm150k/cohort600k guards",
+      "correctness_and_errors": "4/4 exact files,160/160 echoes all overlapping bulk, zero reported Drive API errors/stalls; all owner processes stopped; source predates bounded seen-cache patch",
+      "cleanup": "Four exact muxv4/v5 session namespaces empty immediately and after31s; no unrelated Drive object",
+      "decision": "Mixed tradeoff and lower v5 file rate reverse earlier64MiB ranking; no stable product speed winner or maximum claim",
+      "source_documents": [
+        "docs/experiments/current-v5-vs-main-128m-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/v5-final-main-128-down-20261116-01/"
+      ],
+      "revision_or_binary": "v5 SHA256 9639c94686119164de174cc0134d22e4b60bd16d4d7a979bd3bb578e1730cce1; main SHA256 34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-116",
+      "candidate": "Current v5 versus clean main 128MiB mixed upload stopped",
+      "evidence_level": "live_incomplete_prespecified_error_stop",
+      "workload": "Planned main/current/current/main exact128MiB upload plus40 pipelined text; first two completed, third current arm had client Drive upload timeout guard and fourth not launched",
+      "latency": "Only single completed main/current text p95 6.546/6.925s; no paired median",
+      "throughput_mbps": "Only single completed main/current file49.461/49.481 Mb/s; third file incomplete; no paired ranking",
+      "estimated_quota_units": "First two local warmup+tail estimated units40015/43565; third aborted after two client upload timeouts at 30s attempt deadline; guard stopped",
+      "correctness_and_errors": "First two arms exact file and40/40 echoes; third current only7/40 echoes, file invalid/incomplete, two client upload timeouts, exit zero; all owned processes stopped",
+      "cleanup": "Three started exact muxv4/v5 namespaces empty immediately and after31s;46 owned objects deleted only from first two",
+      "decision": "Negative robustness observation, no valid upload speed comparison; do not discard failed arm or relax guard to obtain ranking",
+      "source_documents": [
+        "docs/experiments/current-v5-vs-main-128m-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/v5-final-main-128-up-20261116-01/"
+      ],
+      "revision_or_binary": "same frozen binaries as R3-115",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-117",
+      "candidate": "Structured Google storage quota and not-found reason normalization",
+      "evidence_level": "code_and_mock_error_tests",
+      "workload": "GoogleAPIError ErrorInfo STORAGE_QUOTA_EXCEEDED and NOT_FOUND variants plus legacy JSON/status; focused tests",
+      "latency": "No live latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No normal-path Drive call change",
+      "correctness_and_errors": "Storage quota and missing-object classifiers now normalize modern structured reason tokens; not-found also accepts HTTP404 while permission denial stays separate",
+      "cleanup": "No Google object",
+      "decision": "Product parser hardening; no performance claim",
+      "source_documents": [
+        "docs/experiments/final-architecture-assessment-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root commit 3faf6f6",
+      "live_comparable": false
     }
   ]
 }
