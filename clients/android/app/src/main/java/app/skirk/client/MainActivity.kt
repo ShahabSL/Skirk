@@ -539,6 +539,10 @@ fun ConfigScreen() {
                 clipboard.setText(AnnotatedString("skirk setup renew-oauth --kit skirk-kit"))
                 Toast.makeText(context, "Renewal command copied", Toast.LENGTH_SHORT).show()
             },
+            onCopyPersonalSetupCommand = {
+                clipboard.setText(AnnotatedString("skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal"))
+                Toast.makeText(context, "Personal setup command copied", Toast.LENGTH_SHORT).show()
+            },
             onOpenOAuthSettings = {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://console.cloud.google.com/auth/audience")))
             },
@@ -811,6 +815,7 @@ private fun ConnectionPanel(
     onChooseVpnApps: () -> Unit,
     onReplaceProfile: () -> Unit,
     onCopyRenewalCommand: () -> Unit,
+    onCopyPersonalSetupCommand: () -> Unit,
     onOpenOAuthSettings: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -902,12 +907,14 @@ private fun ConnectionPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        if (googleGrantExpired) {
-            OAuthRecoveryCard(
-                onCopyRenewalCommand = onCopyRenewalCommand,
-                onOpenOAuthSettings = onOpenOAuthSettings,
-            )
-        }
+        GoogleAccessCard(
+            hasProfile = selected != null,
+            needsRenewal = googleGrantExpired,
+            onReplaceProfile = onReplaceProfile,
+            onCopyRenewalCommand = onCopyRenewalCommand,
+            onCopyPersonalSetupCommand = onCopyPersonalSetupCommand,
+            onOpenOAuthSettings = onOpenOAuthSettings,
+        )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.CloudQueue, "Google access route", googleRouteLabel(selected?.routeMode))
         Row(
@@ -987,14 +994,19 @@ private fun ConnectionPanel(
 }
 
 @Composable
-private fun OAuthRecoveryCard(
+private fun GoogleAccessCard(
+    hasProfile: Boolean,
+    needsRenewal: Boolean,
+    onReplaceProfile: () -> Unit,
     onCopyRenewalCommand: () -> Unit,
+    onCopyPersonalSetupCommand: () -> Unit,
     onOpenOAuthSettings: () -> Unit,
 ) {
-    var showProjectOwnerHelp by remember { mutableStateOf(false) }
+    var showOwnerGuide by remember { mutableStateOf(false) }
+    val guideColor = if (needsRenewal) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = if (needsRenewal) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
@@ -1003,27 +1015,53 @@ private fun OAuthRecoveryCard(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("Google access needs renewal", fontWeight = FontWeight.SemiBold)
+                Text("Google authorization", fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "Google rejected this device's saved access. Ask the exit owner to run the renewal command, restart the exit, and send you an updated client.skirk. Then import it with the button above.",
+                when {
+                    needsRenewal -> "Renewal needed"
+                    !hasProfile -> "No profile"
+                    else -> "Expiry date unknown"
+                },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                when {
+                    needsRenewal -> "Google rejected this device's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk."
+                    !hasProfile -> "Import a client profile from your exit. The exit owner sets up Google access."
+                    else -> "A saved profile cannot show a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting to check this session."
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (needsRenewal) {
                 TextButton(onClick = onCopyRenewalCommand) { Text("Copy command for exit owner") }
+                TextButton(onClick = onReplaceProfile) { Text("Import renewed profile") }
             }
-            TextButton(onClick = { showProjectOwnerHelp = !showProjectOwnerHelp }) {
-                Text(if (showProjectOwnerHelp) "Hide project-owner help" else "For Google Cloud project owners")
+            TextButton(onClick = { showOwnerGuide = !showOwnerGuide }) {
+                Text(if (showOwnerGuide) "Hide personal OAuth guide" else "Personal OAuth and renewal guide")
             }
-            if (showProjectOwnerHelp) {
+            if (showOwnerGuide) {
                 Text(
-                    "If the OAuth app is in Testing, its refresh tokens expire after seven days. " +
-                        "Publishing it under Google Auth Platform → Audience removes that automatic expiry for new grants. " +
-                        "Publishing does not restore rejected access; renew the kit first. Other token failures can still happen later.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "1. For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and choose Personal OAuth during setup.",
+                    color = guideColor,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                TextButton(onClick = onOpenOAuthSettings) { Text("Open OAuth audience settings") }
+                TextButton(onClick = onCopyPersonalSetupCommand) { Text("Copy personal setup command") }
+                Text(
+                    "2. Only the project owner can check Google Auth Platform → Audience. Add the signing-in account as a test user while Testing. External Testing grants expire after seven days; In production removes that specific limit for new grants. Google may require verification.",
+                    color = guideColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this device's grant was rejected. Other revocations remain possible.",
+                    color = guideColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = onOpenOAuthSettings) { Text("Open Google Cloud Audience") }
+                if (hasProfile && !needsRenewal) {
+                    TextButton(onClick = onCopyRenewalCommand) { Text("Copy exit renewal command") }
+                }
             }
         }
     }

@@ -492,21 +492,6 @@ h2 {
   justify-content: flex-start;
 }
 
-.recovery-owner-details {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-  font-size: 13px;
-}
-
-.recovery-owner-details summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.recovery-owner-details p {
-  margin-top: 8px;
-}
-
 .control-surface {
   --phase-color: var(--muted);
   --phase-bg: var(--surface-soft);
@@ -643,6 +628,64 @@ h2 {
 
 .route-choice-copy small {
   color: var(--muted);
+}
+
+.google-access-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+
+.google-access-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+
+.access-state {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.access-state.needs-renewal {
+  color: var(--danger);
+}
+
+.google-access-panel p,
+.google-access-panel ol {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.google-access-panel details {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.google-access-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.google-access-panel ol {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0 0 20px;
+}
+
+.google-access-panel code {
+  overflow-wrap: anywhere;
+}
+
+.google-access-panel .button-row {
+  margin-top: 10px;
 }
 
 .route-selector {

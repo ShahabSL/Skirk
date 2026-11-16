@@ -226,6 +226,15 @@ function App() {
     error,
     phase === "error" ? snapshot?.connection.message : undefined,
   );
+  const googleAccessStatus = googleGrantExpired
+    ? "Renewal needed"
+    : !selectedProfile
+      ? "No profile"
+      : exitProbe?.status === "verified"
+        ? "Exit test passed"
+        : exitProbe?.status === "unverified" || exitProbeError
+          ? "Exit not verified"
+        : "Expiry date unknown";
   const displayPhase = googleGrantExpired && !connected ? "error" : phase;
   const routeSelection = selectedProfile?.routeMode === "direct" || selectedProfile?.routeMode === "real_pinned"
     ? "direct"
@@ -365,6 +374,24 @@ function App() {
     }
   }
 
+  async function copyAudienceLink() {
+    try {
+      await copyText("https://console.cloud.google.com/auth/audience");
+      setCopyStatus("Audience link copied.");
+    } catch (nextError) {
+      setError(normalizeError(nextError));
+    }
+  }
+
+  async function copyPersonalSetupCommand() {
+    try {
+      await copyText("skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal");
+      setCopyStatus("Personal setup command copied.");
+    } catch (nextError) {
+      setError(normalizeError(nextError));
+    }
+  }
+
   async function testExit() {
     if (!connected || exitProbeRunning) return;
     const generation = exitProbeGeneration.current;
@@ -403,6 +430,7 @@ function App() {
 
         <nav className="side-nav" aria-label="Skirk sections">
           <a href="#profiles">Profiles</a>
+          <a href="#google-access">Google access</a>
           <a href="#import">Import</a>
           <a href="#runtime">Runtime</a>
           <a href="#logs">Logs</a>
@@ -467,10 +495,6 @@ function App() {
               </button>
             </div>
             {connected ? <small>Disconnect before replacing the saved profile.</small> : null}
-            <details className="recovery-owner-details">
-              <summary>For Google Cloud project owners</summary>
-              <p>If your OAuth app is in <strong>Testing</strong>, publish it under Google Auth Platform → Audience to remove the automatic seven-day expiry for new grants. Publishing does not restore a rejected grant. Renew it first; other token failures can still happen later.</p>
-            </details>
           </section>
         ) : error ? (
           <div className="alert" role="alert">
@@ -556,6 +580,48 @@ function App() {
               <small className="field-help">Saved route: {googleRouteLabel(selectedProfile.routeMode)}. Choose either option to update it.</small>
             ) : null}
           </div>
+
+          <section className="google-access-panel" id="google-access" aria-labelledby="google-access-title">
+            <div className="google-access-heading">
+              <strong id="google-access-title">Google authorization</strong>
+              <span className={googleGrantExpired ? "access-state needs-renewal" : "access-state"}>{googleAccessStatus}</span>
+            </div>
+            <p>
+              {googleGrantExpired
+                ? "Google rejected this device's saved access. Renew the exit kit and import its updated client profile."
+                : !selectedProfile
+                  ? "Import a client profile to connect. The exit owner sets up Google access."
+                  : exitProbe?.status === "verified"
+                    ? "The exit answered through Drive in this session. This does not predict how long Google will keep the grant valid."
+                    : exitProbe?.status === "unverified" || exitProbeError
+                      ? "The exit test did not confirm a round trip. Check the exit and its Google access; this alone does not prove that a grant expired."
+                    : "A saved profile cannot reveal a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting."}
+            </p>
+            <details>
+              <summary>Personal OAuth and renewal guide</summary>
+              <ol>
+                <li>For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and run <code>skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal</code> on the exit.</li>
+                <li>Only that project owner can check Google Auth Platform → Audience. Add the signing-in account as a test user while Testing. External Testing grants expire after seven days; In production removes that specific limit for new grants. Google may require verification.</li>
+                <li>After publishing or a rejected grant, run <code>skirk setup renew-oauth --kit skirk-kit</code> using the actual kit directory, restart the exit, and send an updated <code>client.skirk</code> if the client's saved access was rejected.</li>
+              </ol>
+              <div className="button-row">
+                <button type="button" onClick={() => void copyPersonalSetupCommand()}>
+                  {copyStatus === "Personal setup command copied." ? <Check /> : <Copy />}
+                  {copyStatus === "Personal setup command copied." ? "Setup command copied" : "Copy personal setup command"}
+                </button>
+                <button type="button" onClick={() => void copyAudienceLink()}>
+                  {copyStatus === "Audience link copied." ? <Check /> : <Copy />}
+                  {copyStatus === "Audience link copied." ? "Audience link copied" : "Copy Google Cloud Audience link"}
+                </button>
+                {selectedProfile && !googleGrantExpired ? (
+                  <button type="button" onClick={() => void copyRenewCommand()}>
+                    {copyStatus === "Renew command copied." ? <Check /> : <Copy />}
+                    {copyStatus === "Renew command copied." ? "Command copied" : "Copy exit renewal command"}
+                  </button>
+                ) : null}
+              </div>
+            </details>
+          </section>
 
           <div className="command-row" role="group" aria-label="Connection actions">
             {disconnectAvailable ? (

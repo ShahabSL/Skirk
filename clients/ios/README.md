@@ -63,11 +63,13 @@ A profile whose OAuth
 grant expires needs a renewed profile imported again; publishing the Google
 OAuth app avoids the seven-day Testing grant limit but cannot guarantee an
 indefinite grant.
-The Profile section reports the Google grant as unverified because this screen
-cannot independently verify it. If the tunnel reports `invalid_grant`, the app
-shows renewal steps and profile replacement in a separate recovery section.
-Its Copy exit renewal command button copies
-only the nonsecret CLI command; Replace profile accepts the renewed
+The Google authorization section reports that a guaranteed refresh-token
+expiry date and Cloud publishing status are unavailable from the saved profile. It includes
+an owner guide for personal OAuth setup and Production publishing. If the tunnel
+reports `invalid_grant`, the same section shows renewal steps, while the main
+connection action changes to Import renewed profile. Its Copy exit renewal
+command button copies only the nonsecret CLI command; Replace profile accepts
+the renewed
 `client.skirk` from Files or pasted text into Keychain. Restart the exit after
 renewing its kit. Neither
 the profile nor its refresh token is placed on the clipboard by the copy button.
