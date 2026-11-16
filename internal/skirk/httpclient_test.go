@@ -294,12 +294,13 @@ func TestGoogleHTTPRouteAttemptsStayWithinUserSelectedMode(t *testing.T) {
 }
 
 func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
-	rateLimited := &HTTPResult{
-		Status: http.StatusForbidden,
-		Body:   []byte(`{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}`),
-	}
-	if !shouldRetryResult(rateLimited) {
-		t.Fatal("expected Drive userRateLimitExceeded response to be retried")
+	for _, body := range []string{
+		`{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}`,
+		`{"error":{"code":403,"message":"Rate Limit Exceeded","status":"RATE_LIMIT_EXCEEDED"}}`,
+	} {
+		if !shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(body)}) {
+			t.Fatalf("expected Drive rate-limit response %s to be retried", body)
+		}
 	}
 	ordinaryForbidden := &HTTPResult{
 		Status: http.StatusForbidden,
@@ -307,6 +308,9 @@ func TestShouldRetryDriveRateLimitResponses(t *testing.T) {
 	}
 	if shouldRetryResult(ordinaryForbidden) {
 		t.Fatal("expected ordinary 403 response not to be retried")
+	}
+	if shouldRetryResult(&HTTPResult{Status: http.StatusForbidden, Body: []byte(`{"error":{"status":"PERMISSION_DENIED","message":"rateLimitExceeded is not the reason"}}`)}) {
+		t.Fatal("expected a 403 with a non-rate-limit status not to be retried")
 	}
 	if !shouldRetryResult(&HTTPResult{Status: http.StatusTooManyRequests}) {
 		t.Fatal("expected 429 response to be retried")

@@ -1772,7 +1772,7 @@ func isDriveRateLimitResult(result *HTTPResult) bool {
 	if result.Status != http.StatusForbidden {
 		return false
 	}
-	reason := strings.ToLower(strings.TrimSpace(driveErrorReason(result.Body)))
+	reason := normalizeGoogleErrorReason(driveErrorReason(result.Body))
 	return reason == "ratelimitexceeded" || reason == "userratelimitexceeded" || reason == "dailylimitexceeded"
 }
 

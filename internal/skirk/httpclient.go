@@ -583,8 +583,17 @@ func shouldRetryResultWithPolicy(result *HTTPResult, retryRateLimit bool) bool {
 	if result.Status != http.StatusForbidden {
 		return false
 	}
-	body := string(result.Body)
-	return strings.Contains(body, "rateLimitExceeded") || strings.Contains(body, "userRateLimitExceeded")
+	reason, _ := googleAPIErrorDetails(result.Body)
+	switch normalizeGoogleErrorReason(reason) {
+	case "ratelimitexceeded", "userratelimitexceeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeGoogleErrorReason(reason string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(reason)), "_", "")
 }
 
 func retryAfter(result *HTTPResult) time.Duration {

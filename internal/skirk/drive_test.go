@@ -247,7 +247,7 @@ func TestDriveStoreRateLimitBackoffDelaysNextRequest(t *testing.T) {
 	var requests int32
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if atomic.AddInt32(&requests, 1) == 1 {
-			return stringResponse(http.StatusForbidden, `{"error":{"errors":[{"reason":"rateLimitExceeded"}],"message":"Rate Limit Exceeded"}}`), nil
+			return stringResponse(http.StatusForbidden, `{"error":{"code":403,"message":"Rate Limit Exceeded","status":"RATE_LIMIT_EXCEEDED"}}`), nil
 		}
 		return stringResponse(http.StatusOK, `{"id":"file-id","name":"object","size":"4"}`), nil
 	})}}
