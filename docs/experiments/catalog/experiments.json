@@ -2358,7 +2358,7 @@
       "cleanup": "1residualmux;8prefixeszeroimmediate+31s",
       "decision": "Coldtextslower,notdefault;nojointspeedclaim",
       "source_documents": [
-        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+        "https://github.com/ShahabSL/Skirk/blob/af189bfd582ba7ee4fdf09a5189ffdf760e198a1/docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
       ],
       "raw_archive_paths": [
         ".skirk-runs/recovery-v5-live-down-20261115/"
@@ -2378,7 +2378,7 @@
       "cleanup": "4residualmux;8prefixeszeroimmediate+31s",
       "decision": "Cold/file/unitsworse;keepopt-in",
       "source_documents": [
-        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+        "https://github.com/ShahabSL/Skirk/blob/af189bfd582ba7ee4fdf09a5189ffdf760e198a1/docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
       ],
       "raw_archive_paths": [
         ".skirk-runs/recovery-v5-live-up-20261115/"
@@ -2398,7 +2398,7 @@
       "cleanup": "5muxdeleted;prefixzeroimmediate+31s",
       "decision": "Specificreplaypreventionproof;notexactlyonceorlease",
       "source_documents": [
-        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+        "https://github.com/ShahabSL/Skirk/blob/af189bfd582ba7ee4fdf09a5189ffdf760e198a1/docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
       ],
       "raw_archive_paths": [
         ".skirk-runs/recovery-v5-restart-live-20261115/"
@@ -2418,7 +2418,7 @@
       "cleanup": "7muxdeleted;8prefixeszeroimmediate+31s",
       "decision": "Combinedcodefunctional;coldpenaltypersists;controltailpreventsbulkclaim",
       "source_documents": [
-        "docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
+        "https://github.com/ShahabSL/Skirk/blob/af189bfd582ba7ee4fdf09a5189ffdf760e198a1/docs/experiments/recovery-v5-opt-in-live-2026-11-15.md"
       ],
       "raw_archive_paths": [
         ".skirk-runs/recovery-v5-rebased-down2-20261115/"

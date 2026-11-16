@@ -46,10 +46,13 @@ retaining their media body for compatibility. It remains off by default. This
 removes one API round trip; it does not remove upload, visibility, discovery,
 or cleanup. See the [audit experiments](audit-experiments-2026.md).
 
-## Mux v4
+## Mux v5
 
-Mux v4 is the production transport. Many application streams share a bounded set
-of Drive lanes:
+New kits use Mux v5 as the default transport. It retains Mux v4's batching and
+Drive API operations, while a separate `muxv5/` namespace and a fresh
+generation-bound encryption key on each sender start prevent the reproduced
+restart key/nonce collision. Many application streams share a bounded set of
+Drive lanes:
 
 - each frame carries stream, sequence, and close metadata inside the encrypted
   payload;
@@ -79,19 +82,23 @@ download quickly once the file ID exists, but live transports repeatedly lost
 when they added extra control objects, metadata polling, change-feed work, or
 large whole-file update tails.
 
-The current evidence says muxv4 is the best proven default for the
-`google_front_pinned` hostile-path profile. Future work should be promoted only
-when it beats muxv4 on mixed browser and bulk traffic, not just a synthetic
-single-stream download.
+The current v5 build has passed mixed file and short-message transfers through
+the pinned `www.google.com` front. Its exact comparisons with clean `main`
+(Mux v4) varied by run and upload order, so they do not establish a stable
+speed or latency win. V5 is the default for its restart safety; future carrier
+changes need reliable mixed browser and bulk results, not a single-stream
+download. See the [current comparison](experiments/current-v5-vs-main-live-2026-11-16.md).
 
-Muxv4's initial priority allowance is per TCP stream. A long-lived messenger
+The mux's initial priority allowance is per TCP stream. A long-lived messenger
 connection that has sent more than 64 KiB stays in the normal class, even for
 later short messages. A bounded interaction-priority and metadata-only
 experiment improved short paired text-plus-file workloads, but some 100 MiB
 file arms stalled. Its per-process priority budget also cannot enforce one
 account-wide budget across devices. These experiments have not changed the
-default; see the [architecture frontier](architecture-frontier-2026.md) for
-the measurements and remaining correctness and quota gates.
+carrier; see the [architecture frontier](architecture-frontier-2026.md) for
+the measurements and remaining correctness and quota gates. V4 remains an
+explicit legacy option, but peers on V4 and V5 cannot exchange objects; see
+the [migration guide](mux-v5-migration-2026-11-16.md).
 
 See [Transport Research](transport-research.md) for the experiment record and
 promotion gates.

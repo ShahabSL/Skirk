@@ -245,12 +245,12 @@ listing. That path is intentionally simple: upload encrypted mux objects, poll t
 matching direction prefix, download by Drive file ID, and delete processed
 objects after foreground traffic is quiet.
 
-Mux v4 is the current default for Skirk's Drive-only transport. In local
-same-day mixed-workload tests, it has been more reliable than the experimental
-candidates tried so far, especially when browser or media traffic overlaps bulk
-downloads. It is still bounded by Drive upload, object visibility, prefix
-listing, download, cleanup, quota, and route conditions, so benchmark results are
-environment-specific rather than guaranteed speed claims.
+New kits default to Mux v5 for its restart key/nonce safety; V4 is an explicit
+legacy option. Exact live mixed-workload comparisons with clean `main` V4 have
+not shown a stable speed or latency win for V5. Both remain bounded by Drive
+upload, object visibility, prefix listing, download, cleanup, quota, and route
+conditions, so benchmark results are environment-specific rather than
+guaranteed speed claims. See the [current comparison](docs/experiments/current-v5-vs-main-live-2026-11-16.md).
 
 The Linux installer can perform VPS setup non-interactively:
 
