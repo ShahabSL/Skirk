@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 237 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 238 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -4779,6 +4779,24 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "236f6b3",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-098",
+      "candidate": "Mux-wide cap and release for deferred receive handoff",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Eight stalled streams each defer eight 1 MiB frames, ninth overflow, frame-cap saturation, unrelated live delivery, concurrent close and drain; focused race x10 and vet",
+      "latency": "No live Google speed or latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Drive method added; no measured live quota change",
+      "correctness_and_errors": "Aggregate deferred handoff limited to 64 MiB or 8,192 frames; budget released on pop and close; overflowing stream fails without blocking unrelated delivery. Per-stream inbound channels remain a separate aggregate-memory exposure.",
+      "cleanup": "Local memory store only; no Google resource",
+      "decision": "Product receive-memory bound and deadlock repair, not a live performance win; full preflight and mixed live comparison are separate gates",
+      "source_documents": [
+        "docs/experiments/deferred-inbound-global-budget-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "55b9048",
       "live_comparable": false
     }
   ]
