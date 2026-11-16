@@ -10442,5 +10442,31 @@
     "all_small_request_total_p95_ms": 7948.917,
     "all_small_scheduled_total_p95_ms": 7949.501,
     "combined_units_including_warmup_and_tail": 132945
+  },
+  {
+    "source_worktree": "drive-etag-probe-wt",
+    "source_path": ".skirk-runs/drive-etag-live-20261115-2353/etag-probe-result.json",
+    "arm_index": 0,
+    "observation_kind": "fixture_failure_before_conditional_write",
+    "binary_sha256": "95d357af18c86a53c021519881c082198494a34ce8be8d8ca6259ba59e825bb9",
+    "visible_drive_dispatches": 10,
+    "attempts_upper": 80,
+    "quota_units_upper": 1120,
+    "write_cas_observed": null,
+    "conditional_write_executed": false,
+    "cleanup_verified": true
+  },
+  {
+    "source_worktree": "drive-etag-probe-wt",
+    "source_path": ".skirk-runs/drive-etag-live-20261115-2357/etag-probe-result.json",
+    "arm_index": 0,
+    "observation_kind": "completed_negative_write_fence_observation",
+    "binary_sha256": "768b5c9a05f15f4f5da62ef498194001a08fedd20061d49cf3d338a9fdcb981d",
+    "visible_drive_dispatches": 12,
+    "attempts_upper": 96,
+    "quota_units_upper": 1560,
+    "write_cas_observed": false,
+    "conditional_write_executed": true,
+    "cleanup_verified": true
   }
 ]

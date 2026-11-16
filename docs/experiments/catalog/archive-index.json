@@ -30,6 +30,18 @@
     "extraction": "source-index-only; inspect cited catalog entry or raw file for exact values"
   },
   {
+    "worktree": "drive-etag-probe-wt",
+    "path": ".skirk-runs/drive-etag-live-20261115-2353/etag-probe-result.json",
+    "bytes": 3672,
+    "extraction": "sanitized exact phases/status/protocol/upper-reservations/cleanup in drive-metadata-etag-cas companion JSON; IDs/names/headers omitted"
+  },
+  {
+    "worktree": "drive-etag-probe-wt",
+    "path": ".skirk-runs/drive-etag-live-20261115-2357/etag-probe-result.json",
+    "bytes": 4324,
+    "extraction": "sanitized exact phases/status/protocol/upper-reservations/cleanup in drive-metadata-etag-cas companion JSON; IDs/names/headers omitted"
+  },
+  {
     "worktree": "drive-watch-probe",
     "path": ".skirk-runs/drive-watch-probe-20261114.json",
     "bytes": 416,

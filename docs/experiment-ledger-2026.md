@@ -2,7 +2,7 @@
 
 This ledger preserves **positive, negative, incomplete, simulated, primitive, and app-level evidence** from prior agents and branches. It is an inventory of available records, not a claim that every possible protocol has been explored. Some archive-only runs lack the exact binary, test conditions, byte verification, quota, or cleanup record; those gaps are explicit.
 
-There are **191 interpreted experiment records**, **315 recognized raw result files** indexed across local worktrees, and **419 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
+There are **196 interpreted experiment records**, **317 recognized raw result files** indexed across local worktrees, and **421 sanitized arm observations** imported from available summaries. The index excludes profiles, tokens, config files, browser data and recovery ledgers. Duplicate copied archives remain listed with their worktree; do not count them as independent repetitions.
 
 [Machine-readable experiment JSON](experiments/catalog/experiments.json) · [CSV](experiments/catalog/experiments.csv) · [Sanitized per-arm observations](experiments/catalog/arm-observations.json) · [Raw result-file index JSON](experiments/catalog/archive-index.json) · [CSV](experiments/catalog/archive-index.csv)
 
@@ -273,3 +273,9 @@ R3-048 retains the separately versioned bare-upload source inference; R3-049 rec
 ## Complete sustained comparison under a separately declared burst allowance
 
 R3-050/051 retain the fixed burst observer and [all four complete100MiB/100echo arms](experiments/sustained-end-to-end-burst-recovery-2026-11-15.md). The candidate bundle had descriptive two-run medians25.4835Mb/s and9.016s scheduled full-echo p95, versus actualmain19.6855Mb/s and20.545s. Its units were14.40%higher and it retained six real RPC errors, including a PATCH timeout resolved by exact sealed readback. Everyfile,400echoes,origin and owned-process proof passed; all8prefixes were empty after31seconds. This is a positive bundle result with limited replication and real cost/error tradeoffs, not an architectural ceiling, universal promotion, capacity claim or reclassification of earlier failures.
+
+## Drive write-fence test and new hybrid correctness evidence
+
+R3-052/053 retain [both ETag/If-Match attempts](experiments/drive-metadata-etag-cas-2026-11-15.json). The first stopped on our default-field projection mistake before testing writes. The corrected path returned no ETag for either explicit projection and accepted an impossible If-Match PATCH200, with exact changed-description readback. This is negative evidence for the tested Drive v3 metadata write fence; provider-tag valid/stale and cache-validation phases were unexecuted. Both exact owned files were deleted and absent twice immediately and twice after31seconds. No latency or throughput is assigned to this primitive.
+
+R3-054..056 separately preserve the cumulative Firestore/Drive state prototype, bounded REST/official-SDK carrier and full actual TLS SOCKS/mux correctness integration. The latter carried independent random16MiB GET and POST files plus40 unique64B echoes with genuine physical normal objects, lost/coalesced Watch fallback, reconnect and real processing receipts. Both late OPEN arrival orders retained one destination effect after clearing the core TTL caches. This is loopback correctness with artificial overlap gates, not a live hybrid performance result, scaling proof or product authentication solution.

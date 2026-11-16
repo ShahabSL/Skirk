@@ -3864,6 +3864,109 @@
       ],
       "revision_or_binary": "candidate8c9829/281986;main2c52ff8/340461;observerd5437ca",
       "live_comparable": true
+    },
+    {
+      "id": "R3-052",
+      "candidate": "Drive metadata ETag fence: first default-projection fixture failure",
+      "evidence_level": "live_api_primitive_fixture_failure",
+      "workload": "One owned generated-ID random AEAD metadata file;10visible Drive calls; conditional PATCH not reached",
+      "latency": "Not a latency benchmark",
+      "throughput_mbps": null,
+      "estimated_quota_units": "80attempt-upper/1120quota-unit-upper/3296request-byte-upper; token setup1 separate",
+      "correctness_and_errors": "Projected GET noETag; fallback omitted fields so default projection omitted description; stop etag_probe_full_readback. No write-CAS observation",
+      "cleanup": "Ownership verified; DELETE204;2immediate+2delayed31s404; borrowed config removed",
+      "decision": "Retain fixture failure; corrected wildcard probe is a distinct experiment",
+      "source_documents": [
+        "docs/experiments/drive-metadata-etag-cas-2026-11-15.md",
+        "docs/experiments/drive-metadata-etag-cas-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "drive-etag-probe-wt/.skirk-runs/drive-etag-live-20261115-2353/etag-probe-result.json"
+      ],
+      "revision_or_binary": "db4a8b9a75cd5fc1cc9f789aff85341b00439150/95d357af18c86a53c021519881c082198494a34ce8be8d8ca6259ba59e825bb9",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-053",
+      "candidate": "Drive metadata ETag fence: corrected wildcard negative result",
+      "evidence_level": "live_api_primitive",
+      "workload": "One owned generated-ID file; projected+fields=* GET; impossible If-Match PATCH and exact readback;12visible H2 calls",
+      "latency": "Not a latency benchmark",
+      "throughput_mbps": null,
+      "estimated_quota_units": "96attempt-upper/1560quota-unit-upper/5104request-byte-upper; token setup1 separate",
+      "correctness_and_errors": "NoETag both projections; bogus If-Match PATCH200 changed exact owned ciphertext. Valid/stale provider-tag and cache304 phases unexecuted, not measured failures",
+      "cleanup": "Ownership verified; DELETE204;2immediate+2delayed31s404; borrowed config removed; no report/cleanup errors",
+      "decision": "No tested server CAS on this path; preserve ambiguity retirement. Does not establish every Drive API/type lacks a fence",
+      "source_documents": [
+        "docs/experiments/drive-metadata-etag-cas-2026-11-15.md",
+        "docs/experiments/drive-metadata-etag-cas-2026-11-15.json"
+      ],
+      "raw_archive_paths": [
+        "drive-etag-probe-wt/.skirk-runs/drive-etag-live-20261115-2357/etag-probe-result.json"
+      ],
+      "revision_or_binary": "d2ed85119b39c51be858d8bfe3ee416e436cabb3/768b5c9a05f15f4f5da62ef498194001a08fedd20061d49cf3d338a9fdcb981d",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-054",
+      "candidate": "Firestore cumulative p0 state plus Drive p1: authenticated memory/fault prototype",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Two single-writer encrypted cumulative docs;CAS+exact-readback/samecipher retry; processing-receipt core hook; normal Drive store passthrough",
+      "latency": "No Google latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Bounded32queue/8MiB payload,4096lifetimeclaims,64KiB carrier envelope; tests only",
+      "correctness_and_errors": "Lost/coalesced watches,late physical aliases,wrong identity/innerAEAD,terminal403/412 distinctions,ACK-only,late ACK,fallback/reconnect,full-page normal discovery under blocked priority credit; actual processing hook, Delete alone never receipt",
+      "cleanup": "Store Close cancels/joins owned workers and releases payload; exact fallback targets retained; ordinary run-prefix cleanup separate",
+      "decision": "Research-only test files; no default/product/profile or Cloud resource change. Whole session cancellation must be owned by caller",
+      "source_documents": [
+        "internal/skirk/firestore_hybrid_store_test.go",
+        "internal/skirk/firestore_hybrid_store_cases_test.go",
+        "internal/skirk/mux_processing_receipt_test.go",
+        "experiments/firestore-hybrid/README.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "protocol/state through3d9831f+a9af13e;combinedTestFSHybrid race9.666s includes full-mux1e1fe7c",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-055",
+      "candidate": "Firestore REST plus pinned official SDK loopback carrier",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "64KiB exact-document CAS REST; three sequential joined Watch attempts sharing5min/512calls/4096attempt-upper/128MiB request-upper; official pinned SDK through loopback only",
+      "latency": "Local16s idle fixture proves SDK long-poll lifecycle, not Google timing",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Private owner-OAuth fixture only; separate pinned wwwGoogle control pool; reserved cleanup slots/bytes",
+      "correctness_and_errors": "Exact paths/query/body/doc IDs and opaque timestamps,token privacy/no direct fallback,wrong-target/tampered response caps,cancel/join/REMOVE,three reconnect attempts;15Node tests18.199s;focused Go1.322s/race2x3.398s;fullGo202.598s/vet pass",
+      "cleanup": "Exclusive fresh0700 per-carrier paths; every request/operation/Node owner joined; canonical owner cancellation separated from unexpected failures",
+      "decision": "Private research carrier ready for guarded integration; no live hybrid/rules/IAM/billing/resource setup or production ownership solution",
+      "source_documents": [
+        "internal/skirk/firestore_hybrid_carrier_test.go",
+        "internal/skirk/firestore_hybrid_carrier_cases_test.go",
+        "internal/skirk/firestore_hybrid_watch_test.go",
+        "experiments/firestore-hybrid/watch.mjs",
+        "experiments/firestore-hybrid/watch.test.mjs"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "bc6374e+22d9f06;integrated3d9831f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-056",
+      "candidate": "Firestore/Drive hybrid through actual strict TLS SOCKS/mux",
+      "evidence_level": "loopback_full_transport_correctness",
+      "workload": "Independent random16MiB GET+16MiB POST;40unique64B echoes complete during midpoint-held real bulk; actual normal physicalp1 >64KiB;lost Watch/fallback/reconnect",
+      "latency": "Artificial origin gates enforce overlap; no performance measurement",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google calls/resources; memory cumulative carrier and memory Drive base",
+      "correctness_and_errors": "Strict owned TLS root/destination; exact file hashes/counts;real core receipts;both OPEN arrival orders after clearing core closed/seen/processed/knownID caches yield1enqueue/1dial/1initialwrite;fatal store cancels actual workload;focusedrace2x17.167s,combinedrace9.666s,vet pass",
+      "cleanup": "Top mux loops plus Store workers joined; active/payload/task counters0; scoped both-direction p0+p1 cleanup preserves unrelated sentinel; origin side effects exact after teardown",
+      "decision": "Full local protocol correctness proof, not live Google QoS/capacity/auth or every nested core goroutine individually joined",
+      "source_documents": [
+        "internal/skirk/firestore_hybrid_mux_integration_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "1e1fe7c5bc6577d690999d25c2b8f082460a46bf;architecture guards througha9af13e",
+      "live_comparable": false
     }
   ]
 }

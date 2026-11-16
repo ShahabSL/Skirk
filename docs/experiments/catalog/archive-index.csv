@@ -4,6 +4,8 @@ apps-script-relay-client-wt,.skirk-runs/relay-packed-ab54f98-simulation.log,1431
 apps-script-relay-client-wt,.skirk-runs/relay-packed-ebcb9fd-bulk-simulation.log,1568,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-changes-watch-wt,.skirk-runs/drive-changes-watch-live.json,2462,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-changes-watch-wt,.skirk-runs/drive-files-watch-live.json,2409,source-index-only; inspect cited catalog entry or raw file for exact values
+drive-etag-probe-wt,.skirk-runs/drive-etag-live-20261115-2353/etag-probe-result.json,3672,sanitized exact phases/status/protocol/upper-reservations/cleanup in drive-metadata-etag-cas companion JSON; IDs/names/headers omitted
+drive-etag-probe-wt,.skirk-runs/drive-etag-live-20261115-2357/etag-probe-result.json,4324,sanitized exact phases/status/protocol/upper-reservations/cleanup in drive-metadata-etag-cas companion JSON; IDs/names/headers omitted
 drive-watch-probe,.skirk-runs/drive-watch-probe-20261114.json,416,source-index-only; inspect cited catalog entry or raw file for exact values
 drive-watch-probe,.skirk-runs/drive-watch-probe-retry-20261114.json,416,source-index-only; inspect cited catalog entry or raw file for exact values
 fresh-architecture-wt,.skirk-runs/id-train-live-20261115.json,6461,source-index-only; inspect cited catalog entry or raw file for exact values
