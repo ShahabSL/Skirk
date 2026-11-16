@@ -107,6 +107,7 @@ type fsHybridGoogleCarrier struct {
 	watchStopping                           bool
 	watchAttempts                           int
 	watchProofClean, watchUnjoined          bool
+	watchJoined, controlJoined              bool
 	watchOwnerCanceled                      bool
 	watchDir                                string
 	watchDone                               chan struct{}

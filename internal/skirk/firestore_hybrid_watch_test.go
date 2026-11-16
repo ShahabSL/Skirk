@@ -1,6 +1,7 @@
 package skirk
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -39,20 +40,20 @@ type fsHybridWatchEvent struct {
 }
 
 type fsHybridWatchBridge struct {
-	carrier                  *fsHybridGoogleCarrier
-	auth                     string
-	server                   *httptest.Server
-	mu                       sync.Mutex
-	closed                   bool
-	wg                       sync.WaitGroup
-	closeOnce                sync.Once
-	requestSlots, eventSlots chan struct{}
-	events                   chan fsHybridWatchEvent
-	failed                   chan error
+	carrier                                *fsHybridGoogleCarrier
+	auth                                   string
+	server                                 *httptest.Server
+	mu                                     sync.Mutex
+	closed                                 bool
+	wg                                     sync.WaitGroup
+	closeOnce                              sync.Once
+	requestSlots, eventSlots, controlSlots chan struct{}
+	events                                 chan fsHybridWatchEvent
+	failed                                 chan error
 }
 
 func newFSHybridWatchBridge(c *fsHybridGoogleCarrier, auth string) *fsHybridWatchBridge {
-	b := &fsHybridWatchBridge{carrier: c, auth: auth, requestSlots: make(chan struct{}, 4), eventSlots: make(chan struct{}, 1), events: make(chan fsHybridWatchEvent, 32), failed: make(chan error, 1)}
+	b := &fsHybridWatchBridge{carrier: c, auth: auth, requestSlots: make(chan struct{}, 4), eventSlots: make(chan struct{}, 1), controlSlots: make(chan struct{}, 1), events: make(chan fsHybridWatchEvent, 32), failed: make(chan error, 1)}
 	b.server = httptest.NewUnstartedServer(http.HandlerFunc(b.serve))
 	b.server.Config.ReadHeaderTimeout = 5 * time.Second
 	b.server.Config.ReadTimeout = 5 * time.Second
@@ -194,13 +195,15 @@ func (b *fsHybridWatchBridge) serve(w http.ResponseWriter, r *http.Request) {
 		reject(403, "unauthorized")
 		return
 	}
-	if r.URL.Path != "/event" && r.URL.Path != "/request" {
+	if r.URL.Path != "/event" && r.URL.Path != "/request" && r.URL.Path != "/stop" {
 		reject(404, "unknown_route")
 		return
 	}
 	slots := b.requestSlots
 	if r.URL.Path == "/event" {
 		slots = b.eventSlots
+	} else if r.URL.Path == "/stop" {
+		slots = b.controlSlots
 	}
 	select {
 	case slots <- struct{}{}:
@@ -214,6 +217,27 @@ func (b *fsHybridWatchBridge) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		reject(413, "local_body_bound")
 		b.fail(errFSHybridBounds)
+		return
+	}
+	if r.URL.Path == "/stop" {
+		var control struct {
+			Reason string `json:"reason"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&control) != nil || decoder.Decode(new(any)) != io.EOF || (control.Reason != "observer_close" && control.Reason != "request_bound") {
+			reject(400, "stop_shape")
+			b.fail(errFSHybridIntegrity)
+			return
+		}
+		// Set ownership before acknowledging the control request. A native
+		// SDK-initiated close must use the same reserved REMOVE headroom as a
+		// Go-initiated close, even when the active request budget was exhausted.
+		if control.Reason == "request_bound" {
+			b.fail(errFSHybridBounds)
+		}
+		b.carrier.stopWatch()
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if r.URL.Path == "/event" {
@@ -306,6 +330,11 @@ func (b *fsHybridWatchBridge) serve(w http.ResponseWriter, r *http.Request) {
 	b.carrier.mu.Unlock()
 	result, err := b.carrier.call(r.Context(), "listen", request.Method, request.Path, request.Headers, body, cleanup)
 	if err != nil || result == nil {
+		if err == nil {
+			err = errFSHybridIntegrity
+		}
+		b.fail(err)
+		b.carrier.stopWatch()
 		reject(502, "front_request_failed")
 		return
 	}
@@ -367,6 +396,8 @@ func (c *fsHybridGoogleCarrier) WatchSnapshot() map[string]any {
 	copy["attempts"] = c.watchAttempts
 	copy["attempt_failures"] = c.stats.WatchFailures
 	copy["canceled_attempts"] = c.stats.WatchCancellations
+	copy["child_joined"] = c.watchJoined
+	copy["control_joined"] = c.controlJoined
 	return copy
 }
 
@@ -395,6 +426,7 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 	c.watchDir = dir
 	c.watchStopping = false
 	c.watchProofClean = false
+	c.watchJoined = true // No child exists until command.Start succeeds.
 	c.watchState = nil
 	c.watchDone = make(chan struct{})
 	c.watchStop = make(chan struct{})
@@ -439,7 +471,7 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 	defer bridge.close()
 	configPath := filepath.Join(dir, "hybrid-watch-config.json")
 	defer os.Remove(configPath)
-	config := map[string]any{"hybrid_research": true, "bridge_url": bridge.server.URL, "bridge_auth": bridge.auth, "database": c.cfg.Database, "document": c.cfg.PeerDocument, "access_token": c.cfg.OwnerToken, "webchannel_blob": filepath.Join(c.cfg.PrivateDir, "webchannel_blob_es2018.js"), "duration_ms": remainingTime.Milliseconds(), "request_limit": requestsLeft, "event_limit": eventsLeft}
+	config := map[string]any{"hybrid_research": true, "bridge_url": bridge.server.URL, "bridge_auth": bridge.auth, "database": c.cfg.Database, "document": c.cfg.PeerDocument, "access_token": c.cfg.OwnerToken, "webchannel_blob": filepath.Join(c.cfg.PrivateDir, "webchannel_blob_es2018.js"), "duration_ms": remainingTime.Milliseconds(), "request_limit": requestsLeft, "request_cleanup_reserve": 8, "event_limit": eventsLeft}
 	if err = firestoreListenWrite(dir, "hybrid-watch-config.json", config); err != nil {
 		return errFSHybridBounds
 	}
@@ -472,6 +504,9 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 	if err = command.Start(); err != nil {
 		return &fsHybridControlError{errors.New("owned Node observer start failed")}
 	}
+	c.mu.Lock()
+	c.watchJoined = false
+	c.mu.Unlock()
 	done := make(chan error, 1)
 	go func() { done <- command.Wait() }()
 	joined := false
@@ -507,6 +542,9 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 				}
 			}
 		}
+		c.mu.Lock()
+		c.watchJoined = joined
+		c.mu.Unlock()
 		if !joined {
 			c.mu.Lock()
 			c.watchUnjoined = true
@@ -572,7 +610,12 @@ func (c *fsHybridGoogleCarrier) WatchPeer(ctx context.Context, callback func(fsP
 		case <-timer.C:
 			return errFSHybridBounds
 		case <-stopRequested:
-			return nil
+			select {
+			case failure := <-bridge.failed:
+				return failure
+			default:
+				return nil
+			}
 		}
 	}
 }
@@ -603,7 +646,14 @@ func (c *fsHybridGoogleCarrier) Close() error {
 		}
 		c.client.client.CloseIdleConnections()
 		requestsDone := make(chan struct{})
-		go func() { c.requestWG.Wait(); c.operationWG.Wait(); close(requestsDone) }()
+		go func() {
+			c.requestWG.Wait()
+			c.operationWG.Wait()
+			c.mu.Lock()
+			c.controlJoined = true
+			c.mu.Unlock()
+			close(requestsDone)
+		}()
 		select {
 		case <-requestsDone:
 		case <-time.After(2 * time.Second):
@@ -616,4 +666,12 @@ func (c *fsHybridGoogleCarrier) Close() error {
 		c.mu.Unlock()
 	})
 	return c.closeErr
+}
+
+// Physical ownership is separate from an error-free workload/REMOVE result.
+// A failed observer can be fully joined; its original error stays in Close.
+func (c *fsHybridGoogleCarrier) WritersJoined() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed && c.finished && c.controlJoined && !c.watchStarted && !c.watchUnjoined && (c.watchAttempts == 0 || c.watchJoined)
 }

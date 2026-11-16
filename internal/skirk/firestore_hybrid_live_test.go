@@ -238,7 +238,7 @@ func (r *fsHybridLiveRun) setup() error {
 			if e = os.WriteFile(filepath.Join(dir, "webchannel_blob_es2018.js"), blob, 0600); e != nil {
 				return errFSHybridBounds
 			}
-			carrier, e := newFSHybridGoogleCarrier(r.ctx, fsHybridGoogleCarrierConfig{PrivateDir: dir, Database: r.settings.Database, OwnDocument: own, PeerDocument: peer, OwnerToken: token, Route: cc.Route, MaxCalls: 256, MaxAttemptsUpper: 2048, MaxEncodedBytesUpper: 64 << 20, MaxResponseBytes: 1 << 20, MaxWatchRequests: 128, MaxWatchEvents: 256, WatchDuration: fsHybridLiveDuration})
+			carrier, e := newFSHybridGoogleCarrier(r.ctx, fsHybridGoogleCarrierConfig{PrivateDir: dir, Database: r.settings.Database, OwnDocument: own, PeerDocument: peer, OwnerToken: token, Route: cc.Route, MaxCalls: 256, MaxAttemptsUpper: 2048, MaxEncodedBytesUpper: 64 << 20, MaxResponseBytes: 1 << 20, MaxWatchRequests: 256, MaxWatchEvents: 256, WatchDuration: fsHybridLiveDuration})
 			if e != nil {
 				return e
 			}
@@ -590,10 +590,13 @@ func (r *fsHybridLiveRun) stop() error {
 		gate.stop()
 		gate.CloseIdleConnections()
 	}
-	// A failed carrier/Node/control join remains a failed ownership proof even
-	// when the top-level mux loops stopped. External cleanup must wait for root
-	// to verify every owned process dead; do not manufacture a joined result.
-	r.joined = stopped == nil
+	// Preserve workload/REMOVE errors separately from actual ownership. A
+	// failed-but-joined observer permits exact cleanup; an unjoined Node,
+	// controller or mux never does. Neither condition turns stopErr into nil.
+	r.joined = (r.cm == nil || r.cm.active.Load() == 0 && r.cm.t.activeStreams.Load() == 0) && (r.em == nil || r.em.active.Load() == 0 && r.em.t.activeStreams.Load() == 0)
+	for _, carrier := range r.carriers {
+		r.joined = r.joined && carrier.WritersJoined()
+	}
 	if r.origin != nil {
 		r.origin.Close()
 	}

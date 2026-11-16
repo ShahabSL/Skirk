@@ -18,8 +18,10 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   if (!databasePattern.test(config.database) || !config.document.startsWith(config.database + '/documents/') || config.document.length > 512 || !/^[\x21-\x7e]{1,16384}$/.test(config.access_token)) throw new Error('invalid owned target');
   const lifetime = Math.min(Math.max(config.duration_ms || 60000, 1000), hybrid ? 300000 : 90000);
   const requestLimit = hybrid ? config.request_limit ?? 256 : 28;
+  const cleanupReserve = hybrid ? config.request_cleanup_reserve ?? 8 : 0;
   const eventLimit = hybrid ? config.event_limit ?? 512 : 64;
   if (!Number.isSafeInteger(requestLimit) || requestLimit < 1 || requestLimit > (hybrid ? 256 : 28) || !Number.isSafeInteger(eventLimit) || eventLimit < 1 || eventLimit > (hybrid ? 512 : 64)) throw new Error('invalid owned observer bounds');
+  if (!Number.isSafeInteger(cleanupReserve) || cleanupReserve < 0 || cleanupReserve > 8 || cleanupReserve >= requestLimit) throw new Error('invalid owned cleanup reserve');
   const requests = new Set();
   const deliveries = new Set();
   const transportAbort = new AbortController();
@@ -47,6 +49,9 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   const removed = new Promise(resolve => { removeResolve = resolve; });
   let channel;
   let requestCount = 0;
+  let activeRequestCount = 0;
+  let cleanupRequestCount = 0;
+  let rejectedRequestCount = 0;
   let documentCount = 0;
   let targetCount = 0;
   let rejected = 0;
@@ -95,7 +100,12 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
     if (parsed.protocol !== 'https:' || parsed.hostname !== 'firestore.googleapis.com' || parsed.port || parsed.pathname !== listenPath || parsed.searchParams.get('database') !== config.database || parsed.username || parsed.password || parsed.searchParams.has('$httpHeaders') || decodeURIComponent(parsed.search).includes(config.access_token) || !['GET', 'POST'].includes(req.method)) {
       rejected++; failure ||= 'NETWORK_WHITELIST'; throw new Error('logical request outside owned listener');
     }
-    if (++requestCount > requestLimit) { failure ||= 'REQUEST_BOUND'; throw new Error('listener request bound'); }
+    const ownedCleanup = !!closingPromise;
+    if (requestCount >= requestLimit || (!ownedCleanup && activeRequestCount >= requestLimit-cleanupReserve) || (ownedCleanup && cleanupReserve && cleanupRequestCount >= cleanupReserve)) {
+      rejectedRequestCount++;failure ||= 'REQUEST_BOUND';void close();throw new Error('listener request bound');
+    }
+    requestCount++;
+    if (ownedCleanup) cleanupRequestCount++; else activeRequestCount++;
     const bytes = Buffer.from(await req.arrayBuffer());
     if (bytes.length > 128 * 1024) throw new Error('listener body bound');
     const signal = AbortSignal.any([req.signal, transportAbort.signal]);
@@ -171,6 +181,13 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
     // Assign ownership before channel.send can synchronously emit callbacks.
     closingPromise = Promise.resolve().then(async () => {
       clearTimeout(timer);
+      if (hybrid) {
+        // This private authenticated control call consumes no Google quota.
+        // It synchronously marks Go-side teardown ownership before native
+        // REMOVE/terminate can consume the reserved eight forwarding slots.
+        try { await postLocal('/stop', { reason: failure === 'REQUEST_BOUND' ? 'request_bound' : 'observer_close' }, AbortSignal.timeout(1000), 'control'); }
+        catch (error) { recordError(error,'control',new AbortController().signal);failure ||= 'CONTROL_STOP_DELIVERY'; }
+      }
       try { channel.send({ database: config.database, removeTarget: 2 }); } catch {}
       let removeTimer;
       await Promise.race([removed, new Promise(resolve => { removeTimer=setTimeout(resolve,1500); })]);
@@ -198,7 +215,7 @@ export async function startObserver(config, blob, localFetch = globalThis.fetch)
   };
   channel.open();
   channel.send({ database: config.database, addTarget: { documents: { documents: [config.document] }, targetId: 2 } });
-  return { close, state: () => ({ request_count: requestCount, document_events: documentCount, target_events: targetCount, emitted_events:eventCount,target_remove_acknowledged:removeAcknowledged, channel_closed:channelClosed,foreign_requests_rejected: rejected, pending_requests:requests.size,pending_events:deliveries.size,pending_sdk_timers:sdkTimers.size,disposed_sdk_timers:timersCleared,local_errors:diagnostics,error: failure, stopped }) };
+  return { close, state: () => ({ request_count: requestCount, active_request_count:activeRequestCount, cleanup_request_count:cleanupRequestCount, rejected_request_count:rejectedRequestCount, document_events: documentCount, target_events: targetCount, emitted_events:eventCount,target_remove_acknowledged:removeAcknowledged, channel_closed:channelClosed,foreign_requests_rejected: rejected, pending_requests:requests.size,pending_events:deliveries.size,pending_sdk_timers:sdkTimers.size,disposed_sdk_timers:timersCleared,local_errors:diagnostics,error: failure, stopped }) };
 }
 
 async function main() {

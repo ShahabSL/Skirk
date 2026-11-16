@@ -21,7 +21,7 @@ function ownedBackend({missingTime=false,eventStatus=204,idleDelay=0}={}) {
   let initial=false,removed=false,pendingPull=null,sequence=2;
   let found;
   const documentSeen=new Promise(resolve=>{found=resolve;});
-  const requests=[],events=[];
+  const requests=[],events=[],controls=[];
   const reply=text=>new Response(JSON.stringify({status:200,headers:{'Content-Type':'text/plain','X-HTTP-Session-Id':'hybrid-fixture-session'},body_base64:Buffer.from(text).toString('base64')}),{status:200});
   const removal=()=>reply(framed([[++sequence,[{targetChange:{targetChangeType:'REMOVE',targetIds:[2]}}]]]));
   const fetch=async (url,options)=>{
@@ -29,6 +29,7 @@ function ownedBackend({missingTime=false,eventStatus=204,idleDelay=0}={}) {
     assert.equal(new URL(url).hostname,'127.0.0.1');
     assert.equal(options.headers.Authorization,`Bearer ${base.bridge_auth}`);
     const value=JSON.parse(options.body);
+    if(route==='/stop'){assert.ok(['observer_close','request_bound'].includes(value.reason));controls.push(value);return new Response(null,{status:204});}
     if(route==='/event') {events.push(value);if(value.kind==='document')found(value);return new Response(null,{status:eventStatus});}
     assert.equal(route,'/request');
     const logical=new URL('https://firestore.googleapis.com'+value.path);
@@ -51,7 +52,7 @@ function ownedBackend({missingTime=false,eventStatus=204,idleDelay=0}={}) {
       if(options.signal.aborted){clearTimeout(timer);pendingPull=null;reject(new DOMException('owned abort','AbortError'));}
     });
   };
-  return {fetch,requests,events,documentSeen};
+  return {fetch,requests,events,controls,documentSeen};
 }
 
 test('hybrid extensions require explicit finite bounds before SDK access',async()=>{
@@ -74,10 +75,11 @@ test('hybrid document without server updateTime is rejected, never invented',{sk
   finally {await observer.close();}
 });
 
-test('explicit request bound retains the triggering count',{skip:!blobPath},async()=>{
-  const backend=ownedBackend();const observer=await startHybridWatch({...base,request_limit:1},await readFile(blobPath),backend.fetch);
-  try {const deadline=Date.now()+3000;while(!observer.state().error&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(observer.state().error,'REQUEST_BOUND');assert.ok(observer.state().request_count>=2);}
+test('active request exhaustion retains failure and reserved REMOVE headroom',{skip:!blobPath},async()=>{
+  const backend=ownedBackend({idleDelay:1});const observer=await startHybridWatch({...base,request_limit:16},await readFile(blobPath),backend.fetch);
+  try {const deadline=Date.now()+3000;while(!observer.state().error&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(observer.state().error,'REQUEST_BOUND');}
   finally {await observer.close();}
+  const state=observer.state();assert.equal(state.active_request_count,8);assert.ok(state.cleanup_request_count>0&&state.cleanup_request_count<=8);assert.ok(state.request_count<=16);assert.ok(state.rejected_request_count>=1);assert.equal(state.target_remove_acknowledged,true);assert.equal(state.stopped,true);assert.equal(state.error,'REQUEST_BOUND');assert.deepEqual(backend.controls,[{reason:'request_bound'}]);
 });
 
 test('real SDK stays active beyond a 15-second HTTP deadline using bounded empty polls',{skip:!blobPath,timeout:25000},async()=>{

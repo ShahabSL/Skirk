@@ -1,8 +1,10 @@
 # Firestore priority / Drive bulk research design
 
-Status: an offline, test-only prototype is implemented and component-tested.
-No live Google hybrid transport has run and no new Google resources or
-credentials have been provisioned for it. Primitive
+Status: the test-only prototype has passed offline correctness checks. A first
+live attempt transferred both files but failed before all text echoes and
+cleanup proof completed; no complete controlled comparison is claimed. Its
+owned resources were subsequently cleaned and the prior API state restored.
+Primitive
 Firestore write/read and six-state WebChannel results do not establish this
 transport's correctness or performance.
 
@@ -186,7 +188,7 @@ Current component evidence (2026-11-15; not a live transport result):
   twice under the race detector in 17.167 seconds; combined hybrid tests passed
   in 9.666 seconds. These are offline correctness results, not Google speed.
 
-## Guarded live entry (not run)
+## Guarded live entry (fresh comparison pending)
 
 `TestLivePinnedFirestoreHybrid` requires all three explicit environment values:
 
@@ -277,6 +279,28 @@ Root separately deletes/verifies the exact Firestore documents/whole database,
 restores the prior API state, removes copied authorization files, and only then
 releases a hybrid arm's campaign active file. `summary.json` deliberately keeps
 `firestore_cleanup_required: true`; it is not a complete Cloud-cleanup proof.
+
+### First live failure retained and fixed
+
+The first complete-transport attempt transferred both exact 16 MiB files but
+completed 38 of 41 origin echoes (warm plus 20 per direction). It remains a
+failed run. The exit observer exhausted its local active SDK allowance of
+120 (`128 - 8` cleanup reserve), returning local 502s while every received
+Google response was 200. Native-initiated close had not yet marked Go teardown,
+so REMOVE requests incorrectly consumed the exhausted active bucket. This was
+a fixture/guard defect; it does not establish a Google transport error or a
+complete latency distribution.
+
+The corrected observer counts active and cleanup forwarding separately. Before
+REMOVE, a bounded authenticated loopback control request marks Go teardown and
+retains the original active-bound error. Eight SDK requests are reserved for
+REMOVE/final-pull/terminate within the unchanged total cap. The live role preset
+now permits 256 SDK requests while the shared pair cap remains 512 Google calls.
+Actual child/bridge/control joins are recorded independently of an error-free
+workload: a failed-but-joined arm permits exact Drive cleanup but remains failed.
+An unjoined owner still blocks cleanup. A real pinned SDK regression exhausts
+the active allowance, receives REMOVE acknowledgement, joins every owner and
+retains `REQUEST_BOUND` and the original Go bound error.
 
 ## Official API references
 
