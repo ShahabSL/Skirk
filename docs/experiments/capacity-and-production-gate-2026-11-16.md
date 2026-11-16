@@ -12,6 +12,9 @@ not a measurement of units billed by Google.
 Google currently documents, for new Drive API projects, **1,000,000 quota
 units/min/project**, **325,000 units/min/user/project**, a **400,000,000
 units/day/project threshold before charges**, and **1 TB/day/project egress**.
+It also documents a **750 GB/day upload limit per Google Workspace user**
+across My Drive and shared drives. This is an additional account-level ceiling
+for a shared exit; splitting project headers does not remove it.
 Examples in its method table are `files.get` **5**, `files.list` **100**,
 `files.update` **50**, and `files.download` **200** units. Google says older
 projects that used the API between November 2025 and April 2026 retain their

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 228 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 232 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -24,7 +24,8 @@
     "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts.",
     "The known-comment carrier was only a same-OAuth-grant API primitive, overlapped a local full Go suite, and failed at an 8 KiB reply HTTP403 after four 8-record arms; its visible latency is not a CPU-quiet full-tunnel comparison. The 403 reason and cross-account access are unproved.",
     "The selected-project zero-limit contrast demonstrated independent Drive quota enforcement for one pinned-front metadata GET and one test grant, with final override removal and recovered read. It does not measure method unit weights, billing, sustained rate or 200,000-user capacity.",
-    "The v2 About and v3 start-page-token watermark primitive completed on one same-account pinned-front kit. In five of six mutations the exact list showed the change while a confirming signal read remained old. Both eventually advanced; neither is a sole correctness or low-latency discovery gate."
+    "The v2 About and v3 start-page-token watermark primitive completed on one same-account pinned-front kit. In five of six mutations the exact list showed the change while a confirming signal read remained old. Both eventually advanced; neither is a sole correctness or low-latency discovery gate.",
+    "Four fresh fixed-rendezvous live attempts stopped before timing on v2 bogus conditional PATCH HTTP500. Each cleaned exact owned state; no speed ranking or general CAS contract follows."
   ],
   "records": [
     {
@@ -4611,6 +4612,83 @@
         "repocomp/.skirk-runs/about-watermark-probe-20261116-a.json"
       ],
       "revision_or_binary": "88ee1c8/test-only tool",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-089",
+      "candidate": "Mux v5 generation-bound AEAD restart security and namespace migration",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Fresh 128-bit sender generation in lane HKDF and muxv5 namespace; synthetic restart, tamper, legacy/mismatch, slot-shadow validation; full Go and focused race",
+      "latency": "No live Google speed/latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No normal-path Drive API call added by namespace/key change",
+      "correctness_and_errors": "V4 deterministic restart key/nonce collision reproduced locally; v5 generation rejects zero/noncanonical and cross-version; slot validator and empty direct Tunnel default fixed",
+      "cleanup": "Janitor and manual cleanup recognize muxv5 and muxv4; no Cloud resource used for this test",
+      "decision": "New kits default v5; both peers must upgrade together; explicit v4 retained temporarily with prior risk; no speed claim",
+      "source_documents": [
+        "docs/mux-v5-migration-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "8a21dcc+1d51160",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-090",
+      "candidate": "Bounded generated-ID 502 recovery guard for Drive v2 research arms",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Local fake pinned-front 502->409 exact SHA-256 proof, 16MiB both ways and 40 overlapping echoes; negative status/retry/cancel cases",
+      "latency": "No live Google speed/latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "At most 8 provisional statuses/IDs and 3 known-ID proof GETs each; all within existing arm guard",
+      "correctness_and_errors": "Retains raw HTTP statuses, permits only generated normal-lane upload cases, rejects unresolved or mismatched hashes; full local SOCKS/TLS exact",
+      "cleanup": "Local joined writers and owned objects removed, unrelated sentinel retained",
+      "decision": "Test-only accounting repair; interrupted FSH2 live arms remain failed/incomplete until a fresh paired rerun",
+      "source_documents": [
+        "docs/experiments/drive-v2-generated-upload-live-guard-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "e074f01",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-091",
+      "candidate": "Precreated fixed-ID hot CAS rendezvous versus immutable list, fresh live capability",
+      "evidence_level": "live_api_primitive_incomplete_negative_capability",
+      "workload": "Four fresh same-grant pinned-front owned-file v2 CAS preflights before planned 1/2/4/8-writer arms",
+      "latency": "No timed arm completed; no latency comparison",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Each attempt 415 nominal/3320 eightfold upper; four total 1660 nominal/13280 upper",
+      "correctness_and_errors": "Bogus If-Match PATCH returned HTTP500 in all four, including minimal prior-probe projection/headers; 0 capability checks and 0 timed arms",
+      "cleanup": "Each created ID deleted, exact404 twice, unique prefix empty immediately and after31s; ledgers removed",
+      "decision": "No CAS authorization or speed ranking on current route/fixture; distinct XDRIVE ring remains untested by this probe",
+      "source_documents": [
+        "docs/experiments/fixed-rendezvous-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fixed-rendezvous-live-20261116-01.json",
+        "repocomp/.skirk-runs/fixed-rendezvous-live-20261116-02.json",
+        "repocomp/.skirk-runs/fixed-rendezvous-live-20261116-03.json",
+        "repocomp/.skirk-runs/fixed-rendezvous-live-20261116-04.json"
+      ],
+      "revision_or_binary": "26b2a53 through07b7fd8/test-only tool",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-092",
+      "candidate": "Released Xray-core XDRIVE 64-slot architecture independent source audit",
+      "evidence_level": "external_primary_source_audit",
+      "workload": "Two independent Sol ultra/Astra ultra audits of released XDRIVE ring/pools/retry/cleanup versus all228 Skirk records; no cloud calls",
+      "latency": "Upstream author-reported ~0.9-0.96s one-way/~1.5s warm RTT, different workload and unverified here",
+      "throughput_mbps": null,
+      "estimated_quota_units": "64 slots/direction+2 watermarks=130 cold objects; two spare rings may add260; no measured Skirk quota cost",
+      "correctness_and_errors": "Source hypothesis: unconditional v3 delayed PATCH may overwrite reused slot; ACK on memory fetch and periodic cleanup do not prove durable application delivery/owned absence",
+      "cleanup": "Read-only audit; no local or Cloud resource",
+      "decision": "Transfer bounded read-ahead/pooling ideas, but test a small fenced ring under late-write fault before promotion; no cross-project speed ranking",
+      "source_documents": [
+        "docs/experiments/xdrive-external-architecture-audit-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "Xray 676eaf66+5d17b872; Skirk 8a21dcc",
       "live_comparable": false
     }
   ]
