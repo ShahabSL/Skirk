@@ -7,10 +7,15 @@ user-selected Google route, with `www.google.com` front as its default.
 
 ## Method and provenance
 
-All six completed arms below ran the same frozen Go test executable, SHA-256
+The first six completed arms below ran the same frozen Go test executable, SHA-256
 `75d56f5d7f8c57efa88f67affe9f94480a9d56518349789ac65cce3002c0b0c9`,
-from source `116b6eb26ed41ff40913166bd809d628e3add68e`. Each arm used the
-selected `www.google.com` front for transport, one owned SOCKS/mux path to an
+from source `116b6eb26ed41ff40913166bd809d628e3add68e`. The reverse-order
+Firestore pair ran a second frozen executable, SHA-256
+`3a5a5ebb849db46b7880c336901628f1d9f9d3b5e64fc46065716eea496a0a49`,
+from source `c5d52c4fbe8a19d820d8836e86fe231f7d8a9563`. That source adds
+provider-error classification to the live fixture; the two Firestore pairs
+must not be pooled as one exact-binary experiment. Each arm used the selected
+`www.google.com` front for transport, one owned SOCKS/mux path to an
 owned TLS origin, one exact seeded 16 MiB download, one exact seeded 16 MiB
 upload, and one persistent upgraded TLS text connection. The text connection
 sent one warm and forty independently authenticated 64-byte frames, with twenty
@@ -30,10 +35,11 @@ HTTP/1.1 mixed workload has a different schedule and cannot be numerically
 pooled with these arms.
 
 The two Drive v2 pairs ran candidate/control and control/candidate order in
-separate bounded campaigns. The Firestore pair ran hybrid/control. Each pair
-used the same workload seed and executable; order and remote load were not
-controlled between pairs. The private result paths are listed at the end;
-their raw JSON and authentication files are intentionally ignored by Git.
+separate bounded campaigns. The Firestore pairs ran hybrid/control and then
+control/hybrid. Each pair used the same workload seed and executable; order and
+remote load were not controlled between pairs. The private result paths are
+listed at the end; their raw JSON and authentication files are intentionally
+ignored by Git.
 
 ## Drive v2 conditional-metadata priority versus Drive-only control
 
@@ -87,47 +93,53 @@ compatibility guarantee.
 
 The hybrid used Firestore document writes and WebChannel Listen through the
 same Google front for interactive priority records, while Drive carried bulk
-and bounded fallback. One complete hybrid/control campaign passed the full
-SOCKS/TLS workload and exact hashes. The candidate was first; the control was
-second. A reverse-order campaign with a more detailed status classifier is
-separate follow-up work and must not be assumed to pass here.
+and bounded fallback. Two complete campaigns passed the full SOCKS/TLS
+workload and exact hashes. The candidate was first in D and second in E. E
+used the later diagnostic-only source/binary stated above.
 
 | Campaign/order | Mode | 16 MiB down | 16 MiB up | Text p95 while down | Text p95 while up | Drive calls / conservative unit upper | Firestore calls |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | D, first | Firestore priority + Drive bulk | 5.000 s / **26.845 Mb/s** | 3.474 s / **38.636 Mb/s** | **0.560 s** | **0.416 s** | 129 / 83,440 | 417 |
 | D, second | Drive-only control | 6.157 s / 21.801 Mb/s | 4.375 s / 30.676 Mb/s | 2.076 s | 2.331 s | 468 / 222,360 | 0 |
+| E, first | Drive-only control | 7.393 s / 18.154 Mb/s | 4.712 s / 28.483 Mb/s | 2.117 s | 4.461 s | 419 / 225,800 | 0 |
+| E, second | Firestore priority + Drive bulk | 3.782 s / **35.491 Mb/s** | 4.454 s / **30.136 Mb/s** | **0.414 s** | **0.378 s** | 135 / 81,400 | 463 |
 
-In this single pair, file rate was 23.1%/25.9% higher for download/upload;
-scheduled text p95 was 73.0%/82.2% lower. The warm text sample was 0.540 s
-hybrid versus 1.996 s control. Hybrid had 16 download frames and 2 upload
-frames complete while the respective bulk file was active; control had 7 and
-4. This is a real application path but only one successful pair, with small
-p95 samples. It does not establish a steady-state minimum RTT or many-user
-capacity.
+In D, file rate was 23.1%/25.9% higher for download/upload and scheduled
+text p95 was 73.0%/82.2% lower. In E, file rate was 95.5%/5.8% higher and
+text p95 was 80.4%/91.5% lower. The control's download rate varied 21.801 to
+18.154 Mb/s across these campaigns, and the two binaries differ, so these
+paired percentages remain descriptive. The warm text sample was 0.540 versus
+1.996 s in D and 0.427 versus 2.014 s in E (hybrid versus control). D's
+hybrid/control completed 16/7 download and 2/4 upload frames during their
+respective bulk files; E completed 12/11 and 8/3. This is a real application
+path but only two small successful pairs. It does not establish a steady-state
+minimum RTT or many-user capacity.
 
-The hybrid's two observers recorded 127 and 118 Listen requests, each within
-its 256-request role allowance, and 84 REST writes per role (168 total). Both
-received REMOVE acknowledgement, joined their child/control owners and ended
-with zero pending requests, events or SDK timers. Its Drive guard had 129
-visible calls, 16 expected cleanup 404s, zero denials, timeouts or transport
-errors. The Firestore guard had 417 HTTP/2 responses: **416 status 200 and one
-unexpected status 400 near teardown**. The last workload frame had completed;
-the watch summaries reported no carrier API error and successful joined
-shutdown. The raw guard still records `api_errors: 1`, so this cannot be called
-an error-free arm or dismissed without a classified repeat. Neither the
-provider message nor the exact operation of that 400 was captured by this
-frozen executable. A later diagnostic change adds method/route/close-state
-classification for a fresh campaign; it does not retroactively explain this
-one event.
+In D, the hybrid's two observers recorded 127 and 118 Listen requests and 84
+REST writes per role (168 total). In E, they recorded 137 and 143 Listen
+requests and 89/90 REST writes (179 total). Every observer stayed within its
+256-request role allowance, received REMOVE acknowledgement, joined its
+child/control owners and ended with zero pending requests, events or SDK
+timers. D/E hybrid Drive guards had 129/135 visible calls, 16/23 expected
+cleanup 404s, and zero denials, timeouts or transport errors. The Firestore
+guards had 417 and 463 HTTP/2 responses respectively. **Each recorded one
+HTTP 400 near teardown** and therefore `api_errors: 1`, despite all 41 exact
+frames and both files completing. E's new classifier identifies its 400 as an
+owned cleanup **GET Listen** request that had been canceled; it was not a
+WebChannel terminate request or an active-workload write. E's two carrier
+summaries recorded zero API/transport errors. This supports a canceled-cleanup
+interpretation for E, while D's frozen binary did not capture method/route
+details and cannot be retroactively assigned the same cause. Neither arm's
+raw guard counter should be rewritten to zero.
 
 The Firestore project had billing disabled and was eligible for its free
-database. The owned mailbox documents and entire fresh database were removed,
-checked absent immediately and after 31 seconds; the previously disabled
-Firestore API was restored to **DISABLED**. No persistent shared backend was
-created. [Firestore's free quotas](https://firebase.google.com/docs/firestore/quotas)
+database. In both campaigns, the owned mailbox documents and entire fresh
+database were removed, checked absent immediately and after 31 seconds; the
+previously disabled Firestore API was restored to **DISABLED**. No persistent
+shared backend was created. [Firestore's free quotas](https://firebase.google.com/docs/firestore/quotas)
 include 20,000 writes and 50,000 reads per day, 1 GiB storage and 10 GiB
-outbound per month for the eligible free database. The observed 168 writes in
-one small workload alone show why this result cannot be extrapolated to
+outbound per month for the eligible free database. The observed 168/179 writes
+in one small workload alone show why this result cannot be extrapolated to
 200,000 users on one free project. It also requires owner Cloud credentials,
 IAM and fresh database lifecycle work that the current consumer onboarding
 does not provide.
@@ -151,13 +163,14 @@ ordinary end user is not a simple immediate sign-in flow.
 ## Decision and private evidence
 
 The strongest **observed** chat-like response in these completed pipelined
-arms is the Firestore hybrid's 0.560/0.416-second scheduled p95. The Drive v2
-carrier showed a less complex and potentially cheaper path with good file
+arms is the Firestore hybrid's 0.414/0.378-second scheduled p95 in E. The Drive
+v2 carrier showed a less complex and potentially cheaper path with good file
 rates, but its text p95 remained roughly 1.9–2.3 seconds. No experiment here
-establishes an architectural wall: remote variance, a single hybrid pair,
-the teardown 400, finite free quotas and missing product integration prevent
-that claim. Keep both candidates behind research gates and retain the
-shipping Drive route while further controlled tests and product work proceed.
+establishes an architectural wall: remote variance, only two hybrid pairs,
+the classified but still recorded teardown 400, finite free quotas and missing
+product integration prevent that claim. Keep both candidates behind research
+gates and retain the shipping Drive route while further controlled tests and
+product work proceed.
 
 Private, ignored evidence (no raw IDs, credentials or sealed payloads in this
 tracked report):
@@ -166,8 +179,8 @@ tracked report):
   `.skirk-runs/drive-v2-pipeline-20261116b/`: `campaign.json`,
   `orchestrator-ledger.json`, and each arm's `summary.json`.
 - `.skirk-runs/fs-hybrid-pipeline-20261116a/` through
-  `.skirk-runs/fs-hybrid-pipeline-20261116d/`: campaign and recovery ledgers;
-  B/C external recovery proofs; D hybrid/control arm summaries.
+  `.skirk-runs/fs-hybrid-pipeline-20261116e/`: campaign and recovery ledgers;
+  B/C external recovery proofs; D/E hybrid/control arm summaries.
 
 The earlier [Drive ETag primitive](drive-v2-metadata-etag-cas-2026-11-15.md),
 [first failed full hybrid](firestore-hybrid-first-live-2026-11-15.md), and
