@@ -4896,6 +4896,42 @@
       "raw_archive_paths": [],
       "revision_or_binary": "separate research branch codex/skirk-inbound-fairness-20261116 at 62d919f; not product PR",
       "live_comparable": false
+    },
+    {
+      "id": "R3-104",
+      "candidate": "Modern Google Drive rate-error handling and mux media response bound",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Legacy/status-only/ErrorInfo details 403 rate limits and ordinary denied 403; exact full sealed 4 MiB batch, one-byte-over plain/gzip, misleading Content-Length, store ignoring HTTP context; focused race and vet",
+      "latency": "No live Google latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No normal-path Drive method change; oversize responses stop retrying and ordinary quota 403 enters shared backoff",
+      "correctness_and_errors": "Modern RATE_LIMIT_EXCEEDED and typed ErrorInfo recognized without retrying permission denial; mux media capped at4194359 bytes (4 MiB raw batch+39 header+16 GCM tag), including decoded gzip; non-HTTP oversize rejected",
+      "cleanup": "Local mock only; no Google object or OAuth used",
+      "decision": "Promoted as product hardening; full preflight passed before corrected buffer integration; no live speed/capacity claim",
+      "source_documents": [
+        "docs/experiments/mux-media-read-buffer-and-drive-rate-errors-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root commits dea9b48, ef0be47, 55879f6; isolated originals 2c419e9, fce7b99, a7f4701",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-105",
+      "candidate": "Adaptive mux socket read-buffer admission and corrected first-read coalescing",
+      "evidence_level": "localhost_full_mux_paired_and_race",
+      "workload": "Six AB pairs 32 MiB bulk+24 small requests, 64 MiB ABBA, persistent 384 KiB prelude+8 exact echoes+4x4 MiB file; focused race/vet and five read-allocation microbench samples",
+      "latency": "Local scheduled short p95 median baseline132.7ms vs corrected132.2ms (not Google latency)",
+      "throughput_mbps": "Local simulated bulk median baseline1121.9 vs corrected1114.2 Mb/s; distributions overlap, not Drive speed",
+      "estimated_quota_units": "No Drive method change; first flawed candidate caused 6/6 local gap repairs vs0/6 baseline, corrected candidate0/6 vs1/6 baseline",
+      "correctness_and_errors": "Corrected path starts at32 KiB, coalesces first full read into admitted large buffer before framing, caps large buffers at64 MiB/mux, demotes after2s idle/short sends/close; exact bodies and all short requests passed",
+      "cleanup": "Local MemoryStore only; no Google object or OAuth used",
+      "decision": "Promoted corrected candidate as memory admission bound; old adc0297 removed after repeatable gap-repair regression; live Drive throughput and total active-stream memory remain unproven",
+      "source_documents": [
+        "docs/experiments/mux-media-read-buffer-and-drive-rate-errors-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root commit 0a7fd08; isolated corrected 2bdf41c; flawed adc0297 superseded",
+      "live_comparable": false
     }
   ]
 }

@@ -60,6 +60,11 @@ a 200,000-user capacity.
 The private raw ledgers are `.skirk-runs/v5-main-persistent-{down,up}-20261116-{01,02}/`.
 The final inbound-cap ledgers are
 `.skirk-runs/v5-inbound-main-{down,up}-20261116-01/`.
+In those final cohorts, all 20 text completions overlapped the file in each
+upload arm; in download arms the two `main` runs had 20 each and the two v5
+runs had 15 and 18. The fixed-denominator p95 includes any frames completing
+after the file, so it does not by itself prove a sustained saturated-bulk
+latency guarantee.
 Across the six cohorts, **23 of 24** arms completed; each successful arm
 verified its file and all 20 frames. After each cohort, a separate exact
 session-prefix cleanup removed residual muxv4/muxv5 objects only for its own
