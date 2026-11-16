@@ -6,6 +6,12 @@ carrier, but it does **not** enable the lane in CLI, desktop, Android, or iOS.
 The ordinary Drive mux remains the product path. This document records the
 work required to make an opt-in implementation safe and testable.
 
+A dormant `SKVQ` offer/accept/ready codec is now in normal source. It binds
+the exact session, generation, conditional file IDs, and probed ciphertext
+limit, with a distinct marker that existing mux peers ignore. No runtime
+handler sends or accepts these payloads yet; the codec alone provides no
+distributed setup, rollover, quota admission, or cleanup guarantee.
+
 ## Why direct promotion is unsafe
 
 The live fixture creates two fresh v2 files, writes their exact IDs to an
