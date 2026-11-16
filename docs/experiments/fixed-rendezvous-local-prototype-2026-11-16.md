@@ -46,6 +46,19 @@ an exit-signed processing receipt. The exit merges signed receipts using the
 same conditional-write rule. A bounded retry or full snapshot uses an
 immutable identity-preserving fallback that the exit discovers by list.
 
+A follow-up capacity regression found that admitting based only on the pending
+snapshot was unsafe. With 89 prior receipts, a valid 16,325-byte snapshot
+could hold another OPEN, but replacing that OPEN with its signed receipt would
+need 16,385 bytes, one byte above the 16,384-byte cap. The old local exit
+recorded the OPEN effect and only then discovered that it could not publish the
+receipt. The model now computes the complete post-processing size using the
+fixed Ed25519 signature length before a client publishes an inline claim; a
+full generation sends the OPEN by immutable fallback. The exit independently
+checks receipt capacity before any effect, including for a peer that bypasses
+client admission. Both paths have deterministic regression tests. This is a
+**local model repair**, not evidence that the real Drive carrier works or that
+the exit has durable exactly-once effects.
+
 Rollover seals the old generation with a fenced PATCH before a signed anchor
 switch. A client paused just before its old-generation PATCH must see 412,
 refetch the anchor, and publish in the new generation. The old file remains
@@ -125,3 +138,8 @@ The final cross-generation identity case was then covered by a focused
 race-enabled run and twenty repeated focused race runs; final `go vet ./...`,
 all-package focused compile/run, and staged `git diff --check` passed. No
 native app or real Google transport was changed or tested by this branch.
+The later receipt-capacity repair is separately covered by the focused
+`TestRendezvousFixedID` suite and its two boundary regressions. Ten repeated
+race-enabled focused runs, `go vet ./internal/skirk`, and `git diff --check`
+passed. It does not revise the earlier fake cost table or add a live
+performance claim.

@@ -401,6 +401,21 @@ func rendezvousTestHasOwnClaim(snapshot rendezvousTestSnapshot, own rendezvousTe
 	return false, nil
 }
 
+func rendezvousTestReceiptsFit(snapshot rendezvousTestSnapshot) (bool, error) {
+	// The client cannot sign exit receipts, but their Ed25519 signature length is
+	// fixed. Reserve the complete post-processing snapshot before publishing.
+	settled := snapshot
+	settled.Done = append([]rendezvousTestReceipt(nil), snapshot.Done...)
+	for _, claim := range snapshot.Claims {
+		settled.Done = append(settled.Done, rendezvousTestReceipt{
+			ID: claim.ID, ClaimMAC: claim.MAC, Signature: make([]byte, ed25519.SignatureSize),
+		})
+	}
+	settled.Claims = nil
+	encoded, err := json.Marshal(settled)
+	return len(encoded) <= rendezvousTestMaxSnapshotBytes, err
+}
+
 func rendezvousTestEffectHash(claim rendezvousTestClaim) [sha256.Size]byte {
 	identity, _ := json.Marshal(struct {
 		ID, Client, Run string
@@ -461,6 +476,13 @@ func (f *rendezvousTestFixture) appendOpen(ctx context.Context, claim rendezvous
 			return "", err
 		}
 		if len(encoded) > rendezvousTestMaxSnapshotBytes {
+			return f.immutableFallback(claim)
+		}
+		receiptsFit, err := rendezvousTestReceiptsFit(snapshot)
+		if err != nil {
+			return "", err
+		}
+		if !receiptsFit {
 			return f.immutableFallback(claim)
 		}
 		if beforeFirstPatch != nil && !hooked {
@@ -534,6 +556,16 @@ func (f *rendezvousTestFixture) consumeGeneration(id string, generation int) err
 		}
 		if len(snapshot.Claims) == 0 {
 			return nil
+		}
+		// A peer with the mailbox credential may have written a snapshot that
+		// bypassed the client admission check. Do not perform an exit effect that
+		// cannot be acknowledged within the generation's hard size cap.
+		receiptsFit, err := rendezvousTestReceiptsFit(snapshot)
+		if err != nil {
+			return err
+		}
+		if !receiptsFit {
+			return errors.New("receipt tombstones require rollover")
 		}
 		for _, claim := range snapshot.Claims {
 			if err := f.recordEffect(claim); err != nil {
@@ -827,6 +859,96 @@ func TestRendezvousFixedIDImmutableFallbackAndExactCleanup(t *testing.T) {
 	_, units := f.drive.snapshotMeter()
 	if units <= 0 {
 		t.Fatal("meter did not count calls")
+	}
+}
+
+func rendezvousTestReceiptBoundary(t *testing.T, f *rendezvousTestFixture, claim rendezvousTestClaim) (rendezvousTestSnapshot, rendezvousTestClaim) {
+	t.Helper()
+	prepared := rendezvousTestSealClaim(f.invite.SharedKey, f.invite.Session, f.generation, claim)
+	completed := rendezvousTestReceipt{ID: prepared.ID, ClaimMAC: bytes.Clone(prepared.MAC),
+		Signature: ed25519.Sign(f.exitKey, rendezvousTestReceiptMessage(f.invite.Session, f.generation, prepared.ID, prepared.MAC))}
+	snapshot := rendezvousTestSnapshot{Version: 1, Generation: f.generation}
+	for i := 0; i < 128; i++ {
+		trial := snapshot
+		trial.Done = append([]rendezvousTestReceipt(nil), snapshot.Done...)
+		id := fmt.Sprintf("past-%03d-", i)
+		trial.Done = append(trial.Done, rendezvousTestReceipt{ID: id, ClaimMAC: bytes.Repeat([]byte{1}, sha256.Size),
+			Signature: bytes.Repeat([]byte{1}, ed25519.SignatureSize)})
+		pending := trial
+		pending.Claims = []rendezvousTestClaim{prepared}
+		settled := trial
+		settled.Done = append(append([]rendezvousTestReceipt(nil), trial.Done...), completed)
+		pendingJSON, _ := json.Marshal(pending)
+		settledJSON, _ := json.Marshal(settled)
+		padding := max(0, rendezvousTestMaxSnapshotBytes-len(settledJSON)+1)
+		if padding < 256 && len(pendingJSON)+padding <= rendezvousTestMaxSnapshotBytes {
+			id += strings.Repeat("x", padding)
+			trial.Done[len(trial.Done)-1].ID = id
+			trial.Done[len(trial.Done)-1].Signature = ed25519.Sign(f.exitKey, rendezvousTestReceiptMessage(
+				f.invite.Session, f.generation, id, trial.Done[len(trial.Done)-1].ClaimMAC))
+			t.Logf("receipt boundary: prior_done=%d pending_bytes=%d settled_bytes=%d cap=%d",
+				len(trial.Done), len(pendingJSON)+padding, len(settledJSON)+padding, rendezvousTestMaxSnapshotBytes)
+			return trial, prepared
+		}
+		regularID := fmt.Sprintf("past-%03d", i)
+		snapshot.Done = append(snapshot.Done, rendezvousTestReceipt{ID: regularID, ClaimMAC: bytes.Repeat([]byte{1}, sha256.Size),
+			Signature: ed25519.Sign(f.exitKey, rendezvousTestReceiptMessage(f.invite.Session, f.generation, regularID, bytes.Repeat([]byte{1}, sha256.Size)))})
+	}
+	t.Fatal("could not construct a valid snapshot whose receipt exceeds the cap")
+	return rendezvousTestSnapshot{}, rendezvousTestClaim{}
+}
+
+func TestRendezvousFixedIDReservesReceiptCapacityBeforeEffect(t *testing.T) {
+	f := newRendezvousTestFixture(t, 128)
+	claim := rendezvousTestClaim{ID: "receipt-boundary", Client: "client", Run: "run", Payload: []byte("open")}
+	snapshot, prepared := rendezvousTestReceiptBoundary(t, f, claim)
+	file, _, err := f.readSnapshot(f.current, f.generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := json.Marshal(snapshot)
+	if _, err := f.drive.patch(f.invite.Owner, f.invite.App, file.ID, file.ETag, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := f.appendOpen(context.Background(), claim, nil)
+	if err != nil || mode != "fallback" {
+		t.Fatalf("full receipt snapshot must route OPEN to immutable fallback: mode=%s error=%v", mode, err)
+	}
+	if err := f.consumeGeneration(f.current, f.generation); err != nil {
+		t.Fatal(err)
+	}
+	if f.processed[prepared.ID] != 0 {
+		t.Fatal("rendezvous exit produced an effect without a receipt")
+	}
+	if err := f.consumeFallback(); err != nil || f.processed[prepared.ID] != 1 {
+		t.Fatalf("fallback OPEN did not produce one effect: count=%d error=%v", f.processed[prepared.ID], err)
+	}
+	if err := f.cleanup(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRendezvousFixedIDRejectsUnreceiptableClaimBeforeEffect(t *testing.T) {
+	f := newRendezvousTestFixture(t, 128)
+	claim := rendezvousTestClaim{ID: "receipt-boundary", Client: "client", Run: "run", Payload: []byte("open")}
+	snapshot, prepared := rendezvousTestReceiptBoundary(t, f, claim)
+	snapshot.Claims = []rendezvousTestClaim{prepared}
+	file, _, err := f.readSnapshot(f.current, f.generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := json.Marshal(snapshot)
+	if _, err := f.drive.patch(f.invite.Owner, f.invite.App, file.ID, file.ETag, string(seed)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.consumeGeneration(f.current, f.generation); err == nil {
+		t.Fatal("exit accepted an OPEN whose signed receipt cannot fit")
+	}
+	if f.processed[claim.ID] != 0 {
+		t.Fatal("exit produced an effect before confirming receipt capacity")
+	}
+	if err := f.cleanup(); err != nil {
+		t.Fatal(err)
 	}
 }
 
