@@ -235,7 +235,7 @@ function App() {
         ? "Exit test passed"
         : exitProbe?.status === "unverified" || exitProbeError
           ? "Exit not verified"
-        : "Expiry date unknown";
+        : "Google access not checked yet";
   const displayPhase = googleGrantExpired && !connected ? "error" : phase;
   const routeSelection = selectedProfile?.routeMode === "direct" || selectedProfile?.routeMode === "real_pinned"
     ? "direct"
@@ -605,7 +605,7 @@ function App() {
                     ? "The exit answered through Drive in this session. This does not predict how long Google will keep the grant valid."
                     : exitProbe?.status === "unverified" || exitProbeError
                       ? "The exit test did not confirm a round trip. Check the exit and its Google access; this alone does not prove that a grant expired."
-                    : "A saved profile cannot reveal a guaranteed Google refresh-token expiry or the Cloud project's publishing status. Test the exit after connecting."}
+                    : "Connect, then use Test exit to check this session. Google does not provide a guaranteed refresh-token expiry date here."}
             </p>
             <details>
               <summary>Personal OAuth and renewal guide</summary>
