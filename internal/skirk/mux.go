@@ -102,6 +102,13 @@ const (
 	cleanupRetryMaxDelay         = 16 * time.Second
 )
 
+// A receive worker may decode up to 512 frames after its per-stream admission
+// check. Keep the extra handoff finite if the local socket stalls.
+const (
+	muxStreamDeferredFrames = muxMaxFrames
+	muxStreamDeferredBytes  = 8 * 1024 * 1024
+)
+
 const (
 	muxPriorityRetryProbeLimit    = 4
 	muxPriorityRetryProbeInterval = 30 * time.Second
@@ -429,9 +436,16 @@ type muxStream struct {
 	conn     net.Conn
 
 	inbound chan []byte
-	done    chan struct{}
-	once    sync.Once
-	ready   atomic.Bool
+	// The existing writer goroutine drains inbound before deferredInbound.
+	// Delivery workers never wait for a stalled local socket. Only that stream
+	// is closed if the additional bounded handoff fills.
+	deferredInbound      [][]byte
+	deferredInboundBytes int
+	deferredInboundCount atomic.Int64
+	deferredWake         chan struct{}
+	done                 chan struct{}
+	once                 sync.Once
+	ready                atomic.Bool
 
 	deliverMu              sync.Mutex
 	mu                     sync.Mutex
@@ -920,6 +934,7 @@ func (m *driveMux) registerStreamInternal(id uint64, clientID, runID string, con
 		mux:          m,
 		conn:         conn,
 		inbound:      make(chan []byte, muxStreamInbound),
+		deferredWake: make(chan struct{}, 1),
 		done:         make(chan struct{}),
 		recvExpected: 1,
 		recvPending:  map[uint64]muxFrame{},
@@ -1378,26 +1393,66 @@ func (s *muxStream) bulkSendCoalescingAt(now time.Time) bool {
 func (m *driveMux) startWriter(stream *muxStream) {
 	go func() {
 		for {
-			select {
-			case data := <-stream.inbound:
-				if data == nil {
-					stream.markRemoteReadDone()
-					return
-				}
-				stream.noteFirstRecvPayload(len(data))
-				if err := writeAll(stream.conn, data); err != nil {
-					stream.close()
-					m.sendRSTBestEffort(context.Background(), stream.key(), []byte(sanitizeTransportErrorText(err.Error())))
-					return
-				}
-				signalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-				m.signalNormalMuxObjectIfReady(signalCtx, stream.key())
-				cancel()
-			case <-stream.done:
+			data, ok := stream.nextInbound()
+			if !ok {
 				return
 			}
+			if data == nil {
+				stream.markRemoteReadDone()
+				return
+			}
+			stream.noteFirstRecvPayload(len(data))
+			if err := writeAll(stream.conn, data); err != nil {
+				stream.close()
+				m.sendRSTBestEffort(context.Background(), stream.key(), []byte(sanitizeTransportErrorText(err.Error())))
+				return
+			}
+			signalCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			m.signalNormalMuxObjectIfReady(signalCtx, stream.key())
+			cancel()
 		}
 	}()
+}
+
+// nextInbound is the sole consumer. Both its queue decision and acceptFrame's
+// send/defer decision use deliverMu, so a later frame cannot pass an earlier
+// deferred frame even when the channel becomes writable concurrently.
+func (s *muxStream) nextInbound() ([]byte, bool) {
+	for {
+		s.deliverMu.Lock()
+		select {
+		case <-s.done:
+			s.deliverMu.Unlock()
+			return nil, false
+		default:
+		}
+		select {
+		case data := <-s.inbound:
+			s.deliverMu.Unlock()
+			return data, true
+		default:
+		}
+		if len(s.deferredInbound) != 0 {
+			data := s.deferredInbound[0]
+			s.deferredInbound[0] = nil
+			s.deferredInbound = s.deferredInbound[1:]
+			if len(s.deferredInbound) == 0 {
+				s.deferredInbound = nil
+			}
+			s.deferredInboundBytes -= len(data)
+			s.deferredInboundCount.Add(-1)
+			s.deliverMu.Unlock()
+			return data, true
+		}
+		s.deliverMu.Unlock()
+		select {
+		case <-s.done:
+			return nil, false
+		case data := <-s.inbound:
+			return data, true
+		case <-s.deferredWake:
+		}
+	}
 }
 
 func (s *muxStream) markLocalReadDone() {
@@ -3752,7 +3807,7 @@ func normalReceivePauseStateForStream(stream *muxStream) (bool, bool) {
 	}
 	frames, bytes := stream.reassemblyBacklog()
 	reassemblyPaused := frames >= muxStreamPauseFrames || bytes >= muxStreamPauseBytes
-	inboundPaused := stream != nil && len(stream.inbound) >= muxStreamInboundPause
+	inboundPaused := len(stream.inbound) >= muxStreamInboundPause || stream.deferredInboundCount.Load() > 0
 	return reassemblyPaused, inboundPaused
 }
 
@@ -5256,28 +5311,61 @@ func (s *muxStream) acceptFrame(ctx context.Context, frame muxFrame) {
 	}
 
 	for _, next := range ready {
-		switch next.Kind {
-		case muxFrameData:
-			data := append([]byte(nil), next.Payload...)
-			select {
-			case s.inbound <- data:
-			case <-s.done:
-				return
-			case <-ctx.Done():
-				return
+		select {
+		case <-s.done:
+			return
+		case <-ctx.Done():
+			return
+		default:
+		}
+		var data []byte
+		if next.Kind == muxFrameData {
+			data = append([]byte(nil), next.Payload...)
+		}
+		if !s.queueInboundLocked(data) {
+			if s.mux != nil && s.mux.t != nil && s.mux.t.Logger != nil {
+				s.mux.t.Logger.Printf("mux local delivery overflow role=%s stream=%016x deferred_frames=%d deferred_bytes=%d", s.mux.role, s.id, len(s.deferredInbound), s.deferredInboundBytes)
 			}
-		case muxFrameFIN:
-			select {
-			case s.inbound <- nil:
-			case <-s.done:
-			case <-ctx.Done():
+			// A local socket that cannot consume the finite handoff fails only
+			// its own TCP stream. Shared Drive receive workers remain available
+			// to other streams. The sender gets a bounded best-effort RST.
+			s.close()
+			if s.mux != nil {
+				s.mux.sendRSTBestEffort(ctx, s.key(), []byte("local_receiver_backpressure"))
 			}
+			return
+		}
+		if next.Kind == muxFrameFIN {
 			return
 		}
 	}
 	if resumeNormal && s.mux != nil {
 		s.mux.signalNormalMuxObjectIfReady(ctx, s.key())
 	}
+}
+
+// queueInboundLocked does not wait for a local socket. The channel holds the
+// oldest frames; the per-stream writer drains a finite deferred tail before
+// accepting later frames. Caller holds deliverMu.
+func (s *muxStream) queueInboundLocked(data []byte) bool {
+	if len(s.deferredInbound) == 0 {
+		select {
+		case s.inbound <- data:
+			return true
+		default:
+		}
+	}
+	if len(s.deferredInbound) >= muxStreamDeferredFrames || s.deferredInboundBytes+len(data) > muxStreamDeferredBytes {
+		return false
+	}
+	s.deferredInbound = append(s.deferredInbound, data)
+	s.deferredInboundBytes += len(data)
+	s.deferredInboundCount.Add(1)
+	select {
+	case s.deferredWake <- struct{}{}:
+	default:
+	}
+	return true
 }
 
 func (s *muxStream) reassemblyBacklog() (int, int) {
