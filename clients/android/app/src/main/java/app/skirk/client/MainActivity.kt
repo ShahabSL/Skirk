@@ -56,6 +56,8 @@ import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.AlertDialog
@@ -100,14 +102,19 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -1023,6 +1030,28 @@ private fun OAuthRecoveryCard(
 }
 
 @Composable
+private fun ProfileVisibilityButton(visible: Boolean, onToggle: () -> Unit) {
+    val action = if (visible) "Hide profile text" else "Show profile text"
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier.clearAndSetSemantics {
+            contentDescription = action
+            stateDescription = if (visible) "Visible" else "Hidden"
+            role = Role.Button
+            onClick(label = action) {
+                onToggle()
+                true
+            }
+        },
+    ) {
+        Icon(
+            if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+            contentDescription = null,
+        )
+    }
+}
+
+@Composable
 private fun ReplaceProfileDialog(
     profileName: String,
     rawConfig: String,
@@ -1035,6 +1064,7 @@ private fun ReplaceProfileDialog(
     onReplace: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var profileTextVisible by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -1055,17 +1085,28 @@ private fun ReplaceProfileDialog(
                     label = { Text("Renewed client.skirk") },
                     isError = error.isNotBlank(),
                     supportingText = if (error.isNotBlank()) ({ Text(error) }) else null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (profileTextVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        ProfileVisibilityButton(profileTextVisible) { profileTextVisible = !profileTextVisible }
+                    },
                 )
                 if (readingFile) {
                     Text("Reading profile file…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     TextButton(onClick = onCancelFile) { Text("Cancel file import") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onPaste) {
+                    OutlinedButton(onClick = {
+                        profileTextVisible = false
+                        onPaste()
+                    }) {
                         Icon(Icons.Rounded.ContentPaste, contentDescription = null)
                         Text("Paste")
                     }
-                    OutlinedButton(onClick = onChooseFile) {
+                    OutlinedButton(onClick = {
+                        profileTextVisible = false
+                        onChooseFile()
+                    }) {
                         Icon(Icons.Rounded.Storage, contentDescription = null)
                         Text("Choose file")
                     }
@@ -1621,9 +1662,13 @@ private fun ImportPanel(
     onCancelFile: () -> Unit,
     onImport: () -> Unit,
 ) {
+    var profileTextVisible by remember { mutableStateOf(false) }
     Panel {
         SectionHeader(Icons.Rounded.Add, "Import profile", "File or one-line config")
-        OutlinedButton(onClick = onChooseFile, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = {
+            profileTextVisible = false
+            onChooseFile()
+        }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
             Text("Choose client.skirk file")
         }
         if (readingFile) {
@@ -1637,6 +1682,11 @@ private fun ImportPanel(
             minLines = 3,
             label = { Text("Skirk profile or client.json") },
             isError = importError.isNotBlank(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            visualTransformation = if (profileTextVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                ProfileVisibilityButton(profileTextVisible) { profileTextVisible = !profileTextVisible }
+            },
             supportingText = {
                 if (importError.isNotBlank()) {
                     Text(importError)
@@ -1658,7 +1708,10 @@ private fun ImportPanel(
                 Icon(Icons.Rounded.Add, contentDescription = null)
                 Text("Import")
             }
-            OutlinedButton(onClick = onPaste) {
+            OutlinedButton(onClick = {
+                profileTextVisible = false
+                onPaste()
+            }) {
                 Icon(Icons.Rounded.ContentPaste, contentDescription = null)
                 Text("Paste")
             }

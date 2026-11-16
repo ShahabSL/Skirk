@@ -197,6 +197,34 @@ textarea {
   line-height: 1.45;
 }
 
+.secret-field {
+  display: grid;
+  gap: 7px;
+}
+
+.secret-field input[type="password"] {
+  min-height: 42px;
+  font-family: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.secret-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.secret-field-header label {
+  display: block;
+}
+
+.secret-reveal-button {
+  min-height: 32px;
+  padding: 5px 8px;
+  box-shadow: none;
+}
+
 label {
   display: grid;
   gap: 7px;

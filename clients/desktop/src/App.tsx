@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import {
   Check,
@@ -51,6 +51,7 @@ const CUSTOM_MAX_DOWNLOAD_WORKERS = 64;
 function App() {
   const [snapshot, setSnapshot] = useState<DesktopSnapshot | null>(null);
   const [rawConfig, setRawConfig] = useState("");
+  const [profileTextVisible, setProfileTextVisible] = useState(false);
   const [profileFileError, setProfileFileError] = useState("");
   const [profileName, setProfileName] = useState("Skirk profile");
   const [socksPort, setSocksPort] = useState("18080");
@@ -75,12 +76,16 @@ function App() {
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<ClientProfile | null>(null);
   const importPanelRef = useRef<HTMLDetailsElement>(null);
   const profileFileRef = useRef<HTMLInputElement>(null);
+  const maskedProfileRef = useRef<HTMLInputElement>(null);
+  const revealedProfileRef = useRef<HTMLTextAreaElement>(null);
+  const pendingProfileFocus = useRef<{ start: number; end: number } | null>(null);
   const profileNameId = useId();
   const socksPortId = useId();
   const httpPortId = useId();
   const socksPortHelpId = useId();
   const httpPortHelpId = useId();
   const rawConfigId = useId();
+  const rawConfigHelpId = useId();
 
   const refresh = useCallback(async () => {
     const read = snapshotGuard.current.beginRead();
@@ -126,6 +131,22 @@ function App() {
     const timer = window.setTimeout(() => setCopyStatus(""), 1800);
     return () => window.clearTimeout(timer);
   }, [copyStatus]);
+
+  useEffect(() => {
+    if (!importOpen) setProfileTextVisible(false);
+  }, [importOpen]);
+
+  useLayoutEffect(() => {
+    const selection = pendingProfileFocus.current;
+    if (!selection) return;
+    const field = profileTextVisible ? revealedProfileRef.current : maskedProfileRef.current;
+    if (field) {
+      field.focus();
+      const end = field.value.length;
+      field.setSelectionRange(Math.min(selection.start, end), Math.min(selection.end, end));
+    }
+    pendingProfileFocus.current = null;
+  }, [profileTextVisible]);
 
   const selectedProfile = useMemo(() => {
     if (!snapshot) {
@@ -255,6 +276,7 @@ function App() {
     try {
       const text = await navigator.clipboard.readText();
       setRawConfig(text);
+      setProfileTextVisible(false);
       setProfileFileError("");
       setError("");
     } catch (nextError) {
@@ -276,10 +298,12 @@ function App() {
         throw new Error("The selected profile file is empty.");
       }
       setRawConfig(value);
+      setProfileTextVisible(false);
       setProfileFileError("");
       setError("");
     } catch (cause) {
       setRawConfig("");
+      setProfileTextVisible(false);
       setProfileFileError(cause instanceof Error &&
         (cause.message === "Profile file is too large (maximum 256 KiB)." || cause.message === "The selected profile file is empty.")
           ? cause.message
@@ -781,18 +805,71 @@ function App() {
               </div>
               )}
 
-              <label htmlFor={rawConfigId}>
-                <span>Client profile text</span>
+              <div className="secret-field">
+                <div className="secret-field-header">
+                  <label htmlFor={rawConfigId}>Client profile text</label>
+                  <button
+                    type="button"
+                    className="secret-reveal-button"
+                    aria-pressed={profileTextVisible}
+                    onPointerDown={() => {
+                      const field = profileTextVisible ? revealedProfileRef.current : maskedProfileRef.current;
+                      if (field && document.activeElement === field) {
+                        pendingProfileFocus.current = {
+                          start: field.selectionStart ?? 0,
+                          end: field.selectionEnd ?? 0,
+                        };
+                      }
+                    }}
+                    onClick={() => setProfileTextVisible((visible) => !visible)}
+                  >
+                    {profileTextVisible ? "Hide profile text" : "Show profile text"}
+                  </button>
+                </div>
+                <input
+                  ref={maskedProfileRef}
+                  id={profileTextVisible ? undefined : rawConfigId}
+                  type="password"
+                  value={rawConfig.replace(/[\r\n]/g, "")}
+                  hidden={profileTextVisible}
+                  readOnly={/[\r\n]/.test(rawConfig)}
+                  aria-describedby={rawConfigHelpId}
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setRawConfig(event.target.value);
+                    setProfileFileError("");
+                  }}
+                  onPaste={(event) => {
+                    const pasted = event.clipboardData.getData("text/plain");
+                    if (!pasted) return;
+                    event.preventDefault();
+                    const { selectionStart, selectionEnd } = event.currentTarget;
+                    const next = /[\r\n]/.test(rawConfig)
+                      ? pasted
+                      : rawConfig.slice(0, selectionStart ?? rawConfig.length) + pasted +
+                        rawConfig.slice(selectionEnd ?? rawConfig.length);
+                    setRawConfig(next);
+                    setProfileFileError("");
+                  }}
+                  spellCheck={false}
+                />
                 <textarea
-                  id={rawConfigId}
+                  ref={revealedProfileRef}
+                  id={profileTextVisible ? rawConfigId : undefined}
                   value={rawConfig}
+                  hidden={!profileTextVisible}
+                  aria-describedby={rawConfigHelpId}
                   onChange={(event) => {
                     setRawConfig(event.target.value);
                     setProfileFileError("");
                   }}
                   spellCheck={false}
                 />
-              </label>
+                <small id={rawConfigHelpId} className="field-help">
+                  Contains Google access credentials. Hidden until you choose Show.
+                  {!profileTextVisible && /[\r\n]/.test(rawConfig) ? " Show to edit multiline text." : ""}
+                </small>
+              </div>
 
               {profileFileError ? <small className="field-error" role="alert">{profileFileError}</small> : null}
 
