@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "259 documented findings across historical notes, local fault models, API primitives and live full-tunnel cohorts. Current muxv5 versus clean-main 16/64/128 MiB results disagree by workload and direction; 128 MiB upload stopped on two client upload timeouts. Opt-in muxv6 replay fence has one live crash gate but corrected same-generation ledger is local-only. Metadata-only known-ID, generated-ID doorbell and known-comment WAKE remain quota/correctness research, not product defaults. A real receiver-path local fixture reproduces a two-stream flow-control reset. No universal architecture optimum or 200000-user shared-free capacity is established.",
+  "research_tip": "262 documented findings. Current muxv5 versus clean-main 16/64/128 MiB results disagree by workload and direction; 128 MiB upload stopped on two client upload timeouts. Opt-in corrected muxv6 passed a live restart/new-ID replay case and eight exact mixed arms, with higher text p95 in two-arm medians; it is not a default. Generated-ID doorbell, known-comment WAKE and receive-credit designs remain unproven research. OAuth profile renewal now preserves transport identity across Android, iOS and desktop. No universal architecture optimum or 200000-user shared-free capacity is established.",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -5074,9 +5074,9 @@
       "latency": "Earlier flawed-source v5/v6 download text p95 6.886/7.174s; not a corrected-source or product ranking",
       "throughput_mbps": "Earlier flawed-source v5/v6 download25.460/21.011 Mb/s; not a corrected-source ranking",
       "estimated_quota_units": "Earlier flawed-source v5/v6 local units23960/24260 per arm median; HELLO/ACK adds structural 400-800 units plus polling per exchange; not billed units",
-      "correctness_and_errors": "v5 replay reproduced; live v6 crash/reupload case rejected stale OPEN and accepted fresh once, exact cleanup; pre-ledger v6 failed alias replay locally; generation-lifetime ledger plus 60s authenticated cache refresh passed local race/preflight; corrected source not live tested, quiet established stream and multi-host unresolved",
+      "correctness_and_errors": "v5 replay reproduced; live v6 crash/reupload case rejected stale OPEN and accepted fresh once, exact cleanup; pre-ledger v6 failed alias replay locally; generation-lifetime ledger plus 60s authenticated cache refresh passed local race/preflight; corrected-source live result tracked separately as R3-120, quiet established stream and multi-host unresolved",
       "cleanup": "One live crash gate and earlier ABBA exact owned muxv5/v6 namespaces empty immediately and after31s; no live calls on corrected ledger",
-      "decision": "Keep opt-in research branch; no release/default promotion or corrected-source performance claim",
+      "decision": "Isolated opt-in research; corrected-source live crash and comparative cohorts are recorded separately as R3-120, not a product default",
       "source_documents": [
         "docs/experiments/exit-generation-fence-v6-2026-11-16.md"
       ],
@@ -5196,6 +5196,62 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "separate pushed branch codex/mux-receive-budget-20261116 at 1800b8a; not product PR source",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-120",
+      "candidate": "Corrected muxv6 generation fence versus same-binary muxv5 live mixed cohorts",
+      "evidence_level": "live_same_binary_four_arm_each_direction_and_crash_gate",
+      "workload": "Approved secondary pinned www.google.com front and retained quota-project header; one corrected v6 restart/new-ID physical replay gate, then two serial v5/v6/v6/v5 cohorts each arm exact16MiB file plus20 persistent pipelined text echoes; 100k rolling/50k arm/200k cohort estimated-unit guards",
+      "latency": "Scheduled text p95 two-arm medians download v5 6.012s vs v6 6.443s (+7.2%); upload 7.063 vs7.424s (+5.1%); no cold/warm first OPEN metric",
+      "throughput_mbps": "Download v5 22.954 vs v6 25.113 (+9.4%); upload17.699 vs11.977 (-32.3%) with one v6 7.137 Mb/s arm",
+      "estimated_quota_units": "Local warmup+tail median download v5 25260 vs v6 26385 (+4.5%); upload22560 vs25710 (+14.0%); not billed units, explicit cleanup excluded",
+      "correctness_and_errors": "8/8 exact files,160/160 echoes, one HELLO+ACK per v6 arm, zero Drive API/guard errors; corrected restart/new-ID replay rejected, fresh stream second attempt after first25s timeout; live same-generation alias, quiet established stream and multi-host exit unproved",
+      "cleanup": "All eight exact muxv5/v6 session prefixes empty immediately and after31s after bounded owned-only cleanup; all peers/writers stopped",
+      "decision": "Supports bounded pilot safety scenario, not a stable speed winner or product default; two arms/transport and slow v6 upload retained",
+      "source_documents": [
+        "docs/experiments/exit-generation-fence-v6-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "../exit-generation-recovery-wt/.skirk-runs/exit-generation-v6-corrected-cf3f30b/"
+      ],
+      "revision_or_binary": "isolated pushed branch codex/exit-generation-recovery-20261116 at f37551f; measured Go source cf3f30b, SHA256 c90dbbe52199091387f87b415e06e12ef1a83e20698bb9c731d6d61de981dcd7",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-121",
+      "candidate": "Decoded-frame receive credit arithmetic and lifecycle model",
+      "evidence_level": "isolated_local_test_only_credit_model",
+      "workload": "Real-mux red fixture A fills64MiB primary then B overflows per-stream8MiB deferred; test-only model exact per-frame credits and bounded metadata queue, priority DATA/FIN, mixed batch, cancel/retry, close and consume; focused race x5 and vet",
+      "latency": "No live Drive latency measured",
+      "throughput_mbps": "No product speed measured; candidate admits B2 versus baseline B6 under A saturation, while uncontended six-object model window remains",
+      "estimated_quota_units": "Potential re-download cost on denied decoded object unmeasured; no Google call",
+      "correctness_and_errors": "Model avoids B reset with primary64MiB and deferred7MiB, four B IDs queued; product still resets B. Real handoff placement, writer-owned credits, not-ready streams, priority denial and metadata verification unproved",
+      "cleanup": "Pure local model and separate pushed research branches; no owned Google object",
+      "decision": "Research only; no product scheduler change until real mux green and matched throughput/p95/quotas",
+      "source_documents": [
+        "docs/experiments/mux-receive-credit-model-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "separate pushed branch codex/mux-flow-credit-model-20261116 at 2659fb5",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-122",
+      "candidate": "Cross-platform OAuth profile renewal preserves mux transport identity",
+      "evidence_level": "android_emulator_ios_simulator_desktop_tests",
+      "workload": "Android absent-to-v5 renewal and v4/v5/v6 mismatch/no-mutation on Pixel7 API36 plus build/unit; iOS synthetic lifecycle on iOS26.5 Simulator plus app/Packet Tunnel build; desktop Rust 27 passed/2 ignored and build",
+      "latency": "No live tunnel latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Drive method change",
+      "correctness_and_errors": "Android/iOS/desktop reject ordinary replacement if tunnel.transport differs or is malformed; absent/blank/null normalizes to muxv5; same-version OAuth renewal preserves user route and local ports/settings; CLI already checked transport",
+      "cleanup": "Dedicated emulators/simulator shut down and deleted; no Google object",
+      "decision": "Product profile identity fix; v6 pilot still needs separate kit, core integration and device runtime gates",
+      "source_documents": [
+        "docs/experiments/final-architecture-assessment-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "root cherry-pick 8255b93 from isolated 03137ef",
       "live_comparable": false
     }
   ]

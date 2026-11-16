@@ -1,7 +1,7 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 259 documented findings,
-including 73 marked live comparable. A finding can be an API primitive,
+The [catalog](catalog/experiments.json) contains 262 documented findings,
+including 74 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
 not 246 equally controlled protocol races. A universal throughput or latency
 limit has **not** been demonstrated. The exact current v5 versus clean `main`
@@ -25,6 +25,7 @@ workload disagree, so no stable product speed win emerged.
 | Test-only Drive v2 priority window 8 vs window 4, four-arm same-binary pipelined 16 MiB each way + 41 echoes | Download 2.223 → 1.455 s (34.6% lower); upload 2.140 → 1.498 s (30.0% lower) | Download 24.301 → 24.406 (0.4% higher); upload 37.101 → 35.737 (3.7% lower) | Conservative whole-arm reservation 232,400 → 208,360 (10.3% lower); seven/eight physical fallbacks → zero. **Best completed Drive-only text-tail research setting for that short, undemoted workload, not a product or `main` comparison.** Many upload text frames were offered after bulk ended. [Evidence](drive-v2-priority-latency-attribution-2026-11-16.md). |
 | Test-only Firestore priority plus Drive bulk vs Drive control, best of two paired pipelined cohorts | Download 2.117 → 0.414 s; upload 4.461 → 0.378 s | Download 18.154 → 35.491; upload 28.483 → 30.136 | All files/echoes verified, but each hybrid arm had a shutdown HTTP 400. Firestore's finite free write and outbound allowance disqualifies a shared 200,000-user free default. [Evidence](pipelined-live-comparisons-2026-11-16.md). |
 | Test-only full Apps Script relay, best real SOCKS/TLS variant | Download 2.612 s; upload 10.169 s over 12 echoes | Download 4.116; upload 2.700 | Slower than completed Drive examples; no Drive-scale quota claim. [Evidence](apps-script-relay-full-live-2026-11-15.md). |
+| Opt-in corrected muxv6 fence vs same-binary muxv5, 16 MiB + 20 pipelined echoes | Download v5 6.012 vs v6 6.443 s; upload 7.063 vs 7.424 s | Download v5 22.954 vs v6 25.113; upload 17.699 vs 11.977 | Eight/eight exact files and echoes, zero API errors, exact cleanup. Two arms/transport; one slow v6 upload arm. One restart/re-upload safety case passed, but no default speed or universal safety claim. [Evidence](exit-generation-fence-v6-2026-11-16.md). |
 | Test-only immutable known-ID train, eight tiny records vs list primitive | 0.775 s list → 0.829 s known-ID (7% higher) | No full tunnel file measurement | Core discovery estimate 1,105 → 465 units (58% lower), excluding ID exchange; credible **scale hypothesis**, not a latency win. [Evidence](id-train-live-2026-11-15.md). |
 
 A separate 100 MiB burst cohort of a **different frozen async candidate** saw
@@ -131,6 +132,13 @@ DATA/FIN flow still delivered in order. The global 64 MiB deferred pool was
 not exhausted. A safe fix needs per-stream capacity reservation before
 physical reads, close-race proof, and matched speed/latency testing; reducing
 the six-object window or raising a cap alone is not established as better.
+An isolated [receive-credit model](mux-receive-credit-model-2026-11-16.md)
+passes arithmetic and lifecycle fault checks by keeping four of B's six
+object IDs queued as bounded metadata while A occupies the primary pool;
+it keeps the ordinary uncontended six-object window. The real mux still
+resets B. Crediting frames through completed socket writes, binding decoded
+frames to a reserved placement, and proving mixed-batch retry/close behavior
+remain implementation work before any product speed claim.
 
 The existing pre-OPEN pending-frame guard had a separate isolation bug: when
 its global 256 MiB budget filled, it discarded and reset **all** pending
@@ -157,11 +165,20 @@ OPEN with a changed physical `.bN` name could replay **within the same exit
 generation** after finite tombstone expiry. A bounded generation-lifetime
 OPEN ledger now blocks that local replay and a 60-second authenticated cache
 refresh handles a lost restart RST for later streams; focused race and full
-preflight passed. The corrected source has **not** been rerun live. Cold
-streams pay a control exchange, quiet established streams still need a
-liveness path, and all platforms need coordinated migration. A four-arm v5/v6
-download comparison of the earlier flawed v6 source is not a product ranking;
-v6 is not a shipping default.
+preflight passed. One **corrected-source** live crash/re-upload gate and two
+four-arm same-binary mixed cohorts then passed exact integrity and cleanup.
+The first fresh post-restart request timed out before the next succeeded,
+and v6 text p95 was higher in both small cohorts. Live same-generation alias,
+quiet established-stream liveness, and multi-host exit ownership remain
+unproved. Cold streams pay a control exchange; all platforms need a separate
+explicit pilot kit and rebuilt engines. V6 is not a shipping default.
+Android, iOS and desktop now treat the mux transport as part of a saved
+profile's identity during ordinary OAuth renewal. A v4/v5/v6 mismatch is
+rejected before replacement; an absent legacy field still means v5, and a
+same-transport renewal keeps the chosen Google route and local settings.
+This prevents a renewal from silently converting an existing mailbox into
+an incompatible pilot. The platform engines still need an explicit v6 build
+and separate pilot import before they can use v6.
 
 A [known-comment WAKE fault model](comment-wake-rendezvous-fault-model-2026-11-16.md)
 tested a five-unit exact-ID `comments.get` head read and an on-change

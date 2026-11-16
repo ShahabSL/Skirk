@@ -1,12 +1,12 @@
 # Opt-in muxv6 exit generation fence
 
 Status: isolated local prototype. The shipped `main` and current branch default
-remain unchanged (`muxv4` and `muxv5`, respectively). A bounded pinned-front
-comparison and one crash observation were completed, but a later local audit
-found a same-generation replay gap in the measured v6 source. The gap is
-addressed only in the isolated branch and has no live validation. Do not
-promote `muxv6` without another correctness gate, a complete liveness design, and a
-rollout proof for every client platform.
+remain unchanged (`muxv4` and `muxv5`, respectively). An early pinned-front
+comparison and crash observation preceded discovery of a same-generation
+replay gap. The corrected isolated source has one bounded live restart proof
+and two exploratory mixed-workload comparisons, but its same-generation alias
+case has only fake-Drive validation. Do not promote `muxv6` without a complete
+liveness design and a rollout proof for every client platform.
 
 ## Reproduced failure
 
@@ -226,10 +226,10 @@ python3 tools/skirk_live_ab.py \
 
 The command starts and stops its own peers and reports exact payload checks.
 It does **not** inject an exit crash or establish first-request latency by
-itself. The earlier flawed-source ABBA ran once, as reported below; the
-corrected ledger source has not been rerun live.
+itself. Later corrected-source cohorts used the same workload with the
+selected quota project retained, as recorded below.
 
-### Archived live crash/re-upload gate
+### Guarded live crash/re-upload gate
 
 Read-only config inspection on 2026-11-16 found that the active secondary
 `personal-test/quota-kit/client.json` and `exit.json` share a nonempty session
@@ -252,7 +252,8 @@ python3 tools/skirk_exit_generation_live.py \
   --output-root .skirk-runs/exit-generation-v6
 ```
 
-Run this only after the current mailbox campaign and its cleanup finish.
+This is the archived command used for the earlier observation. Any later live
+run requires a new isolated mailbox, process preflight, and quota coordination.
 The helper rejects a missing `--live`, nonprivate configs, non-v6 transport,
 nonpinned route, or a session mismatch. It authenticates the retained OPEN
 ciphertext and checks its exact initial marker before re-uploading the same
@@ -318,5 +319,76 @@ Each arm had a fresh session. All four exact `muxv5/<session>/` or
 `muxv6/<session>/` namespaces passed a bounded delete and immediate empty
 scan, followed by an empty scan after 31 seconds. The private
 `abba-down/exact-cleanup.json` records each prefix and count. No project live
-process remained. No other Google calls are planned for this branch before
-the corrected ledger and liveness behavior receive another review.
+process remained. The corrected-source gates below ran later.
+
+### Corrected-source pinned-front gates
+
+The isolated Go source at `cf3f30b` produced one binary with SHA-256
+`c90dbbe52199091387f87b415e06e12ef1a83e20698bb9c731d6d61de981dcd7`.
+All corrected-source runs used the approved secondary `shahabpre` quota-kit
+OAuth grant and pinned `www.google.com` route. The crash harness copied both
+role configs, preserving their selected quota project. The ABBA harness gained
+an explicit `--retain-quota-project` guard for identical control/candidate
+binaries; all eight arms recorded the quota-project header. No other live
+Skirk process was present at preflight or after teardown.
+
+One corrected-source crash/re-upload gate used a fresh `muxv6` session, a
+300-second workload deadline, and 30,000 local estimated-unit total and
+rolling-minute guards. Exit 1 delivered the 40-byte marker once. Exit 2
+rejected its retained OPEN. A later new stream reached the origin on the
+second 25-second probe attempt; the first attempt timed out. The original
+authenticated ciphertext was then copied under a new physical Drive ID with
+the same SHA-256. Exit 3 rejected it. The origin accepted exactly two
+connections overall, and each of the two delivered markers appeared once.
+Every owned peer and writer stopped. Exact-session cleanup counted two
+leftover objects, deleted them, counted zero immediately, and counted zero
+after 31 seconds. The saved evidence is the private
+`.skirk-runs/exit-generation-v6-corrected-cf3f30b/exit-generation-666ea3afba8dfa04e4d498cc31bae531/final-result.json`.
+The sampled process metrics plus helper report total 11,250 local estimated
+units; the short-lived third exit sampled zero before its first metrics tick,
+so this is an undercount, not a provider bill or an exact quota total. This
+gate tested restart fencing, not a same-generation `.bN` alias on live Drive.
+
+The same binary then ran serial `muxv5, muxv6, muxv6, muxv5` ABBA cohorts in
+both directions. **Upload** below means the 16 MiB bulk payload traveled from
+client to origin; arm order remained the same. Every arm verified one exact
+16 MiB payload (`integrity_checked=true`), all 20 pipelined persistent text
+echoes, one exit probe, zero Drive API errors, and owned teardown. The quota
+guards were 100,000 local estimated units per rolling minute, 50,000 per arm,
+and 200,000 per cohort; none fired. Candidate logs showed one HELLO upload and
+one HELLO_ACK upload per arm, with no stale-generation rejection; control arms
+had no stream-zero control upload.
+
+| Direction | Arm | Transport | Exact bulk; texts | Scheduled text TTFB p95 | Bulk Mb/s | Local units | Exit probe | Exact cleanup: deleted; immediate/31 s |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| Download | 0 control | muxv5 | 1/1; 20/20 | 5.622 s | 25.936 | 24,460 | 3.104 s | 1; 0/0 |
+| Download | 1 candidate | muxv6 | 1/1; 20/20 | 5.939 s | 24.978 | 25,310 | 3.021 s | 8; 0/0 |
+| Download | 2 candidate | muxv6 | 1/1; 20/20 | 6.947 s | 25.247 | 27,460 | 2.872 s | 1; 0/0 |
+| Download | 3 control | muxv5 | 1/1; 20/20 | 6.402 s | 19.972 | 26,060 | 2.071 s | 15; 0/0 |
+| Upload | 0 control | muxv5 | 1/1; 20/20 | 7.291 s | 17.655 | 21,760 | 3.041 s | 1; 0/0 |
+| Upload | 1 candidate | muxv6 | 1/1; 20/20 | 6.968 s | 7.137 | 30,310 | 2.992 s | 2; 0/0 |
+| Upload | 2 candidate | muxv6 | 1/1; 20/20 | 7.880 s | 16.817 | 21,110 | 3.244 s | 2; 0/0 |
+| Upload | 3 control | muxv5 | 1/1; 20/20 | 6.835 s | 17.742 | 23,360 | 3.019 s | 8; 0/0 |
+
+The two-arm medians are descriptive only:
+
+| Direction and metric | muxv5 | corrected muxv6 |
+| --- | ---: | ---: |
+| Download scheduled text TTFB p95 | 6.012 s | 6.443 s |
+| Download bulk Mb/s | 22.954 | 25.113 |
+| Download local units | 25,260 | 26,385 |
+| Upload scheduled text TTFB p95 | 7.063 s | 7.424 s |
+| Upload bulk Mb/s | 17.699 | 11.977 |
+| Upload local units | 22,560 | 25,710 |
+
+The 7.137 Mb/s candidate upload arm is included in that median. Two arms per
+transport and substantial arm variation cannot establish a speed ranking.
+These unit counts include warm-up and workload tail, but exclude the later
+explicit exact-session cleanup calls. The benchmark's common on-demand exit
+probe precedes the mixed workload; it does not separately record a truly cold
+versus prewarmed first OPEN. Private `abba-down/summary.json` and
+`abba-up/summary.json` hold per-arm metrics. Their `exact-cleanup.json` files
+record each generated prefix, deleted count, immediate zero, and 31-second
+zero. Both cohorts ended with no live Skirk process. Muxv6 remains opt-in and
+test-only; concurrent exits on different hosts and quiet established-stream
+liveness remain unresolved.
