@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "compiled_date": "2026-11-15",
+  "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained successful and failed Drive cohorts, real fronted Firestore Listen including initial failed and repaired joined shutdown, Apps Script primitives and local relay stress; no architecture optimum claim",
+  "research_tip": "Retained successful and failed Drive cohorts, v2 metadata CAS capability probes, failed bounded Firestore/Drive and adaptive Drive mixed live arms, local Drive v2 priority carrier; primitive, offline, incomplete and paired transport evidence remain separate; no architecture optimum claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -11,7 +11,9 @@
     "The 2026-05 archives include external-origin, shared-server and non-hash-verified notes; do not rank them against November local exact-body runs.",
     "Live Google test account credentials and runtime profiles are excluded. Only aggregate fields explicitly whitelisted in the generator are imported.",
     "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet.",
-    "Final CPU-quiet matrix attempted16arms/completed15; one ordinary async bulk timeout remains. Dependency-onlydiagnostic incomplete; sustained strictcohorts preserve budgets,accountingfalsepositive,andmainRPCtimeouts separately. Normaldesktopbackgrounduncontrolled."
+    "Final CPU-quiet matrix attempted16arms/completed15; one ordinary async bulk timeout remains. Dependency-onlydiagnostic incomplete; sustained strictcohorts preserve budgets,accountingfalsepositive,andmainRPCtimeouts separately. Normaldesktopbackgrounduncontrolled.",
+    "The first two full Firestore/Drive live campaigns and two subsequent adaptive Drive control arms failed their declared 41-text workload. Exact cleanup is separately recorded; file completion or provider success cannot turn these into a paired performance result.",
+    "The Drive v2 resource ETag was observed to fence PATCH/PUT on three owned-file probes. That API capability does not establish full tunnel speed, durability across restarts, other accounts, or a permanent v2 contract."
   ],
   "records": [
     {
@@ -3938,7 +3940,7 @@
       "estimated_quota_units": "Private owner-OAuth fixture only; separate pinned wwwGoogle control pool; reserved cleanup slots/bytes",
       "correctness_and_errors": "Exact paths/query/body/doc IDs and opaque timestamps,token privacy/no direct fallback,wrong-target/tampered response caps,cancel/join/REMOVE,three reconnect attempts;15Node tests18.199s;focused Go1.322s/race2x3.398s;fullGo202.598s/vet pass",
       "cleanup": "Exclusive fresh0700 per-carrier paths; every request/operation/Node owner joined; canonical owner cancellation separated from unexpected failures",
-      "decision": "Private research carrier ready for guarded integration; no live hybrid/rules/IAM/billing/resource setup or production ownership solution",
+      "decision": "Local carrier integrity and ownership evidence; subsequent bounded live hybrid attempt failed its workload and cleanup proof before manual recovery (R3-061); later teardown fix is R3-064. No production promotion.",
       "source_documents": [
         "internal/skirk/firestore_hybrid_carrier_test.go",
         "internal/skirk/firestore_hybrid_carrier_cases_test.go",
@@ -3954,18 +3956,236 @@
       "id": "R3-056",
       "candidate": "Firestore/Drive hybrid through actual strict TLS SOCKS/mux",
       "evidence_level": "loopback_full_transport_correctness",
-      "workload": "Independent random16MiB GET+16MiB POST;40unique64B echoes complete during midpoint-held real bulk; actual normal physicalp1 >64KiB;lost Watch/fallback/reconnect",
+      "workload": "Independent random 16MiB GET+16MiB POST; 40 unique 64B echoes while midpoint-held real bulk is in progress; actual normal physical p1 object observed (no minimum object size asserted); lost Watch/fallback/reconnect",
       "latency": "Artificial origin gates enforce overlap; no performance measurement",
       "throughput_mbps": null,
       "estimated_quota_units": "No Google calls/resources; memory cumulative carrier and memory Drive base",
       "correctness_and_errors": "Strict owned TLS root/destination; exact file hashes/counts;real core receipts;both OPEN arrival orders after clearing core closed/seen/processed/knownID caches yield1enqueue/1dial/1initialwrite;fatal store cancels actual workload;focusedrace2x17.167s,combinedrace9.666s,vet pass",
       "cleanup": "Top mux loops plus Store workers joined; active/payload/task counters0; scoped both-direction p0+p1 cleanup preserves unrelated sentinel; origin side effects exact after teardown",
-      "decision": "Full local protocol correctness proof, not live Google QoS/capacity/auth or every nested core goroutine individually joined",
+      "decision": "Full local protocol correctness proof, not live Google QoS/capacity/auth. Portable object-presence assertion supersedes the original >64KiB size condition.",
       "source_documents": [
         "internal/skirk/firestore_hybrid_mux_integration_test.go"
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "1e1fe7c5bc6577d690999d25c2b8f082460a46bf;architecture guards througha9af13e",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-057",
+      "candidate": "Drive v2 metadata PATCH resource-ETag write fence",
+      "evidence_level": "live_api_primitive",
+      "workload": "One fresh generated-ID owned file; PATCH-selected exact A/B/C/D challenge; 16 visible H2 calls",
+      "latency": "Capability/correctness sequence, not RTT",
+      "throughput_mbps": null,
+      "estimated_quota_units": "128 attempt-upper; 2,440 quota-unit upper; 8,784 request-byte upper; one token setup call",
+      "correctness_and_errors": "Resource etag (no header); cache 304; impossible If-Match 412 preserved A; current tag PATCH 200 wrote B; stale tag PATCH 412 preserved B; no errors",
+      "cleanup": "Exact title/ID; DELETE 204; two immediate and two delayed 31s 404; borrowed config removed",
+      "decision": "Positive observed write fence for this v2 method/owned account/route only; not transport speed or permanent API promise",
+      "source_documents": [
+        "docs/experiments/drive-v2-metadata-etag-cas-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "drive-etag-probe-wt/.skirk-runs/drive-etag-v2-patch-live-20261116-0010/etag-probe-result.json"
+      ],
+      "revision_or_binary": "28d10bd/21682216b2c72d3c4095a517d851bf96f6bfe1a7e2d8ff3f77cc8d62feaaf678",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-058",
+      "candidate": "Drive v2 metadata PUT resource-ETag write fence",
+      "evidence_level": "live_api_primitive",
+      "workload": "Separate fresh generated-ID owned file; PUT-selected exact A/B/C/D challenge; 16 visible H2 calls",
+      "latency": "Capability/correctness sequence, not RTT",
+      "throughput_mbps": null,
+      "estimated_quota_units": "128 attempt-upper; 2,440 quota-unit upper; 8,784 request-byte upper; one token setup call",
+      "correctness_and_errors": "Resource etag (no header); cache 304; impossible If-Match 412 preserved A; current tag PUT 200 wrote B; stale tag PUT 412 preserved B; no errors",
+      "cleanup": "Exact title/ID; DELETE 204; two immediate and two delayed 31s 404; borrowed config removed",
+      "decision": "Positive observed write fence for this separate v2 method/owned account/route only; not interchangeable with PATCH or tunnel proof",
+      "source_documents": [
+        "docs/experiments/drive-v2-metadata-etag-cas-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "drive-etag-probe-wt/.skirk-runs/drive-etag-v2-put-live-20261116-0012/etag-probe-result.json"
+      ],
+      "revision_or_binary": "28d10bd/21682216b2c72d3c4095a517d851bf96f6bfe1a7e2d8ff3f77cc8d62feaaf678",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-059",
+      "candidate": "Drive v2 rapid successive PATCH revision discriminator",
+      "evidence_level": "live_api_primitive",
+      "workload": "One fresh owned file; three back-to-back distinct PATCH revisions, three old-tag 412 challenges, exact readbacks; 18 visible H2 calls total",
+      "latency": "Nine active calls 3.247s; accepted PATCH 997.900/335.216/326.852ms; stale 412 151.408/152.590/161.579ms; GET 130.469/699.450/136.891ms",
+      "throughput_mbps": null,
+      "estimated_quota_units": "144 attempt-upper; 3,600 quota-unit upper; 14,208 request-byte upper",
+      "correctness_and_errors": "Four globally distinct strong resource ETags across three revisions; every old tag 412; exact expected value/tag after each; no error; one cadence only",
+      "cleanup": "Exact DELETE 204; two immediate and two delayed 31s 404; borrowed profile removed",
+      "decision": "Capability observation only: no arbitrary simultaneous-writer guarantee, no full transport RTT or capacity claim",
+      "source_documents": [
+        "docs/experiments/drive-v2-metadata-etag-cas-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "drive-etag-probe-wt/.skirk-runs/drive-etag-v2-rapid-live-20261116-0019/etag-probe-result.json"
+      ],
+      "revision_or_binary": "ffa07d3/681b0f1054ae655fdf360f7a7ad77a41df3d249883e73eccd4d27d4af7ce907f",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-060",
+      "candidate": "First guarded full-live Drive control, 250ms discovery",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Actual SOCKS/TLS, 16MiB each direction plus 41 text echoes planned; first candidate/control cohort stopped in Drive-only control",
+      "latency": "One exact 16MiB download; ten of twenty down-text completed; no complete p95",
+      "throughput_mbps": null,
+      "estimated_quota_units": "377 visible Drive calls; 3,016 attempt-upper; 250,280 unit-upper; local 240,000 active upper exceeded",
+      "correctness_and_errors": "Local guard denied one active call; no provider rate-limit response; upload and remaining text unattempted/canceled",
+      "cleanup": "Writers joined; exact two fresh Drive prefixes empty immediately and after 31s; no Firestore DB created",
+      "decision": "Failed bounded arm, no paired winner or complete mixed speed; overactive list schedule motivated adaptive discovery",
+      "source_documents": [
+        "docs/experiments/firestore-hybrid-first-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-abba-20261116/arm-drive-a/summary.json"
+      ],
+      "revision_or_binary": "49acd495757a166712292fe41e6a3b19c4eb3e70/ab7b7a64b3bf42ffab04d22099bcc5e6310f4930009a8aab82df2723a97cea77",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-061",
+      "candidate": "First guarded full-live Firestore priority/Drive bulk",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Actual SOCKS/TLS; 16MiB exact down+up and 41 total warm/down/up 64B echoes planned; candidate-first arm only",
+      "latency": "Files 8.681/7.829s; warm 1.359s; down text 20/20 p95 9.818s; upload 17/20 completed p95 of successes 7.287s; complete 40-text p95 undefined",
+      "throughput_mbps": "Down 15.46, up 17.14 single-arm decimal Mb/s",
+      "estimated_quota_units": "141 Drive calls/113,280 unit-upper; 412 Firestore calls; zero provider or aggregate-guard errors",
+      "correctness_and_errors": "Origin one GET/one POST/38 of 41 text, zero bad bodies. Exit Watch reached 120 active request cap, rejected five local requests; SDK REMOVE blocked, last three texts canceled; stop proof failed",
+      "cleanup": "Initial test refused Drive deletion without writer join. Post-process exact-prefix recovery deleted five owned Drive objects, verified two Firestore docs/database absent immediate+31s, restored API DISABLED, removed copied credentials",
+      "decision": "Failed bounded arm despite exact files; no fair paired Drive result or finished text workload. Follow-up observer reserve fix is separate evidence",
+      "source_documents": [
+        "docs/experiments/firestore-hybrid-first-live-2026-11-15.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-abba-20261116b/arm-hybrid-a/summary.json",
+        "repocomp/.skirk-runs/fs-hybrid-abba-20261116b/recovery-proof.json"
+      ],
+      "revision_or_binary": "4a2fbd8/45891e9b0130b5ec733df726433df0dc96a9c336af7fd10dd0f543ca35eaa0b7",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-062",
+      "candidate": "Adaptive one-second Drive control with lifetime guard",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "Separate frozen actual SOCKS/TLS; exact 16MiB GET+POST and 41 warm/down/up text echoes planned; single HTTP/1.1 text connection",
+      "latency": "Both exact files; 25 of 41 origin texts; complete 40-text p95 undefined",
+      "throughput_mbps": null,
+      "estimated_quota_units": "375 visible Drive calls; 246,040 eight-attempt unit-upper; one local guard denial; no provider rate-limit",
+      "correctness_and_errors": "Lifetime active ceiling stopped arm; no provider API/transport errors. Earlier copied-binary setup stopped before Drive transport and is not counted as this arm",
+      "cleanup": "Writers joined; both exact owned prefixes empty immediately and after 31s; temporary credentials removed",
+      "decision": "Failed text workload; file completion is not a completed mixed result or paired comparison",
+      "source_documents": [
+        "docs/experiments/drive-adaptive-live-control-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-drive-cadence-20261116b/arm-drive-pilot/summary.json"
+      ],
+      "revision_or_binary": "4a2fbd8/45891e9b0130b5ec733df726433df0dc96a9c336af7fd10dd0f543ca35eaa0b7",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-063",
+      "candidate": "Adaptive one-second Drive control with rolling-minute guard",
+      "evidence_level": "live_full_transport_incomplete",
+      "workload": "New frozen actual SOCKS/TLS; exact 16MiB GET+POST, one warm+40 scheduled 64B echoes, single HTTP/1.1 text connection",
+      "latency": "Files 10.576/11.009s; warm 4.118s; down text 20/20 scheduled p95 34.462s; upload 3/20; complete 40-text p95 undefined",
+      "throughput_mbps": "Down 12.69, up 12.19 single-arm decimal Mb/s",
+      "estimated_quota_units": "387 visible H2 Drive calls; 249,600 eight-attempt whole-arm unit-upper; final minute counter 103,560 after delayed cleanup; two local denials",
+      "correctness_and_errors": "Origin one GET/one POST/25 of 41 texts, zero bad bodies; no provider API rate-limit/transport errors. Exact aggregate subcondition at denial not recorded",
+      "cleanup": "Writers joined; two owned prefixes empty immediately and after 31s; temporary credentials removed",
+      "decision": "Failed text workload; final minute counter cannot identify earlier peak. No provider quota exhaustion or paired winner claim",
+      "source_documents": [
+        "docs/experiments/drive-adaptive-live-control-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-drive-rolling-20261116/arm-drive-pilot/summary.json"
+      ],
+      "revision_or_binary": "eee57c79dac024414860b6cee7610b85a0ed3e62/9f4dffb7b44b6812782fc1a24c266436cb33f8af6fd66ad4ca32abfe1d23de16",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-064",
+      "candidate": "Native Firestore observer active-request cleanup reserve",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Reserve eight authenticated SDK cleanup calls within finite per-role 256/global 512; private stop control and explicit joined ownership proof",
+      "latency": "No Google performance cell",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google calls in regression; quota and call bounds retained",
+      "correctness_and_errors": "Active limit regression checks genuine failure plus REMOVE headroom; pinned SDK Node 15/15 PASS in 16.718s; focused Go race hybrid PASS; vet PASS",
+      "cleanup": "Go stop owns all writers even when previous error persists; exact cleanup authorized only after joined proof",
+      "decision": "Repairs first hybrid teardown limitation; does not retroactively complete failed live arm or prove new live QoS",
+      "source_documents": [
+        "experiments/firestore-listen/observer.mjs",
+        "experiments/firestore-hybrid/watch.test.mjs",
+        "internal/skirk/firestore_hybrid_cleanup_headroom_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "1bcb151",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-065",
+      "candidate": "Finite rolling-minute Drive quota admission with cleanup reserve",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Shared guarded client: rolling 280,000 unit-upper/minute, 40,000 same-minute cleanup reserve, finite 800,000 whole-arm unit-upper and 1,000 calls",
+      "latency": "No direct Google latency measurement",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Eight opaque attempts reserved per visible dispatch; one-minute and whole-arm bounds tested",
+      "correctness_and_errors": "Focused race and vet PASS; later live rolling control still failed its full text workload (R3-063)",
+      "cleanup": "No owned provider resources from this code test",
+      "decision": "Corrects prior lifetime-minute conflation; does not assert measured provider usage or turn R3-063 into success",
+      "source_documents": [
+        "internal/skirk/firestore_hybrid_live_guard_test.go",
+        "internal/skirk/firestore_hybrid_live_guard_cases_test.go",
+        "docs/experiments/drive-adaptive-live-control-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "14ce467",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-066",
+      "candidate": "Drive v2 priority carrier accelerated local cap attempts",
+      "evidence_level": "loopback_full_transport_incomplete",
+      "workload": "20ms accelerated poll with owned two-file CAS priority carrier and 16MiB GET+POST plus 40 echoes; two local attempts",
+      "latency": "No valid full transport performance result",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Both stopped at unchanged 100,000 unit-upper component bound; second observed 735 dispatches/99,960 reserved units",
+      "correctness_and_errors": "Injected recovery paths had begun; local bound failure retained, no Google calls",
+      "cleanup": "Local fixture owned workers scoped; no provider files",
+      "decision": "Preserve failed accelerated test evidence; corrected 150,000-unit fixture is separate and no live throughput is inferred",
+      "source_documents": [
+        "docs/experiments/drive-v2-priority-queue-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "3f91455",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-067",
+      "candidate": "Drive v2 CAS priority queue through full local SOCKS/TLS faults",
+      "evidence_level": "loopback_full_transport_correctness",
+      "workload": "Two fresh known-ID files; seven-call max16KiB fence/capacity probe per peer before either store; independent 16MiB GET+POST and forty 64B echoes during held bulk; lost committed response, delayed fallback, reconnect",
+      "latency": "Artificial bulk gates and 20ms accelerated local poll; no Google RTT",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Explicit 150,000 unit-upper per local peer; no Google calls",
+      "correctness_and_errors": "Both exact file hashes, 40 echoes, strict TLS/SOCKS, origin effects and replay/fence fault paths; two injected lost-response errors retained; nine V2 race test functions pass in 11.656s, vet PASS",
+      "cleanup": "All local writers and mux owners joined; queues/payload/active streams zero; exact normal+priority run-prefix cleanup preserves unrelated sentinel",
+      "decision": "Strong local correctness candidate, not a live quota/speed/capacity winner. Per-run v2 feature probe and immutable fallback required",
+      "source_documents": [
+        "docs/experiments/drive-v2-priority-queue-2026-11-16.md",
+        "internal/skirk/drive_v2_priority_mux_integration_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "3f91455",
       "live_comparable": false
     }
   ]
