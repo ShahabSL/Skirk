@@ -3,7 +3,9 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -343,8 +345,16 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 	if d.normalUploadHTTP != nil && isNormalGeneratedMuxUpload(fileID, name, len(data)) {
 		primaryHTTP = d.normalUploadHTTP
 	}
+	var proofDigest func() string
+	if fileID != "" {
+		// Most uploads succeed; hash only when a duplicate ID needs proof.
+		proofDigest = func() string {
+			digest := sha256.Sum256(data)
+			return hex.EncodeToString(digest[:])
+		}
+	}
 	upload := func(uploadCtx context.Context, client *GoogleHTTPClient) (ObjectInfo, error) {
-		return d.uploadObjectWithHTTP(uploadCtx, client, fileID, name, len(data), headers, body.Bytes())
+		return d.uploadObjectWithHTTPMode(uploadCtx, client, fileID, name, len(data), headers, body.Bytes(), proofDigest, false)
 	}
 	if d.uploadStallHedgeDelay > 0 && isNormalGeneratedMuxUpload(fileID, name, len(data)) {
 		return d.uploadObjectWithStallHedge(ctx, primaryHTTP, fileID, name, data, headers, body.Bytes())
@@ -482,37 +492,16 @@ func (d *DriveStore) freshHedgeHTTPClient() *GoogleHTTPClient {
 	return NewGoogleHTTPClient(d.http.route)
 }
 
-func (d *DriveStore) uploadObjectWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte) (ObjectInfo, error) {
-	return d.uploadObjectWithHTTPMode(ctx, httpClient, fileID, name, size, headers, body, "")
-}
-
-func (d *DriveStore) uploadObjectWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte, expectedSHA256 string) (ObjectInfo, error) {
-	result, err := d.requestWithHTTPMode(ctx, httpClient, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body, expectedSHA256 != "")
+func (d *DriveStore) uploadObjectWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte, proofDigest func() string, singleAttempt bool) (ObjectInfo, error) {
+	result, err := d.requestWithHTTPMode(ctx, httpClient, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body, singleAttempt)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	if result.Status == http.StatusConflict && fileID != "" {
-		if expectedSHA256 != "" {
-			info, committed, err := d.readUploadCommitProof(ctx, httpClient, fileID, name, size, expectedSHA256)
-			if err != nil {
-				return ObjectInfo{}, err
-			}
-			if !committed {
-				return ObjectInfo{}, errors.New("upload conflict has no exact content commit proof")
-			}
-			return info, nil
+		if proofDigest == nil {
+			return ObjectInfo{}, errors.New("upload conflict has no prepared content digest")
 		}
-		info, err := d.getObjectInfoByIDWithHTTP(ctx, httpClient, fileID)
-		if err != nil {
-			return ObjectInfo{}, err
-		}
-		if info.Name != "" && info.Name != name {
-			return ObjectInfo{}, fmt.Errorf("drive upload id conflict name=%q want=%q", info.Name, name)
-		}
-		if info.Size != int64(size) {
-			return ObjectInfo{}, fmt.Errorf("drive upload id conflict size=%d want=%d", info.Size, size)
-		}
-		return info, nil
+		return d.proveGeneratedUploadConflict(ctx, httpClient, fileID, name, size, proofDigest())
 	}
 	if err := require2xx(result, "drive upload"); err != nil {
 		return ObjectInfo{}, err
@@ -527,6 +516,29 @@ func (d *DriveStore) uploadObjectWithHTTPMode(ctx context.Context, httpClient *G
 	}
 	parsedSize, _ := strconv.ParseInt(payload.Size, 10, 64)
 	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: parsedSize}, nil
+}
+
+func (d *DriveStore) proveGeneratedUploadConflict(ctx context.Context, client *GoogleHTTPClient, id, name string, size int, digest string) (ObjectInfo, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		info, committed, err := d.readUploadCommitProof(ctx, client, id, name, size, digest)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		if committed {
+			return info, nil
+		}
+		if attempt == 2 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ObjectInfo{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return ObjectInfo{}, errors.New("upload conflict has no exact content commit proof")
 }
 
 func (d *DriveStore) EnsureFolder(ctx context.Context, name string) (ObjectInfo, error) {

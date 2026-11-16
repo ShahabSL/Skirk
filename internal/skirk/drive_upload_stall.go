@@ -210,7 +210,7 @@ func (d *DriveStore) uploadObjectWithStallHedge(ctx context.Context, primaryHTTP
 	primary := make(chan driveUploadOutcome, 1)
 	primaryCtx := context.WithValue(legCtx, driveUploadStallScopeKey{}, driveUploadStallScope{observer: observer})
 	upload := func(c context.Context, client *GoogleHTTPClient) driveUploadOutcome {
-		info, err := d.uploadObjectWithHTTPMode(c, client, id, name, len(data), headers, body, digest)
+		info, err := d.uploadObjectWithHTTPMode(c, client, id, name, len(data), headers, body, func() string { return digest }, true)
 		return driveUploadOutcome{info, err}
 	}
 	go func() { primary <- upload(primaryCtx, primaryHTTP) }()

@@ -3,7 +3,9 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -436,13 +438,14 @@ func TestDriveStorePutObjectWithIDIncludesGeneratedID(t *testing.T) {
 
 func TestDriveStorePutObjectWithIDTreatsConflictAsIdempotent(t *testing.T) {
 	var requests []string
+	digest := sha256.Sum256([]byte("data"))
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests = append(requests, req.Method+" "+req.URL.Path+"?"+req.URL.RawQuery)
 		if req.Method == http.MethodPost {
 			return stringResponse(http.StatusConflict, `{"error":{"status":"ALREADY_EXISTS"}}`), nil
 		}
 		if req.Method == http.MethodGet && req.URL.Path == "/drive/v3/files/generated-id" {
-			return stringResponse(http.StatusOK, `{"id":"generated-id","name":"object","size":"4","modifiedTime":"2026-05-14T00:00:00Z"}`), nil
+			return stringResponse(http.StatusOK, fmt.Sprintf(`{"id":"generated-id","name":"object","size":"4","sha256Checksum":%q}`, hex.EncodeToString(digest[:]))), nil
 		}
 		return stringResponse(http.StatusNotFound, `{}`), nil
 	})}}
@@ -455,8 +458,8 @@ func TestDriveStorePutObjectWithIDTreatsConflictAsIdempotent(t *testing.T) {
 	if info.ID != "generated-id" || info.Name != "object" || info.Size != 4 {
 		t.Fatalf("info = %+v, want existing generated object", info)
 	}
-	if len(requests) != 2 || !strings.Contains(requests[1], "fields=id,name,size,modifiedTime") {
-		t.Fatalf("requests = %#v, want conflict metadata lookup", requests)
+	if len(requests) != 2 || !strings.Contains(requests[1], "sha256Checksum") {
+		t.Fatalf("requests = %#v, want exact conflict checksum lookup", requests)
 	}
 }
 
@@ -786,9 +789,10 @@ func TestDriveUploadHedgeWaitsAfterSecondaryFailure(t *testing.T) {
 func TestDriveUploadHedgeConflictLookup404WaitsForOtherLeg(t *testing.T) {
 	hedgeStarted := make(chan struct{})
 	lookupFailed := make(chan struct{})
+	var lookupOnce sync.Once
 	primary := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method == http.MethodGet {
-			close(lookupFailed)
+			lookupOnce.Do(func() { close(lookupFailed) })
 			return stringResponse(http.StatusNotFound, `{}`), nil
 		}
 		<-hedgeStarted
@@ -809,8 +813,8 @@ func TestDriveUploadHedgeConflictLookup404WaitsForOtherLeg(t *testing.T) {
 	if err != nil || info.ID != "generated-id" {
 		t.Fatalf("409/404 race masked secondary success: info=%+v err=%v", info, err)
 	}
-	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 || snapshot.Ops["metadata"].Calls != 1 {
-		t.Fatalf("quota calls = %+v, want two uploads and conflict lookup", snapshot.Ops)
+	if snapshot := store.QuotaSnapshot(); snapshot.Ops["upload"].Calls != 2 || snapshot.Ops["upload_commit_probe"].Calls != 1 {
+		t.Fatalf("quota calls = %+v, want two uploads and one canceled-leg checksum probe", snapshot.Ops)
 	}
 }
 

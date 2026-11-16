@@ -438,7 +438,11 @@ func TestUploadStallConflictRequiresExactContentProof(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("conflict accepted without content proof")
 			}
-			if q := d.QuotaSnapshot(); q.Calls != 2 || q.Units != 55 || q.Errors != 1 {
+			wantCalls, wantUnits := int64(2), int64(55)
+			if checksum == "" {
+				wantCalls, wantUnits = 4, 65 // Three bounded reads await checksum propagation.
+			}
+			if q := d.QuotaSnapshot(); q.Calls != wantCalls || q.Units != wantUnits || q.Errors != 1 {
 				t.Fatalf("conflict accounting %+v", q)
 			}
 		})
