@@ -716,7 +716,7 @@ func (d *DriveStore) GetNormalByID(ctx context.Context, fileID string) ([]byte, 
 	if client == nil {
 		client = d.http
 	}
-	return d.getByIDWithHTTP(ctx, client, fileID)
+	return d.getByIDWithHTTP(withGoogleResponseLimitAtMost(ctx, int64(muxMaxSealedBatch)), client, fileID)
 }
 
 func (d *DriveStore) getByIDWithHTTP(ctx context.Context, client *GoogleHTTPClient, fileID string) ([]byte, error) {

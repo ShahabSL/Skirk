@@ -40,8 +40,17 @@ type HTTPResult struct {
 
 type googleResponseLimitKey struct{}
 
+var errGoogleResponseTooLarge = errors.New("Google response exceeded configured byte limit")
+
 func withGoogleResponseLimit(ctx context.Context, limit int64) context.Context {
 	return context.WithValue(ctx, googleResponseLimitKey{}, limit)
+}
+
+func withGoogleResponseLimitAtMost(ctx context.Context, limit int64) context.Context {
+	if current, ok := ctx.Value(googleResponseLimitKey{}).(int64); ok && current > 0 && current <= limit {
+		return ctx
+	}
+	return withGoogleResponseLimit(ctx, limit)
 }
 
 // Failed network attempts may have reached Google even without a response.
@@ -342,6 +351,9 @@ func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path strin
 		if ctx.Err() != nil {
 			break
 		}
+		if errors.Is(err, errGoogleResponseTooLarge) {
+			break
+		}
 		if !shouldTryNextGoogleRoute(result, err) {
 			break
 		}
@@ -370,6 +382,9 @@ func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host,
 			return result, nil
 		}
 		lastResult, lastErr = result, err
+		if errors.Is(err, errGoogleResponseTooLarge) {
+			break
+		}
 		if attempt == attempts-1 {
 			break
 		}
@@ -537,7 +552,7 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		return nil, err
 	}
 	if responseLimit > 0 && int64(len(responseBody)) > responseLimit {
-		return nil, errors.New("Google response exceeded configured byte limit")
+		return nil, errGoogleResponseTooLarge
 	}
 	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header, Proto: resp.Proto}, nil
 }

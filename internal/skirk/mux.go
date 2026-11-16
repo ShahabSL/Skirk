@@ -103,6 +103,9 @@ const (
 	cleanupRetryMaxDelay         = 16 * time.Second
 )
 
+// Seal adds the envelope header and the AES-GCM tag to a full mux batch.
+const muxMaxSealedBatch = muxMaxBatch + headerLen + 16
+
 // A receive worker may decode up to 512 frames after its per-stream admission
 // check. Keep the extra handoff finite if the local socket stalls.
 const (
@@ -123,6 +126,8 @@ const (
 	muxPriorityRetryProbeLimit    = 4
 	muxPriorityRetryProbeInterval = 30 * time.Second
 )
+
+var errMuxObjectTooLarge = errors.New("mux object exceeds sealed batch limit")
 
 const (
 	muxSparsePriorityMaxPayload    = 4 * 1024
@@ -3674,6 +3679,10 @@ func (m *driveMux) runReceiveWorker(ctx context.Context, priorityOnly bool) {
 				m.dropStaleMuxObject(ctx, meta, err)
 				continue
 			}
+			if errors.Is(err, errGoogleResponseTooLarge) || errors.Is(err, errMuxObjectTooLarge) {
+				m.failMuxObject(ctx, meta, err)
+				continue
+			}
 			if meta.Attempts >= muxProcessMaxRetries {
 				m.failMuxObject(ctx, meta, err)
 				continue
@@ -4273,7 +4282,7 @@ func (m *driveMux) processMuxObjectWithRetry(ctx context.Context, meta muxObject
 	}
 	for {
 		err := m.processMuxObject(ctx, meta)
-		if err == nil || ctx.Err() != nil || isDriveNotFound(err) {
+		if err == nil || ctx.Err() != nil || isDriveNotFound(err) || errors.Is(err, errGoogleResponseTooLarge) || errors.Is(err, errMuxObjectTooLarge) {
 			return meta, err
 		}
 		meta.Attempts++
@@ -4921,6 +4930,7 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 	slotWait := time.Since(slotStarted)
 	started := time.Now()
 	opCtx, cancel := context.WithTimeout(ctx, muxDriveAttemptTimeout(meta.normalReceiveBytes(), meta.Priority, m.t.RouteProxy != ""))
+	opCtx = withGoogleResponseLimitAtMost(opCtx, int64(muxMaxSealedBatch))
 	var sealed []byte
 	if meta.ID != "" {
 		if store, ok := m.t.Data.(NormalObjectIDStore); ok && !meta.Priority && meta.PlainBytes >= driveUploadHedgeMinBytes {
@@ -4932,6 +4942,10 @@ func (m *driveMux) downloadMuxObjectAttempt(ctx context.Context, meta muxObjectM
 		}
 	} else {
 		sealed, err = m.t.Data.Get(opCtx, meta.Name)
+	}
+	if err == nil && len(sealed) > muxMaxSealedBatch {
+		err = errMuxObjectTooLarge
+		sealed = nil
 	}
 	duration := time.Since(started)
 	cancel()
