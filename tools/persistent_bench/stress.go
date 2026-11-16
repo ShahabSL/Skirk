@@ -377,7 +377,7 @@ func runMultiClientStress(a stressArgs) error {
 	cleanupRemaining := -1
 	var remainingNames []string
 	for time.Since(cleanupStarted) < 70*time.Second {
-		infos, err := store.MemoryStore.List(ctx, "muxv4/")
+		infos, err := store.MemoryStore.List(ctx, "muxv")
 		if err != nil {
 			return err
 		}

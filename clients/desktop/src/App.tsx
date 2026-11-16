@@ -716,7 +716,7 @@ function App() {
               {exitProbe?.status === "verified"
                 ? `Exit responded through Google Drive in ${exitProbe.roundTripMs} ms. This is one sample; website access is not checked.`
                 : exitProbe?.status === "unverified"
-                  ? "Exit could not be verified. It may be offline, running an older Skirk, or need Google authorization renewed. Ask the exit owner to check its status."
+                  ? "Exit could not be verified. Check that the client and exit run the same Skirk transport version, that the exit is online, and that Google access is valid. Upgrade both sides together if either uses an older profile."
                   : exitProbeError || "Local connection is ready. Use Test exit to verify a round trip to the exit on demand."}
             </div>
           ) : null}

@@ -355,7 +355,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.Profile = "auto"
 	}
 	if c.Tunnel.Transport == "" {
-		c.Tunnel.Transport = "muxv4"
+		c.Tunnel.Transport = "muxv5"
 	}
 	if c.Tunnel.ExitIPFamily == "" {
 		c.Tunnel.ExitIPFamily = "prefer_ipv4"
@@ -427,9 +427,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
 	switch strings.TrimSpace(c.Tunnel.Transport) {
-	case "", "muxv4":
+	case "", "muxv4", "muxv5":
 	default:
-		return fmt.Errorf("config.tunnel.transport must be muxv4")
+		return fmt.Errorf("config.tunnel.transport must be muxv4 or muxv5")
 	}
 	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
 	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":

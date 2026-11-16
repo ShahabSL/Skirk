@@ -166,6 +166,11 @@ skirk bench-live --config skirk-kit/client.skirk --bulk-url http://example.com/b
 زمان عملیات‌ها را نشان می‌دهند. اگر OAuth client خودتان را استفاده می‌کنید،
 Google Cloud Console منبع دقیق‌تر برای quota پروژه است.
 
+کیت‌های جدید از `muxv5` استفاده می‌کنند. نسخهٔ خروجی و همهٔ کلاینت‌ها را
+هم‌زمان به‌روزرسانی کنید؛ نسخه‌های قدیمی فقط صندوق `muxv4/` را می‌بینند.
+پیش از استفادهٔ دوباره از کیت قدیمی، [راهنمای مهاجرت](docs/mux-v5-migration-2026-11-16.md)
+را بخوانید.
+
 ## قطع کردن و پاکسازی
 
 در حالت عادی، runtime فایل‌های mailbox را بعد از پردازش حذف می‌کند. `serve-exit`
@@ -174,7 +179,7 @@ concurrency پایین پاک می‌کند. این بازه طولانی‌تر
 دانلودهای خیلی طولانی یا کند را می‌گیرد.
 
 پاکسازی دستی به صورت dry-run. بدون `--prefix`، مسیرهای runtime اسکریک
-(`muxv4/`، `bench-drive/` و `setup/`) بررسی می‌شوند:
+(`muxv5/`، `muxv4/`، `bench-drive/` و `setup/`) بررسی می‌شوند:
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h

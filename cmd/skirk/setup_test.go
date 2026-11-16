@@ -27,6 +27,22 @@ func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
 	}
 }
 
+func TestSetupKitUsesMuxV5AndRenewRejectsMixedTransport(t *testing.T) {
+	created := setupTunnelConfig("127.0.0.1:18080", 1024, 100, 0, 0)
+	if created.Transport != "muxv5" {
+		t.Fatalf("new kit transport = %q, want muxv5", created.Transport)
+	}
+	exit := &skirk.Config{Tunnel: created}
+	client := &skirk.Config{Tunnel: created}
+	if err := checkOAuthRenewClientIdentity(exit, client); err != nil {
+		t.Fatalf("matching kit transports rejected: %v", err)
+	}
+	client.Tunnel.Transport = "muxv4"
+	if err := checkOAuthRenewClientIdentity(exit, client); err == nil || !strings.Contains(err.Error(), "transport version") {
+		t.Fatalf("mixed kit transports did not fail with upgrade guidance: %v", err)
+	}
+}
+
 func TestResolveOAuthClientCredentialsPrefersExplicitFileThenEnvThenBuiltIn(t *testing.T) {
 	oldID, oldSecret := defaultOAuthClientID, defaultOAuthClientSecret
 	t.Cleanup(func() {

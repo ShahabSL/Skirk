@@ -90,6 +90,10 @@ func newMetadataSlotGeneration() ([16]byte, error) {
 }
 
 func newMetadataSlotCodec(secret string, sid [16]byte, direction byte, clientID, runID string, generation [16]byte, limits metadataSlotLimits) (*metadataSlotCodec, error) {
+	return newMetadataSlotCodecForTransport("muxv4", secret, sid, direction, clientID, runID, generation, limits)
+}
+
+func newMetadataSlotCodecForTransport(transport, secret string, sid [16]byte, direction byte, clientID, runID string, generation [16]byte, limits metadataSlotLimits) (*metadataSlotCodec, error) {
 	var zero [16]byte
 	if generation == zero || (direction != DirectionUp && direction != DirectionDown) {
 		return nil, errors.New("metadata slot generation or direction invalid")
@@ -118,7 +122,7 @@ func newMetadataSlotCodec(secret string, sid [16]byte, direction byte, clientID,
 	codec := &metadataSlotCodec{
 		generation: generation,
 		direction:  direction,
-		prefix:     muxDirPrefix(sid, direction, clientID, runID),
+		prefix:     muxDirPrefixForTransport(transport, sid, direction, clientID, runID),
 		clientID:   clientID,
 		runID:      runID,
 		limits:     limits,
@@ -647,6 +651,10 @@ type metadataSlotPeer struct {
 }
 
 func newMetadataSlotPeer(secret string, sid [16]byte, sendDirection byte, clientID, runID string, generation [16]byte, limits metadataSlotLimits) (*metadataSlotPeer, error) {
+	return newMetadataSlotPeerForTransport("muxv4", secret, sid, sendDirection, clientID, runID, generation, limits)
+}
+
+func newMetadataSlotPeerForTransport(transport, secret string, sid [16]byte, sendDirection byte, clientID, runID string, generation [16]byte, limits metadataSlotLimits) (*metadataSlotPeer, error) {
 	if sendDirection != DirectionUp && sendDirection != DirectionDown {
 		return nil, errors.New("metadata slot send direction invalid")
 	}
@@ -654,11 +662,11 @@ func newMetadataSlotPeer(secret string, sid [16]byte, sendDirection byte, client
 	if sendDirection == DirectionUp {
 		receiveDirection = DirectionDown
 	}
-	sendCodec, err := newMetadataSlotCodec(secret, sid, sendDirection, clientID, runID, generation, limits)
+	sendCodec, err := newMetadataSlotCodecForTransport(transport, secret, sid, sendDirection, clientID, runID, generation, limits)
 	if err != nil {
 		return nil, err
 	}
-	receiveCodec, err := newMetadataSlotCodec(secret, sid, receiveDirection, clientID, runID, generation, limits)
+	receiveCodec, err := newMetadataSlotCodecForTransport(transport, secret, sid, receiveDirection, clientID, runID, generation, limits)
 	if err != nil {
 		return nil, err
 	}

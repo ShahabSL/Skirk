@@ -165,7 +165,7 @@ func (d *DriveStore) MetadataOnlyPriorityLimit() int {
 
 func indexedMuxClass(name string) string {
 	parts := strings.Split(name, "/")
-	if len(parts) < 9 || parts[0] != "muxv4" || !strings.HasPrefix(parts[len(parts)-2], "l") {
+	if len(parts) < 9 || (parts[0] != "muxv4" && parts[0] != "muxv5") || !strings.HasPrefix(parts[len(parts)-2], "l") {
 		return ""
 	}
 	class := parts[len(parts)-4]
@@ -173,6 +173,10 @@ func indexedMuxClass(name string) string {
 		return class
 	}
 	return ""
+}
+
+func isMuxNamespace(name string) bool {
+	return strings.HasPrefix(name, "muxv4/") || strings.HasPrefix(name, "muxv5/")
 }
 
 func (d *DriveStore) addIndexedClassProperty(metadata map[string]any, name string) {
@@ -233,7 +237,7 @@ func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sea
 }
 
 func isMetadataOnlyPriorityName(name string) bool {
-	return strings.HasPrefix(name, "muxv4/") && strings.Contains(name, "/p0/") && strings.HasSuffix(name, driveMetadataOnlyNameSuffix)
+	return isMuxNamespace(name) && strings.Contains(name, "/p0/") && strings.HasSuffix(name, driveMetadataOnlyNameSuffix)
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -301,7 +305,7 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 		"mimeType": "application/octet-stream",
 	}
 	d.addIndexedClassProperty(metadata, name)
-	if d.inlineSmallObjects && len(data) > 0 && len(data) <= driveInlineMaxBytes && strings.HasPrefix(name, "muxv4/") && strings.Contains(name, "/p0/") {
+	if d.inlineSmallObjects && len(data) > 0 && len(data) <= driveInlineMaxBytes && isMuxNamespace(name) && strings.Contains(name, "/p0/") {
 		// Retain the media body so existing readers can read the same file.
 		metadata["description"] = driveInlineMarker + base64.StdEncoding.EncodeToString(data)
 	}
@@ -371,7 +375,7 @@ func (d *DriveStore) shouldHedgeUpload(fileID, name string, size int) bool {
 
 func isNormalGeneratedMuxUpload(fileID, name string, size int) bool {
 	return fileID != "" && size >= driveUploadHedgeMinBytes &&
-		strings.HasPrefix(name, "muxv4/") && strings.Contains(name, "/p1/")
+		isMuxNamespace(name) && strings.Contains(name, "/p1/")
 }
 
 type driveUploadOutcome struct {
@@ -838,8 +842,8 @@ func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, sin
 }
 
 func (d *DriveStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
-	if !strings.HasPrefix(prefix, "muxv4/") {
-		return ObjectListInfo{}, errors.New("adaptive mux list requires a muxv4 prefix")
+	if !isMuxNamespace(prefix) {
+		return ObjectListInfo{}, errors.New("adaptive mux list requires a mux prefix")
 	}
 	if maxPages < 1 || maxPages > driveMuxFreshListMaxPages {
 		return ObjectListInfo{}, errors.New("adaptive mux list page budget must be 1..4")
@@ -968,7 +972,7 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 
 func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
 	pageSize := driveListPageSize
-	if len(contains) == 2 && strings.HasPrefix(contains[0], "muxv4/") && contains[1] == "/p1/" {
+	if len(contains) == 2 && isMuxNamespace(contains[0]) && contains[1] == "/p1/" {
 		pageSize = strconv.Itoa(d.normalListPageSize)
 	}
 	return d.listFreshQueryPageStatus(ctx, d.containsQuery(contains), since, pageToken, maxPages, pageSize, func(name string) bool {
@@ -987,8 +991,8 @@ func (d *DriveStore) ListFreshIndexedClassPageStatus(ctx context.Context, prefix
 	if d == nil || !d.indexedClassProperties {
 		return ObjectListInfo{}, errors.New("indexed class properties are disabled")
 	}
-	if !strings.HasPrefix(prefix, "muxv4/") || (class != "p0" && class != "p1") {
-		return ObjectListInfo{}, errors.New("indexed class query requires a muxv4 prefix and p0 or p1 class")
+	if !isMuxNamespace(prefix) || (class != "p0" && class != "p1") {
+		return ObjectListInfo{}, errors.New("indexed class query requires a mux prefix and p0 or p1 class")
 	}
 	query := d.containsQuery([]string{prefix}) + fmt.Sprintf(" and properties has { key='%s' and value='%s' }", driveIndexedClassProperty, class)
 	return d.listFreshQueryPageStatus(ctx, query, since, pageToken, maxPages, driveListPageSize, func(name string) bool {
@@ -1311,7 +1315,7 @@ func (d *DriveStore) decodeInlineData(name, description string, size int64) []by
 		}
 		return data
 	}
-	if !d.inlineSmallObjects || size <= 0 || size > driveInlineMaxBytes || !strings.HasPrefix(name, "muxv4/") || !strings.Contains(name, "/p0/") || !strings.HasPrefix(description, driveInlineMarker) {
+	if !d.inlineSmallObjects || size <= 0 || size > driveInlineMaxBytes || !isMuxNamespace(name) || !strings.Contains(name, "/p0/") || !strings.HasPrefix(description, driveInlineMarker) {
 		return nil
 	}
 	encoded := strings.TrimPrefix(description, driveInlineMarker)

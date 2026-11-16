@@ -346,7 +346,7 @@ class ExactCleanupError(RuntimeError):
 def cleanup_exact(binary: Path, source_exit_config: Path, session: str) -> dict[str, Any]:
     if not re.fullmatch(r"[a-f0-9]{32}", session):
         raise ValueError("exact generated session required")
-    prefixes = [f"{kind}/{session}/" for kind in ("muxv4", "slotv1")]
+    prefixes = [f"{kind}/{session}/" for kind in ("muxv5", "muxv4", "slotv1")]
     result = {"attempts": 0, "matched": 0, "deleted": 0, "remaining": None,
               "failed": 0, "truncated": False, "estimated_units": 0, "ok": False,
               "prefixes": prefixes, "delayed_checks": [], "commands_started": 0, "operations": [],

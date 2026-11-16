@@ -506,7 +506,7 @@ func relayClientSOCKSFixture(t *testing.T, rc relayResearchConfig, muxChunk int,
 	}
 	t.Cleanup(func() { cancel(); c.Close(); b.Close() })
 	sid, _ := NewSessionID()
-	cfg := &Config{Secret: "relay-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client-a", RunID: "run-a"}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: muxChunk, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
+	cfg := &Config{Secret: "relay-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client-a", RunID: "run-a"}, Tunnel: TunnelConfig{Transport: "muxv4", Profile: "fixed", PollIntervalMS: 10, ChunkSize: muxChunk, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	ct, err := NewTunnel(c, cfg)
 	if err != nil {

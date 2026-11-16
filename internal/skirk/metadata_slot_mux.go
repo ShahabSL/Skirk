@@ -211,7 +211,7 @@ func (m *driveMux) ensureClientSlot(ctx context.Context) {
 		m.logSlotSetupError(err)
 		return
 	}
-	peer, err := newMetadataSlotPeer(m.t.Secret, m.t.SessionID, DirectionUp, key.clientID, key.runID, generation, metadataSlotLimits{})
+	peer, err := newMetadataSlotPeerForTransport(m.transport, m.t.Secret, m.t.SessionID, DirectionUp, key.clientID, key.runID, generation, metadataSlotLimits{})
 	if err != nil {
 		cleanup(false)
 		m.logSlotSetupError(err)
@@ -367,7 +367,7 @@ func (m *driveMux) handleSlotCapability(ctx context.Context, frame muxFrame) {
 		m.logSlotSetupError(err)
 		return
 	}
-	peer, err := newMetadataSlotPeer(m.t.Secret, m.t.SessionID, DirectionDown, key.clientID, key.runID, capability.generation, metadataSlotLimits{DescriptionBytes: int(capability.limit)})
+	peer, err := newMetadataSlotPeerForTransport(m.transport, m.t.Secret, m.t.SessionID, DirectionDown, key.clientID, key.runID, capability.generation, metadataSlotLimits{DescriptionBytes: int(capability.limit)})
 	if err != nil {
 		m.logSlotSetupError(err)
 		return

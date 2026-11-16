@@ -70,7 +70,7 @@ func authFailureClientTunnel(t *testing.T, store BlobStore) *Tunnel {
 		Secret:    secret,
 		SessionID: "00112233445566778899aabbccddeeff",
 		Client:    ClientConfig{ID: "client-a", RunID: "run-a"},
-		Tunnel:    TunnelConfig{ChunkSize: 1024, PollIntervalMS: 10},
+		Tunnel:    TunnelConfig{Transport: "muxv4", ChunkSize: 1024, PollIntervalMS: 10},
 	}
 	cfg.ApplyDefaults()
 	tunnel, err := NewTunnel(store, cfg)
@@ -3129,24 +3129,24 @@ func TestMuxUploadStorageQuotaRunsEmergencyStaleCleanup(t *testing.T) {
 		t.Fatal("cleanup calls = 0, want emergency cleanup")
 	}
 	deadline := time.After(2 * time.Second)
-	for store.cleanupCalls.Load() < 2 {
+	for store.cleanupCalls.Load() < 3 {
 		select {
 		case <-deadline:
-			t.Fatalf("cleanup calls = %d, want both runtime prefixes", store.cleanupCalls.Load())
+			t.Fatalf("cleanup calls = %d, want both mux versions and benchmark prefix", store.cleanupCalls.Load())
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	opts := store.cleanupOptions()
-	if len(opts) < 2 {
-		t.Fatalf("cleanup options = %#v, want both runtime prefixes", opts)
+	if len(opts) < 3 {
+		t.Fatalf("cleanup options = %#v, want both mux versions and benchmark prefix", opts)
 	}
-	for i, wantPrefix := range []string{"muxv4/", "bench-drive/"} {
+	for i, wantPrefix := range []string{"muxv4/", "muxv5/", "bench-drive/"} {
 		if opts[i].Prefix != wantPrefix {
 			t.Fatalf("cleanup prefix[%d] = %q, want %q", i, opts[i].Prefix, wantPrefix)
 		}
 		wantAge := 10 * time.Minute
-		if wantPrefix == "muxv4/" {
+		if wantPrefix == "muxv4/" || wantPrefix == "muxv5/" {
 			wantAge = 24 * time.Hour
 		}
 		if opts[i].OlderThan != wantAge {
@@ -3169,14 +3169,14 @@ func TestMuxStoragePressureCleanupContinuesAfterPrefixError(t *testing.T) {
 	mux.runStoragePressureCleanup(context.Background(), store)
 
 	opts := store.cleanupOptions()
-	if len(opts) != 2 {
-		t.Fatalf("cleanup calls = %d, want both runtime prefixes", len(opts))
+	if len(opts) != 3 {
+		t.Fatalf("cleanup calls = %d, want both mux versions and benchmark prefix", len(opts))
 	}
-	if opts[0].Prefix != "muxv4/" || opts[1].Prefix != "bench-drive/" {
-		t.Fatalf("cleanup prefixes = %#v, want muxv4/ then bench-drive/", opts)
+	if opts[0].Prefix != "muxv4/" || opts[1].Prefix != "muxv5/" || opts[2].Prefix != "bench-drive/" {
+		t.Fatalf("cleanup prefixes = %#v, want muxv4/, muxv5/, then bench-drive/", opts)
 	}
-	if got := mux.cleanupDeleted.Load(); got != 1 {
-		t.Fatalf("cleanup progress = %d, want successful second prefix to count", got)
+	if got := mux.cleanupDeleted.Load(); got != 2 {
+		t.Fatalf("cleanup progress = %d, want both successful prefixes to count", got)
 	}
 }
 
@@ -3185,7 +3185,7 @@ func TestMuxStoragePressureCleanupRetainsActiveOptInSlots(t *testing.T) {
 	mux := &driveMux{t: &Tunnel{MetadataSlotV1: true}}
 	mux.runStoragePressureCleanup(context.Background(), store)
 	opts := store.cleanupOptions()
-	if len(opts) != 3 || opts[2].Prefix != "slotv1/" || opts[2].OlderThan != 24*time.Hour {
+	if len(opts) != 4 || opts[3].Prefix != "slotv1/" || opts[3].OlderThan != 24*time.Hour {
 		t.Fatalf("opt-in slot cleanup options = %#v, want slotv1/ older than 24h", opts)
 	}
 }

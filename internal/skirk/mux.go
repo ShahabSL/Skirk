@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -177,6 +178,7 @@ type muxObjectMeta struct {
 	ClientID        string
 	RunID           string
 	Epoch           string
+	Transport       string
 	StreamID        uint64
 	StreamIDs       []uint64
 	Lane            int
@@ -460,7 +462,11 @@ type muxStream struct {
 }
 
 func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, error) {
-	epoch, err := randomMuxEpoch()
+	if value := strings.TrimSpace(t.Transport); value != "" && value != "muxv4" && value != "muxv5" {
+		return nil, fmt.Errorf("unsupported mux transport %q", value)
+	}
+	transport := normalizeMuxTransport(t.Transport)
+	epoch, err := randomMuxEpochForTransport(transport)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +477,7 @@ func newDriveMux(t *Tunnel, role string, sendDir, recvDir byte) (*driveMux, erro
 		sendDir:               sendDir,
 		recvDir:               recvDir,
 		epoch:                 epoch,
-		transport:             normalizeMuxTransport(t.Transport),
+		transport:             transport,
 		streams:               map[muxStreamKey]*muxStream{},
 		opening:               map[muxStreamKey]struct{}{},
 		closed:                map[muxStreamKey]time.Time{},
@@ -534,6 +540,9 @@ func newMuxLane(m *driveMux, idx int) *muxLane {
 }
 
 func normalizeMuxTransport(transport string) string {
+	if strings.TrimSpace(transport) == "muxv5" {
+		return "muxv5"
+	}
 	return "muxv4"
 }
 
@@ -2076,13 +2085,18 @@ func (m *driveMux) runStoragePressureCleanup(ctx context.Context, store driveCle
 	}
 	cleanupCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
 	defer cancel()
-	prefixes := []string{"muxv4/", "bench-drive/"}
+	currentPrefix := normalizeMuxTransport(m.transport) + "/"
+	otherPrefix := "muxv4/"
+	if currentPrefix == otherPrefix {
+		otherPrefix = "muxv5/"
+	}
+	prefixes := []string{currentPrefix, otherPrefix, "bench-drive/"}
 	if m.t != nil && m.t.MetadataSlotV1 {
 		prefixes = append(prefixes, "slotv1/")
 	}
 	for _, prefix := range prefixes {
 		olderThan := 10 * time.Minute
-		if prefix == "muxv4/" || prefix == "slotv1/" {
+		if prefix == "muxv4/" || prefix == "muxv5/" || prefix == "slotv1/" {
 			// An unprocessed mux object or active slot can outlive ten minutes.
 			// Match the mailbox janitor's retention window rather than deleting
 			// another client's live data under storage pressure.
@@ -2259,7 +2273,12 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 		return muxPreparedUpload{}, err
 	}
 	seq := l.seq.Add(1)
-	key, err := DeriveMuxLaneKeyV4(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.idx)
+	var key []byte
+	if l.mux.transport == "muxv5" {
+		key, err = DeriveMuxLaneKeyV5(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.idx, l.mux.epoch)
+	} else {
+		key, err = DeriveMuxLaneKeyV4(l.mux.t.Secret, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.idx)
+	}
 	if err != nil {
 		return muxPreparedUpload{}, err
 	}
@@ -2272,7 +2291,7 @@ func (l *muxLane) prepareUploadBatchV4(ctx context.Context, frames []muxFrame) (
 	if len(streamIDs) != 1 {
 		minSeq, maxSeq = 0, 0
 	}
-	name := muxObjectNameWithStreamIDs(l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, streamIDs, l.idx, seq, len(frames), minSeq, maxSeq, len(raw), priority)
+	name := muxObjectNameWithStreamIDsForTransport(l.mux.transport, l.mux.t.SessionID, l.mux.sendDir, clientID, runID, l.mux.epoch, frames[0].StreamID, streamIDs, l.idx, seq, len(frames), minSeq, maxSeq, len(raw), priority)
 	metadataOnly := priority && len(sealed) <= l.mux.metadataBatchLimit(frames)
 	if metadataOnly {
 		name += driveMetadataOnlyNameSuffix
@@ -2625,9 +2644,9 @@ func (m *driveMux) pollMuxObjectsFromPrefix(ctx context.Context, prefix, source 
 
 func (m *driveMux) recvPrefix() string {
 	if m.role == "exit" {
-		return muxDirPrefix(m.t.SessionID, m.recvDir, "", "")
+		return muxDirPrefixForTransport(m.transport, m.t.SessionID, m.recvDir, "", "")
 	}
-	return muxDirPrefix(m.t.SessionID, m.recvDir, m.t.ClientID, m.t.RunID)
+	return muxDirPrefixForTransport(m.transport, m.t.SessionID, m.recvDir, m.t.ClientID, m.t.RunID)
 }
 
 func (m *driveMux) shouldPollNormalMuxObjects(now time.Time) bool {
@@ -4541,7 +4560,18 @@ func (m *driveMux) processMuxObject(ctx context.Context, meta muxObjectMeta) err
 	if meta.Lane < 0 || meta.Lane >= muxLaneCount {
 		return fmt.Errorf("invalid mux lane %d", meta.Lane)
 	}
-	key, err := DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Lane)
+	objectTransport := normalizeMuxTransport(meta.Transport)
+	localTransport := normalizeMuxTransport(m.transport)
+	if objectTransport != localTransport {
+		return fmt.Errorf("mux peer transport %s does not match local %s; update both client and exit", objectTransport, localTransport)
+	}
+	var key []byte
+	var err error
+	if localTransport == "muxv5" {
+		key, err = DeriveMuxLaneKeyV5(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Lane, meta.Epoch)
+	} else {
+		key, err = DeriveMuxLaneKeyV4(m.t.Secret, m.t.SessionID, m.recvDir, meta.ClientID, meta.RunID, meta.Lane)
+	}
 	if err != nil {
 		return err
 	}
@@ -5741,7 +5771,11 @@ func decodeMuxOpenPayload(payload []byte) (string, []byte, error) {
 }
 
 func muxDirPrefix(sid [16]byte, direction byte, clientID, runID string) string {
-	base := fmt.Sprintf("muxv4/%s/%s/", SessionString(sid), directionName(direction))
+	return muxDirPrefixForTransport("muxv4", sid, direction, clientID, runID)
+}
+
+func muxDirPrefixForTransport(transport string, sid [16]byte, direction byte, clientID, runID string) string {
+	base := fmt.Sprintf("%s/%s/%s/", normalizeMuxTransport(transport), SessionString(sid), directionName(direction))
 	clientID = strings.TrimSpace(clientID)
 	runID = strings.TrimSpace(runID)
 	if clientID == "" {
@@ -5754,8 +5788,12 @@ func muxDirPrefix(sid [16]byte, direction byte, clientID, runID string) string {
 }
 
 func muxObjectNameWithStreamIDs(sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, streamIDs []uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
+	return muxObjectNameWithStreamIDsForTransport("muxv4", sid, direction, clientID, runID, epoch, streamID, streamIDs, lane, seq, frames, frameMinSeq, frameMaxSeq, bytes, priority)
+}
+
+func muxObjectNameWithStreamIDsForTransport(transport string, sid [16]byte, direction byte, clientID, runID, epoch string, streamID uint64, streamIDs []uint64, lane int, seq uint64, frames int, frameMinSeq, frameMaxSeq uint64, bytes int, priority bool) string {
 	epoch = strings.TrimSpace(epoch)
-	if epoch == "" {
+	if epoch == "" && normalizeMuxTransport(transport) == "muxv4" {
 		epoch = "0000000000000000"
 	}
 	class := "p1"
@@ -5780,13 +5818,13 @@ func muxObjectNameWithStreamIDs(sid [16]byte, direction byte, clientID, runID, e
 		base += fmt.Sprintf(".r%016x-%016x", frameMinSeq, frameMaxSeq)
 	}
 	base += fmt.Sprintf(".b%d", bytes)
-	return fmt.Sprintf("%s%s/%s/%s/l%02d/%s", muxDirPrefix(sid, direction, clientID, runID), epoch, class, streamPart, lane, base)
+	return fmt.Sprintf("%s%s/%s/%s/l%02d/%s", muxDirPrefixForTransport(transport, sid, direction, clientID, runID), epoch, class, streamPart, lane, base)
 }
 
 func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	name := info.Name
 	parts := strings.Split(name, "/")
-	if len(parts) < 9 || parts[0] != "muxv4" || !strings.HasPrefix(parts[len(parts)-2], "l") {
+	if len(parts) < 9 || (parts[0] != "muxv4" && parts[0] != "muxv5") || !strings.HasPrefix(parts[len(parts)-2], "l") {
 		return muxObjectMeta{}, false
 	}
 	classIdx := len(parts) - 3
@@ -5828,6 +5866,15 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	epoch := parts[5]
 	if clientID == "" || runID == "" {
 		return muxObjectMeta{}, false
+	}
+	if parts[0] == "muxv5" {
+		if clientID != strings.TrimSpace(clientID) || runID != strings.TrimSpace(runID) ||
+			!isSafeObjectSegment(clientID) || !isSafeObjectSegment(runID) {
+			return muxObjectMeta{}, false
+		}
+		if _, err := parseMuxGenerationV5(epoch); err != nil {
+			return muxObjectMeta{}, false
+		}
 	}
 	lane, err := strconv.Atoi(strings.TrimPrefix(parts[len(parts)-2], "l"))
 	if err != nil {
@@ -5884,7 +5931,7 @@ func parseMuxObjectInfo(info ObjectInfo) (muxObjectMeta, bool) {
 	if metadataOnly && class != "p0" {
 		return muxObjectMeta{}, false
 	}
-	return muxObjectMeta{Name: name, ID: info.ID, InlineData: inlineData, MetadataOnly: metadataOnly, ClientID: clientID, RunID: runID, Epoch: epoch, StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
+	return muxObjectMeta{Name: name, ID: info.ID, InlineData: inlineData, MetadataOnly: metadataOnly, ClientID: clientID, RunID: runID, Epoch: epoch, Transport: parts[0], StreamID: streamID, StreamIDs: streamIDs, Lane: lane, Seq: seq, Priority: class == "p0", PlainBytes: plainBytes, FrameMinSeq: frameMinSeq, FrameMaxSeq: frameMaxSeq, FrameRangeKnown: frameRangeKnown, Updated: updated}, true
 }
 
 func muxShortName(name string) string {
@@ -5912,4 +5959,18 @@ func randomMuxEpoch() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%016x", id), nil
+}
+
+func randomMuxEpochForTransport(transport string) (string, error) {
+	if transport != "muxv5" {
+		return randomMuxEpoch()
+	}
+	var generation [16]byte
+	if _, err := rand.Read(generation[:]); err != nil {
+		return "", err
+	}
+	if generation == [16]byte{} {
+		return "", errors.New("mux v5 random generation was zero")
+	}
+	return hex.EncodeToString(generation[:]), nil
 }

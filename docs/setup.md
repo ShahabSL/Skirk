@@ -11,6 +11,10 @@ This is the operator flow:
 The exit machine needs outbound internet access. It does not need an inbound
 port because both sides exchange encrypted objects through Google Drive.
 
+New kits use `muxv5`. Upgrade the exit and every client together; older
+versions only watch `muxv4/`. See the [migration guide](mux-v5-migration-2026-11-16.md)
+when replacing an existing kit.
+
 ## Install
 
 ```bash
@@ -547,7 +551,7 @@ deleted after use, with foreground traffic prioritized over cleanup. The exit
 janitor removes stale leftovers from crashed clients or interrupted exits.
 
 Dry-run stale object cleanup. Without `--prefix`, cleanup scans Skirk's runtime
-object prefixes (`muxv4/`, `bench-drive/`, and `setup/`):
+object prefixes (`muxv5/`, `muxv4/`, `bench-drive/`, and `setup/`):
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
@@ -562,7 +566,7 @@ skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
 Clean a specific prefix:
 
 ```bash
-skirk cleanup --config skirk-kit/exit.json --prefix muxv4/ --older-than 1s --delete
+skirk cleanup --config skirk-kit/exit.json --prefix muxv5/ --older-than 1s --delete
 ```
 
 Emergency-only cleanup: stop Skirk clients and the exit first, then empty every

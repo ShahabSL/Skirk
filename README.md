@@ -263,6 +263,11 @@ curl -fsSL https://raw.githubusercontent.com/ShahabSL/Skirk/main/install.sh | \
 Clients still use the Google-fronted Drive path and do not need inbound
 connectivity.
 
+New kits use the `muxv5` transport. Upgrade the exit and every client together;
+older Skirk versions watch a separate `muxv4/` mailbox. See the
+[migration guide](docs/mux-v5-migration-2026-11-16.md) before reusing an
+existing kit.
+
 ## Cleanup And Disconnect
 
 Normal runtime deletes processed mailbox objects. `serve-exit` also starts a
@@ -272,7 +277,7 @@ The long age window avoids deleting live objects from very slow long-running
 downloads while still cleaning crash leftovers eventually.
 
 Manual cleanup is dry-run by default. Without `--prefix`, it scans Skirk's
-runtime object prefixes (`muxv4/`, `bench-drive/`, and `setup/`):
+runtime object prefixes (`muxv5/`, `muxv4/`, `bench-drive/`, and `setup/`):
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h

@@ -338,7 +338,7 @@ func serveClient(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -432,7 +432,7 @@ func serveExit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-exit", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -484,7 +484,7 @@ const mailboxJanitorDefaultDeleteConcurrency = 2
 const mailboxJanitorDefaultMaxDeletesPerPrefix = 500
 const mailboxJanitorDefaultDeleteDelay = 100 * time.Millisecond
 
-var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
+var mailboxJanitorPrefixes = []string{"muxv4/", "muxv5/", "bench-drive/", "setup/"}
 
 func defaultCleanupPrefixes() []string {
 	return append(append([]string(nil), mailboxJanitorPrefixes...), "slotv1/")
@@ -729,7 +729,7 @@ func benchLive(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")

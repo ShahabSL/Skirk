@@ -123,6 +123,10 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport := strings.TrimSpace(cfg.Tunnel.Transport)
+	if transport == "" {
+		transport = "muxv5"
+	}
 	t := &Tunnel{
 		Data:                   data,
 		Secret:                 cfg.Secret,
@@ -130,7 +134,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		ClientID:               strings.TrimSpace(cfg.Client.ID),
 		RunID:                  strings.TrimSpace(cfg.Client.RunID),
 		ChunkSize:              cfg.Tunnel.ChunkSize,
-		Transport:              strings.TrimSpace(cfg.Tunnel.Transport),
+		Transport:              transport,
 		Concurrency:            cfg.Tunnel.Concurrency,
 		UploadConcurrency:      cfg.Tunnel.UploadConcurrency,
 		DownloadConcurrency:    cfg.Tunnel.DownloadConcurrency,

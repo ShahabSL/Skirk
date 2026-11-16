@@ -316,7 +316,7 @@ func (s *hybridNormalMemory) PutObjectWithID(ctx context.Context, id, name strin
 }
 func TestHybridFullSOCKSMixedBytesAndDuplicateCarrier(t *testing.T) {
 	sid, _ := NewSessionID()
-	cfg := &Config{Secret: "hybrid-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client", RunID: "run"}, Tunnel: TunnelConfig{PollIntervalMS: 10, ChunkSize: 256 << 10, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
+	cfg := &Config{Secret: "hybrid-full-local", SessionID: hex.EncodeToString(sid[:]), Client: ClientConfig{ID: "client", RunID: "run"}, Tunnel: TunnelConfig{Transport: "muxv4", PollIntervalMS: 10, ChunkSize: 256 << 10, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	base := &hybridNormalMemory{MemoryStore: NewMemoryStore()}
 	client, _ := newHybridStore(base, cfg.Secret, sid, DirectionUp, cfg.Client.ID, cfg.Client.RunID)

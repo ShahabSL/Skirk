@@ -134,10 +134,10 @@ class CapacityCompareTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=run), mock.patch("time.sleep"):
             result = cleanup_exact(Path("/private/skirk"), Path("/private/exit.json"), session)
         self.assertTrue(result["ok"])
-        self.assertEqual(len(commands), 6)
-        self.assertEqual(result["estimated_units"], 6 * 100 + 4 * 50)
+        self.assertEqual(len(commands), 9)
+        self.assertEqual(result["estimated_units"], 9 * 100 + 6 * 50)
         for command in commands:
-            self.assertIn(command[command.index("--prefix") + 1], [prefix, prefix.replace("muxv4/", "slotv1/")])
+            self.assertIn(command[command.index("--prefix") + 1], [prefix, prefix.replace("muxv4/", "muxv5/"), prefix.replace("muxv4/", "slotv1/")])
             self.assertNotIn("--all", command)
 
     def test_async_package_clears_saved_experiments_and_preserves_route(self):

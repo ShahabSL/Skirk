@@ -215,7 +215,7 @@ func (s *adaptiveDiscoveryStore) GetMuxObjectMetadataByID(_ context.Context, fil
 
 func adaptiveTestMux(t *testing.T, store *adaptiveDiscoveryStore) *driveMux {
 	t.Helper()
-	cfg := &Config{SessionID: "00112233445566778899aabbccddeeff", Client: ClientConfig{ID: "client-test", RunID: "run-test"}}
+	cfg := &Config{SessionID: "00112233445566778899aabbccddeeff", Client: ClientConfig{ID: "client-test", RunID: "run-test"}, Tunnel: TunnelConfig{Transport: "muxv4"}}
 	cfg.Drive.AdaptiveMuxDiscovery = true
 	tunnel, err := NewTunnel(store, cfg)
 	if err != nil {

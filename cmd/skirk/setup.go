@@ -544,6 +544,7 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 	cfg := skirk.TunnelConfig{
 		Listen:           listen,
 		Profile:          "auto",
+		Transport:        "muxv5",
 		ChunkSize:        chunkSize,
 		PollIntervalMS:   pollMS,
 		Concurrency:      32,
@@ -1063,9 +1064,11 @@ All generated client and exit configs contain Google refresh credentials and the
 - do not paste them into logs or chats;
 - regenerate the kit if one leaks.
 
+This kit uses the `+"`muxv5`"+` transport. Upgrade the exit and all clients together: older Skirk versions watch a separate `+"`muxv4/`"+` mailbox and cannot answer this kit. If Test exit does not verify after upgrading, check both versions and the exit status before renewing Google authorization.
+
 ## Cleanup / Disconnect
 
-Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. Without `+"`--prefix`"+`, manual cleanup scans Skirk runtime object prefixes (`+"`muxv4/`"+`, `+"`bench-drive/`"+`, and `+"`setup/`"+`):
+Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. Without `+"`--prefix`"+`, manual cleanup scans Skirk runtime object prefixes (`+"`muxv5/`"+`, `+"`muxv4/`"+`, `+"`bench-drive/`"+`, and `+"`setup/`"+`):
 
 `+"```bash"+`
 skirk cleanup --config %s --older-than 2h

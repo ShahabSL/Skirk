@@ -172,7 +172,7 @@ function mockSnapshot(): DesktopSnapshot {
           updatedAt: new Date().toISOString(),
           durationSeconds: 60,
           routeMode: "google_front_pinned",
-          transport: "muxv4",
+          transport: "muxv5",
           pollMs: profile?.performance.pollMs ?? 1000,
           uploadConcurrency: profile?.performance.uploadConcurrency ?? 8,
           downloadConcurrency: profile?.performance.downloadConcurrency ?? 16,

@@ -200,7 +200,7 @@ func rrRunOwnedClient(parent context.Context, dir string, s relayResearchPrivate
 	// of leaving application reads alive until their independent deadlines.
 	stopClientFailure := context.AfterFunc(client.ctx, cancel)
 	defer stopClientFailure()
-	cfg := &Config{Secret: s.MuxSecretHex, SessionID: s.SessionID, Client: ClientConfig{ID: s.ClientID, RunID: s.RunID}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 10, ChunkSize: s.ChunkBytes, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
+	cfg := &Config{Secret: s.MuxSecretHex, SessionID: s.SessionID, Client: ClientConfig{ID: s.ClientID, RunID: s.RunID}, Tunnel: TunnelConfig{Transport: "muxv4", Profile: "fixed", PollIntervalMS: 10, ChunkSize: s.ChunkBytes, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	tunnel, err := NewTunnel(client, cfg)
 	if err != nil {

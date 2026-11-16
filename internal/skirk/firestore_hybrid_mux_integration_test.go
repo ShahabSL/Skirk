@@ -75,7 +75,7 @@ func fsHybridFullMuxFixtureWithStores(t *testing.T, c, e *fsHybridPriorityStore,
 	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
 	f := &fsHybridMuxFixture{ctx: ctx, cancel: cancel, client: c, exit: e, base: base}
 	t.Cleanup(func() { f.close(t) })
-	cfg := &Config{Secret: c.cfg.Secret, SessionID: hex.EncodeToString(c.cfg.Session[:]), Client: ClientConfig{ID: c.cfg.ClientID, RunID: c.cfg.RunID}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 5, ChunkSize: 4 << 20, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
+	cfg := &Config{Secret: c.cfg.Secret, SessionID: hex.EncodeToString(c.cfg.Session[:]), Client: ClientConfig{ID: c.cfg.ClientID, RunID: c.cfg.RunID}, Tunnel: TunnelConfig{Transport: "muxv4", Profile: "fixed", PollIntervalMS: 5, ChunkSize: 4 << 20, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
 	ct, err := NewTunnel(c, cfg)
 	if err != nil {
