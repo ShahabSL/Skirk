@@ -11,7 +11,7 @@ and its limitations are in
 
 Unlike archived `OLD-020`, the reader polls an **existing generation ID**.
 It does not query a different not-yet-created ID for each OPEN and accumulate
-expected 404s. This also differs from Skirk's current prewarmed 64-slot
+expected 404s. This also differs from Xray-core XDRIVE's prewarmed 64-slot
 known-ID ring with read-ahead. The result cannot rank that ring.
 
 ## Safety and method
