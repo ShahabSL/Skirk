@@ -12,6 +12,15 @@ limit, with a distinct marker that existing mux peers ignore. No runtime
 handler sends or accepts these payloads yet; the codec alone provides no
 distributed setup, rollover, quota admission, or cleanup guarantee.
 
+An equally dormant owned-target intent journal records exact generated IDs,
+names, mailbox parent/space, and expected owner permission ID in an immutable
+private file. The file and containing directory must sync before remote create.
+Recovery only returns validated records; it cannot delete Drive files. It
+fails closed on Windows until directory-entry durability is implemented and
+tested there. A recovered record is not proof of remote ownership: the future
+janitor must verify current Drive metadata and coordinate exclusive process
+ownership before any exact-ID deletion.
+
 ## Why direct promotion is unsafe
 
 The live fixture creates two fresh v2 files, writes their exact IDs to an
