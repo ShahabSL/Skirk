@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -25,7 +26,17 @@ type session struct {
 	err          error
 	secret       string
 	socksAddress string
+	quota        quotaReporter
 }
+
+// quotaReporter is implemented by the Drive store. Its snapshots read only
+// local counters; requesting them must not issue a Google API request.
+type quotaReporter interface {
+	QuotaSnapshot() skirk.DriveQuotaSnapshot
+	QuotaBackoffSnapshot() skirk.DriveQuotaBackoffSnapshot
+}
+
+const quotaUnavailable = `{"v":1,"available":false}`
 
 var bridge struct {
 	sync.Mutex
@@ -209,6 +220,9 @@ func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int
 	if err != nil {
 		return err
 	}
+	if quota, ok := store.(quotaReporter); ok {
+		s.quota = quota
+	}
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()
 	}
@@ -261,6 +275,26 @@ func ProbeExit() (int64, error) {
 		return 0, err
 	}
 	return duration.Milliseconds(), nil
+}
+
+// QuotaStatusJSON reports only this client's local Drive counters and remaining
+// cooldown. The bounded response never includes credentials, error text, file
+// names, or other accounts' usage. A new app-side sample derives the rate.
+func QuotaStatusJSON() string {
+	bridge.Lock()
+	s := bridge.active
+	bridge.Unlock()
+	if s == nil || s.ctx.Err() != nil || s.quota == nil {
+		return quotaUnavailable
+	}
+	quota := s.quota.QuotaSnapshot()
+	backoff := s.quota.QuotaBackoffSnapshot()
+	seconds := int64(0)
+	if backoff.Active && !math.IsNaN(backoff.WaitSeconds) && backoff.WaitSeconds > 0 {
+		seconds = int64(math.Ceil(math.Min(backoff.WaitSeconds, 86400)))
+	}
+	return fmt.Sprintf(`{"v":1,"available":true,"units":%d,"errors":%d,"cooldown_seconds":%d}`,
+		max(0, quota.Units), max(0, quota.Errors), seconds)
 }
 
 func watchListeners(s *session, errCh <-chan error, count int) {

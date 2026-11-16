@@ -194,7 +194,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     override func handleAppMessage(_ messageData: Data, completionHandler: (@Sendable (Data?) -> Void)?) {
         let completion = ProbeCompletion(completionHandler)
         lifecycleQueue.async { [weak self] in
-            guard let self, messageData == Data("probe-exit-v1".utf8), self.active, self.engineStarted else {
+            guard let self, self.active, self.engineStarted else {
+                completion.finish("unavailable")
+                return
+            }
+            if messageData == Data("quota-status-v1".utf8) {
+                // This only reads the in-process Drive counter and backoff
+                // snapshots. It never probes the exit or calls Google.
+                self.engineStartQueue.async {
+                    completion.finish(GoTunnelEngine.quotaStatusJSON)
+                }
+                return
+            }
+            guard messageData == Data("probe-exit-v1".utf8) else {
                 completion.finish("unavailable")
                 return
             }

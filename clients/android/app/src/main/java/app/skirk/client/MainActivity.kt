@@ -271,6 +271,11 @@ fun ConfigScreen() {
             connectionStore.stopped("Disconnected")
         }
         val next = connectionStore.read()
+        if (next.invalidatesDriveMetrics(connectionState)) {
+            // The metrics file can still hold a prior process's last sample
+            // during CONNECTING. Start each connected attempt unmeasured.
+            driveMetrics = null
+        }
         connectionState = next
         if (next.updatedAtMillis > lastConnectionUpdateAt) {
             lastConnectionUpdateAt = next.updatedAtMillis
@@ -522,7 +527,7 @@ fun ConfigScreen() {
             running = running,
             phase = panelConnection.phase,
             message = if (connectionState.phase == ConnectionPhase.FAILED) panelConnection.message else message,
-            metrics = driveMetrics,
+            metrics = if (connectionState.canShowDriveMetrics) driveMetrics else null,
             onModeChange = { mode ->
                 selectedMode = mode
                 updateSelectedProfile { it.copy(connectionMode = mode) }
@@ -731,7 +736,7 @@ fun ConfigScreen() {
         if (advancedSettingsOpen) {
             AdvancedSettingsDialog(
                 performance = selected?.performance ?: PerformanceSettings.recommended(),
-                metrics = driveMetrics,
+                metrics = if (connectionState.canShowDriveMetrics) driveMetrics else null,
                 enabled = selected != null && !running,
                 onDismiss = { advancedSettingsOpen = false },
                 onPerformanceChange = { performance ->
@@ -929,17 +934,6 @@ private fun ConnectionPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        GoogleAccessCard(
-            hasProfile = selected != null,
-            needsRenewal = googleGrantExpired,
-            exitProbeChecked = exitProbeStatus.isNotBlank(),
-            exitProbeVerified = exitProbeVerified,
-            onReplaceProfile = onReplaceProfile,
-            onCopyRenewalCommand = onCopyRenewalCommand,
-            onCopyPersonalSetupCommand = onCopyPersonalSetupCommand,
-            onOpenOAuthSettings = onOpenOAuthSettings,
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.CloudQueue, "Google access route", googleRouteLabel(selected?.routeMode))
         Row(
             modifier = Modifier.selectableGroup(),
@@ -965,9 +959,20 @@ private fun ConnectionPanel(
             )
         }
         Text(
-            "Choose Google front where direct Google access is unavailable. Reconnect to change routes.",
+            "Use Google front where Direct Google is unavailable. Disconnect to change routes later.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        GoogleAccessCard(
+            hasProfile = selected != null,
+            needsRenewal = googleGrantExpired,
+            exitProbeChecked = exitProbeStatus.isNotBlank(),
+            exitProbeVerified = exitProbeVerified,
+            onReplaceProfile = onReplaceProfile,
+            onCopyRenewalCommand = onCopyRenewalCommand,
+            onCopyPersonalSetupCommand = onCopyPersonalSetupCommand,
+            onOpenOAuthSettings = onOpenOAuthSettings,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         SectionHeader(Icons.Rounded.PowerSettingsNew, "Connection mode", modeLabel(selectedMode))

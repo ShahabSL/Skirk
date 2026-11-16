@@ -16,6 +16,12 @@ through the existing Drive mailbox and reports one round-trip sample. It does
 not run in the background or test arbitrary websites. An older or unreachable
 exit cannot return the proof; the app then reports that reachability is
 unverified rather than diagnosing an expired OAuth grant.
+While connected and foregrounded, the app asks the extension for local Drive
+counter snapshots every ten seconds. It computes a recent units/minute and
+errors/minute pace and shows any active cooldown. This status makes no Google
+request and includes only this iPhone's client activity, not the exit or other
+apps using the same Google project. It becomes unavailable on disconnect and
+starts a fresh measurement after a long pause.
 
 ## Build
 
@@ -84,6 +90,14 @@ ownership, picker cancellation, security-scope lifetime and bounded input:
 
 ```sh
 swift test --package-path clients/ios
+```
+
+The pure Swift client-activity parser and rate model can also be checked
+without a VPN entitlement:
+
+```sh
+swiftc clients/ios/App/ClientDriveActivity.swift clients/ios/Tests/ClientDriveActivityTests.swift -o /tmp/skirk-client-drive-activity-tests
+/tmp/skirk-client-drive-activity-tests
 ```
 
 These focused tests do not replace Simulator UI checks or signed-device tests

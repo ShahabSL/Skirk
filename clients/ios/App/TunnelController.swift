@@ -7,7 +7,7 @@ enum ExitProbeVerification: Sendable {
     case unverified
 }
 
-private final class ExitProbeReply: @unchecked Sendable {
+private final class ProviderMessageReply: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Data?, Never>?
 
@@ -42,6 +42,7 @@ final class TunnelController: ObservableObject {
     @Published private(set) var exitProbeVerification: ExitProbeVerification = .notChecked
     @Published private(set) var exitProbeAt: Date?
     @Published private(set) var isTestingExit = false
+    @Published private(set) var driveActivityState: ClientDriveActivityState = .unavailable
     @Published private(set) var connectionError: String?
     @Published var message: String?
 
@@ -52,6 +53,7 @@ final class TunnelController: ObservableObject {
     private var authorizationCheckGeneration: UInt64 = 0
     private var exitProbeGeneration: UInt64 = 0
     private var manager: NETunnelProviderManager?
+    private var driveActivity = ClientDriveActivity()
 
     init() {
         let savedProfile = try? ProfileVault.read()
@@ -102,6 +104,7 @@ final class TunnelController: ObservableObject {
             exitProbeMessage = nil
             exitProbeVerification = .notChecked
             exitProbeAt = nil
+            resetDriveActivity()
             connectionError = nil
             message = nil
         } catch {
@@ -124,6 +127,7 @@ final class TunnelController: ObservableObject {
             exitProbeMessage = nil
             exitProbeVerification = .notChecked
             exitProbeAt = nil
+            resetDriveActivity()
             isTestingExit = false
             connectionError = nil
             message = nil
@@ -148,6 +152,7 @@ final class TunnelController: ObservableObject {
             exitProbeMessage = nil
             exitProbeVerification = .notChecked
             exitProbeAt = nil
+            resetDriveActivity()
             isTestingExit = false
             connectionError = nil
             message = nil
@@ -177,6 +182,7 @@ final class TunnelController: ObservableObject {
         exitProbeMessage = nil
         exitProbeVerification = .notChecked
         exitProbeAt = nil
+        resetDriveActivity()
         isTestingExit = false
         connectionError = nil
         message = nil
@@ -213,6 +219,7 @@ final class TunnelController: ObservableObject {
         exitProbeMessage = nil
         exitProbeVerification = .notChecked
         exitProbeAt = nil
+        resetDriveActivity()
         isTestingExit = false
         connectionError = nil
         manager?.connection.stopVPNTunnel()
@@ -228,6 +235,7 @@ final class TunnelController: ObservableObject {
                 exitProbeMessage = nil
                 exitProbeVerification = .notChecked
                 exitProbeAt = nil
+                resetDriveActivity()
                 isTestingExit = false
             }
             intentionalDisconnect = false
@@ -241,6 +249,7 @@ final class TunnelController: ObservableObject {
             exitProbeMessage = nil
             exitProbeVerification = .notChecked
             exitProbeAt = nil
+            resetDriveActivity()
             isTestingExit = false
         }
         // A cold launch can expose an old provider error after the profile was replaced.
@@ -274,19 +283,7 @@ final class TunnelController: ObservableObject {
         defer {
             if exitProbeGeneration == generation { isTestingExit = false }
         }
-        let data: Data? = await withCheckedContinuation { continuation in
-            let reply = ExitProbeReply(continuation)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 50) {
-                reply.finish(nil)
-            }
-            do {
-                try session.sendProviderMessage(Data("probe-exit-v1".utf8)) { data in
-                    reply.finish(data)
-                }
-            } catch {
-                reply.finish(nil)
-            }
-        }
+        let data = await providerMessage("probe-exit-v1", session: session, timeout: 50)
         guard status == .connected, exitProbeGeneration == generation else { return }
         let response = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         exitProbeAt = Date()
@@ -300,6 +297,41 @@ final class TunnelController: ObservableObject {
         } else {
             exitProbeVerification = .unverified
             exitProbeMessage = "The exit test could not run. Check that the local client is still connected."
+        }
+    }
+
+    func resetDriveActivity() {
+        driveActivity.reset()
+        driveActivityState = driveActivity.state
+    }
+
+    func refreshDriveActivity() async {
+        guard status == .connected,
+              let session = manager?.connection as? NETunnelProviderSession else {
+            resetDriveActivity()
+            return
+        }
+        let generation = exitProbeGeneration
+        let data = await providerMessage("quota-status-v1", session: session, timeout: 3)
+        guard !Task.isCancelled, status == .connected, exitProbeGeneration == generation else { return }
+        driveActivity.ingest(data, uptime: ProcessInfo.processInfo.systemUptime)
+        driveActivityState = driveActivity.state
+    }
+
+    private func providerMessage(_ value: String, session: NETunnelProviderSession,
+                                 timeout: TimeInterval) async -> Data? {
+        await withCheckedContinuation { continuation in
+            let reply = ProviderMessageReply(continuation)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                reply.finish(nil)
+            }
+            do {
+                try session.sendProviderMessage(Data(value.utf8)) { data in
+                    reply.finish(data)
+                }
+            } catch {
+                reply.finish(nil)
+            }
         }
     }
 

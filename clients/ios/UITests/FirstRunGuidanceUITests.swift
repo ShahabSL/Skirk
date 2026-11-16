@@ -26,9 +26,9 @@ final class FirstRunGuidanceUITests: XCTestCase {
         }
         XCTAssertTrue(guide.isHittable)
         guide.tap()
-        let ownerOnly = app.staticTexts[
-            "Only the Google Cloud project owner can publish it; this iPhone cannot change that setting."
-        ]
+        let ownerOnly = app.staticTexts.matching(NSPredicate(
+            format: "label BEGINSWITH %@", "Only the Google Cloud project owner can publish it."
+        )).firstMatch
         for _ in 0..<5 {
             if ownerOnly.exists { break }
             app.swipeUp()

@@ -10,6 +10,13 @@ data class ConnectionState(
     val message: String,
     val updatedAtMillis: Long,
 ) {
+    val canShowDriveMetrics: Boolean
+        get() = running && phase == ConnectionPhase.CONNECTED
+
+    fun invalidatesDriveMetrics(previous: ConnectionState): Boolean =
+        !canShowDriveMetrics || !previous.canShowDriveMetrics ||
+            profileId != previous.profileId || mode != previous.mode
+
     // A terminal outcome belongs to the attempt that produced it, not whichever
     // saved profile the user selects afterwards. Keep its owner for recovery.
     fun failed(message: String, atMillis: Long): ConnectionState = copy(

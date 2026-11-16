@@ -46,6 +46,10 @@ enum GoTunnelEngine {
         EngineLastError()
     }
 
+    static var quotaStatusJSON: String {
+        EngineQuotaStatusJSON()
+    }
+
     static func probeExit() throws -> Int64 {
         var error: NSError?
         var milliseconds: Int64 = 0

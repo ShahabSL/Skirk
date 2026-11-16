@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +16,57 @@ import (
 
 	"github.com/ShahabSL/Skirk/internal/skirk"
 )
+
+type quotaStoreFixture struct {
+	skirk.BlobStore
+	quota   skirk.DriveQuotaSnapshot
+	backoff skirk.DriveQuotaBackoffSnapshot
+}
+
+func (s *quotaStoreFixture) QuotaSnapshot() skirk.DriveQuotaSnapshot { return s.quota }
+func (s *quotaStoreFixture) QuotaBackoffSnapshot() skirk.DriveQuotaBackoffSnapshot {
+	return s.backoff
+}
+
+func TestQuotaStatusReadsOnlyLocalBoundedCounters(t *testing.T) {
+	defer Stop()
+	if got := QuotaStatusJSON(); got != quotaUnavailable {
+		t.Fatalf("stopped status = %q", got)
+	}
+	profile := testProfile(t)
+	store := &quotaStoreFixture{
+		BlobStore: skirk.NewMemoryStore(),
+		quota:     skirk.DriveQuotaSnapshot{Units: 37, Errors: 2, LastErrorReason: "private error detail"},
+		backoff:   skirk.DriveQuotaBackoffSnapshot{Active: true, WaitSeconds: 90000, Reason: "private reason"},
+	}
+	if err := start(profile, "ios-quota-test", freePort(t), 0,
+		func(context.Context, *skirk.Config) (skirk.BlobStore, error) { return store, nil }); err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Version         int   `json:"v"`
+		Available       bool  `json:"available"`
+		Units           int64 `json:"units"`
+		Errors          int64 `json:"errors"`
+		CooldownSeconds int64 `json:"cooldown_seconds"`
+	}
+	got := QuotaStatusJSON()
+	if len(got) > 256 || strings.Contains(got, "private") || strings.Contains(got, "secret") {
+		t.Fatalf("quota status contains unbounded or sensitive data: %q", got)
+	}
+	if err := json.Unmarshal([]byte(got), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Version != 1 || !status.Available || status.Units != 37 || status.Errors != 2 || status.CooldownSeconds != 86400 {
+		t.Fatalf("quota status = %+v", status)
+	}
+	if err := Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := QuotaStatusJSON(); got != quotaUnavailable {
+		t.Fatalf("stopped status = %q", got)
+	}
+}
 
 func testProfile(t *testing.T) string {
 	t.Helper()

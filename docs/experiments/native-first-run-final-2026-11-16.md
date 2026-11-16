@@ -6,8 +6,10 @@ paste behind a secondary action. With no profile, route settings, diagnostics,
 and a disabled Connect control do not compete with import. Owner-only OAuth
 and renewal instructions stay available from a collapsed guide. After import,
 the app displays the effective route; the user can choose the pinned
-`www.google.com` front (default for new profiles) or Direct Google. Imported
-legacy profiles retain their effective route rather than silently changing it.
+`www.google.com` front (default for new client imports) or Direct Google.
+Android and desktop preselect that front even when the imported kit names
+Direct; the user can switch before connecting. Existing iOS installs using
+the legacy imported-profile route retain and display its effective route.
 
 Google access has an actionable unchecked/reconnect state instead of an
 unexplained unknown expiry date. A published production OAuth app removes the

@@ -8,6 +8,7 @@ struct ContentView: View {
     private static let personalSetupCommand = "skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal"
 
     @StateObject private var tunnel = TunnelController()
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var fileImport = ProfileFileImport()
     @State private var profileInput = ""
     @State private var showPasteInput = false
@@ -179,6 +180,31 @@ struct ContentView: View {
                     } footer: {
                         Text(tunnel.routeDetail)
                     }
+
+                    Section {
+                        switch tunnel.driveActivityState {
+                        case .unavailable:
+                            Text(tunnel.status == .connected
+                                 ? "Client activity unavailable. Skirk will try again."
+                                 : "Client activity unavailable while disconnected.")
+                                .foregroundStyle(.secondary)
+                        case .measuring:
+                            Text("Measuring this iPhone's Drive activity…")
+                                .foregroundStyle(.secondary)
+                        case .live(let units, let errors, _):
+                            LabeledContent("Recent quota pace", value: "~\(units.formatted()) units/min")
+                            LabeledContent("Request errors", value: "~\(errors.formatted())/min")
+                        }
+                        if let cooldown = tunnel.driveActivityState.cooldownDescription {
+                            Label("Drive cooldown: \(cooldown) remaining",
+                                  systemImage: "pause.circle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    } header: {
+                        Text("Client Drive activity")
+                    } footer: {
+                        Text("Client only. The exit and other apps can also use the Google project quota.")
+                    }
                 } else {
                     Section {
                         personalOAuthGuide
@@ -204,7 +230,10 @@ struct ContentView: View {
                 Text("You will need client.skirk to import this profile again.")
             }
             .task { await tunnel.load() }
-            .onDisappear { fileImport.cancel() }
+            .onDisappear {
+                fileImport.cancel()
+                tunnel.resetDriveActivity()
+            }
             .onChange(of: profileInput) { _, _ in fileImport.cancel() }
             .onChange(of: replacingProfile) { _, _ in fileImport.cancel() }
             .task(id: tunnel.statusText) {
@@ -213,6 +242,20 @@ struct ContentView: View {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, tunnel.statusText == "Connecting…", !statusFocused else { return }
                 AccessibilityNotification.Announcement("Connecting").post()
+            }
+            .task(id: tunnel.status == .connected && scenePhase == .active) {
+                guard tunnel.status == .connected && scenePhase == .active else {
+                    tunnel.resetDriveActivity()
+                    return
+                }
+                while !Task.isCancelled {
+                    await tunnel.refreshDriveActivity()
+                    do {
+                        try await Task.sleep(for: .seconds(10))
+                    } catch {
+                        break
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
                 tunnel.refreshStatus()
@@ -298,7 +341,7 @@ struct ContentView: View {
                 copiedPersonalSetupCommand = true
             }
             Text("2. The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.")
-            Text("Only the Google Cloud project owner can publish it; this iPhone cannot change that setting.")
+            Text("Only the Google Cloud project owner can publish it. If that is you, open Google Cloud Audience below; a Skirk client profile cannot change the setting.")
             Text("3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this iPhone's grant was rejected. Other revocations remain possible.")
             Link("Open Google Cloud Audience", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
             if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {

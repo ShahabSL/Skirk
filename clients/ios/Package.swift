@@ -7,7 +7,7 @@ let package = Package(
     products: [.library(name: "SkirkProfileImport", targets: ["SkirkProfileImport"])],
     targets: [
         .target(name: "SkirkProfileImport", path: "App",
-                exclude: ["ContentView.swift", "TunnelController.swift", "SkirkApp.swift", "Info.plist", "Skirk.entitlements"],
+                exclude: ["ClientDriveActivity.swift", "ContentView.swift", "TunnelController.swift", "SkirkApp.swift", "Info.plist", "Skirk.entitlements"],
                 sources: ["ProfileFileImport.swift"]),
         .testTarget(name: "SkirkProfileImportTests", dependencies: ["SkirkProfileImport"], path: "Tests/ProfileImportTests"),
     ],
