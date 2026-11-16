@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 239 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders",
+  "research_tip": "Retained 240 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders; local full-mux known-ID train negative quota/bootstrap gate",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -4821,6 +4821,24 @@
       ],
       "revision_or_binary": "v5 34fabb39de22 vs main 34046169e271",
       "live_comparable": true
+    },
+    {
+      "id": "R3-100",
+      "candidate": "Known-ID immutable priority train through actual mux, negative local scale gate",
+      "evidence_level": "memory_simulation_full_mux",
+      "workload": "Test-only fake Drive store with actual muxv5/SOCKS5/verified TLS; exact 1 MiB down/up, warm reply and16 concurrent text replies, lost-response, reserve and deleted-head fallback; race x5 and vet",
+      "latency": "No live Google latency measured; 5 ms local fake poll is not a provider result",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Local fixture observed 2068 known-ID metadata probes,15 bootstrap lists,91 priority fallback lists and6 bulk lists; at published weights at least21540 units before 200-unit media content GETs, uploads and deletes. Dynamic one-second list plus four 5-unit heads models7200 units/min vs current6000.",
+      "correctness_and_errors": "Exact local files,17 total text replies and one upload effect passed; new clients are not discovered after initial bootstrap, head maps unbounded, sender can advance before publication commits, restart has no side-effect-safe resume proof",
+      "cleanup": "Fixture exact local prefix sweep passes; prototype lacks carrier-owned runtime bootstrap cleanup; no Google objects or OAuth used",
+      "decision": "Do not promote or live-test this wrapper; media GET defeats metadata-only primitive savings and bootstrap/rotation are incomplete. Keep separate reproducible research branch.",
+      "source_documents": [
+        "docs/experiments/id-train-full-mux-local-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "separate branch codex/skirk-id-train-full-mux-20261116 at a723b1c",
+      "live_comparable": false
     }
   ]
 }

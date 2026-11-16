@@ -1,9 +1,9 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 239 documented findings,
+The [catalog](catalog/experiments.json) contains 240 documented findings,
 including 70 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
-not 239 equally controlled protocol races. A universal throughput or latency
+not 240 equally controlled protocol races. A universal throughput or latency
 limit has **not** been demonstrated. The exact current v5 versus clean `main`
 cohorts are [reported separately](current-v5-vs-main-live-2026-11-16.md):
 15 of 16 mixed arms completed, but two complete upload orders disagreed on
@@ -72,11 +72,19 @@ project bucket for one tested pinned-front method, but do not prove that
 Ten simultaneous clients is the largest successful recorded live stress,
 not a capacity ceiling. [Capacity model](capacity-and-production-gate-2026-11-16.md).
 
-The next discriminating architecture experiment is a versioned immutable
+A local [full-mux known-ID prototype](id-train-full-mux-local-2026-11-16.md)
+then passed real muxv5/SOCKS5/verified TLS with exact local files and
+concurrent text, but exposed a decisive quota distinction: it reads tiny
+records as **file content at 200 units** after the metadata probe, so it
+cannot inherit the primitive's five-unit metadata-only economics. It also
+needs dynamic-client bootstrap listing, bounded head state, durable rotation,
+and carrier-owned cleanup. It remains on a separate research branch.
+
+The next discriminating architecture experiment is a **metadata-only**
 known-ID priority queue with authenticated bounded ID credit exchange,
-normal immutable bulk, a list fallback for cold OPEN and credit depletion,
-and exact owned-ID cleanup. Compare it with current mux and the v2 research
-queue under the **same** full SOCKS/TLS mixed down/up cohort, then run cold
-OPEN, restart, five saturated streams and 24-hour idle quota tests. Predeclare
-integrity, p95, file, quota and cleanup gates. No current data makes this a
-proven winner or establishes an immovable architecture wall.
+normal immutable bulk, and a crash-safe first-head/rotation path. Compare it
+with current mux and the v2 research queue under the **same** full SOCKS/TLS
+mixed down/up cohort, then run cold OPEN, restart, five saturated streams and
+24-hour idle quota tests. Predeclare integrity, p95, file, quota and cleanup
+gates. No current data makes this a proven winner or establishes an immovable
+architecture wall.
