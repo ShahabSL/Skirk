@@ -182,6 +182,10 @@ func (s *fsHybridPriorityStore) prefetchOne(info ObjectInfo) error {
 		entry, err := s.state.normalizePhysical(info, sealed, time.Now())
 		if err == nil {
 			s.counters["physical_priority_discoveries"]++
+			if !entry.trace.physicalObserved {
+				s.cfg.PhaseTrace.record(s.state.incoming.direction, entry.info.Name, entry.sequence, "peer_physical_observed")
+				entry.trace.physicalObserved = true
+			}
 			done := entry.done
 			s.mu.Unlock()
 			if done {

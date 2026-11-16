@@ -50,6 +50,11 @@ func (r *fsHybridLiveRun) setupDriveV2(client, exit *DriveStore, cc, ec *Config,
 	if len(r.drives) != 2 || len(r.cleanupDrives) != 2 || cc.Drive.FolderID == "" || cc.Drive.FolderID == "appDataFolder" || cc.Drive.FolderID != ec.Drive.FolderID {
 		return errFSHybridBounds
 	}
+	trace, err := newFSHybridPhaseTrace(1024)
+	if err != nil {
+		return err
+	}
+	r.v2PhaseTrace = trace
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return err
@@ -161,7 +166,7 @@ func (r *fsHybridLiveRun) setupDriveV2(client, exit *DriveStore, cc, ec *Config,
 			Direction: direction, ClientID: r.settings.ClientID, RunID: r.settings.RunID,
 			FallbackAfter: 2 * time.Second, OperationTimeout: 10 * time.Second,
 			ACKDelay: 10 * time.Millisecond, Duration: fsHybridLiveDuration,
-			DiscoveryInterval: time.Second,
+			DiscoveryInterval: time.Second, PhaseTrace: r.v2PhaseTrace,
 		})
 		if err != nil {
 			return err

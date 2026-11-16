@@ -10,6 +10,9 @@ import (
 )
 
 // The store mutex owns this state. No method performs I/O or invokes mux code.
+type fsHybridOutboundTraceFlags struct{ patchStart, patchDone, acked bool }
+type fsHybridInboundTraceFlags struct{ metadataObserved, physicalObserved, processed bool }
+
 type fsHybridOutbound struct {
 	name       string
 	digest     [32]byte
@@ -27,6 +30,7 @@ type fsHybridOutbound struct {
 	fbDone     bool
 	fbErr      error
 	physicalID string
+	trace      fsHybridOutboundTraceFlags
 }
 
 type fsHybridInbound struct {
@@ -38,6 +42,7 @@ type fsHybridInbound struct {
 	done        bool
 	queued      bool
 	physicalIDs map[string]struct{}
+	trace       fsHybridInboundTraceFlags
 }
 
 type fsHybridState struct {

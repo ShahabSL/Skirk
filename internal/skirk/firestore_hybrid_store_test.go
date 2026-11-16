@@ -19,6 +19,7 @@ type fsHybridStoreConfig struct {
 	ClientID, RunID                                                        string
 	MaxSnapshotBytes                                                       int
 	FallbackAfter, OperationTimeout, ACKDelay, Duration, DiscoveryInterval time.Duration
+	PhaseTrace                                                             *fsHybridPhaseTrace
 }
 
 func (c fsHybridStoreConfig) normalized() (fsHybridStoreConfig, error) {
@@ -234,6 +235,7 @@ func (s *fsHybridPriorityStore) ingest(doc fsPriorityDocument) error {
 		}
 		return nil
 	}
+	ackedBefore := s.state.acked
 	ready, advanced, err := s.state.receive(doc.Ciphertext, time.Now())
 	if errors.Is(err, errFSHybridReplay) {
 		s.counters["watch_replays"]++
@@ -245,6 +247,22 @@ func (s *fsHybridPriorityStore) ingest(doc fsPriorityDocument) error {
 		return err
 	}
 	s.counters["watch_snapshots"]++
+	if trace := s.cfg.PhaseTrace; trace != nil {
+		for _, entry := range ready {
+			if entry.sequence != 0 && !entry.trace.metadataObserved {
+				trace.record(s.state.incoming.direction, entry.info.Name, entry.sequence, "peer_metadata_observed")
+				entry.trace.metadataObserved = true
+			}
+		}
+		if s.state.acked > ackedBefore {
+			for _, claim := range s.state.outNames {
+				if claim.record.Sequence > ackedBefore && claim.record.Sequence <= s.state.acked && !claim.trace.acked {
+					trace.record(s.cfg.Direction, claim.name, claim.record.Sequence, "sender_processing_ack")
+					claim.trace.acked = true
+				}
+			}
+		}
+	}
 	if advanced {
 		s.scheduleACKLocked()
 	}
@@ -449,6 +467,16 @@ func (s *fsHybridPriorityStore) runWriter() {
 			s.dirty = false
 			wire, high, err := s.state.prepare()
 			previous := s.own
+			if err == nil {
+				if trace := s.cfg.PhaseTrace; trace != nil {
+					for _, claim := range s.state.outQueue {
+						if claim.record.Sequence <= high && !claim.trace.patchStart {
+							trace.record(s.cfg.Direction, claim.name, claim.record.Sequence, "patch_started")
+							claim.trace.patchStart = true
+						}
+					}
+				}
+			}
 			s.mu.Unlock()
 			if err != nil {
 				s.fail(err)
@@ -474,6 +502,14 @@ func (s *fsHybridPriorityStore) runWriter() {
 			}
 			s.own = doc
 			s.ownPublished = true
+			if trace := s.cfg.PhaseTrace; trace != nil {
+				for _, claim := range s.state.outNames {
+					if claim.record.Sequence != 0 && claim.record.Sequence <= high && !claim.trace.patchDone {
+						trace.record(s.cfg.Direction, claim.name, claim.record.Sequence, "patch_completed")
+						claim.trace.patchDone = true
+					}
+				}
+			}
 			s.state.published(high)
 			s.counters["snapshot_writes"]++
 			s.updateReadyLocked()
@@ -523,6 +559,7 @@ func (s *fsHybridPriorityStore) runFallbackWorker() {
 			body := bytes.Clone(r.sealed)
 			id := r.physicalID
 			s.counters["fallback_attempts"]++
+			s.cfg.PhaseTrace.record(s.cfg.Direction, r.name, r.record.Sequence, "fallback_started")
 			s.mu.Unlock()
 			ctx, cancel := context.WithTimeout(s.ctx, s.cfg.OperationTimeout)
 			var err error
@@ -551,12 +588,14 @@ func (s *fsHybridPriorityStore) runFallbackWorker() {
 				r.fbDone = true
 				fsHybridMarkPublished(r, info)
 				s.counters["fallback_published"]++
+				s.cfg.PhaseTrace.record(s.cfg.Direction, r.name, r.record.Sequence, "fallback_completed")
 				if r.record.Sequence == 0 && len(r.sealed) > 0 {
 					s.state.outRetained -= len(r.sealed)
 					r.sealed = nil
 				}
 			} else {
 				s.counters["fallback_errors"]++
+				s.cfg.PhaseTrace.record(s.cfg.Direction, r.name, r.record.Sequence, "fallback_error")
 				r.deadline = time.Now().Add(50 * time.Millisecond)
 			}
 			// A late processing ACK wins over an immutable fallback failure.
@@ -606,6 +645,10 @@ func (s *fsHybridPriorityStore) NoteMuxProcessed(name, id string) error {
 	if err == nil {
 		if !wasDone {
 			s.counters["processed_receipts"]++
+			if !entry.trace.processed {
+				s.cfg.PhaseTrace.record(s.state.incoming.direction, entry.info.Name, entry.sequence, "receiver_processed")
+				entry.trace.processed = true
+			}
 		} else {
 			s.counters["duplicate_processing_receipts"]++
 		}

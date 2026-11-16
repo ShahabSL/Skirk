@@ -44,9 +44,11 @@ func (s *fsHybridPriorityStore) PutObject(ctx context.Context, name string, data
 			s.dirty = true
 			s.ackDue = time.Time{}
 			s.counters["priority_enqueued"]++
+			s.cfg.PhaseTrace.recordClaim(s.cfg.Direction, r.name, r.record.Sequence, "queued_inline", r.streams)
 		} else {
 			r.deadline = time.Time{}
 			s.counters["priority_immutable_only"]++
+			s.cfg.PhaseTrace.recordClaim(s.cfg.Direction, r.name, 0, "immutable_only", r.streams)
 		}
 	}
 	s.mu.Unlock()
