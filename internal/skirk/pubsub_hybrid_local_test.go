@@ -553,7 +553,7 @@ func TestHybridActualOPENDoesNotRedialAfterMuxClosedExpiry(t *testing.T) {
 		t.Fatal(e)
 	}
 	name := muxObjectNameWithStreamIDs(exit.sid, DirectionUp, exit.clientID, exit.runID, "open-epoch", 99, []uint64{99}, 0, 42, 1, 0, 0, len(raw), true)
-	tunnel := &Tunnel{Data: exit, Secret: exit.secret, SessionID: exit.sid, ClientID: exit.clientID, RunID: exit.runID, Logger: log.New(io.Discard, "", 0)}
+	tunnel := &Tunnel{Data: exit, Secret: exit.secret, SessionID: exit.sid, ClientID: exit.clientID, RunID: exit.runID, Transport: "muxv4", Logger: log.New(io.Discard, "", 0)}
 	mux, e := newDriveMux(tunnel, "exit", DirectionDown, DirectionUp)
 	if e != nil {
 		t.Fatal(e)

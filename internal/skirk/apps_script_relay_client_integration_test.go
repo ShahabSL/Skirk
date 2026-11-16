@@ -807,7 +807,7 @@ func TestRelayClientActualOPENRetryAfterMuxClosedTTLDoesNotRepeatSideEffect(t *t
 	defer cancel()
 	sid, _ := NewSessionID()
 	secret := "relay-open-replay"
-	tunnel := &Tunnel{Data: b.exitStore(), Secret: secret, SessionID: sid, ClientID: "client-a", RunID: "run-a", Logger: log.New(io.Discard, "", 0)}
+	tunnel := &Tunnel{Data: b.exitStore(), Secret: secret, SessionID: sid, ClientID: "client-a", RunID: "run-a", Transport: "muxv4", Logger: log.New(io.Discard, "", 0)}
 	m, err := newDriveMux(tunnel, "exit", DirectionDown, DirectionUp)
 	if err != nil {
 		t.Fatal(err)
