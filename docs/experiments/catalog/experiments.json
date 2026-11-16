@@ -4932,6 +4932,27 @@
       "raw_archive_paths": [],
       "revision_or_binary": "root commit 0a7fd08; isolated corrected 2bdf41c; flawed adc0297 superseded",
       "live_comparable": false
+    },
+    {
+      "id": "R3-106",
+      "candidate": "Hardened muxv5 versus clean main, pinned-front sustained64MiB mixed down/up",
+      "evidence_level": "live_product_four_arm_each_direction",
+      "workload": "Two ABBA four-arm cohorts; each arm exact-hash64MiB file plus20 verified persistent pipelined text frames at250ms; same secondary account and pinned www.google.com front; fresh session each arm",
+      "latency": "Download median all20 scheduled text p95 main7.177s -> hardened v5 6.995s (-2.5%); upload main7.757s -> v5 6.994s (-9.8%); two arms/mode and broad per-arm variance",
+      "throughput_mbps": "Download median main47.385 -> v5 48.134 (+1.6%); upload main24.716 -> v5 34.628 (+40.1%, dominated by slow final main arm)",
+      "estimated_quota_units": "Local warmup+tail median download main26860 -> v5 27135 (+1.0%); upload main29810 -> v5 26010 (-12.7%); not provider-billed units; rolling125k/arm150k/cohort600k local caps",
+      "correctness_and_errors": "8/8 arms exact file and20/20 echoes, all20 overlaps per arm, zero reported Drive errors/stalls, all owned processes stopped; earlier upload orders reversed ranking, so no stable speed winner",
+      "cleanup": "Eight exact muxv4/muxv5 session prefixes dry-run/deleted/empty immediately and after31s; no unrelated Drive objects touched",
+      "decision": "Hardened source passed longer mixed workload; do not claim universal or stable throughput/p95 win from two-arm medians; keep muxv5 product baseline and test alternate carriers under matched workload",
+      "source_documents": [
+        "docs/experiments/current-hardened-v5-vs-main-64m-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        ".skirk-runs/v5-hardened-main-64-down-20261116-01/",
+        ".skirk-runs/v5-hardened-main-64-up-20261116-01/"
+      ],
+      "revision_or_binary": "hardened binary SHA256 6f1b18f869f71d390243a5cbbd7b546481f1f07b8e3e2560169b9bc1d11ed727; clean main SHA256 34046169e27185bcd06a5eb6c48cb3499246c09f2b1fe6a202d0261ca01737f3",
+      "live_comparable": true
     }
   ]
 }
