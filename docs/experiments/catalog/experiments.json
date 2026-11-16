@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 222 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt local prototype and two interrupted live comparisons, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 225 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment feasibility, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -21,7 +21,8 @@
     "The four-arm window 8/4/4/8 comparison shares one frozen binary and exact workload. Both window-8 arms improved text p95 and conservative units while upload file rate and warm-frame medians were worse; only two arms per setting and no saturated multi-stream fairness proof.",
     "The local window-eight saturation test shows four streams can fill all 32 inline slots; a fifth uses immutable fallback and bulk remains independent. A stalled first claim holds cumulative receipts for 31 completed claims. This is not a five-stream live latency or 200k-user capacity result.",
     "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win.",
-    "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts."
+    "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts.",
+    "The known-comment carrier was only a same-OAuth-grant API primitive, overlapped a local full Go suite, and failed at an 8 KiB reply HTTP403 after four 8-record arms; its visible latency is not a CPU-quiet full-tunnel comparison. The 403 reason and cross-account access are unproved."
   ],
   "records": [
     {
@@ -4491,6 +4492,62 @@
         "repocomp/.skirk-runs/drive-v2-selective-20261116i/"
       ],
       "revision_or_binary": "c71184d/e26ce5fc",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-083",
+      "candidate": "Persistent fixed known-ID exit rendezvous with conditional client OPEN append",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Local fake: 1/2/4/8 simultaneous cold OPENs on one 16KiB generation, forced ETag conflict, signed receipts, rollover, fallback and lost-response readback",
+      "latency": "No Google latency measured; one known-ID GET versus 20x lower nominal idle unit cost than files.list is only a hypothesis",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Fake fixed total at 1/2/4/8: 550/670/1090/2290 versus immutable-list 205/310/520/940; fixed variable cost after 430 setup 120/240/660/1860",
+      "correctness_and_errors": "Local exact one-delivery, 412 merge, ignored-If-Match rejection, forged receipt rejection, rollover race, same-ID-different-body rejection; durable remote side effects not proved",
+      "cleanup": "Local exact owned IDs deleted; unrelated sentinel retained; no cloud resource",
+      "decision": "Distinct from old per-object known-ID 404 polling; possible idle unit saving, but four/eight writer contention loses locally. Needs live primitive and durable protocol before ranking.",
+      "source_documents": [
+        "docs/experiments/fixed-rendezvous-local-prototype-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "b209e5d",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-084",
+      "candidate": "Known Drive comment with append-only replies, local authenticated probe",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Local fake: 1/2/4/8 writers, committed lost response, duplicate logical delivery, 2/8/16KiB, rotation, cancellation and exact cleanup",
+      "latency": "No Google latency from local fake",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Official nominal comments.get5, replies.create50; local guard 70000 active upper plus 10000 cleanup",
+      "correctness_and_errors": "Focused Go race/vet passed; synthetic failure paths do not prove independent-account access or live size support",
+      "cleanup": "Fake exact owned ID and prefix checks; no cloud resource",
+      "decision": "New append-log API hypothesis, not a product carrier. Live same-grant primitive recorded separately.",
+      "source_documents": [
+        "tools/comment_thread_probe/README.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "5ff8485",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-085",
+      "candidate": "Known Drive comment replies, pinned-front same-grant live primitive",
+      "evidence_level": "live_api_primitive_incomplete",
+      "workload": "One shahabpre OAuth grant in two process profiles; one growing comment; four sequential 8-record phases at 1/2/4/8 writers; committed response discard and 2/8/16KiB plan; local full Go suite overlapped",
+      "latency": "Start-to-visible p95 at 1/2/4/8 writers: 1.156/2.691/4.233/7.604s; 8 samples per phase; no matched control",
+      "throughput_mbps": null,
+      "estimated_quota_units": "36 reply creates,49 comment GETs,2415 nominal units,19320 eight-attempt upper including cleanup,259766 response bytes; not billing telemetry",
+      "correctness_and_errors": "All 32 64-byte records exact; committed lost response found and duplicate suppressed; 2KiB accepted/read back; 8KiB POST returned unclassified HTTP403; 16KiB and rotation not run",
+      "cleanup": "Temporary owned file deleted; twice exact ID404, comments404, exact-name prefix empty immediately+31s; recovery ledger removed",
+      "decision": "Proves small append/read through pinned front for same OAuth grant only. Failed arm and rising latency/response growth; not a full-proxy speed or cross-account winner.",
+      "source_documents": [
+        "docs/experiments/drive-known-comment-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/comment-thread-probe-20261116-a.json"
+      ],
+      "revision_or_binary": "5ff8485",
       "live_comparable": false
     }
   ]

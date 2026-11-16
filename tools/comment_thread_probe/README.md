@@ -31,9 +31,10 @@ control, and rotation.
 The live gate requires an explicit `-live`, fresh output directly under
 `.skirk-runs`, and the existing isolated `personal-test/kit/client.json` and
 `exit.json`. It uses the pinned `www.google.com` front by default;
-`-route direct` is an explicit diagnostic choice. Both accounts must use the same
-visible shared Drive folder. The client account owns the file and comments;
-the exit account reads the comment. This probes one direction only.
+`-route direct` is an explicit diagnostic choice. The current isolated kit has
+two process profiles using the **same** `shahabpre` OAuth grant and folder.
+The client process writes; the exit process reads. This probes one direction
+only and cannot establish cross-account permissions or delivery.
 
 The tool reserves a generated file ID and durably records it **before** file
 creation. It creates one exact-ID file and one comment, then reads that
@@ -92,9 +93,10 @@ go test -race ./tools/comment_thread_probe
 ## Falsification and limits
 
 The idea fails as a lower-cost known-ID append log if `comments.get` omits
-replies or silently truncates them, if the peer cannot read the comment with
-its existing `drive.file` grant, or if the selected pinned route rejects any
-method. It fails as a low-latency alternative if reply visibility or POST
+replies or silently truncates them, if a separately authorized peer cannot read
+the comment with its own `drive.file` grant, or if the selected pinned route
+rejects any method. The current one-grant kit cannot settle cross-account
+access. It fails as a low-latency alternative if reply visibility or POST
 tails are slower than the same-cohort v2 anchor. It fails as a bounded
 transport if the response grows too quickly, size is too small for normal
 mux claims, replies are deleted or reordered without recoverable sequence,
@@ -109,7 +111,8 @@ requires the visible shared-folder layout.
 If the primitive passes, the next discriminating full-proxy comparison is a
 frozen same-binary ABBA against v2 window eight: one persistent demoted TLS
 text stream, simultaneous exact 16 MiB upload/download, 41 echoes per arm,
-two accounts, fixed active poll and quota guard, joined writers, and exact
+two independently authorized secondary accounts, fixed active poll and quota
+guard, joined writers, and exact
 cleanup. Record text p95/p99, file rates, reply visibility, response-byte
 growth, physical fallback, errors, and whole-arm/minute upper units. A
 single primitive or a small ABBA cannot establish a 200,000-user default.

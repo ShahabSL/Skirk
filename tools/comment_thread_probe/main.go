@@ -627,6 +627,7 @@ func (p *probe) sizeBounds(ctx context.Context, commentID string) error {
 			continue
 		}
 		if err = requireStatus(r, 200, 201); err != nil {
+			p.result.Sizes = append(p.result.Sizes, row)
 			return err
 		}
 		v, err := parseOne[reply](r.Body)
