@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 238 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check",
+  "research_tip": "Retained 239 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment and watermark feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs, followed by reusable-ring fault, receipt-capacity, receive-isolation, dial-permit and priority-waiter local checks; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim; shared deferred-memory cap local check; exact current-v5/main mixed cohorts with contradictory upload orders",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -4798,6 +4798,29 @@
       "raw_archive_paths": [],
       "revision_or_binary": "55b9048",
       "live_comparable": false
+    },
+    {
+      "id": "R3-099",
+      "candidate": "Exact current muxv5 product binary versus clean main on pinned front",
+      "evidence_level": "live_full_transport",
+      "workload": "Four separate ABBA cohorts; exact 16 MiB one-way file plus 20 pipelined 64-byte SOCKS/TLS echoes/250 ms and warm frame per arm; same secondary kit and pinned www.google.com; 15/16 arms complete",
+      "latency": "Down clean cohort main6.610→v5 6.057s scheduled p95; upload first main9.214→v5 6.469s but reverse main6.772→v5 6.806s; first down cohort incomplete and complete pair showed v5 worse",
+      "throughput_mbps": "Down main18.774→v5 20.884; upload first main11.955→v5 15.264 but reverse main17.558→v5 16.175; all two-arm medians",
+      "estimated_quota_units": "Down clean median main23285→v5 21635; upload main22985→21235 and22135→21360; local estimates include warmup/tail, exclude exact post-arm cleanup",
+      "correctness_and_errors": "15 arms each verified exact file and20 echoes, zero API errors; fourth main down arm stopped on four28s pinned-front multipart upload timeouts, no file/text result; no guard denials in complete arms",
+      "cleanup": "All four cohorts exact muxv4/muxv5 session-prefix residues removed; immediate and31s checks zero; no unrelated files touched",
+      "decision": "Two complete upload orders reverse throughput and p95 signs; high provider variance and interrupted first down cohort prevent stable product speed winner; current safety/UX fixes remain independent",
+      "source_documents": [
+        "docs/experiments/current-v5-vs-main-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/v5-main-persistent-down-20261116-01/",
+        "repocomp/.skirk-runs/v5-main-persistent-down-20261116-02/",
+        "repocomp/.skirk-runs/v5-main-persistent-up-20261116-01/",
+        "repocomp/.skirk-runs/v5-main-persistent-up-20261116-02/"
+      ],
+      "revision_or_binary": "v5 34fabb39de22 vs main 34046169e271",
+      "live_comparable": true
     }
   ]
 }
