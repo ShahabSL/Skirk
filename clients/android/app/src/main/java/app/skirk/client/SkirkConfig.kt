@@ -11,6 +11,7 @@ data class SkirkConfig(
     val sessionId: String,
     val secret: String,
     val oauthClientId: String,
+    val transport: String,
     val routeMode: String,
     val driveSpace: String,
     val driveFolderId: String,
@@ -31,10 +32,20 @@ data class SkirkConfig(
             val route = root.optJSONObject("route") ?: JSONObject()
             val drive = root.optJSONObject("drive") ?: JSONObject()
             val auth = root.optJSONObject("auth") ?: JSONObject()
+            val tunnelValue = root.opt("tunnel")
+            require(tunnelValue == null || tunnelValue == JSONObject.NULL || tunnelValue is JSONObject) {
+                "Config has an invalid Skirk transport section"
+            }
+            val tunnel = tunnelValue as? JSONObject ?: JSONObject()
+            val transportValue = tunnel.opt("transport")
+            require(transportValue == null || transportValue == JSONObject.NULL || transportValue is String) {
+                "Config has an invalid Skirk transport version"
+            }
             return SkirkConfig(
                 sessionId = root.optString("session_id"),
                 secret = root.optString("secret"),
                 oauthClientId = auth.optString("client_id"),
+                transport = (transportValue as? String)?.trim()?.ifEmpty { "muxv5" } ?: "muxv5",
                 routeMode = route.optString("mode", "google_front_pinned").ifBlank { "google_front_pinned" },
                 driveSpace = drive.optString("space"),
                 driveFolderId = drive.optString("folder_id"),

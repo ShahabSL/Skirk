@@ -34,6 +34,8 @@ The generated profile defaults to Google front. Change **Google access route**
 while disconnected when direct Google is available and preferred on your
 network; the chosen route is saved with the profile on Windows, Linux, and
 macOS.
+Replacing a profile for OAuth renewal keeps its transport version; import a
+different transport as a new profile.
 
 ## macOS Proxy Setup
 

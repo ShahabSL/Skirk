@@ -374,6 +374,22 @@ struct AppPaths {
     settings_file: PathBuf,
 }
 
+fn tunnel_transport_for_identity(config: &Value) -> Result<&str, String> {
+    let tunnel = match config.get("tunnel") {
+        None | Some(Value::Null) => return Ok("muxv5"),
+        Some(Value::Object(value)) => value,
+        _ => return Err("client config has an invalid Skirk transport section".into()),
+    };
+    match tunnel.get("transport") {
+        None | Some(Value::Null) => Ok("muxv5"),
+        Some(Value::String(value)) => {
+            let version = value.trim();
+            Ok(if version.is_empty() { "muxv5" } else { version })
+        }
+        _ => Err("client config has an invalid Skirk transport version".into()),
+    }
+}
+
 impl DesktopRuntime {
     fn new(paths: AppPaths, resource_dir: Option<PathBuf>) -> Self {
         Self {
@@ -632,6 +648,9 @@ impl DesktopRuntime {
             if previous_value.is_none() || previous_value != renewed_value {
                 return Err("updated client config must keep the same session, tunnel secret, and OAuth client; import a different setup as a new profile".into());
             }
+        }
+        if tunnel_transport_for_identity(&previous)? != tunnel_transport_for_identity(&parsed)? {
+            return Err("updated client config uses a different Skirk transport version; import it as a new profile".into());
         }
         let google_ip = parsed
             .pointer("/route/google_ip")
@@ -3069,7 +3088,8 @@ mod tests {
             "session_id": "same-session",
             "auth": {"client_id": "same-oauth-client", "refresh_token": "new-grant"},
             "drive": {"space": "drive", "folder_id": "mailbox-one"},
-            "route": {"google_ip": "8.8.8.8"}
+            "route": {"google_ip": "8.8.8.8"},
+            "tunnel": {"transport": "muxv5"}
         });
         let mut wrong = renewed.clone();
         *wrong.pointer_mut("/drive/folder_id").expect("folder field") = json!("other-mailbox");
@@ -3092,6 +3112,42 @@ mod tests {
                 original.to_string()
             );
         }
+
+        for transport in ["muxv4", "muxv6"] {
+            let mut wrong = renewed.clone();
+            wrong["tunnel"]["transport"] = json!(transport);
+            let error = runtime
+                .replace_profile_config("profile-test", wrong.to_string())
+                .expect_err("transport change must not replace a profile");
+            assert!(error.contains("different Skirk transport version"));
+            assert_eq!(
+                fs::read_to_string(&config_path).expect("unchanged config"),
+                original.to_string()
+            );
+        }
+        for tunnel in [json!(17), json!({"transport": 17})] {
+            let mut wrong = renewed.clone();
+            wrong["tunnel"] = tunnel;
+            assert!(runtime
+                .replace_profile_config("profile-test", wrong.to_string())
+                .is_err());
+            assert_eq!(
+                fs::read_to_string(&config_path).expect("unchanged config"),
+                original.to_string()
+            );
+        }
+        let mut legacy_v4 = original.clone();
+        legacy_v4["tunnel"] = json!({"transport": "muxv4"});
+        fs::write(&config_path, legacy_v4.to_string()).expect("v4 config");
+        let reverse_error = runtime
+            .replace_profile_config("profile-test", renewed.to_string())
+            .expect_err("v4 to v5 renewal must be rejected");
+        assert!(reverse_error.contains("different Skirk transport version"));
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("unchanged v4 config"),
+            legacy_v4.to_string()
+        );
+        fs::write(&config_path, original.to_string()).expect("restore original config");
 
         runtime
             .replace_profile_config("profile-test", renewed.to_string())

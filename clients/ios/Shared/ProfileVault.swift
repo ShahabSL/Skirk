@@ -35,6 +35,7 @@ enum ProfileVault {
         let oauthClientID: String
         let driveSpace: String
         let driveFolderID: String
+        let transport: String
     }
 
     private static let maxProfileBytes = 256 * 1024
@@ -91,7 +92,11 @@ enum ProfileVault {
         let incomingIdentity = try identity(of: profile)
         if replacing {
             guard let current = try read() else { throw VaultError.missingProfile }
-            guard try identity(of: current) == incomingIdentity else {
+            let currentIdentity = try identity(of: current)
+            guard currentIdentity.transport == incomingIdentity.transport else {
+                throw VaultError.differentTransport
+            }
+            guard currentIdentity == incomingIdentity else {
                 throw VaultError.differentProfile
             }
         } else if try read() != nil {
@@ -116,12 +121,28 @@ enum ProfileVault {
         guard driveSpace == "appDataFolder" || !driveFolderID.isEmpty else {
             throw VaultError.invalidProfile
         }
+        let tunnel: [String: Any]
+        if let value = root["tunnel"], !(value is NSNull) {
+            guard let parsed = value as? [String: Any] else { throw VaultError.invalidProfile }
+            tunnel = parsed
+        } else {
+            tunnel = [:]
+        }
+        let rawTransport: String
+        if let value = tunnel["transport"], !(value is NSNull) {
+            guard let parsed = value as? String else { throw VaultError.invalidProfile }
+            rawTransport = parsed
+        } else {
+            rawTransport = ""
+        }
+        let selectedTransport = rawTransport.trimmingCharacters(in: .whitespacesAndNewlines)
         return ProfileIdentity(
             sessionID: sessionID,
             secret: secret,
             oauthClientID: oauthClientID,
             driveSpace: driveSpace,
-            driveFolderID: driveFolderID
+            driveFolderID: driveFolderID,
+            transport: selectedTransport.isEmpty ? "muxv5" : selectedTransport
         )
     }
 
@@ -291,6 +312,7 @@ enum VaultError: LocalizedError {
     case missingProfile
     case profileAlreadyStored
     case differentProfile
+    case differentTransport
     case invalidClientID
     case invalidRouteMode
     case missingAccessGroup
@@ -302,6 +324,7 @@ enum VaultError: LocalizedError {
         case .missingProfile: "The saved profile is missing. Import the client.skirk again."
         case .profileAlreadyStored: "A profile is already saved. Use Replace profile to update it."
         case .differentProfile: "This config belongs to a different Skirk tunnel. Add it on another device or remove this profile first."
+        case .differentTransport: "This config uses a different Skirk transport version. Remove this profile before importing a different setup."
         case .invalidClientID: "The device identity is invalid."
         case .invalidRouteMode: "The saved Google access route is invalid. Select a route again."
         case .missingAccessGroup: "The app is missing its shared Keychain signing entitlement."

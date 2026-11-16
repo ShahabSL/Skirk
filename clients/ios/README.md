@@ -79,10 +79,10 @@ before import for a self-managed exit. If the tunnel
 reports `invalid_grant`, the same section shows renewal steps, while the main
 connection action changes to Import renewed profile. Its Copy exit renewal
 command button copies only the nonsecret CLI command; Replace profile accepts
-the renewed
-`client.skirk` from Files or pasted text into Keychain. Restart the exit after
-renewing its kit. Neither
-the profile nor its refresh token is placed on the clipboard by the copy button.
+the renewed `client.skirk` from Files or pasted text into Keychain only when it
+uses the same transport version. Remove the saved profile before importing a
+different transport setup. Restart the exit after renewing its kit. Neither the
+profile nor its refresh token is placed on the clipboard by the copy button.
 
 The isolated macOS test package exercises the shared file-import helper with
 Swift 6 concurrency checking, including blocked provider reads, newer-selection

@@ -22,9 +22,18 @@ final class ProfileImportUITests: XCTestCase {
         app.buttons["Replace profile"].tap()
         app.buttons["Paste profile instead"].tap()
         field.tap()
-        field.typeText(try inlineProfile(syntheticProfile(refreshToken: "renewed")))
+        field.typeText(try inlineProfile(syntheticProfile(refreshToken: "renewed", transport: "muxv5")))
         app.buttons["Import updated profile"].tap()
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
+
+        app.buttons["Replace profile"].tap()
+        app.buttons["Paste profile instead"].tap()
+        field.tap()
+        field.typeText(syntheticProfile(refreshToken: "different-transport", transport: "muxv4"))
+        app.buttons["Import updated profile"].tap()
+        XCTAssertTrue(app.staticTexts["This config uses a different Skirk transport version. Remove this profile before importing a different setup."].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(stored.exists)
 
         app.buttons["Replace profile"].tap()
         app.buttons["Paste profile instead"].tap()
@@ -44,15 +53,33 @@ final class ProfileImportUITests: XCTestCase {
         app.alerts.buttons["Remove profile"].tap()
         app.buttons["Paste profile instead"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+
+        field.tap()
+        field.typeText(syntheticProfile(refreshToken: "v4-original", transport: "muxv4"))
+        app.buttons["Import pasted profile"].tap()
+        XCTAssertTrue(stored.waitForExistence(timeout: 5))
+        app.buttons["Replace profile"].tap()
+        app.buttons["Paste profile instead"].tap()
+        field.tap()
+        field.typeText(syntheticProfile(refreshToken: "v5-renewed"))
+        app.buttons["Import updated profile"].tap()
+        XCTAssertTrue(app.staticTexts["This config uses a different Skirk transport version. Remove this profile before importing a different setup."].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(stored.exists)
+
+        app.buttons["Remove profile"].tap()
+        app.alerts.buttons["Remove profile"].tap()
     }
 
-    private func syntheticProfile(refreshToken: String, secret: String = "synthetic-secret") -> String {
-        let values: [String: Any] = [
+    private func syntheticProfile(refreshToken: String, secret: String = "synthetic-secret",
+                                  transport: String? = nil) -> String {
+        var values: [String: Any] = [
             "session_id": "synthetic-session",
             "secret": secret,
             "auth": ["client_id": "synthetic-client", "refresh_token": refreshToken],
             "drive": ["space": "appDataFolder"],
         ]
+        if let transport { values["tunnel"] = ["transport": transport] }
         let data = try! JSONSerialization.data(withJSONObject: values)
         return String(decoding: data, as: UTF8.self)
     }

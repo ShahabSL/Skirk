@@ -46,6 +46,9 @@ data class ClientProfile(
             originalIdentity.oauthClientId == renewedIdentity.oauthClientId) {
             "This config has a different OAuth client ID. Add it as a new profile instead."
         }
+        require(originalIdentity.transport == renewedIdentity.transport) {
+            "This config uses a different Skirk transport version. Add it as a new profile instead."
+        }
         val renewed = fromRawConfig(
             name = name,
             rawConfig = newRawConfig,
