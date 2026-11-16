@@ -385,7 +385,24 @@ func (b *fsHybridLiveBudget) responseDone(r *http.Request, response *http.Respon
 		b.addEventLocked("drive_v2_conditional_write_precondition", response.StatusCode)
 		return
 	}
+	beforeEvents := len(b.Events)
 	b.addEventLocked("unexpected_api_status", response.StatusCode)
+	if len(b.Events) > beforeEvents {
+		event := b.Events[len(b.Events)-1]
+		event["method"] = r.Method
+		event["owned_cleanup"] = cleanup
+		event["google_reason"] = reason
+		event["request_canceled"] = r.Context().Err() != nil
+		switch {
+		case strings.Contains(r.URL.Path, "/google.firestore.v1.Firestore/Listen/channel"):
+			event["route_kind"] = "listen_channel"
+		case strings.Contains(r.URL.Path, "/documents/"):
+			event["route_kind"] = "document"
+		default:
+			event["route_kind"] = "other"
+		}
+		event["webchannel_terminate"] = r.URL.Query().Get("TYPE") == "terminate"
+	}
 	if b.cancel != nil {
 		b.cancel()
 	}
