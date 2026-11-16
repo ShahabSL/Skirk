@@ -59,10 +59,16 @@ other protocol writes. The observed prototype used more writes than this
 idealized minimum. [Firestore quotas](https://firebase.google.com/docs/firestore/quotas),
 [listener/read and no-op billing](https://docs.cloud.google.com/firestore/native/docs/billing-questions).
 
-Per-user projects distribute these **project-level** quotas if every user
-truly owns and configures a separate project. This is a capacity model only:
-it does not show that 200,000 projects, their Google accounts, the exit's
-permissions, live sessions, API backend, or the front will sustain that scale.
+The [bounded zero-limit contrast](quota-project-enforcement-live-2026-11-16.md)
+now demonstrates that `X-Goog-User-Project` selects an **independently enforced**
+Drive project-minute bucket for one pinned-front metadata GET and the
+secondary test grant. The same published OAuth application can therefore be
+used with an operator-owned quota project for that tested method. Per-user
+projects distribute these **project-level** quotas only if each operator
+truly owns and configures a separate project. This still does not show that
+200,000 projects, their Google accounts, the exit's permissions, live
+sessions, API backend, or the front will sustain that scale, and the test did
+not establish numerical method weights or billing attribution.
 It also does not make Firestore's finite free allotment unlimited. The shared
 exit and each user's Google account remain separate bottlenecks requiring
 measurement.

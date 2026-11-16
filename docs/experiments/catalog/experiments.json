@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 225 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment feasibility, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 227 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt and fixed-rendezvous local prototypes, interrupted live comparisons, known-comment feasibility, generated-ID recovery proof, quota-project enforcement, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -22,7 +22,8 @@
     "The local window-eight saturation test shows four streams can fill all 32 inline slots; a fifth uses immutable fallback and bulk remains independent. A stalled first claim holds cumulative receipts for 31 completed claims. This is not a five-stream live latency or 200k-user capacity result.",
     "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win.",
     "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts.",
-    "The known-comment carrier was only a same-OAuth-grant API primitive, overlapped a local full Go suite, and failed at an 8 KiB reply HTTP403 after four 8-record arms; its visible latency is not a CPU-quiet full-tunnel comparison. The 403 reason and cross-account access are unproved."
+    "The known-comment carrier was only a same-OAuth-grant API primitive, overlapped a local full Go suite, and failed at an 8 KiB reply HTTP403 after four 8-record arms; its visible latency is not a CPU-quiet full-tunnel comparison. The 403 reason and cross-account access are unproved.",
+    "The selected-project zero-limit contrast demonstrated independent Drive quota enforcement for one pinned-front metadata GET and one test grant, with final override removal and recovered read. It does not measure method unit weights, billing, sustained rate or 200,000-user capacity."
   ],
   "records": [
     {
@@ -4548,6 +4549,47 @@
         "repocomp/.skirk-runs/comment-thread-probe-20261116-a.json"
       ],
       "revision_or_binary": "5ff8485",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-086",
+      "candidate": "Generated-ID Drive upload retry 409 exact-content proof and 502 recovery",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Local fake route: committed ordinary multipart POST returns synthetic502, retry same ID gets409, known-ID SHA-256 readback; exact 16MiB up+down SOCKS/TLS with40 text echoes",
+      "latency": "No Google speed or latency measured",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Injected path 2 POST+1 GET=105 nominal fake units,840 eight-attempt upper; normal success path no extra API call or hash",
+      "correctness_and_errors": "Exact ID/name/size/SHA-256 required; same-size wrong body rejected; absent checksum/404 max3 bounded GETs then fail closed; full local files/text exact, 502/409 visible, no guard denial",
+      "cleanup": "Local writers joined and owned objects removed; unrelated sentinel retained; no Cloud resource",
+      "decision": "Product correctness repair; not proof that failed FSH2 live arms recovered, nor a transport speed win",
+      "source_documents": [
+        "docs/experiments/generated-id-upload-recovery-and-proof-2026-11-16.md"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "b50ec3d",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-087",
+      "candidate": "Header-selected Drive quota-project zero-limit enforcement contrast",
+      "evidence_level": "live_api_primitive_controlled_enforcement",
+      "workload": "Same shahabpre refresh grant, pinned front, exact app-owned folder metadata GET fields=id; disposable selected project limit 1M→0→default1M; publisher project unchanged",
+      "latency": "Rejection50–52ms; baseline exact reads139/95ms and restored exact188ms, not a tunnel latency comparison",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Eight read-only Drive GETs total; no unit-weight telemetry or billing proof",
+      "correctness_and_errors": "Baseline A/B200; zero-limit publisher200,A403 RATE_LIMIT_EXCEEDED twice,publisher200; first post-restore A403 then A200 after propagation; only one method/principal",
+      "cleanup": "Cloud Console override removed; default 1M units/min and no override indicator visible; final A exact GET200; no Drive files created/deleted",
+      "decision": "Independent selected-project bucket enforcement demonstrated narrowly. Supports operator-owned quota project direction, not 200k capacity, numeric unit weights or billing attribution.",
+      "source_documents": [
+        "docs/experiments/quota-project-enforcement-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/quota-enforcement-baseline-20261116.json",
+        "repocomp/.skirk-runs/quota-enforcement-challenged-20261116.json",
+        "repocomp/.skirk-runs/quota-enforcement-restored-20261116.json",
+        "repocomp/.skirk-runs/quota-enforcement-restored-20261116-b.json"
+      ],
+      "revision_or_binary": "b50ec3d plus test-only probe",
       "live_comparable": false
     }
   ]
