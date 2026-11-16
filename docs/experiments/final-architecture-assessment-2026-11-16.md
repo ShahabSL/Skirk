@@ -1,9 +1,9 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 238 documented findings,
-including 69 marked live comparable. A finding can be an API primitive,
+The [catalog](catalog/experiments.json) contains 239 documented findings,
+including 70 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
-not 238 equally controlled protocol races. A universal throughput or latency
+not 239 equally controlled protocol races. A universal throughput or latency
 limit has **not** been demonstrated. The exact current v5 versus clean `main`
 cohorts are [reported separately](current-v5-vs-main-live-2026-11-16.md):
 15 of 16 mixed arms completed, but two complete upload orders disagreed on
