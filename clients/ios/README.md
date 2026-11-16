@@ -52,9 +52,11 @@ late result. Canceling a provider read is cooperative: security-scoped access
 is released when its actual I/O finishes, while the UI immediately allows
 another selection or pasted profile. A new import defaults
 to Google front, which sends TLS SNI to `www.google.com` even if an older
-profile contains a Direct route. "Use profile route" deliberately follows the
-imported config. The explicit Direct Google choice connects to Drive API hosts
-and may be unavailable in some regions. An explicit route choice is preserved
+profile contains a Direct route. The explicit Direct Google choice connects to
+Drive API hosts and may be unavailable in some regions. Existing installations
+that previously selected the legacy imported-profile route retain its behavior;
+the app labels the resolved imported route so a Direct choice is visible, then
+offers Google front and Direct Google as the explicit new choices. An explicit route choice is preserved
 when a renewed profile is imported. It is saved in the shared Keychain on a
 signed iPhone and applies on the next connection. Simulator builds store only
 this nonsecret preference in app defaults; the OAuth profile stays in the
@@ -63,9 +65,11 @@ A profile whose OAuth
 grant expires needs a renewed profile imported again; publishing the Google
 OAuth app avoids the seven-day Testing grant limit but cannot guarantee an
 indefinite grant.
-The Google authorization section reports that a guaranteed refresh-token
-expiry date and Cloud publishing status are unavailable from the saved profile. It includes
-an owner guide for personal OAuth setup and Production publishing. If the tunnel
+After import, Google authorization starts at “not checked yet” and directs the
+user to Connect, then Test exit. A completed test shows its result and local
+time for this session. It cannot guarantee future refresh-token validity or
+show the Cloud publishing status. The optional owner guide is also available
+before import for a self-managed exit. If the tunnel
 reports `invalid_grant`, the same section shows renewal steps, while the main
 connection action changes to Import renewed profile. Its Copy exit renewal
 command button copies only the nonsecret CLI command; Replace profile accepts

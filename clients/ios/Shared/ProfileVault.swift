@@ -7,11 +7,13 @@ enum GoogleRouteMode: String, CaseIterable, Identifiable, Sendable {
     case direct = "direct"
     case profile = "profile"
 
+    static let choices: [GoogleRouteMode] = [.front, .direct]
+
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .profile: "Use profile route"
+        case .profile: "Imported profile route"
         case .front: "Google front"
         case .direct: "Direct Google"
         }
@@ -19,7 +21,7 @@ enum GoogleRouteMode: String, CaseIterable, Identifiable, Sendable {
 
     var detail: String {
         switch self {
-        case .profile: "Uses the route in your imported profile. New Skirk profiles use www.google.com for TLS SNI."
+        case .profile: "Uses the route saved in this profile. Select Google front or Direct Google to choose explicitly."
         case .front: "Uses www.google.com for TLS SNI where direct Google Drive access is unavailable."
         case .direct: "Connects to Google Drive API hosts directly where they are reachable."
         }
@@ -101,22 +103,8 @@ enum ProfileVault {
     }
 
     private static func identity(of profile: String) throws -> ProfileIdentity {
-        guard profile.utf8.count <= maxProfileBytes else { throw VaultError.invalidProfile }
-        let json: Data
-        if profile.hasPrefix("skirk:") {
-            let encoded = String(profile.dropFirst("skirk:".count))
-                .replacingOccurrences(of: "-", with: "+")
-                .replacingOccurrences(of: "_", with: "/")
-            let padded = encoded + String(repeating: "=", count: (4 - encoded.count % 4) % 4)
-            guard let compressed = Data(base64Encoded: padded) else { throw VaultError.invalidProfile }
-            json = try inflateGzip(compressed)
-        } else if profile.hasPrefix("{") {
-            json = Data(profile.utf8)
-        } else {
-            throw VaultError.invalidProfile
-        }
-        guard let root = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any],
-              let sessionID = root["session_id"] as? String, !sessionID.isEmpty,
+        let root = try profileObject(profile)
+        guard let sessionID = root["session_id"] as? String, !sessionID.isEmpty,
               let secret = root["secret"] as? String, !secret.isEmpty,
               let auth = root["auth"] as? [String: Any],
               let oauthClientID = auth["client_id"] as? String, !oauthClientID.isEmpty,
@@ -135,6 +123,41 @@ enum ProfileVault {
             driveSpace: driveSpace,
             driveFolderID: driveFolderID
         )
+    }
+
+    // A legacy saved "profile" selection remains operational, but the UI
+    // names its actual imported route so a Direct route is never hidden.
+    static func importedRouteTitle(_ profile: String) -> String? {
+        guard let root = try? profileObject(profile) else { return nil }
+        let mode = ((root["route"] as? [String: Any])?["mode"] as? String) ?? "google_front_pinned"
+        switch mode {
+        case "direct": return "Direct Google (imported profile)"
+        case "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned":
+            return "Google front (imported profile)"
+        case "real_pinned": return "Pinned Google API (imported profile)"
+        default: return "Custom route: \(mode)"
+        }
+    }
+
+    private static func profileObject(_ profile: String) throws -> [String: Any] {
+        guard profile.utf8.count <= maxProfileBytes else { throw VaultError.invalidProfile }
+        let json: Data
+        if profile.hasPrefix("skirk:") {
+            let encoded = String(profile.dropFirst("skirk:".count))
+                .replacingOccurrences(of: "-", with: "+")
+                .replacingOccurrences(of: "_", with: "/")
+            let padded = encoded + String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+            guard let compressed = Data(base64Encoded: padded) else { throw VaultError.invalidProfile }
+            json = try inflateGzip(compressed)
+        } else if profile.hasPrefix("{") {
+            json = Data(profile.utf8)
+        } else {
+            throw VaultError.invalidProfile
+        }
+        guard let root = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any] else {
+            throw VaultError.invalidProfile
+        }
+        return root
     }
 
     private static func inflateGzip(_ compressed: Data) throws -> Data {

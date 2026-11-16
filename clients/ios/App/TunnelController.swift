@@ -1,6 +1,12 @@
 import Foundation
 import NetworkExtension
 
+enum ExitProbeVerification: Sendable {
+    case notChecked
+    case verified
+    case unverified
+}
+
 private final class ExitProbeReply: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Data?, Never>?
@@ -30,8 +36,11 @@ final class TunnelController: ObservableObject {
     @Published private(set) var hasProfile = false
     @Published private(set) var isConnecting = false
     @Published private(set) var routeMode: GoogleRouteMode = .front
+    @Published private(set) var importedRouteTitle: String?
     @Published private(set) var googleAuthorizationNeedsRenewal = false
     @Published private(set) var exitProbeMessage: String?
+    @Published private(set) var exitProbeVerification: ExitProbeVerification = .notChecked
+    @Published private(set) var exitProbeAt: Date?
     @Published private(set) var isTestingExit = false
     @Published private(set) var connectionError: String?
     @Published var message: String?
@@ -45,8 +54,25 @@ final class TunnelController: ObservableObject {
     private var manager: NETunnelProviderManager?
 
     init() {
-        hasProfile = (try? ProfileVault.read()) != nil
+        let savedProfile = try? ProfileVault.read()
+        hasProfile = savedProfile != nil
+        importedRouteTitle = savedProfile.flatMap(ProfileVault.importedRouteTitle)
         routeMode = (try? ProfileVault.routeMode()) ?? .front
+    }
+
+    var routeTitle: String {
+        routeMode == .profile ? (importedRouteTitle ?? "Imported profile route") : routeMode.title
+    }
+
+    var routeDetail: String {
+        if routeMode == .profile {
+            return "Uses \(routeTitle). Choose Google front or Direct Google to set this device's route explicitly."
+        }
+        return routeMode.detail
+    }
+
+    var routeChoices: [GoogleRouteMode] {
+        routeMode == .profile ? [.profile] + GoogleRouteMode.choices : GoogleRouteMode.choices
     }
 
     var statusText: String {
@@ -73,6 +99,9 @@ final class TunnelController: ObservableObject {
         do {
             try ProfileVault.saveRouteMode(mode)
             routeMode = mode
+            exitProbeMessage = nil
+            exitProbeVerification = .notChecked
+            exitProbeAt = nil
             connectionError = nil
             message = nil
         } catch {
@@ -88,10 +117,13 @@ final class TunnelController: ObservableObject {
         do {
             try ProfileVault.save(value, replacing: replacing)
             hasProfile = true
+            importedRouteTitle = ProfileVault.importedRouteTitle(value)
             googleAuthorizationNeedsRenewal = false
             authorizationCheckGeneration &+= 1
             exitProbeGeneration &+= 1
             exitProbeMessage = nil
+            exitProbeVerification = .notChecked
+            exitProbeAt = nil
             isTestingExit = false
             connectionError = nil
             message = nil
@@ -109,10 +141,13 @@ final class TunnelController: ObservableObject {
             try ProfileVault.remove()
             hasProfile = false
             routeMode = .front
+            importedRouteTitle = nil
             googleAuthorizationNeedsRenewal = false
             authorizationCheckGeneration &+= 1
             exitProbeGeneration &+= 1
             exitProbeMessage = nil
+            exitProbeVerification = .notChecked
+            exitProbeAt = nil
             isTestingExit = false
             connectionError = nil
             message = nil
@@ -140,6 +175,8 @@ final class TunnelController: ObservableObject {
         authorizationCheckGeneration &+= 1
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
+        exitProbeVerification = .notChecked
+        exitProbeAt = nil
         isTestingExit = false
         connectionError = nil
         message = nil
@@ -174,6 +211,8 @@ final class TunnelController: ObservableObject {
         authorizationCheckGeneration &+= 1
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
+        exitProbeVerification = .notChecked
+        exitProbeAt = nil
         isTestingExit = false
         connectionError = nil
         manager?.connection.stopVPNTunnel()
@@ -187,6 +226,8 @@ final class TunnelController: ObservableObject {
             if previous != .connected {
                 exitProbeGeneration &+= 1
                 exitProbeMessage = nil
+                exitProbeVerification = .notChecked
+                exitProbeAt = nil
                 isTestingExit = false
             }
             intentionalDisconnect = false
@@ -198,6 +239,8 @@ final class TunnelController: ObservableObject {
         if previous == .connected {
             exitProbeGeneration &+= 1
             exitProbeMessage = nil
+            exitProbeVerification = .notChecked
+            exitProbeAt = nil
             isTestingExit = false
         }
         // A cold launch can expose an old provider error after the profile was replaced.
@@ -226,6 +269,8 @@ final class TunnelController: ObservableObject {
         let generation = exitProbeGeneration
         isTestingExit = true
         exitProbeMessage = nil
+        exitProbeVerification = .notChecked
+        exitProbeAt = nil
         defer {
             if exitProbeGeneration == generation { isTestingExit = false }
         }
@@ -244,12 +289,16 @@ final class TunnelController: ObservableObject {
         }
         guard status == .connected, exitProbeGeneration == generation else { return }
         let response = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        exitProbeAt = Date()
         if response.hasPrefix("verified:"), let milliseconds = Int64(response.dropFirst("verified:".count)),
            milliseconds >= 0 {
+            exitProbeVerification = .verified
             exitProbeMessage = "Exit responded through Google Drive in \(milliseconds) ms. This is one sample; website access is not checked."
         } else if response == "unverified" {
+            exitProbeVerification = .unverified
             exitProbeMessage = "Exit could not be verified. It may be offline, older, or need Google authorization renewed. Ask the exit owner to check its status."
         } else {
+            exitProbeVerification = .unverified
             exitProbeMessage = "The exit test could not run. Check that the local client is still connected."
         }
     }
