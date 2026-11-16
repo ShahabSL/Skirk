@@ -1936,7 +1936,7 @@ func TestMuxPendingFramesCapBytesAndCloseOnOverflow(t *testing.T) {
 	}
 }
 
-func TestMuxPendingFramesGlobalOverflowClosesAllPendingStreams(t *testing.T) {
+func TestMuxPendingFramesGlobalOverflowPreservesOtherStreams(t *testing.T) {
 	ctx := context.Background()
 	mux := &driveMux{
 		t:            &Tunnel{},
@@ -1960,19 +1960,22 @@ func TestMuxPendingFramesGlobalOverflowClosesAllPendingStreams(t *testing.T) {
 
 	mux.queuePendingFrame(ctx, muxFrame{Kind: muxFrameData, ClientID: keyC.ClientID, RunID: keyC.RunID, StreamID: keyC.StreamID, Seq: 1, Payload: []byte("c")})
 
-	if got := mux.pendingTotalBytes; got != 0 {
-		t.Fatalf("pending total bytes = %d, want 0", got)
+	if got := mux.pendingTotalBytes; got != muxPendingGlobalBytes {
+		t.Fatalf("pending total bytes = %d, want existing budget %d", got, muxPendingGlobalBytes)
 	}
-	if len(mux.pending) != 0 {
-		t.Fatalf("pending streams = %d, want 0", len(mux.pending))
+	if len(mux.pending) != 2 {
+		t.Fatalf("pending streams = %d, want 2 surviving streams", len(mux.pending))
 	}
-	if len(mux.pendingBytes) != 0 {
-		t.Fatalf("pending byte streams = %d, want 0", len(mux.pendingBytes))
+	if len(mux.pendingBytes) != 2 {
+		t.Fatalf("pending byte streams = %d, want 2 surviving streams", len(mux.pendingBytes))
 	}
-	for _, key := range []muxStreamKey{keyA, keyB, keyC} {
-		if !mux.isClosedStream(key) {
-			t.Fatalf("stream %d was not terminal-closed after global pending overflow", key.StreamID)
+	for _, key := range []muxStreamKey{keyA, keyB} {
+		if mux.isClosedStream(key) || len(mux.pending[key]) != 1 {
+			t.Fatalf("unrelated stream %d was disturbed by global pending overflow", key.StreamID)
 		}
+	}
+	if !mux.isClosedStream(keyC) || len(mux.pending[keyC]) != 0 {
+		t.Fatal("offending stream was not closed and released")
 	}
 }
 

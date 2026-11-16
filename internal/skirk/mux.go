@@ -5073,10 +5073,11 @@ func (m *driveMux) queuePendingFrame(ctx context.Context, frame muxFrame) {
 	case m.pendingTotalBytes+bytes > muxPendingGlobalBytes:
 		overflow = true
 		overflowReason = "global"
-		overflowKeys = m.dropAllPendingFramesLocked()
-		if !muxStreamKeyIn(overflowKeys, key) {
-			overflowKeys = append(overflowKeys, key)
-		}
+		// A global cap must not reset unrelated streams that were already
+		// waiting for their OPEN. Reject the stream that attempted to grow
+		// the full budget and release only its own pending frames.
+		m.dropPendingFramesLocked(key)
+		overflowKeys = []muxStreamKey{key}
 	default:
 		m.pending[key] = append(frames, frame)
 		m.pendingBytes[key] = pendingBytes + bytes
@@ -5137,41 +5138,6 @@ func (m *driveMux) dropPendingFramesLocked(key muxStreamKey) []muxFrame {
 		m.pendingTotalBytes = 0
 	}
 	return frames
-}
-
-func (m *driveMux) dropAllPendingFramesLocked() []muxStreamKey {
-	keysSeen := map[muxStreamKey]struct{}{}
-	keys := make([]muxStreamKey, 0, len(m.pending))
-	for key := range m.pending {
-		if _, ok := keysSeen[key]; ok {
-			continue
-		}
-		keysSeen[key] = struct{}{}
-		keys = append(keys, key)
-	}
-	for key := range m.pendingBytes {
-		if _, ok := keysSeen[key]; ok {
-			continue
-		}
-		keysSeen[key] = struct{}{}
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].ClientID != keys[j].ClientID {
-			return keys[i].ClientID < keys[j].ClientID
-		}
-		if keys[i].RunID != keys[j].RunID {
-			return keys[i].RunID < keys[j].RunID
-		}
-		return keys[i].StreamID < keys[j].StreamID
-	})
-	m.pending = map[muxStreamKey][]muxFrame{}
-	m.pendingBytes = map[muxStreamKey]int{}
-	m.pendingFirstSeen = map[muxStreamKey]time.Time{}
-	m.pendingLastRepair = map[muxStreamKey]time.Time{}
-	m.pendingRepairs = map[muxStreamKey]int{}
-	m.pendingTotalBytes = 0
-	return keys
 }
 
 func (m *driveMux) maintainPendingOpens(ctx context.Context) bool {
@@ -5335,15 +5301,6 @@ func muxPendingOpenRepairIntervalFor(repairs int) time.Duration {
 		return muxPendingOpenRepairInterval
 	}
 	return muxPendingOpenRepairSlow
-}
-
-func muxStreamKeyIn(keys []muxStreamKey, key muxStreamKey) bool {
-	for _, existing := range keys {
-		if existing == key {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *driveMux) flushPendingFrames(ctx context.Context, stream *muxStream) {
