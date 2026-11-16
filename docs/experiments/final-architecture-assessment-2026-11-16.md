@@ -1,20 +1,21 @@
 # Skirk architecture assessment — November 16, 2026
 
-The [catalog](catalog/experiments.json) contains 241 documented findings,
-including 70 marked live comparable. A finding can be an API primitive,
+The [catalog](catalog/experiments.json) contains 243 documented findings,
+including 71 marked live comparable. A finding can be an API primitive,
 interrupted run, deterministic fault model, or full tunnel cohort; these are
-not 241 equally controlled protocol races. A universal throughput or latency
+not 243 equally controlled protocol races. A universal throughput or latency
 limit has **not** been demonstrated. The exact current v5 versus clean `main`
 cohorts are [reported separately](current-v5-vs-main-live-2026-11-16.md):
-15 of 16 mixed arms completed, but two complete upload orders disagreed on
-the sign of both throughput and text p95. No stable product speed win emerged.
+23 of 24 mixed arms completed. The final two cohorts favored v5 in both
+directions, but earlier complete upload orders disagreed on the sign of both
+throughput and text p95. No stable product speed win emerged.
 
 ## Comparisons that answer different questions
 
 | Carrier and workload | Scheduled short-message p95 | File rate, decimal Mb/s | Quota and decision |
 | --- | --- | --- | --- |
 | Earlier frozen async package vs clean `main`, HTTP-serial 16 MiB mixed | Download 6.701 → 5.512 s (17.7% lower); upload 7.955 → 4.635 s (41.7% lower) | Download 14.416 → 13.203 (8.4% lower); upload 12.653 → 12.449 (1.6% lower) | Local estimated units about 9% higher. This is a trade, not a speed sweep. [Evidence](transport-results-round2-2026-11-15.md). |
-| Exact current v5 vs clean `main`, persistent 16 MiB + 20 pipelined echoes | Download completed cohort 6.610 → 6.057 s; upload orders 9.214 → 6.469 s **and** 6.772 → 6.806 s | Download 18.774 → 20.884; upload orders 11.955 → 15.264 **and** 17.558 → 16.175 | Three 4/4 clean cohorts, one 3/4 interrupted by four main upload timeouts. High variation; no stable product winner. [Evidence](current-v5-vs-main-live-2026-11-16.md). |
+| Exact current v5 vs clean `main`, persistent 16 MiB + 20 pipelined echoes | Final inbound-cap build: download 6.785 → 6.135 s; upload 8.469 → 7.628 s | Final build: download 20.779 → 26.744; upload 16.363 → 19.465 | Five 4/4 clean cohorts, one 3/4 interrupted by four main upload timeouts. Earlier upload cohorts disagreed; no stable product winner. [All results](current-v5-vs-main-live-2026-11-16.md). |
 | Separate exact default vs `main` 16 MiB recheck | 13.597 → 16.247 s (19.5% higher) | 14.220 → 12.418 (12.7% lower) | A negative cohort prevents calling the earlier async result stable. [Evidence](default-final-vs-main-2026-11-15.md). |
 | Test-only Drive v2 priority window 8 vs window 4, four-arm same-binary pipelined 16 MiB each way + 41 echoes | Download 2.223 → 1.455 s (34.6% lower); upload 2.140 → 1.498 s (30.0% lower) | Download 24.301 → 24.406 (0.4% higher); upload 37.101 → 35.737 (3.7% lower) | Conservative whole-arm reservation 232,400 → 208,360 (10.3% lower); seven/eight physical fallbacks → zero. **Best completed Drive-only text-tail research setting for that workload, not a product or `main` comparison.** [Evidence](drive-v2-priority-latency-attribution-2026-11-16.md). |
 | Test-only Firestore priority plus Drive bulk vs Drive control, best of two paired pipelined cohorts | Download 2.117 → 0.414 s; upload 4.461 → 0.378 s | Download 18.154 → 35.491; upload 28.483 → 30.136 | All files/echoes verified, but each hybrid arm had a shutdown HTTP 400. Firestore's finite free write and outbound allowance disqualifies a shared 200,000-user free default. [Evidence](pipelined-live-comparisons-2026-11-16.md). |
@@ -81,6 +82,12 @@ records as **file content at 200 units** after the metadata probe, so it
 cannot inherit the primitive's five-unit metadata-only economics. It also
 needs dynamic-client bootstrap listing, bounded head state, durable rotation,
 and carrier-owned cleanup. It remains on a separate research branch.
+
+An [isolated fairness-reserve candidate](inbound-fairness-reserve-test-only-2026-11-16.md)
+proved that a saturated pair of receive budgets can reset a new draining
+stream: the unchanged product test failed and the reserve candidate passed.
+The reserve can still fill and may reset legitimate large streams earlier, so
+it remains test-only.
 
 The next discriminating architecture experiment is a **metadata-only**
 known-ID priority queue with authenticated bounded ID credit exchange,

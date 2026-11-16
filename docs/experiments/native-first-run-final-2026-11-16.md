@@ -27,8 +27,8 @@ that a Google grant expired.
 | Surface | Exact local evidence | Limit |
 | --- | --- | --- |
 | Android | Root-source `:app:testDebugUnitTest :app:assembleDebug` passed with NDK `27.1.12297006`; first-run screenshots visually checked at 320 and 411 dp, including enlarged font; a dedicated emulator was removed afterward. | Emulator layout and build do not prove every physical device or network. |
-| iOS | Fresh dedicated iPhone Simulator first-run, import lifecycle and route-choice UI tests passed; root-source selected UI suite exited zero; app and Packet Tunnel extension Simulator build passed. | Simulator UI/build cannot execute the packet tunnel end to end on physical iPhone. |
-| macOS/Windows desktop | Snapshot 5/5 and desktop build passed locally; GitHub Smoke matrix includes Windows/macOS/Linux checks at earlier source revisions. | A distributable notarized macOS release is still unverified; the current head awaits its own CI run. |
+| iOS | Fresh dedicated iPhone Simulator first-run, import lifecycle and route-choice UI tests passed; root-source selected UI suite exited zero; app and Packet Tunnel extension Simulator build passed again after the final inbound-source change. | Simulator UI/build cannot execute the packet tunnel end to end on physical iPhone. |
+| macOS/Windows desktop | Snapshot 5/5 and desktop build passed locally; [final-source Smoke run](https://github.com/ShahabSL/Skirk/actions/runs/43823800329) passed 14/14 jobs, including Windows x64 and macOS x64/ARM64 packaging. | A distributable notarized macOS release is still unverified. |
 
 These are onboarding and status changes, not measured transport speedups. The
 private screenshots and Simulator artifacts are under `.skirk-runs/` and are
