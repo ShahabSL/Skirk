@@ -125,11 +125,13 @@ const (
 	muxInteractionEpochBytes       = 16 * 1024
 	muxInteractionEpochMinInterval = 200 * time.Millisecond
 	muxInteractionWaitTTL          = time.Second
+	muxInteractionWaiterMax        = 128
 )
 
 type muxInteractionWaiter struct {
 	stream   *muxStream
 	lastSeen time.Time
+	attempts uint8
 }
 
 type muxFrame struct {
@@ -1317,6 +1319,9 @@ func (m *driveMux) refillSparsePriorityLocked(now time.Time) {
 }
 
 func (m *driveMux) claimInteractionPriorityAt(stream *muxStream, now time.Time) bool {
+	if stream == nil {
+		return false
+	}
 	m.sparsePriorityMu.Lock()
 	defer m.sparsePriorityMu.Unlock()
 	m.refillSparsePriorityLocked(now)
@@ -1333,16 +1338,40 @@ func (m *driveMux) claimInteractionPriorityAt(stream *muxStream, now time.Time) 
 		delete(m.interactionWaitIndex, waiter.stream)
 	}
 	if element := m.interactionWaitIndex[stream]; element != nil {
-		element.Value = muxInteractionWaiter{stream: stream, lastSeen: now}
+		waiter := element.Value.(muxInteractionWaiter)
+		waiter.lastSeen = now
+		if waiter.attempts < 2 {
+			waiter.attempts++
+		}
+		element.Value = waiter
 	} else {
-		m.interactionWaitIndex[stream] = m.interactionWaiters.PushBack(muxInteractionWaiter{stream: stream, lastSeen: now})
+		m.interactionWaitIndex[stream] = m.interactionWaiters.PushBack(muxInteractionWaiter{stream: stream, lastSeen: now, attempts: 1})
+		if m.interactionWaiters.Len() > muxInteractionWaiterMax {
+			oldest := m.interactionWaiters.Front()
+			m.interactionWaiters.Remove(oldest)
+			delete(m.interactionWaitIndex, oldest.Value.(muxInteractionWaiter).stream)
+		}
 	}
 	front := m.interactionWaiters.Front()
-	if front == nil || front.Value.(muxInteractionWaiter).stream != stream || m.sparsePriorityTokens == 0 {
+	if front == nil || m.sparsePriorityTokens == 0 {
+		return false
+	}
+	if first := front.Value.(muxInteractionWaiter); first.stream != stream {
+		// A rejected payload has already gone to the normal lane. Do not let
+		// one-shot or stopped waiters strand a refilled priority token.
+		stale := now.Sub(first.lastSeen) > 2*muxSparsePriorityGlobalRefill
+		recentGrant := !stream.lastInteractionAt.IsZero() && !now.Before(stream.lastInteractionAt) &&
+			now.Sub(stream.lastInteractionAt) <= muxInteractionWaitTTL
+		if !stale && (first.attempts > 1 || recentGrant) {
+			return false
+		}
+	}
+	element := m.interactionWaitIndex[stream]
+	if element == nil {
 		return false
 	}
 	m.sparsePriorityTokens--
-	m.interactionWaiters.Remove(front)
+	m.interactionWaiters.Remove(element)
 	delete(m.interactionWaitIndex, stream)
 	return true
 }
