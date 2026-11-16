@@ -83,6 +83,9 @@ type fsHybridLiveRun struct {
 	cm, em                         *driveMux
 	stores                         []*fsHybridPriorityStore
 	carriers                       []*fsHybridGoogleCarrier
+	v2Carriers                     []*driveV2PriorityCarrier
+	v2Metadata                     []driveV2LiveTarget
+	v2Cleanup                      []driveV2LiveEndpoint
 	drives                         []*DriveStore
 	activeGates                    []*fsHybridLiveGate
 	cleanupDrives                  []*DriveStore
@@ -162,7 +165,7 @@ func (r *fsHybridLiveRun) loadDrive(name, tokenFile string, cleanup bool) (*Driv
 	// The Drive-only control uses the proven one-list sparse discovery path.
 	// The hybrid retains the local p0-first path so its Watch notification
 	// cannot wait behind a normal Drive list request.
-	cfg.Drive.AdaptiveMuxDiscovery = r.settings.Mode == "drive"
+	cfg.Drive.AdaptiveMuxDiscovery = r.settings.Mode == "drive" || r.settings.Mode == "drive_v2"
 	cfg.Drive.InlineSmallObjects = true
 	cfg.Drive.NormalListPageSize = 100
 	cfg.Drive.SeparateUploadPool = !cleanup
@@ -205,11 +208,17 @@ func (r *fsHybridLiveRun) setup() error {
 	var epoch [16]byte
 	copy(epoch[:], epochRaw)
 	r.prefixes = []string{muxDirPrefix(sid, DirectionUp, r.settings.ClientID, r.settings.RunID), muxDirPrefix(sid, DirectionDown, r.settings.ClientID, r.settings.RunID)}
-	ledger := map[string]any{"pid": os.Getpid(), "mode": r.settings.Mode, "drive_prefixes": r.prefixes, "database": r.settings.Database, "documents": []string{r.settings.UpDocument, r.settings.DownDocument}, "consumed": true, "firestore_cleanup_external": r.settings.Mode == "hybrid"}
+	ledger := map[string]any{"pid": os.Getpid(), "mode": r.settings.Mode, "workload": r.settings.Workload, "drive_prefixes": r.prefixes, "database": r.settings.Database, "documents": []string{r.settings.UpDocument, r.settings.DownDocument}, "consumed": true, "firestore_cleanup_external": r.settings.Mode == "hybrid"}
 	if err = fsHybridLiveExclusiveJSON(filepath.Join(r.dir, "recovery-resources.json"), ledger); err != nil {
 		return err
 	}
 	var clientData, exitData BlobStore = client, exit
+	if r.settings.Mode == "drive_v2" {
+		if err = r.setupDriveV2(client, exit, cc, ec, sid, epoch); err != nil {
+			return err
+		}
+		clientData, exitData = r.stores[0], r.stores[1]
+	}
 	if r.settings.Mode == "hybrid" {
 		token, e := fsHybridLiveToken(r.dir, r.settings.OwnerTokenFile)
 		if e != nil {
@@ -567,6 +576,9 @@ func (r *fsHybridLiveRun) stop() error {
 	for _, carrier := range r.carriers {
 		stopped = errors.Join(stopped, carrier.Close())
 	}
+	for _, carrier := range r.v2Carriers {
+		stopped = errors.Join(stopped, carrier.Close())
+	}
 	joined := make(chan struct{})
 	go func() { r.workers.Wait(); close(joined) }()
 	select {
@@ -596,6 +608,9 @@ func (r *fsHybridLiveRun) stop() error {
 	r.joined = (r.cm == nil || r.cm.active.Load() == 0 && r.cm.t.activeStreams.Load() == 0) && (r.em == nil || r.em.active.Load() == 0 && r.em.t.activeStreams.Load() == 0)
 	for _, carrier := range r.carriers {
 		r.joined = r.joined && carrier.WritersJoined()
+	}
+	for _, carrier := range r.v2Carriers {
+		r.joined = r.joined && carrier.Snapshot().Joined == 1
 	}
 	if r.origin != nil {
 		r.origin.Close()
@@ -672,6 +687,9 @@ func (r *fsHybridLiveRun) cleanupDrive() error {
 		}
 		deleted = append(deleted, id)
 	}
+	if err = r.deleteDriveV2Metadata(ctx); err != nil {
+		return err
+	}
 	check := func() error {
 		remaining, e := scan()
 		if e != nil || len(remaining) > 0 {
@@ -683,7 +701,7 @@ func (r *fsHybridLiveRun) cleanupDrive() error {
 				return errFSHybridIntegrity
 			}
 		}
-		return nil
+		return r.verifyDriveV2Absent(ctx)
 	}
 	if err = check(); err != nil {
 		return err
@@ -715,6 +733,14 @@ func TestLivePinnedFirestoreHybrid(t *testing.T) {
 	if err != nil {
 		t.Fatal("private live settings precondition failed")
 	}
+	if settings.Mode != "drive" && settings.Mode != "hybrid" {
+		t.Fatal("Firestore entry requires its original modes")
+	}
+	runPinnedHybridLiveArm(t, dir, settings)
+}
+
+func runPinnedHybridLiveArm(t *testing.T, dir string, settings fsHybridLiveSettings) {
+	t.Helper()
 	cohort, err := fsHybridLiveBeginCohort(settings)
 	if err != nil {
 		t.Fatal("fresh serial cohort precondition failed")
@@ -744,7 +770,14 @@ func TestLivePinnedFirestoreHybrid(t *testing.T) {
 	runErr := r.setup()
 	if runErr == nil {
 		j.write(map[string]any{"phase": "ready"})
-		runErr = r.workload()
+		if settings.Workload == "tls_pipeline" {
+			runErr = r.pipelinedWorkload(false)
+		} else {
+			runErr = r.workload()
+		}
+	}
+	if outcomeErr := fsHybridLiveExclusiveJSON(filepath.Join(dir, "workload-outcome.json"), map[string]any{"mode": settings.Mode, "workload": settings.Workload, "arm_id": settings.ArmID, "workload_ok": runErr == nil, "rows": j.rows, "drive_guard": r.driveBudget.snapshot(), "origin_counts": map[string]int64{"gets": r.gets.Load(), "posts": r.posts.Load(), "text_echoes": r.texts.Load(), "bad": r.bad.Load()}}); outcomeErr != nil {
+		runErr = errors.Join(runErr, outcomeErr)
 	}
 	stopErr := r.stop()
 	var cleanupErr error
@@ -767,6 +800,10 @@ func TestLivePinnedFirestoreHybrid(t *testing.T) {
 	for _, carrier := range r.carriers {
 		carriers = append(carriers, map[string]any{"calls": carrier.Snapshot(), "watch": carrier.WatchSnapshot()})
 	}
+	v2Carriers := make([]driveV2PriorityStats, 0, len(r.v2Carriers))
+	for _, carrier := range r.v2Carriers {
+		v2Carriers = append(v2Carriers, carrier.Snapshot())
+	}
 	driveQuota := make([]DriveQuotaSnapshot, 0, len(r.drives))
 	for _, drive := range r.drives {
 		driveQuota = append(driveQuota, drive.QuotaSnapshot())
@@ -775,13 +812,13 @@ func TestLivePinnedFirestoreHybrid(t *testing.T) {
 	if j.err != nil {
 		runErr = errors.Join(runErr, errFSHybridBounds)
 	}
-	report := map[string]any{"mode": settings.Mode, "arm_id": settings.ArmID, "workload_ok": runErr == nil, "stop_ok": stopErr == nil, "writers_joined": r.joined, "drive_cleanup_verified": cleanupErr == nil, "firestore_cleanup_required": settings.Mode == "hybrid", "rows": j.rows, "drive_guard": r.driveBudget.snapshot(), "firestore_guard": r.fsBudget.snapshot(), "stores": stores, "carriers": carriers, "drive_quotas": driveQuota, "origin_counts": map[string]int64{"gets": r.gets.Load(), "posts": r.posts.Load(), "text_echoes": r.texts.Load(), "bad": r.bad.Load()}, "private_log": bounded.stats(), "route": "google_front_pinned", "sni": "www.google.com", "product_credentials_changed": false, "experimental": true}
+	report := map[string]any{"mode": settings.Mode, "workload": settings.Workload, "arm_id": settings.ArmID, "workload_ok": runErr == nil, "stop_ok": stopErr == nil, "writers_joined": r.joined, "drive_cleanup_verified": cleanupErr == nil, "firestore_cleanup_required": settings.Mode == "hybrid", "rows": j.rows, "drive_guard": r.driveBudget.snapshot(), "firestore_guard": r.fsBudget.snapshot(), "stores": stores, "carriers": carriers, "drive_v2_carriers": v2Carriers, "drive_quotas": driveQuota, "origin_counts": map[string]int64{"gets": r.gets.Load(), "posts": r.posts.Load(), "text_echoes": r.texts.Load(), "bad": r.bad.Load()}, "private_log": bounded.stats(), "route": "google_front_pinned", "sni": "www.google.com", "product_credentials_changed": false, "experimental": true}
 	if err = fsHybridLiveExclusiveJSON(filepath.Join(dir, "summary.json"), report); err != nil {
 		runErr = errors.Join(runErr, err)
 	}
 	// The root orchestrator retains the active lock until exact Firestore
 	// docs/database cleanup is verified. A crash or failed arm is never reused.
-	closeErr := cohort.close(r.joined && runErr == nil && stopErr == nil && cleanupErr == nil && settings.Mode == "drive")
+	closeErr := cohort.close(r.joined && runErr == nil && stopErr == nil && cleanupErr == nil && settings.Mode != "hybrid")
 	if runErr != nil || stopErr != nil || cleanupErr != nil || closeErr != nil {
 		t.Fatal("bounded hybrid arm failed; inspect private durable summary/progress and retain recovery ledger")
 	}

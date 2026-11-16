@@ -13,6 +13,7 @@ import (
 type fsHybridLiveCampaign struct {
 	CampaignID   string `json:"campaign_id"`
 	TimeoutLimit int    `json:"timeout_limit"`
+	Workload     string `json:"workload,omitempty"`
 	Arms         []struct {
 		ArmID string `json:"arm_id"`
 		Mode  string `json:"mode"`
@@ -39,10 +40,20 @@ func fsHybridLiveBeginCohort(settings fsHybridLiveSettings) (*fsHybridLiveCohort
 	if dec.Decode(&campaign) != nil || dec.Decode(new(any)) != io.EOF || campaign.TimeoutLimit != 64 || len(campaign.CampaignID) < 1 || len(campaign.CampaignID) > 64 || !isSafeObjectSegment(campaign.CampaignID) || len(campaign.Arms) < 1 || len(campaign.Arms) > 4 {
 		return nil, errFSHybridBounds
 	}
+	workload := settings.Workload
+	if workload == "" {
+		workload = "http_serial"
+	}
+	if campaign.Workload == "" {
+		campaign.Workload = "http_serial"
+	}
+	if campaign.Workload != workload || workload != "http_serial" && workload != "tls_pipeline" {
+		return nil, errFSHybridBounds
+	}
 	matched := false
 	seen := make(map[string]bool)
 	for _, arm := range campaign.Arms {
-		if len(arm.ArmID) < 3 || len(arm.ArmID) > 64 || !isSafeObjectSegment(arm.ArmID) || seen[arm.ArmID] || arm.Mode != "drive" && arm.Mode != "hybrid" {
+		if len(arm.ArmID) < 3 || len(arm.ArmID) > 64 || !isSafeObjectSegment(arm.ArmID) || seen[arm.ArmID] || arm.Mode != "drive" && arm.Mode != "hybrid" && arm.Mode != "drive_v2" {
 			return nil, errFSHybridBounds
 		}
 		seen[arm.ArmID] = true

@@ -75,6 +75,56 @@ func TestFSHybridLiveAggregateGuardsPreserveCleanupReserve(t *testing.T) {
 	}
 }
 
+func TestFSHybridLiveDriveV2PreconditionIsScopedToOwnedConditionalPatch(t *testing.T) {
+	const id = "owned-v2-priority-test-id"
+	for _, marked := range []bool{true, false} {
+		ctx, cancel := context.WithCancel(context.Background())
+		budget := fsHybridLiveNewBudget("drive", cancel)
+		gate := &fsHybridLiveGate{budget: budget, base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return fsHybridHTTP(412, []byte(`{"error":{"message":"precondition"}}`)), nil
+		})}
+		req := fsHybridLiveFakeRequest("www.googleapis.com")
+		req.Method = http.MethodPatch
+		req.URL.Path = "/drive/v2/files/" + id
+		req.Header.Set("If-Match", `"old-tag"`)
+		if marked {
+			req = req.WithContext(context.WithValue(req.Context(), driveV2CASAttemptKey{}, id))
+		}
+		resp, err := gate.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if marked && (budget.ExpectedPreconditions != 1 || ctx.Err() != nil) {
+			t.Fatal("owned conditional 412 was not retained as an expected fence result")
+		}
+		if !marked && (budget.ExpectedPreconditions != 0 || ctx.Err() == nil) {
+			t.Fatal("unmarked 412 was incorrectly accepted")
+		}
+		cancel()
+	}
+}
+
+func TestFSHybridLiveGuardDenialRetainsExactSubbound(t *testing.T) {
+	budget := fsHybridLiveNewBudget("drive", func() {})
+	budget.MaxMinuteUnits = 40040 // one five-unit GET times eight, cleanup reserve retained.
+	req := fsHybridLiveFakeRequest("www.googleapis.com")
+	if err := budget.reserve(req, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.reserve(req, false); err == nil {
+		t.Fatal("minute guard admitted a second active request")
+	}
+	last, ok := budget.snapshot()["last_guard_denial"].(map[string]any)
+	if !ok || last["bound"] != "minute_units" || last["current_minute_units"] != int64(40) || last["effective_minute_units_limit"] != int64(40) {
+		t.Fatal("denial did not retain minute-bound headroom", last)
+	}
+	if err := budget.reserve(req, true); err != nil {
+		t.Fatal("cleanup reserve lost after active minute denial", err)
+	}
+}
+
 func TestFSHybridLiveDriveQuotaUsesOneMinuteWindowAndRetainsWholeArmBound(t *testing.T) {
 	request := fsHybridLiveFakeRequest("www.googleapis.com")
 	active := fsHybridLiveNewBudget("drive", nil)

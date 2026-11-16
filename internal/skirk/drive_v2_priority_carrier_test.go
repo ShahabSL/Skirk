@@ -27,6 +27,10 @@ var errDriveV2CASUnsupported = errors.New("Drive v2 conditional metadata write f
 
 const driveV2PriorityCipherMax = 16 << 10
 
+// Internal-only ownership marker for the exact conditional target. Neither
+// remote metadata nor application bytes can create this request-context value.
+type driveV2CASAttemptKey struct{}
+
 type driveV2PriorityConfig struct {
 	PrivateDir, OwnID, PeerID, OwnName, PeerName, QuotaProject string
 	Route                                                      RouteConfig
@@ -201,6 +205,9 @@ func (c *driveV2PriorityCarrier) request(ctx context.Context, method, id string,
 	stop := context.AfterFunc(c.ctx, cancel)
 	defer stop()
 	path := c.path(id)
+	if method == http.MethodPatch {
+		requestCtx = context.WithValue(requestCtx, driveV2CASAttemptKey{}, id)
+	}
 	if err := c.cfg.BeforeDispatch(requestCtx, method, path, len(body)); err != nil {
 		c.mu.Lock()
 		c.stats.GuardDenied++

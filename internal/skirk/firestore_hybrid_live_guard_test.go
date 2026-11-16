@@ -31,6 +31,7 @@ const (
 
 type fsHybridLiveSettings struct {
 	Mode             string `json:"mode"`
+	Workload         string `json:"workload,omitempty"`
 	SessionID        string `json:"session_id"`
 	Epoch            string `json:"epoch"`
 	Secret           string `json:"secret"`
@@ -86,7 +87,16 @@ func fsHybridLoadLiveSettings(dir string) (fsHybridLiveSettings, error) {
 	if dec.Decode(&s) != nil || dec.Decode(new(any)) != io.EOF {
 		return s, errFSHybridBounds
 	}
-	if s.Mode != "hybrid" && s.Mode != "drive" {
+	if s.Mode != "hybrid" && s.Mode != "drive" && s.Mode != "drive_v2" {
+		return s, errFSHybridBounds
+	}
+	if s.Workload == "" {
+		s.Workload = "http_serial"
+	}
+	if s.Workload != "http_serial" && s.Workload != "tls_pipeline" {
+		return s, errFSHybridBounds
+	}
+	if s.Mode == "drive_v2" && (s.Database != "" || s.UpDocument != "" || s.DownDocument != "" || s.OwnerTokenFile != "") {
 		return s, errFSHybridBounds
 	}
 	if len(s.ArmID) < 3 || len(s.ArmID) > 64 || !isSafeObjectSegment(s.ArmID) || !filepath.IsAbs(s.CampaignLedger) || !strings.Contains(filepath.Clean(s.CampaignLedger), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {
@@ -154,6 +164,7 @@ type fsHybridLiveBudget struct {
 	TimeoutTimes                                                                                                         []time.Time
 	Statuses                                                                                                             map[int]int64
 	Events                                                                                                               []map[string]any
+	LastDenial                                                                                                           map[string]any
 	cancel                                                                                                               context.CancelFunc
 	onTimeout                                                                                                            func() error
 }
@@ -186,7 +197,11 @@ func (b *fsHybridLiveBudget) snapshot() map[string]any {
 		statuses[k] = v
 	}
 	events := append([]map[string]any(nil), b.Events...)
-	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "minute_units_upper": b.MinuteUnits, "minute_limit_upper": b.MaxMinuteUnits, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events}
+	last := make(map[string]any, len(b.LastDenial))
+	for k, v := range b.LastDenial {
+		last[k] = v
+	}
+	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "minute_units_upper": b.MinuteUnits, "minute_limit_upper": b.MaxMinuteUnits, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events, "last_guard_denial": last}
 }
 func (b *fsHybridLiveBudget) addEventLocked(kind string, status int) {
 	if len(b.Events) < 128 {
@@ -253,7 +268,34 @@ func (b *fsHybridLiveBudget) reserve(r *http.Request, cleanup bool) error {
 		}
 	}
 	if b.Calls+1 > calls || b.Units+cost*8 > units && units > 0 || b.MaxMinuteUnits > 0 && b.MinuteUnits+cost*8 > minuteLimit || r.ContentLength > (request-b.RequestUpper)/8 || b.Response+b.PendingResponse >= response {
+		bound := "response_bytes"
+		switch {
+		case b.Calls+1 > calls:
+			bound = "calls"
+		case units > 0 && b.Units+cost*8 > units:
+			bound = "arm_units"
+		case b.MaxMinuteUnits > 0 && b.MinuteUnits+cost*8 > minuteLimit:
+			bound = "minute_units"
+		case r.ContentLength > (request-b.RequestUpper)/8:
+			bound = "request_bytes"
+		}
+		beforeEvents := len(b.Events)
 		b.denyLocked("aggregate_call_unit_or_byte_limit")
+		b.LastDenial = make(map[string]any)
+		if n := len(b.Events); n > beforeEvents {
+			b.LastDenial = b.Events[n-1]
+		}
+		{
+			event := b.LastDenial
+			event["bound"] = bound
+			event["cleanup"] = cleanup
+			event["next_units_upper"] = cost * 8
+			event["current_calls"], event["effective_calls_limit"] = b.Calls, calls
+			event["current_arm_units"], event["effective_arm_units_limit"] = b.Units, units
+			event["current_minute_units"], event["effective_minute_units_limit"] = b.MinuteUnits, minuteLimit
+			event["request_bytes_headroom"] = request - b.RequestUpper
+			event["response_bytes_headroom"] = response - b.Response - b.PendingResponse
+		}
 		return errFSHybridBounds
 	}
 	b.Calls++
@@ -336,6 +378,11 @@ func (b *fsHybridLiveBudget) responseDone(r *http.Request, response *http.Respon
 	if b.Service == "firestore" && r.Method == http.MethodPatch && r.URL.Query().Get("currentDocument.updateTime") != "" && (response.StatusCode == 412 || (response.StatusCode == 400 || response.StatusCode == 409) && reason == "FAILED_PRECONDITION") {
 		b.ExpectedPreconditions++
 		b.addEventLocked("conditional_write_precondition", response.StatusCode)
+		return
+	}
+	if marker, ok := r.Context().Value(driveV2CASAttemptKey{}).(string); ok && b.Service == "drive" && response.StatusCode == 412 && r.Method == http.MethodPatch && marker != "" && r.URL.Path == "/drive/v2/files/"+marker && r.Header.Get("If-Match") != "" {
+		b.ExpectedPreconditions++
+		b.addEventLocked("drive_v2_conditional_write_precondition", response.StatusCode)
 		return
 	}
 	b.addEventLocked("unexpected_api_status", response.StatusCode)
