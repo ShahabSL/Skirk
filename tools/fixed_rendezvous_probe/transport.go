@@ -292,6 +292,7 @@ func (p *probe) reserve(ctx context.Context, title string) (ownedTarget, error) 
 func filePath(t ownedTarget) string { return "/drive/v2/files/" + url.PathEscape(t.ID) }
 
 const fileFields = "id,title,description,parents(id),ownedByMe,isAppAuthorized,etag,version"
+const patchFields = "id,title,description,etag,version"
 
 func (p *probe) requireOwned(f driveFile, t ownedTarget) error {
 	if f.ID != t.ID || f.Title != t.Title || len(f.Parents) != 1 || f.Parents[0].ID != p.folder || !f.OwnedByMe || !f.IsAppAuthorized {
@@ -357,7 +358,7 @@ func (p *probe) patch(ctx context.Context, t ownedTarget, tag, desc string) (dri
 		return driveFile{}, 0, errors.New("invalid conditional tag")
 	}
 	body, _ := json.Marshal(map[string]string{"description": desc})
-	r, err := p.request(ctx, false, writer, http.MethodPatch, filePath(t)+"?fields="+fileFields, map[string]string{"If-Match": tag}, body)
+	r, err := p.request(ctx, false, writer, http.MethodPatch, filePath(t)+"?fields="+patchFields, map[string]string{"If-Match": tag}, body)
 	if err != nil {
 		return driveFile{}, 0, err
 	}
@@ -368,7 +369,7 @@ func (p *probe) patch(ctx context.Context, t ownedTarget, tag, desc string) (dri
 		return driveFile{}, r.Status, err
 	}
 	f, err := parseOne[driveFile](r.Body)
-	if err != nil || p.requireOwned(f, t) != nil || f.Description != desc {
+	if err != nil || f.ID != t.ID || f.Title != t.Title || f.Description != desc {
 		return driveFile{}, 200, errors.New("conditional patch readback mismatch")
 	}
 	return f, 200, nil

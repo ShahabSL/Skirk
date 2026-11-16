@@ -449,7 +449,7 @@ func (p *probe) lostResponse(ctx context.Context, generation ownedTarget, known 
 	body, _ := json.Marshal(map[string]string{"description": desc})
 	// Inject uncertainty at the caller boundary. Send exactly once, then discard
 	// both response and error; readback alone decides whether it committed.
-	_, _ = p.request(ctx, false, writer, "PATCH", filePath(generation)+"?fields="+fileFields, map[string]string{"If-Match": tag}, body)
+	_, _ = p.request(ctx, false, writer, "PATCH", filePath(generation)+"?fields="+patchFields, map[string]string{"If-Match": tag}, body)
 	for i := 0; i < 3; i++ {
 		f, _, err = p.get(ctx, generation)
 		if err != nil {
