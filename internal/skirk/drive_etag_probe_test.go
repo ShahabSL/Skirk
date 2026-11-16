@@ -25,12 +25,16 @@ type driveETagCall struct {
 	Phase, Method, IfMatch, IfNoneMatch, ETag, Protocol, Error string
 	MetadataETag                                               string
 	MetadataVersion                                            string
+	StartedUnixNano, FinishedUnixNano                          int64
 	Status                                                     int
 	Finished                                                   bool
 }
 type driveETagReport struct {
 	Schema                                                                         int `json:"schema"`
 	APIVersion, WriteMethod, SelectedETagSource                                    string
+	ProbeKind                                                                      string
+	RapidRevisions, RapidStaleRejected, RapidUniqueETags                           int
+	RapidElapsedMillis                                                             int64
 	Route, Front, AccountBinding, FileID, FileName, Projection, Failure            string
 	Calls                                                                          []driveETagCall
 	VisibleCalls, ReservedCalls, AttemptsUpper, QuotaUnitsUpper, RequestBytesUpper int
@@ -148,8 +152,10 @@ func (p *driveETagProbe) call(ctx context.Context, phase, method, path string, h
 	requestCtx, cancel := context.WithTimeout(withGoogleResponseLimit(ctx, 1<<20), 10*time.Second)
 	defer cancel()
 	p.report.VisibleCalls++
+	p.report.Calls[at].StartedUnixNano = time.Now().UnixNano()
 	r, err := p.do(requestCtx, method, path, headers, body)
 	entry := &p.report.Calls[at]
+	entry.FinishedUnixNano = time.Now().UnixNano()
 	entry.Finished = true
 	if err != nil {
 		entry.Error = errorSummary(err)
@@ -267,20 +273,20 @@ func (p *driveETagProbe) patch(ctx context.Context, phase, value, tag string) (*
 	}
 	return r, nil
 }
-func (p *driveETagProbe) run(ctx context.Context) error {
+func (p *driveETagProbe) createAndRead(ctx context.Context) (*HTTPResult, error) {
 	r, err := p.call(ctx, "generate", http.MethodGet, p.apiBase()+"/generateIds?"+p.generationQuery().Encode(), nil, nil, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var generated struct {
 		IDs []string `json:"ids"`
 	}
 	if r.Status != 200 || json.Unmarshal(r.Body, &generated) != nil || len(generated.IDs) != 1 || len(generated.IDs[0]) < 16 || len(generated.IDs[0]) > 128 || !isSafeObjectSegment(generated.IDs[0]) {
-		return errors.New("etag_probe_id_reservation")
+		return nil, errors.New("etag_probe_id_reservation")
 	}
 	p.report.FileID = generated.IDs[0]
 	if err = p.persist(); err != nil {
-		return err
+		return nil, err
 	} // Recovery identity exists BEFORE create.
 	metadata := map[string]any{"id": p.report.FileID, "name": p.report.FileName, "mimeType": "application/octet-stream", "description": p.values["A"]}
 	if p.apiVersion == 2 {
@@ -299,14 +305,22 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 	body, _ := json.Marshal(metadata)
 	r, err = p.call(ctx, "create", http.MethodPost, p.apiBase()+"?fields="+p.projection(), map[string]string{"Content-Type": "application/json"}, body, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = p.metadata(r); err != nil {
-		return err
+		return nil, err
 	}
 	r, initial, err := p.get(ctx, "get_projected_A", false, nil)
 	if err != nil || initial != p.values["A"] {
-		return errors.New("etag_probe_initial_readback")
+		return nil, errors.New("etag_probe_initial_readback")
+	}
+	p.report.InitialHash = driveETagHash(initial)
+	return r, nil
+}
+func (p *driveETagProbe) run(ctx context.Context) error {
+	r, err := p.createAndRead(ctx)
+	if err != nil {
+		return err
 	}
 	tag, err := p.currentTag(r)
 	if err != nil {
@@ -314,8 +328,8 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 	}
 	full := false
 	p.report.Projection = p.projection()
-	p.report.InitialHash = driveETagHash(initial)
 	if tag == "" {
+		var initial string
 		r, initial, err = p.get(ctx, "get_full_A", true, nil)
 		if err != nil || initial != p.values["A"] {
 			return errors.New("etag_probe_full_readback")
@@ -397,6 +411,62 @@ func (p *driveETagProbe) run(ctx context.Context) error {
 		return errors.New("etag_probe_stale_mutation_mismatch")
 	}
 	p.report.WriteCASObserved = p.report.BogusRejected && p.report.ValidAccepted && p.report.StaleRejected && p.report.StalePreserved
+	return p.persist()
+}
+
+// Three back-to-back updates use the response's next fence, with no timestamp
+// sleep. Each is immediately challenged with its old fence and read back.
+func (p *driveETagProbe) runRapid(ctx context.Context) error {
+	if p.apiVersion != 2 || p.updateMethod() != http.MethodPatch {
+		return errors.New("etag_probe_rapid_v2_patch_only")
+	}
+	p.report.ProbeKind = "rapid_three_revisions"
+	r, err := p.createAndRead(ctx)
+	if err != nil {
+		return err
+	}
+	p.report.Projection = p.projection()
+	tag, err := p.currentTag(r)
+	if err != nil || tag == "" || strings.HasPrefix(tag, "W/") || p.report.SelectedETagSource != "v2_resource_etag" {
+		return errors.New("etag_probe_rapid_strong_resource_fence_required")
+	}
+	seen := map[string]bool{tag: true}
+	p.report.RapidUniqueETags = len(seen)
+	started := time.Now()
+	defer func() { p.report.RapidElapsedMillis = time.Since(started).Milliseconds() }()
+	for _, phase := range []string{"B", "C", "D"} {
+		oldTag := tag
+		r, err = p.patch(ctx, "rapid_valid_"+phase, p.values[phase], oldTag)
+		if err != nil {
+			return err
+		}
+		value, metaErr := p.metadata(r)
+		if metaErr != nil || value != p.values[phase] {
+			return errors.New("etag_probe_rapid_valid_write_not_confirmed")
+		}
+		tag, err = p.currentTag(r)
+		if err != nil || tag == "" || strings.HasPrefix(tag, "W/") || seen[tag] || p.report.SelectedETagSource != "v2_resource_etag" {
+			return errors.New("etag_probe_rapid_etag_reused_or_unusable")
+		}
+		seen[tag] = true
+		p.report.RapidRevisions++
+		p.report.RapidUniqueETags = len(seen)
+		r, err = p.patch(ctx, "rapid_stale_"+phase, p.values["A"], oldTag)
+		if err != nil {
+			return err
+		}
+		staleRejected := r.Status == 412
+		r, value, err = p.get(ctx, "rapid_read_"+phase, false, nil)
+		if err != nil || !staleRejected || value != p.values[phase] {
+			return errors.New("etag_probe_rapid_stale_fence_did_not_preserve_value")
+		}
+		readTag, tagErr := p.currentTag(r)
+		if tagErr != nil || readTag != tag || p.report.SelectedETagSource != "v2_resource_etag" {
+			return errors.New("etag_probe_rapid_read_fence_changed")
+		}
+		p.report.RapidStaleRejected++
+	}
+	p.report.WriteCASObserved = true
 	return p.persist()
 }
 
@@ -520,7 +590,7 @@ func driveETagSave(dir string, report driveETagReport) error {
 }
 
 func TestLiveDriveMetadataETagCAS(t *testing.T) {
-	runLiveDriveMetadataETag(t, 3, http.MethodPatch, "SKIRK_DRIVE_ETAG")
+	runLiveDriveMetadataETag(t, 3, http.MethodPatch, "SKIRK_DRIVE_ETAG", false)
 }
 
 // PATCH and PUT are independent owned-file experiments, never alternated under
@@ -533,10 +603,14 @@ func TestLiveDriveV2MetadataETagCAS(t *testing.T) {
 	if method != http.MethodPatch && method != http.MethodPut {
 		t.Fatal("select exactly PATCH or PUT for this fresh v2 fixture")
 	}
-	runLiveDriveMetadataETag(t, 2, method, "SKIRK_DRIVE_ETAG_V2")
+	runLiveDriveMetadataETag(t, 2, method, "SKIRK_DRIVE_ETAG_V2", false)
 }
 
-func runLiveDriveMetadataETag(t *testing.T, version int, method, envPrefix string) {
+func TestLiveDriveV2MetadataETagRapidCAS(t *testing.T) {
+	runLiveDriveMetadataETag(t, 2, http.MethodPatch, "SKIRK_DRIVE_ETAG_V2_RAPID", true)
+}
+
+func runLiveDriveMetadataETag(t *testing.T, version int, method, envPrefix string, rapid bool) {
 	t.Helper()
 	dir := os.Getenv(envPrefix + "_PRIVATE_DIR")
 	if dir == "" {
@@ -592,7 +666,7 @@ func runLiveDriveMetadataETag(t *testing.T, version int, method, envPrefix strin
 	if p.space == "appDataFolder" {
 		p.parent = "appDataFolder"
 	}
-	p.report = driveETagReport{Schema: 1, APIVersion: "v3", WriteMethod: method, Route: cfg.Route.Mode, Front: "www.google.com", AccountBinding: "operator_asserted_isolated_secondary_profile", FileName: "skirk-etag-probe-" + hex.EncodeToString(nameNonce), TokenSourceCalls: 1}
+	p.report = driveETagReport{Schema: 1, APIVersion: "v3", WriteMethod: method, ProbeKind: "basic", Route: cfg.Route.Mode, Front: "www.google.com", AccountBinding: "operator_asserted_isolated_secondary_profile", FileName: "skirk-etag-probe-" + hex.EncodeToString(nameNonce), TokenSourceCalls: 1}
 	if version == 2 {
 		p.report.APIVersion = "v2"
 	}
@@ -619,7 +693,12 @@ func runLiveDriveMetadataETag(t *testing.T, version int, method, envPrefix strin
 		}
 		return client.RequestSingleAttempt(ctx, method, "www.googleapis.com", path, selected, body)
 	}
-	runErr := p.run(ctx)
+	var runErr error
+	if rapid {
+		runErr = p.runRapid(ctx)
+	} else {
+		runErr = p.run(ctx)
+	}
 	if runErr != nil {
 		p.report.Failure = runErr.Error()
 	}

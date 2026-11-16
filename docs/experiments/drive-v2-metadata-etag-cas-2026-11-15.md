@@ -114,7 +114,7 @@ with one explicit method and one separate private fixture per run. Both made
 | Impossible quoted If-Match writing D | 412, exact readback remained A | 412, exact readback remained A |
 | Current resource tag writing B | 200, exact readback B | 200, exact readback B |
 | Same now-old resource tag writing C | 412, exact readback still B | 412, exact readback still B |
-| Exact identity check, owned deletion, absence proof | GET200, DELETE204, two immediate404 and two delayed31-second404 | GET200, DELETE204, two immediate404 and two delayed31-second404 |
+| Exact identity check, owned deletion, absence proof | GET 200, DELETE 204, two immediate 404 and two delayed 31-second 404 | GET 200, DELETE 204, two immediate 404 and two delayed 31-second 404 |
 
 The projected resource `etag` supplied the write fence. The metadata GETs did
 not expose an HTTP ETag header; the resource field and the HTTP response header
@@ -160,3 +160,32 @@ stamp; retained clean source and binary hashes provide its provenance.
 | --- | --- | --- |
 | PATCH | `.skirk-runs/drive-etag-v2-patch-live-20261116-0010/etag-probe-result.json` | `a0d55f2e0ea84f6d6f1e103588e3bf3ef9eec52ddef55ba924fd118e9f7c195a` |
 | PUT | `.skirk-runs/drive-etag-v2-put-live-20261116-0012/etag-probe-result.json` | `a30ddbcdc0fbb28c9f3b96d583698772df4de6538413d26776758d11b5f83f22` |
+
+## Separate rapid-revision discriminator
+
+A separately gated PATCH-only variant is prepared to challenge ETag reuse
+across close successive updates. One fresh owned file is created/read, then
+three distinct opaque B/C/D values are written without timestamp sleeps.
+Immediately after each accepted write, an A write with that revision's old
+tag must return 412, and an exact readback must still contain the new value
+and its new tag. This variant requires a strong v2 resource `etag`; a header
+alone cannot qualify. All four observed resource tags must be globally distinct,
+including nonadjacent revisions. There are no competing writers.
+
+This needs 12 active calls plus the same six-call exact cleanup, for 18
+visible calls total within the unchanged 20-call guard. Client start/finish
+times and total revision-phase elapsed milliseconds are recorded to describe
+the actual spacing; they are not server timestamps or transport latency
+benchmarks. A positive result covers only that observed cadence, not arbitrary
+simultaneous revision races or every possible clock granularity.
+
+Two additional test functions cover the successful three-revision sequence,
+constant tags, a nonadjacent tag alias, ignored If-Match, missing/header-only tags,
+wrong-version/method rejection and exact bounded cleanup. The complete focused
+16-function local race run passed in 1.438 seconds; vet passed. No rapid live result is
+recorded at this source checkpoint.
+
+The distinct opt-in is `SKIRK_DRIVE_ETAG_V2_RAPID_ACCOUNT=isolated-secondary`
+and `SKIRK_DRIVE_ETAG_V2_RAPID_PRIVATE_DIR=<fresh-private-directory>`, running
+`-test.run '^TestLiveDriveV2MetadataETagRapidCAS$'` on a new frozen test binary.
+It cannot select PUT or reuse either earlier private directory.

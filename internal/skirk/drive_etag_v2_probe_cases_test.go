@@ -21,6 +21,7 @@ type driveETagV2Fake struct {
 	foreignTitle                                 bool
 	description                                  string
 	revision                                     int
+	aliasRevision                                int
 	writes, deletes                              int
 	paths, methods                               []string
 }
@@ -36,6 +37,9 @@ func newDriveETagV2Fake(method string) (*driveETagProbe, *driveETagV2Fake) {
 func (f *driveETagV2Fake) tag() string {
 	revision := f.revision
 	if f.staticTag {
+		revision = 1
+	}
+	if f.revision == f.aliasRevision {
 		revision = 1
 	}
 	return fmt.Sprintf("\"v2-revision-%d\"", revision)
@@ -234,5 +238,59 @@ func TestDriveETagV2ProbePUTConditionalHeaderKeepsPinnedRoute(t *testing.T) {
 	}
 	if r, err := p.patch(context.Background(), "v2_put_header", p.values["B"], "\"v2-provider-etag\""); err != nil || r.Status != 412 || p.report.Calls[0].ETag != "\"v2-current\"" {
 		t.Fatal("v2 actual client conditional evidence lost", err)
+	}
+}
+
+func TestDriveETagV2ProbeRapidDistinctRevisionsAndExactStaleReadbacks(t *testing.T) {
+	p, f := newDriveETagV2Fake(http.MethodPatch)
+	if err := p.runRapid(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !p.report.WriteCASObserved || p.report.RapidRevisions != 3 || p.report.RapidStaleRejected != 3 || p.report.RapidUniqueETags != 4 || p.report.VisibleCalls != 12 || f.description != p.values["D"] {
+		t.Fatal("rapid proof did not cover three distinct revisions", p.report.RapidRevisions, p.report.RapidUniqueETags)
+	}
+	for _, call := range p.report.Calls {
+		if call.StartedUnixNano <= 0 || call.FinishedUnixNano < call.StartedUnixNano {
+			t.Fatal("client call times missing")
+		}
+	}
+	if err := p.cleanup(context.Background(), 0); err != nil || p.report.VisibleCalls != 18 || !p.report.CleanupVerified || f.exists {
+		t.Fatal("rapid variant exceeded or lost exact cleanup", err, p.report.VisibleCalls)
+	}
+}
+
+func TestDriveETagV2ProbeRapidRejectsConstantAliasedIgnoredAndMissingFences(t *testing.T) {
+	for _, mode := range []string{"constant", "nonadjacent_alias", "ignored", "missing", "header_only"} {
+		t.Run(mode, func(t *testing.T) {
+			p, f := newDriveETagV2Fake(http.MethodPatch)
+			switch mode {
+			case "constant":
+				f.staticTag = true
+			case "nonadjacent_alias":
+				f.aliasRevision = 3
+			case "ignored":
+				f.honor = false
+			case "missing":
+				f.bodyTag, f.headerTag = false, false
+			case "header_only":
+				f.bodyTag = false
+			}
+			if err := p.runRapid(context.Background()); err == nil || p.report.WriteCASObserved {
+				t.Fatal("rapid variant accepted unsafe/unobserved CAS", mode)
+			}
+			if err := p.cleanup(context.Background(), 0); err != nil || !p.report.CleanupVerified || p.report.VisibleCalls > 20 {
+				t.Fatal("rapid failure lost bounded owned cleanup", err)
+			}
+		})
+	}
+	for _, config := range []struct {
+		version int
+		method  string
+	}{{3, http.MethodPatch}, {2, http.MethodPut}} {
+		p, f := newDriveETagV2Fake(config.method)
+		p.apiVersion = config.version
+		if err := p.runRapid(context.Background()); err == nil || len(f.paths) != 0 {
+			t.Fatal("rapid mode touched another API or method")
+		}
 	}
 }
