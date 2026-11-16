@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 219 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 220 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt local prototype and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -19,7 +19,8 @@
     "Firestore service-propagation setup failures A/B/C produced no tunnel performance sample. Exact resource recovery and disabled API restoration were separately verified.",
     "The Drive v2 phase trace is a single diagnostic arm: priority claims can contain multiple TLS frames; the trace identifies the four-unacknowledged per-stream admission bound for ten small text-stream physical fallbacks but does not prove per-frame latency causality.",
     "The four-arm window 8/4/4/8 comparison shares one frozen binary and exact workload. Both window-8 arms improved text p95 and conservative units while upload file rate and warm-frame medians were worse; only two arms per setting and no saturated multi-stream fairness proof.",
-    "The local window-eight saturation test shows four streams can fill all 32 inline slots; a fifth uses immutable fallback and bulk remains independent. A stalled first claim holds cumulative receipts for 31 completed claims. This is not a five-stream live latency or 200k-user capacity result."
+    "The local window-eight saturation test shows four streams can fill all 32 inline slots; a fifth uses immutable fallback and bulk remains independent. A stalled first claim holds cumulative receipts for 31 completed claims. This is not a five-stream live latency or 200k-user capacity result.",
+    "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win; no live FSH2 arm was run."
   ],
   "records": [
     {
@@ -4430,6 +4431,25 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "2e67cd1",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-080",
+      "candidate": "Drive v2 FSH2 selective processing receipts, bounded local prototype",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "Same-binary FSH1/FSH2 fake-route 16MiB GET+POST plus 40 TLS echoes, lost PATCH, fallback and reconnect; 64 reorder seeds, 125-claim stalled-head waves",
+      "latency": "No Google latency; one loopback FSH1/FSH2 elapsed 9.34/9.15s is not ranked",
+      "throughput_mbps": null,
+      "estimated_quota_units": "No Google calls; fake visible calls1471/1448, conservative local unit upper192400/191120; fixed704B wire overhead; actual quota unknown",
+      "correctness_and_errors": "FSH2 releases31 processed claims behind stalled claim1, admits next stream, carries125 claims over four waves; exact mixed files/40 echoes, physical-first dedup, fallback, cleanup, guards; 64 reorder seeds and20 focused race repetitions pass",
+      "cleanup": "Fake Drive and MemoryStore only; joined normal/priority cleanup, unrelated sentinel retained; no Cloud resources",
+      "decision": "Research-only explicit FSH2 selector; no live performance or quota win. Live v2 fixture admission bound corrected to carrier16KiB; prior arms not reinterpreted. Product negotiation/rotation/crash recovery absent.",
+      "source_documents": [
+        "docs/experiments/drive-v2-selective-receipt-local-2026-11-16.md",
+        "internal/skirk/drive_v2_selective_receipt_cases_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "5f429bd",
       "live_comparable": false
     }
   ]
