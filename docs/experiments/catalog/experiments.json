@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained 220 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt local prototype and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
+  "research_tip": "Retained 222 cataloged experiment families/cells through bounded Drive v2 window-8 latency improvement, selective-receipt local prototype and two interrupted live comparisons, and Firestore hybrid pipelined pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -20,7 +20,8 @@
     "The Drive v2 phase trace is a single diagnostic arm: priority claims can contain multiple TLS frames; the trace identifies the four-unacknowledged per-stream admission bound for ten small text-stream physical fallbacks but does not prove per-frame latency causality.",
     "The four-arm window 8/4/4/8 comparison shares one frozen binary and exact workload. Both window-8 arms improved text p95 and conservative units while upload file rate and warm-frame medians were worse; only two arms per setting and no saturated multi-stream fairness proof.",
     "The local window-eight saturation test shows four streams can fill all 32 inline slots; a fifth uses immutable fallback and bulk remains independent. A stalled first claim holds cumulative receipts for 31 completed claims. This is not a five-stream live latency or 200k-user capacity result.",
-    "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win; no live FSH2 arm was run."
+    "The FSH2 selective-receipt local prototype releases processed claims behind a stalled head, but adds 704 encoded bytes per snapshot and may cause extra metadata updates. Its fake-route two-arm mixed workload passed without establishing any Google speed or quota win.",
+    "Two frozen-binary FSH2/FSH1/FSH1/FSH2 live campaigns stopped on unexpected fronted HTTP502 responses after five of seven arms completed. Exact cleanup passed. Neither campaign supports a two-arm FSH2 median or winner; one incomplete arm also had four bulk-upload timeouts."
   ],
   "records": [
     {
@@ -4450,6 +4451,46 @@
       ],
       "raw_archive_paths": [],
       "revision_or_binary": "5f429bd",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-081",
+      "candidate": "Drive v2 FSH2 versus FSH1 selective receipts, interrupted live campaign H",
+      "evidence_level": "live_full_transport_incomplete_ABBA",
+      "workload": "Frozen binary c71184d/e26ce5fc; planned FSH2/FSH1/FSH1/FSH2, exact 16MiB down+up plus warm+40 scheduled TLS echoes; pinned front; stopped in third arm",
+      "latency": "Complete first FSH2/second FSH1 scheduled text p95 down1.404/1.764s, up1.250/1.560s; third FSH1 download text1.646s but no full arm",
+      "throughput_mbps": "Complete first FSH2/second FSH1 down30.628/25.908, up39.952/38.367; third incomplete",
+      "estimated_quota_units": "Conservative whole-arm upper first217520, second241600, failed third176560; visible calls609/673/537; not billed usage",
+      "correctness_and_errors": "First two arms exact files/41 echoes with zero unexpected errors. Third had 20 download echoes then four 28s bulk-upload timeouts and a POST502; guard canceled incomplete file; no quota denial/429.",
+      "cleanup": "All three arms joined writers and verified exact owned prefixes empty immediately+31s; borrowed configs/tokens removed",
+      "decision": "No complete ABBA pair or FSH2 winner. Failure is a recorded fronted 502/timeout event, not proof permanent product retry failure.",
+      "source_documents": [
+        "docs/experiments/drive-v2-selective-receipt-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-selective-20261116h/"
+      ],
+      "revision_or_binary": "c71184d/e26ce5fc",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-082",
+      "candidate": "Drive v2 FSH2 versus FSH1 selective receipts, interrupted live campaign I",
+      "evidence_level": "live_full_transport_incomplete_ABBA",
+      "workload": "Same frozen binary as H; fresh FSH2/FSH1/FSH1/FSH2 16MiB down+up plus warm+40 scheduled TLS echoes; pinned front; fourth arm stopped",
+      "latency": "Complete FSH2 first down/up1.684/1.824s; FSH1 second1.506/1.421s; FSH1 third1.390/1.242s; fourth FSH2 only download text1.248s",
+      "throughput_mbps": "Complete first/second/third down22.092/24.795/26.910, up35.032/28.057/34.309; fourth incomplete",
+      "estimated_quota_units": "Conservative upper204000/210600/213600/137520; visible calls586/597/586/426; last arm incomplete, not billed usage",
+      "correctness_and_errors": "First three arms exact files/41 echoes, zero unexpected errors. Fourth had 20 download echoes then a POST502 and guard cancellation; no timeout, quota denial or 429.",
+      "cleanup": "All four arms joined writers and verified exact owned prefixes empty immediately+31s; borrowed configs/tokens removed",
+      "decision": "No complete ABBA pair or FSH2 winner. A transient-response recovery test must precede more speed rankings.",
+      "source_documents": [
+        "docs/experiments/drive-v2-selective-receipt-live-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-selective-20261116i/"
+      ],
+      "revision_or_binary": "c71184d/e26ce5fc",
       "live_comparable": false
     }
   ]
