@@ -7,23 +7,27 @@ final class ProfileImportUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.secureTextFields["Paste skirk: client profile"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Choose client.skirk file"].exists)
+        let field = app.secureTextFields["Skirk profile or client.json"]
+        XCTAssertFalse(field.exists, "Pasted credentials stay hidden until requested")
+        app.buttons["Paste profile instead"].tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.tap()
         field.typeText(syntheticProfile(refreshToken: "initial"))
-        app.buttons["Import profile"].tap()
+        app.buttons["Import pasted profile"].tap()
 
         let stored = app.staticTexts["Profile stored on this iPhone"]
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
 
         app.buttons["Replace profile"].tap()
+        app.buttons["Paste profile instead"].tap()
         field.tap()
         field.typeText(try inlineProfile(syntheticProfile(refreshToken: "renewed")))
         app.buttons["Import updated profile"].tap()
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
 
         app.buttons["Replace profile"].tap()
+        app.buttons["Paste profile instead"].tap()
         field.tap()
         field.typeText(syntheticProfile(refreshToken: "unrelated", secret: "different-secret"))
         app.buttons["Import updated profile"].tap()
@@ -38,6 +42,7 @@ final class ProfileImportUITests: XCTestCase {
 
         app.buttons["Remove profile"].tap()
         app.alerts.buttons["Remove profile"].tap()
+        app.buttons["Paste profile instead"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
     }
 
@@ -91,7 +96,8 @@ final class ProfileImportUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let field = app.secureTextFields["Paste skirk: client profile"]
+        app.buttons["Paste profile instead"].tap()
+        let field = app.secureTextFields["Skirk profile or client.json"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.tap()
         field.press(forDuration: 1)
@@ -101,7 +107,7 @@ final class ProfileImportUITests: XCTestCase {
         }
         XCTAssertTrue(paste.waitForExistence(timeout: 5))
         paste.tap()
-        app.buttons["Import profile"].tap()
+        app.buttons["Import pasted profile"].tap()
 
         let stored = app.staticTexts["Profile stored on this iPhone"]
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
@@ -144,6 +150,7 @@ final class ProfileImportUITests: XCTestCase {
         XCTAssertTrue(stored.exists)
         app.buttons["Remove profile"].tap()
         app.alerts.buttons["Remove profile"].tap()
+        app.buttons["Paste profile instead"].tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5))
     }
 }

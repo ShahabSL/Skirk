@@ -1706,11 +1706,13 @@ private fun ImportPanel(
     onImport: () -> Unit,
 ) {
     var profileTextVisible by remember { mutableStateOf(false) }
+    var showPasteInput by remember { mutableStateOf(false) }
     var showLocalPorts by remember { mutableStateOf(socksPort != "18080" || httpPort != "18081") }
     Panel {
-        SectionHeader(Icons.Rounded.Add, "Import profile", "File or one-line config")
-        OutlinedButton(onClick = {
+        SectionHeader(Icons.Rounded.Add, "Import profile", "Start with the file from your exit")
+        Button(onClick = {
             profileTextVisible = false
+            showPasteInput = false
             onChooseFile()
         }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
             Text("Choose client.skirk file")
@@ -1719,80 +1721,83 @@ private fun ImportPanel(
             Text("Reading profile file…", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             TextButton(onClick = onCancelFile) { Text("Cancel file import") }
         }
-        OutlinedTextField(
-            value = rawConfig,
-            onValueChange = onRawConfigChange,
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 3,
-            label = { Text("Skirk profile or client.json") },
-            isError = importError.isNotBlank(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = if (profileTextVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = {
-                ProfileVisibilityButton(profileTextVisible) { profileTextVisible = !profileTextVisible }
-            },
-            supportingText = {
-                if (importError.isNotBlank()) {
-                    Text(importError)
-                } else {
-                    Text(if (enabled) "Or paste a one-line profile or client.json."
-                        else "Disconnect before importing another profile.")
-                }
-            },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (!showPasteInput) {
+            TextButton(onClick = { showPasteInput = true }, enabled = enabled) {
+                Text("Paste a profile instead")
+            }
+        } else {
+            OutlinedTextField(
+                value = rawConfig,
+                onValueChange = onRawConfigChange,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                label = { Text("Skirk profile or client.json") },
+                isError = importError.isNotBlank(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation = if (profileTextVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    ProfileVisibilityButton(profileTextVisible) { profileTextVisible = !profileTextVisible }
+                },
+                supportingText = {
+                    if (importError.isNotBlank()) Text(importError)
+                    else Text("Paste a one-line profile or client.json.")
+                },
+            )
+            OutlinedButton(onClick = {
+                profileTextVisible = false
+                onPaste()
+            }, enabled = enabled) {
+                Icon(Icons.Rounded.ContentPaste, contentDescription = null)
+                Text("Paste from clipboard")
+            }
+        }
+        if (rawConfig.isNotBlank() || importError.isNotBlank()) {
+            if (!showPasteInput && rawConfig.isNotBlank()) {
+                Text("Profile ready to import", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (!showPasteInput && importError.isNotBlank()) {
+                Text(importError, color = MaterialTheme.colorScheme.error)
+            }
+            OutlinedTextField(
+                value = profileName,
+                onValueChange = onProfileNameChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Profile name") },
+                singleLine = true,
+            )
             Button(
                 onClick = onImport,
                 enabled = enabled && !readingFile && rawConfig.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
             ) {
                 Icon(Icons.Rounded.Add, contentDescription = null)
-                Text("Import")
+                Text("Import profile")
             }
-            OutlinedButton(onClick = {
-                profileTextVisible = false
-                onPaste()
-            }) {
-                Icon(Icons.Rounded.ContentPaste, contentDescription = null)
-                Text("Paste")
+            TextButton(onClick = { showLocalPorts = !showLocalPorts }) {
+                Text(if (showLocalPorts) "Hide local ports" else "Change local ports")
             }
-        }
-        OutlinedTextField(
-            value = profileName,
-            onValueChange = onProfileNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Profile name") },
-            singleLine = true,
-        )
-        TextButton(onClick = { showLocalPorts = !showLocalPorts }) {
-            Text(if (showLocalPorts) "Hide local ports" else "Change local ports")
-        }
-        if (showLocalPorts) {
-            OutlinedTextField(
-                value = socksPort,
-                onValueChange = onSocksPortChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Local SOCKS port") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-            OutlinedTextField(
-                value = httpPort,
-                onValueChange = onHttpPortChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Local HTTP proxy port") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-        } else {
-            Text(
-                "Local proxy ports use defaults. Change them only if another app uses those ports.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            if (showLocalPorts) {
+                OutlinedTextField(
+                    value = socksPort,
+                    onValueChange = onSocksPortChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Local SOCKS port") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
+                    value = httpPort,
+                    onValueChange = onHttpPortChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Local HTTP proxy port") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ struct ContentView: View {
     @StateObject private var tunnel = TunnelController()
     @StateObject private var fileImport = ProfileFileImport()
     @State private var profileInput = ""
+    @State private var showPasteInput = false
     @State private var replacingProfile = false
     @State private var copiedRenewalCommand = false
     @State private var copiedPersonalSetupCommand = false
@@ -57,6 +58,7 @@ struct ContentView: View {
                         if tunnel.googleAuthorizationNeedsRenewal {
                             Button("Import renewed profile") {
                                 copiedRenewalCommand = false
+                                showPasteInput = false
                                 replacingProfile = true
                             }
                             .disabled(!tunnel.canConnect || replacingProfile)
@@ -81,6 +83,7 @@ struct ContentView: View {
                         if !tunnel.googleAuthorizationNeedsRenewal {
                             Button("Replace profile") {
                                 copiedRenewalCommand = false
+                                showPasteInput = false
                                 replacingProfile = true
                             }
                                 .disabled(!tunnel.canConnect)
@@ -99,19 +102,27 @@ struct ContentView: View {
                             ProgressView("Reading profile…")
                             Button("Cancel file import", role: .cancel) { fileImport.cancel() }
                         }
-                        SecureField("Paste skirk: client profile", text: $profileInput)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .privacySensitive()
-                        Button(replacingProfile ? "Import updated profile" : "Import profile") {
-                            importProfile(profileInput)
+                        DisclosureGroup("Paste profile instead", isExpanded: $showPasteInput) {
+                            SecureField("Skirk profile or client.json", text: $profileInput)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .privacySensitive()
+                            Button(replacingProfile ? "Import updated profile" : "Import pasted profile") {
+                                importProfile(profileInput)
+                            }
+                            .disabled(fileImport.isReading || profileInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .disabled(fileImport.isReading || profileInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if let message = tunnel.message {
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                        }
                         if replacingProfile {
                             Button("Cancel") {
                                 fileImport.cancel()
                                 profileInput = ""
+                                showPasteInput = false
                                 replacingProfile = false
+                                tunnel.message = nil
                             }
                         }
                     }
@@ -182,7 +193,7 @@ struct ContentView: View {
                     Text(tunnel.routeMode.detail)
                 }
 
-                if let message = tunnel.message {
+                if tunnel.hasProfile && !replacingProfile, let message = tunnel.message {
                     Section {
                         Text(message).foregroundStyle(.red)
                     }
@@ -194,6 +205,7 @@ struct ContentView: View {
                     fileImport.cancel()
                     tunnel.removeProfile()
                     copiedRenewalCommand = false
+                    showPasteInput = false
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -265,6 +277,7 @@ struct ContentView: View {
         tunnel.importProfile(value, replacing: replacing ?? replacingProfile)
         if tunnel.message == nil {
             profileInput = ""
+            showPasteInput = false
             replacingProfile = false
         }
     }
