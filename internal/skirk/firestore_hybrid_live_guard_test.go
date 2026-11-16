@@ -3,15 +3,19 @@ package skirk
 // All code in this file is research-only and is excluded from product builds.
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +31,9 @@ const (
 	fsHybridLiveFSCalls           = int64(512)
 	fsHybridLiveFSRequestUpper    = int64(128 << 20)
 	fsHybridLiveFSResponse        = int64(128 << 20)
+	fsHybridLiveTransientLimit    = int64(8)
+	fsHybridLiveTransientIDs      = 8
+	fsHybridLiveProofReads        = int64(3)
 )
 
 type fsHybridLiveSettings struct {
@@ -173,9 +180,21 @@ type fsHybridLiveBudget struct {
 	TimeoutTimes                                                                                                         []time.Time
 	Statuses                                                                                                             map[int]int64
 	Events                                                                                                               []map[string]any
+	RecoveryEvents                                                                                                       []map[string]any
 	LastDenial                                                                                                           map[string]any
+	AllowGeneratedUploadRecovery                                                                                         bool
+	UploadTransientRaw, UploadConflictRaw, UploadProofReadbacks, UploadProvenIDs                                         int64
+	uploadProofs                                                                                                         map[string]*fsHybridLiveUploadProof
 	cancel                                                                                                               context.CancelFunc
 	onTimeout                                                                                                            func() error
+}
+
+type fsHybridLiveUploadProof struct {
+	name   string
+	size   int64
+	digest string
+	proven bool
+	reads  int64
 }
 
 type fsHybridLiveMinuteReservation struct {
@@ -206,15 +225,27 @@ func (b *fsHybridLiveBudget) snapshot() map[string]any {
 		statuses[k] = v
 	}
 	events := append([]map[string]any(nil), b.Events...)
+	recoveryEvents := append([]map[string]any(nil), b.RecoveryEvents...)
 	last := make(map[string]any, len(b.LastDenial))
 	for k, v := range b.LastDenial {
 		last[k] = v
 	}
-	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "minute_units_upper": b.MinuteUnits, "minute_limit_upper": b.MaxMinuteUnits, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events, "last_guard_denial": last}
+	unproven := 0
+	for _, proof := range b.uploadProofs {
+		if !proof.proven {
+			unproven++
+		}
+	}
+	return map[string]any{"service": b.Service, "visible_calls": b.Calls, "attempts_upper": b.Attempts, "units_upper": b.Units, "minute_units_upper": b.MinuteUnits, "minute_limit_upper": b.MaxMinuteUnits, "request_bytes_upper": b.RequestUpper, "response_bytes": b.Response, "pending_response_reservation": b.PendingResponse, "cleanup_calls": b.CleanupCalls, "canceled_calls": b.Canceled, "timeouts": b.Timeouts, "api_errors": b.APIError, "expected_preconditions": b.ExpectedPreconditions, "expected_cleanup_404": b.ExpectedNotFound, "transport_errors": b.TransportErrors, "http2_responses": b.HTTP2, "guard_denials": b.Denials, "statuses": statuses, "failures": events, "last_guard_denial": last, "generated_upload_transient_statuses": b.UploadTransientRaw, "generated_upload_conflict_statuses": b.UploadConflictRaw, "generated_upload_proof_reads": b.UploadProofReadbacks, "generated_upload_proven_ids": b.UploadProvenIDs, "generated_upload_unproven_ids": unproven, "generated_upload_recovery_events": recoveryEvents}
 }
 func (b *fsHybridLiveBudget) addEventLocked(kind string, status int) {
 	if len(b.Events) < 128 {
 		b.Events = append(b.Events, map[string]any{"kind": kind, "status": status, "at_utc": time.Now().UTC().Format(time.RFC3339Nano)})
+	}
+}
+func (b *fsHybridLiveBudget) addRecoveryEventLocked(kind string, status int) {
+	if len(b.RecoveryEvents) < 32 {
+		b.RecoveryEvents = append(b.RecoveryEvents, map[string]any{"kind": kind, "status": status, "at_utc": time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 }
 func (b *fsHybridLiveBudget) denyLocked(kind string) {
@@ -363,7 +394,141 @@ func (b *fsHybridLiveBudget) transportError(err error) {
 		b.cancel()
 	}
 }
-func (b *fsHybridLiveBudget) responseDone(r *http.Request, response *http.Response, body []byte, cleanup bool) {
+
+func fsHybridLiveGeneratedUpload(r *http.Request) (string, fsHybridLiveUploadProof, error) {
+	if r.Method != http.MethodPost || r.URL.Path != "/upload/drive/v3/files" || r.URL.Query().Get("uploadType") != "multipart" || r.GetBody == nil || r.ContentLength <= 0 || r.ContentLength > 8<<20 {
+		return "", fsHybridLiveUploadProof{}, errFSHybridBounds
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return "", fsHybridLiveUploadProof{}, err
+	}
+	defer body.Close()
+	copyRequest := r.Clone(r.Context())
+	copyRequest.Body = io.NopCloser(io.LimitReader(body, r.ContentLength+1))
+	upload, err := captureDriveUpload(copyRequest)
+	if err != nil || !isSafeObjectSegment(upload.id) || !isNormalGeneratedMuxUpload(upload.id, upload.name, len(upload.data)) {
+		return "", fsHybridLiveUploadProof{}, errFSHybridBounds
+	}
+	digest := sha256.Sum256(upload.data)
+	return upload.id, fsHybridLiveUploadProof{name: upload.name, size: int64(len(upload.data)), digest: hex.EncodeToString(digest[:])}, nil
+}
+
+func fsHybridLiveProofJSON(contentEncoding string, body []byte) (id, name string, size int64, digest string, err error) {
+	if strings.EqualFold(contentEncoding, "gzip") {
+		reader, e := gzip.NewReader(bytes.NewReader(body))
+		if e != nil {
+			return "", "", 0, "", e
+		}
+		defer reader.Close()
+		body, err = io.ReadAll(io.LimitReader(reader, 8193))
+		if err != nil || len(body) > 8192 {
+			return "", "", 0, "", errFSHybridBounds
+		}
+	} else if contentEncoding != "" && !strings.EqualFold(contentEncoding, "identity") {
+		return "", "", 0, "", errFSHybridBounds
+	}
+	var item struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Size   string `json:"size"`
+		SHA256 string `json:"sha256Checksum"`
+	}
+	if err := json.Unmarshal(body, &item); err != nil {
+		return "", "", 0, "", err
+	}
+	size, err = strconv.ParseInt(item.Size, 10, 64)
+	return item.ID, item.Name, size, item.SHA256, err
+}
+
+// A raw retryable status is provisional only for a generated-ID bulk upload.
+// The budget separately proves the same ID/name/size/content via the product's
+// checksum readback and fails the arm if a provisional status remains unproved.
+func (b *fsHybridLiveBudget) generatedUploadStatusLocked(r *http.Request, response *http.Response, contentEncoding string, body []byte) bool {
+	if !b.AllowGeneratedUploadRecovery || b.Service != "drive" {
+		return false
+	}
+	status := response.StatusCode
+	if r.Method == http.MethodPost && r.URL.Path == "/upload/drive/v3/files" && (status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout || status == http.StatusConflict) {
+		id, expected, err := fsHybridLiveGeneratedUpload(r)
+		if err != nil || b.UploadTransientRaw+b.UploadConflictRaw >= fsHybridLiveTransientLimit {
+			b.denyLocked("unbounded_or_unidentifiable_generated_upload_error")
+			return true
+		}
+		if b.uploadProofs == nil {
+			b.uploadProofs = make(map[string]*fsHybridLiveUploadProof)
+		}
+		proof := b.uploadProofs[id]
+		if proof == nil {
+			if len(b.uploadProofs) >= fsHybridLiveTransientIDs {
+				b.denyLocked("generated_upload_error_id_limit")
+				return true
+			}
+			proof = &expected
+			b.uploadProofs[id] = proof
+		} else if proof.name != expected.name || proof.size != expected.size || proof.digest != expected.digest {
+			b.denyLocked("generated_upload_retry_identity_or_content_changed")
+			return true
+		}
+		if status == http.StatusConflict {
+			b.UploadConflictRaw++
+		} else {
+			b.UploadTransientRaw++
+		}
+		b.addRecoveryEventLocked("generated_upload_status_pending_exact_proof", status)
+		return true
+	}
+	if r.Method != http.MethodGet || r.Context().Value(driveUploadCommitProbeKey{}) != true || !strings.HasPrefix(r.URL.Path, "/drive/v3/files/") || r.URL.Query().Get("fields") != "id,name,size,sha256Checksum" {
+		return false
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
+	proof := b.uploadProofs[id]
+	if proof == nil {
+		return false
+	}
+	if status != http.StatusOK && status != http.StatusNotFound {
+		return false
+	}
+	proof.reads++
+	b.UploadProofReadbacks++
+	if proof.reads > fsHybridLiveProofReads {
+		b.denyLocked("generated_upload_proof_read_limit")
+		return true
+	}
+	if status == http.StatusNotFound {
+		b.addRecoveryEventLocked("generated_upload_proof_not_yet_visible", status)
+		return true
+	}
+	gotID, name, size, digest, err := fsHybridLiveProofJSON(contentEncoding, body)
+	if err != nil || gotID != id || name != proof.name || size != proof.size || digest != "" && !strings.EqualFold(digest, proof.digest) {
+		b.denyLocked("generated_upload_exact_proof_mismatch")
+		return true
+	}
+	if digest == "" {
+		b.addRecoveryEventLocked("generated_upload_checksum_not_yet_visible", status)
+		return true
+	}
+	if !proof.proven {
+		proof.proven = true
+		b.UploadProvenIDs++
+		b.addRecoveryEventLocked("generated_upload_exact_content_proven", status)
+	}
+	return true
+}
+
+func (b *fsHybridLiveBudget) finalizeGeneratedUploadRecovery() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, proof := range b.uploadProofs {
+		if !proof.proven {
+			b.addEventLocked("generated_upload_unproven_at_workload_end", 0)
+			return fmt.Errorf("generated upload transient status lacks exact commit proof: %w", errFSHybridIntegrity)
+		}
+	}
+	return nil
+}
+
+func (b *fsHybridLiveBudget) responseDone(r *http.Request, response *http.Response, contentEncoding string, body []byte, cleanup bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.Statuses[response.StatusCode]++
@@ -375,12 +540,17 @@ func (b *fsHybridLiveBudget) responseDone(r *http.Request, response *http.Respon
 			b.cancel()
 		}
 	}
-	if response.StatusCode < 400 {
-		return
+	if response.StatusCode >= 400 {
+		b.APIError++
 	}
-	b.APIError++
 	if cleanup && r.Method == http.MethodGet && response.StatusCode == 404 {
 		b.ExpectedNotFound++
+		return
+	}
+	if b.generatedUploadStatusLocked(r, response, contentEncoding, body) {
+		return
+	}
+	if response.StatusCode < 400 {
 		return
 	}
 	reason, _ := googleAPIErrorDetails(body)
@@ -457,7 +627,7 @@ func (g *fsHybridLiveGate) RoundTrip(r *http.Request) (*http.Response, error) {
 		g.mu.RUnlock()
 		return nil, errFSHybridBounds
 	}
-	resp.Body = &fsHybridLiveBody{ReadCloser: resp.Body, gate: g, request: r, response: resp, cleanup: cleanup}
+	resp.Body = &fsHybridLiveBody{ReadCloser: resp.Body, gate: g, request: r, response: resp, contentEncoding: resp.Header.Get("Content-Encoding"), cleanup: cleanup}
 	return resp, nil
 }
 func (g *fsHybridLiveGate) stop() { g.mu.Lock(); g.stopped = true; g.mu.Unlock() }
@@ -469,13 +639,14 @@ func (g *fsHybridLiveGate) CloseIdleConnections() {
 
 type fsHybridLiveBody struct {
 	io.ReadCloser
-	gate      *fsHybridLiveGate
-	request   *http.Request
-	response  *http.Response
-	once      sync.Once
-	errorOnce sync.Once
-	captured  []byte
-	cleanup   bool
+	gate            *fsHybridLiveGate
+	request         *http.Request
+	response        *http.Response
+	contentEncoding string
+	once            sync.Once
+	errorOnce       sync.Once
+	captured        []byte
+	cleanup         bool
 }
 
 func (b *fsHybridLiveBody) recordError(err error) {
@@ -486,7 +657,7 @@ func (b *fsHybridLiveBody) recordError(err error) {
 
 func (b *fsHybridLiveBody) finish() {
 	b.once.Do(func() {
-		b.gate.budget.responseDone(b.request, b.response, b.captured, b.cleanup)
+		b.gate.budget.responseDone(b.request, b.response, b.contentEncoding, b.captured, b.cleanup)
 		b.gate.mu.RUnlock()
 	})
 }

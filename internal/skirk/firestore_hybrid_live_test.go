@@ -764,6 +764,7 @@ func runPinnedHybridLiveArm(t *testing.T, dir string, settings fsHybridLiveSetti
 	bounded := &hybridBoundedLog{writer: logFile, limit: 8 << 20}
 	r := &fsHybridLiveRun{ctx: ctx, cancel: cancel, settings: settings, dir: dir, journal: j, logger: log.New(bounded, "", log.Ldate|log.Ltime|log.Lmicroseconds)}
 	r.driveBudget = fsHybridLiveNewBudget("drive", cancel)
+	r.driveBudget.AllowGeneratedUploadRecovery = settings.Mode == "drive_v2"
 	r.fsBudget = fsHybridLiveNewBudget("firestore", cancel)
 	r.driveBudget.onTimeout = cohort.timeout
 	r.fsBudget.onTimeout = cohort.timeout
@@ -776,6 +777,9 @@ func runPinnedHybridLiveArm(t *testing.T, dir string, settings fsHybridLiveSetti
 		} else {
 			runErr = r.workload()
 		}
+	}
+	if settings.Mode == "drive_v2" {
+		runErr = errors.Join(runErr, r.driveBudget.finalizeGeneratedUploadRecovery())
 	}
 	if outcomeErr := fsHybridLiveExclusiveJSON(filepath.Join(dir, "workload-outcome.json"), map[string]any{"mode": settings.Mode, "workload": settings.Workload, "arm_id": settings.ArmID, "workload_ok": runErr == nil, "rows": j.rows, "drive_guard": r.driveBudget.snapshot(), "origin_counts": map[string]int64{"gets": r.gets.Load(), "posts": r.posts.Load(), "text_echoes": r.texts.Load(), "bad": r.bad.Load()}}); outcomeErr != nil {
 		runErr = errors.Join(runErr, outcomeErr)

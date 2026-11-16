@@ -128,11 +128,25 @@ func TestDriveV2BulkGeneratedIDTransient502RecoversThroughMux(t *testing.T) {
 	}
 	base := NewMemoryStore()
 	route := &driveV2BulkTransientRoute{base: base}
+	guardCtx, guardCancel := context.WithCancel(context.Background())
+	defer guardCancel()
+	budget := fsHybridLiveNewBudget("drive", guardCancel)
+	budget.AllowGeneratedUploadRecovery = true
+	budget.MaxCalls = 35 // three active calls plus the durable cleanup reserve
+	budget.MaxUnits = 40840
+	budget.MaxMinuteUnits = 40840
 	httpClient := &GoogleHTTPClient{
-		route:  RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"},
-		client: &http.Client{Transport: roundTripFunc(route.roundTrip)},
+		route: RouteConfig{Mode: "google_front_pinned", GoogleIP: "203.0.113.1"},
+		client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := route.roundTrip(req)
+			if resp != nil {
+				resp.Proto, resp.ProtoMajor = "HTTP/2.0", 2
+			}
+			return resp, err
+		})},
 	}
 	bulkDrive := NewDriveStore(httpClient, "public-bulk-recovery-token", DriveConfig{})
+	fsHybridLiveGateDrive(bulkDrive, budget, false)
 	store := &driveV2BulkTransientStore{MemoryStore: base, drive: bulkDrive}
 	cfg := fsHybridStoreConfig{
 		Secret: "public-bulk-recovery-fixture", Session: [16]byte{1}, Epoch: [16]byte{2},
@@ -204,6 +218,15 @@ func TestDriveV2BulkGeneratedIDTransient502RecoversThroughMux(t *testing.T) {
 		quota := bulkDrive.QuotaSnapshot()
 		if quota.Calls != 3 || quota.Units != 105 || quota.Errors != 2 {
 			t.Fatalf("recovered 502 quota accounting: calls=%d units=%d errors=%d", quota.Calls, quota.Units, quota.Errors)
+		}
+		if err := budget.finalizeGeneratedUploadRecovery(); err != nil || guardCtx.Err() != nil {
+			t.Fatalf("live guard rejected exact product recovery: proof=%v cancellation=%v", err, guardCtx.Err())
+		}
+		if budget.Calls != 3 || budget.Units != 840 || budget.Denials != 0 || budget.UploadTransientRaw != 1 || budget.UploadConflictRaw != 1 || budget.UploadProofReadbacks != 1 || budget.UploadProvenIDs != 1 || budget.APIError != 2 {
+			t.Fatalf("live guard lost raw statuses, exact proof or reserved units: %+v", budget.snapshot())
+		}
+		if failures := budget.snapshot()["failures"].([]map[string]any); len(failures) != 0 {
+			t.Fatal("recovered statuses entered the hard-failure list", failures)
 		}
 		for _, carrier := range []*driveV2PriorityCarrier{up, down} {
 			s := carrier.Snapshot()
