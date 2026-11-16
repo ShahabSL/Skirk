@@ -601,7 +601,7 @@ function App() {
               <summary>Personal OAuth and renewal guide</summary>
               <ol>
                 <li>For a new self-managed exit, create a Google Cloud project, enable Drive API, create a Desktop OAuth client, and run <code>skirk setup init --out skirk-kit --reset-google-login --oauth-mode personal</code> on the exit.</li>
-                <li>Only that project owner can check Google Auth Platform → Audience. Add the signing-in account as a test user while Testing. External Testing grants expire after seven days; In production removes that specific limit for new grants. Google may require verification.</li>
+                <li>The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.</li>
                 <li>After publishing or a rejected grant, run <code>skirk setup renew-oauth --kit skirk-kit</code> using the actual kit directory, restart the exit, and send an updated <code>client.skirk</code> if the client's saved access was rejected.</li>
               </ol>
               <div className="button-row">

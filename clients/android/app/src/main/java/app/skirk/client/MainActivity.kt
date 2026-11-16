@@ -1049,7 +1049,7 @@ private fun GoogleAccessCard(
                 )
                 TextButton(onClick = onCopyPersonalSetupCommand) { Text("Copy personal setup command") }
                 Text(
-                    "2. Only the project owner can check Google Auth Platform → Audience. Add the signing-in account as a test user while Testing. External Testing grants expire after seven days; In production removes that specific limit for new grants. Google may require verification.",
+                    "2. The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.",
                     color = guideColor,
                     style = MaterialTheme.typography.bodySmall,
                 )

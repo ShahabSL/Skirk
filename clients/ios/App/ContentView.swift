@@ -99,7 +99,7 @@ struct ContentView: View {
                             UIPasteboard.general.string = Self.personalSetupCommand
                             copiedPersonalSetupCommand = true
                         }
-                        Text("2. Only the project owner can check Google Auth Platform → Audience. Add the signing-in account as a test user while Testing. External Testing grants expire after seven days; In production removes that specific limit for new grants. Google may require verification.")
+                        Text("2. The project owner opens Google Auth Platform → Audience and adds the signing-in account as a test user while the app is in Testing. Testing refresh tokens expire after seven days. Publishing the app removes that specific limit for new grants; Google may require verification.")
                         Text("3. After publishing or rejected access, run skirk setup renew-oauth --kit skirk-kit on the exit using its actual kit directory. Restart the exit and send an updated client.skirk if this iPhone's grant was rejected. Other revocations remain possible.")
                         Link("Open Google Cloud Audience", destination: URL(string: "https://console.cloud.google.com/auth/audience")!)
                         if tunnel.hasProfile && !tunnel.googleAuthorizationNeedsRenewal {
