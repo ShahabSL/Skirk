@@ -847,6 +847,7 @@ private fun ConnectionPanel(
         GoogleAccessCard(
             hasProfile = false,
             needsRenewal = false,
+            exitProbeChecked = false,
             exitProbeVerified = false,
             onReplaceProfile = onReplaceProfile,
             onCopyRenewalCommand = onCopyRenewalCommand,
@@ -923,6 +924,7 @@ private fun ConnectionPanel(
             }
             Text(
                 exitProbeStatus.ifEmpty { "Local connection is ready. Test the exit on demand to verify a round trip." },
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )
@@ -930,6 +932,7 @@ private fun ConnectionPanel(
         GoogleAccessCard(
             hasProfile = selected != null,
             needsRenewal = googleGrantExpired,
+            exitProbeChecked = exitProbeStatus.isNotBlank(),
             exitProbeVerified = exitProbeVerified,
             onReplaceProfile = onReplaceProfile,
             onCopyRenewalCommand = onCopyRenewalCommand,
@@ -1018,6 +1021,7 @@ private fun ConnectionPanel(
 private fun GoogleAccessCard(
     hasProfile: Boolean,
     needsRenewal: Boolean,
+    exitProbeChecked: Boolean,
     exitProbeVerified: Boolean,
     onReplaceProfile: () -> Unit,
     onCopyRenewalCommand: () -> Unit,
@@ -1044,6 +1048,7 @@ private fun GoogleAccessCard(
                     when {
                         needsRenewal -> "Renewal needed"
                         exitProbeVerified -> "Exit reachable in this session"
+                        exitProbeChecked -> "Exit not verified"
                         else -> "Google access not checked yet"
                     },
                     style = MaterialTheme.typography.titleSmall,
@@ -1053,6 +1058,7 @@ private fun GoogleAccessCard(
                     when {
                         needsRenewal -> "Google rejected this device's saved access. Ask the exit owner to renew the kit, restart the exit, and send an updated client.skirk."
                         exitProbeVerified -> "The exit responded to a test through Google Drive. This check does not guarantee future token validity."
+                        exitProbeChecked -> "The exit test did not confirm a round trip. Check that the exit is running and its Google access is valid; this alone does not prove the grant expired."
                         else -> "Connect, then tap Test exit to check this session. Google does not provide a guaranteed refresh-token expiry date here."
                     },
                     style = MaterialTheme.typography.bodyMedium,

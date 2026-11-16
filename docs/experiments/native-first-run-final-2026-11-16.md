@@ -16,6 +16,12 @@ permanent. The client guides a project owner through renewal; it cannot
 publish a Cloud project using a normal `drive.file` token. A user authorizing
 the publisher's app does not need a personal domain.
 
+An Android exit probe now has a distinct **not verified** state after a failed
+test. Previously the connection panel showed the failed test while the Google
+authorization card still said access had not been checked. The changing probe
+result is a polite TalkBack live region. A failed probe alone does not prove
+that a Google grant expired.
+
 ## Verification
 
 | Surface | Exact local evidence | Limit |
