@@ -78,6 +78,8 @@ nearest-rank p95 values are descriptive samples, not population percentiles.
 | Historical throughput envelope | November single 128 MiB 74.928 Mb/s; ten × 32 MiB 78.244 Mb/s aggregate | Short, different workloads. May notes around 90 Mb/s aggregate are weaker historical evidence. These are neither the final mixed candidate's speed nor 200,000-user capacity. |
 | Fronted Firestore document primitive | Warm 2 KiB create + known-ID read: 331/346 ms | Six exact AEAD states through the selected front, including 16/256 KiB cases. Discovery and a reliable queue are excluded. Fresh database removed and preceding API state restored. [Report](firestore-front-primitive-2026-11-15.md). |
 | Fronted Firestore WebChannel notification, repaired observer | Five warm 2 KiB write-to-listener callbacks: median 248 ms, range 233–331 ms; cold 1.361 s | Six exact AEAD states; target removal acknowledged, child joined without forced termination, zero pending calls/events/timers. This is an API primitive, not TCP RTT. The first six-state run failed local teardown and remains separate. [Source, first failure and repair](../../experiments/firestore-listen/README.md). |
+| Drive v2 metadata ETag CAS through pinned front | PATCH and PUT each accepted a current strong resource ETag and rejected impossible/old tags with 412; rapid PATCH produced four distinct tags over three back-to-back revisions | Three separate owned-file probes, exact readback and delayed cleanup. The nine-call rapid revision phase took 3.247 s, not app RTT. V3 supplied no observed write fence. Full reliable transport and cross-account behavior remain unmeasured. [Evidence](drive-v2-metadata-etag-cas-2026-11-15.md). |
+| Firestore-priority/Drive-bulk first full live attempt | Exact 16 MiB down/up in 8.681/7.829 s; warm 64-byte echo 1.359 s; 20/20 download and 17/20 upload text echoes | The last three text requests were canceled when the harness's 120-active-Listen cap blocked cleanup. No complete mixed result or paired Drive control. All five residual Drive objects and the free-tier database were deleted and checked after 31 s; prior API state restored. [Failure and cleanup](firestore-hybrid-first-live-2026-11-15.md). |
 | Five simultaneous clients, actual same-binary default | 80 MiB exact files + 60 echoes; aggregate 27.456 Mb/s; scheduled full-echo p95 11.342 s | Zero API errors in the completed baseline. Async candidate stopped on metadata timeouts and exposed a harness teardown bug; it has no valid aggregate or latency comparison. Exact cleanup completed, and the ownership bug is fixed. [Report](bounded-recovery-and-capacity-2026-11-15.md). |
 
 The frozen async-versus-default upload ABBA was interrupted in its fourth
@@ -126,18 +128,24 @@ on PATCH returned 200 and changed the exact owned ciphertext. This tested v3
 path therefore supplied no observed server CAS; valid/stale provider-tag
 phases could not run. Both test-file attempts were deleted and verified absent
 immediately and after 31 seconds. The first attempt stopped on a corrected
-fixture projection error and is not counted as a CAS negative. A distinct v2
-ETag hypothesis is being tested separately.
+fixture projection error and is not counted as a CAS negative. Separate v2
+PATCH, PUT and rapid-revision probes then observed provider-enforced strong
+ETag write fencing on fresh owned files. A feature-detected full transport is
+still required before comparing application latency or replacing the default.
 [ETag report](drive-metadata-etag-cas-2026-11-15.md).
 
 The Firestore-priority/Drive-bulk research prototype passed an offline real
 TLS/SOCKS/mux integration: independent random 16 MiB GET and POST, 40
 distinct overlapping text echoes, lost-watch fallback, reconnect, processing
 receipts, both OPEN arrival orders, and joined exact cleanup. Its fake carrier
-timings are not Google measurements. The owner-token/IAM setup and finite
-Firestore free quotas keep it experimental; a controlled live hybrid versus
-same-binary Drive comparison is required before any performance claim.
-[Design and proof](../../experiments/firestore-hybrid/README.md).
+timings are not Google measurements. The first bounded live hybrid arm carried
+both complete files but failed its last three text echoes at a local watch
+request cap; the paired campaign stopped and exact resource cleanup was proved.
+The owner-token/IAM setup and finite Firestore free quotas keep it experimental;
+a completed controlled live hybrid versus same-binary Drive comparison is still
+required before a performance ranking.
+[Design and proof](../../experiments/firestore-hybrid/README.md),
+[first live failure](firestore-hybrid-first-live-2026-11-15.md).
 
 The prior exact-default versus clean-main recheck also remains visible:
 request p95 6.015 → 5.690 s, scheduled p95 13.597 → 16.247 s and file
