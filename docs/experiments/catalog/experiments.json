@@ -2,7 +2,7 @@
   "schema_version": 1,
   "compiled_date": "2026-11-16",
   "comparison_base": "2c52ff85ea0f6da75dcc0b92f7ca0a9caa32307a",
-  "research_tip": "Retained successful and failed Drive cohorts, v2 metadata CAS capability probes, failed bounded Firestore/Drive and adaptive Drive mixed live arms, local Drive v2 priority carrier; primitive, offline, incomplete and paired transport evidence remain separate; no architecture optimum claim",
+  "research_tip": "Retained 215 cataloged experiment families/cells through bounded Drive v2 and Firestore pipelined full-transport pairs; failed setup, local, API primitive and paired transport evidence stay separate; no architecture optimum or 200k-user capacity claim",
   "method": "Catalog of documented experiment families plus all discoverable recognized result-file paths in local worktrees. Missing data remain null/not recorded. Historical notes are not relabeled as exact-hash modern tests.",
   "units_note": "Mb/s are decimal bits/second; original notes sometimes label MB/GB loosely. Values converted from exact byte/time notes are approximate. Local quota estimates are not Cloud billing telemetry. p95 of a few samples or median of arm p95s is not a population p95.",
   "coverage_limits": [
@@ -13,7 +13,10 @@
     "Correction from root audit986f94a: offline coding/Go tests on shared Mac overlapped some first async ABBA arms. Live account traffic was serialized, but CPU load was not isolated or recorded. Those pairs do not establish causality; final comparison needs coordinated CPU quiet.",
     "Final CPU-quiet matrix attempted16arms/completed15; one ordinary async bulk timeout remains. Dependency-onlydiagnostic incomplete; sustained strictcohorts preserve budgets,accountingfalsepositive,andmainRPCtimeouts separately. Normaldesktopbackgrounduncontrolled.",
     "The first two full Firestore/Drive live campaigns and two subsequent adaptive Drive control arms failed their declared 41-text workload. Exact cleanup is separately recorded; file completion or provider success cannot turn these into a paired performance result.",
-    "The Drive v2 resource ETag was observed to fence PATCH/PUT on three owned-file probes. That API capability does not establish full tunnel speed, durability across restarts, other accounts, or a permanent v2 contract."
+    "The Drive v2 resource ETag was observed to fence PATCH/PUT on three owned-file probes. That API capability does not establish full tunnel speed, durability across restarts, other accounts, or a permanent v2 contract.",
+    "Four Drive v2/control pipelined arms share one frozen binary; two Firestore/Drive hybrid pairs share a workload but the second uses a diagnostic-only source/binary revision. Their arm results are not pooled with clean-main HTTP-serial comparisons.",
+    "Both completed Firestore hybrid arms recorded one HTTP400 during shutdown. The later diagnostic classifies its own event as a canceled owned-cleanup GET Listen; the first event remains unclassified. Workload success does not erase provider errors.",
+    "Firestore service-propagation setup failures A/B/C produced no tunnel performance sample. Exact resource recovery and disabled API restoration were separately verified."
   ],
   "records": [
     {
@@ -4187,6 +4190,166 @@
       "raw_archive_paths": [],
       "revision_or_binary": "3f91455",
       "live_comparable": false
+    },
+    {
+      "id": "R3-068",
+      "candidate": "Pipelined TLS text/file workload and Drive v2 priority live fixture",
+      "evidence_level": "code_and_adversarial_tests",
+      "workload": "One persistent strict TLS text connection with 1 warm+40 pipelined 64B frames; independent exact 16MiB GET+POST; same test binary per pair",
+      "latency": "Offline fixture; no Google performance samples",
+      "throughput_mbps": null,
+      "estimated_quota_units": "Bounded Drive and Firestore guards, exact owned resources, explicit 31s cleanup",
+      "correctness_and_errors": "Distinct full ordered replies and exact hashes; source c5d52c4 added sanitized unexpected-status classifier, focused Go race and vet PASS",
+      "cleanup": "Test-only fixture; no product profile or default change",
+      "decision": "Measurement fixture, not a transport winner",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md",
+        "internal/skirk/firestore_hybrid_tls_pipeline_test.go",
+        "internal/skirk/drive_v2_priority_live_test.go"
+      ],
+      "raw_archive_paths": [],
+      "revision_or_binary": "8b56ad7;116b6eb;c5d52c4",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-069",
+      "candidate": "Drive v2 conditional priority vs Drive: pipelined A candidate/control",
+      "evidence_level": "live_full_transport_complete_paired",
+      "workload": "Same binary 116b6eb, candidate first then Drive, exact 16MiB down+up, one warm+40 pipelined text frames",
+      "latency": "Scheduled text p95 candidate/control: down2.186/2.239s; up2.247/2.236s",
+      "throughput_mbps": "Down25.605/23.554; up42.798/39.931",
+      "estimated_quota_units": "Drive calls615/489; eight-attempt unit upper223560/228320; minute peak219200/114640",
+      "correctness_and_errors": "All files/hash/41 echoes each; expected candidate 412 fences; zero unexpected provider errors/timeouts/denials",
+      "cleanup": "Both writers joined; exact owned prefixes absent immediately and at31s; credentials removed",
+      "decision": "Candidate file faster in this pair, text nearly tied; one pair cannot establish general win",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-pipeline-20261116a/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-070",
+      "candidate": "Drive v2 conditional priority vs Drive: pipelined B control/candidate",
+      "evidence_level": "live_full_transport_complete_paired",
+      "workload": "Same binary 116b6eb, Drive first then candidate, exact 16MiB down+up, one warm+40 pipelined text frames",
+      "latency": "Scheduled text p95 candidate/control: down2.253/2.287s; up1.871/2.863s",
+      "throughput_mbps": "Down27.785/18.343; up39.099/30.575",
+      "estimated_quota_units": "Drive calls641/444; eight-attempt unit upper228360/219640; minute peak222880/118800",
+      "correctness_and_errors": "All files/hash/41 echoes each; expected candidate 412 fences; zero unexpected provider errors/timeouts/denials",
+      "cleanup": "Both writers joined; exact owned prefixes absent immediately and at31s; credentials removed",
+      "decision": "Positive second pair, but Drive control changed sharply across campaigns and candidate costs more active GETs",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/drive-v2-pipeline-20261116b/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-071",
+      "candidate": "Firestore hybrid pipelined setup A: document propagation 403",
+      "evidence_level": "live_setup_failure_no_transport",
+      "workload": "Fresh free-tier database and mailbox document creation after enabling Firestore API; no SOCKS workload",
+      "latency": null,
+      "throughput_mbps": null,
+      "estimated_quota_units": "No tunnel calls",
+      "correctness_and_errors": "403 during mailbox setup after service enablement; zero transport samples",
+      "cleanup": "Owned DB and docs absent immediately+31s; API restored DISABLED",
+      "decision": "Service propagation failure; not a transport latency or reliability observation",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116a/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-072",
+      "candidate": "Firestore hybrid pipelined setup B: database-create propagation 403",
+      "evidence_level": "live_setup_failure_no_transport",
+      "workload": "Fresh database create POST after enabling Firestore API; no SOCKS workload",
+      "latency": null,
+      "throughput_mbps": null,
+      "estimated_quota_units": "No tunnel calls",
+      "correctness_and_errors": "PERMISSION_DENIED 403 explicitly noted recent service enablement may need propagation; zero transport samples",
+      "cleanup": "Exact owned target404 and list empty immediate+31s; API restored DISABLED in external recovery proof",
+      "decision": "Provisioning failure, not transport benchmark",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116b/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-073",
+      "candidate": "Firestore hybrid pipelined setup C: operation-poll propagation 403",
+      "evidence_level": "live_setup_failure_no_transport",
+      "workload": "Database creation operation poll after enabling Firestore API; no SOCKS workload",
+      "latency": null,
+      "throughput_mbps": null,
+      "estimated_quota_units": "No tunnel calls",
+      "correctness_and_errors": "PERMISSION_DENIED 403 during operation poll; zero transport samples",
+      "cleanup": "Exact owned DB deleted and absent immediate+31s; temporarily enabled API borrowed by one D retry and restored DISABLED there",
+      "decision": "Provisioning failure, no transport speed value",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116c/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": false
+    },
+    {
+      "id": "R3-074",
+      "candidate": "Firestore priority/Drive bulk vs Drive: pipelined D hybrid/control",
+      "evidence_level": "live_full_transport_complete_paired",
+      "workload": "Same binary 116b6eb, hybrid first then Drive, exact 16MiB down+up and one warm+40 pipelined text frames",
+      "latency": "Scheduled p95 hybrid/control: down0.560/2.076s; up0.416/2.331s",
+      "throughput_mbps": "Down26.845/21.801; up38.636/30.676",
+      "estimated_quota_units": "Drive calls129/468, unit upper83440/222360; hybrid Firestore417 calls and168 writes",
+      "correctness_and_errors": "All files/hash/41 echoes each; hybrid one Firestore400 near teardown unclassified in this binary; zero Drive unexpected errors/denials",
+      "cleanup": "Both writers joined and Drive prefixes empty immediate+31s; hybrid DB/docs absent immediate+31s; API restored DISABLED",
+      "decision": "Strong single-pair text gain but Firestore free 20k writes/day and teardown400 preclude production ranking",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116d/"
+      ],
+      "revision_or_binary": "116b6eb/75d56f5",
+      "live_comparable": true
+    },
+    {
+      "id": "R3-075",
+      "candidate": "Firestore priority/Drive bulk vs Drive: pipelined E control/hybrid",
+      "evidence_level": "live_full_transport_complete_paired",
+      "workload": "Same binary c5d52c4 within this reverse-order pair; exact 16MiB down+up and one warm+40 pipelined text frames",
+      "latency": "Scheduled p95 hybrid/control: down0.414/2.117s; up0.378/4.461s",
+      "throughput_mbps": "Down35.491/18.154; up30.136/28.483",
+      "estimated_quota_units": "Drive calls135/419, unit upper81400/225800; hybrid Firestore463 calls and179 writes",
+      "correctness_and_errors": "All files/hash/41 echoes each; hybrid one HTTP400 classified canceled owned-cleanup GET Listen after workload; zero Drive unexpected errors/denials",
+      "cleanup": "Both writers joined and Drive prefixes empty immediate+31s; hybrid DB/docs absent immediate+31s; API restored DISABLED",
+      "decision": "Second complete reverse-order text gain; data-plane passed but cleanup400 retained and free-tier scale limited",
+      "source_documents": [
+        "docs/experiments/pipelined-live-comparisons-2026-11-16.md"
+      ],
+      "raw_archive_paths": [
+        "repocomp/.skirk-runs/fs-hybrid-pipeline-20261116e/"
+      ],
+      "revision_or_binary": "c5d52c4/3a5a5ebb",
+      "live_comparable": true
     }
   ]
 }

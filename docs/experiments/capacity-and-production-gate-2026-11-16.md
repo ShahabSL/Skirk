@@ -126,7 +126,7 @@ fallback, not an unconditional permanent protocol assumption.
 [v2/v3 comparison](https://developers.google.com/workspace/drive/api/guides/v2-to-v3-reference),
 [live ETag probe](drive-v2-metadata-etag-cas-2026-11-15.md).
 
-**Decision:** Neither the one-pair Firestore result nor the Drive v2 test
+**Decision:** Neither the two-pair Firestore result nor the Drive v2 test
 carrier proves 200,000-user capacity or a production protocol winner. A
 product launch gate needs versioned peer negotiation, native client support,
 crash-safe exact cleanup, a bounded reconnect path, sustained multi-client
