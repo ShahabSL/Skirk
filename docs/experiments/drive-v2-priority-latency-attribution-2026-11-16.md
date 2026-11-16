@@ -116,3 +116,63 @@ fallback or prove that increasing the window improves p95. It does show a
 discriminating next experiment: retain the same poll cadence, encoded 16 KiB
 cap, global queue, fallback deadline and quota guard while comparing the
 per-stream inline window of four versus eight with a frozen same-binary pair.
+
+## Four-arm window comparison — separate November 16 campaign G
+
+The root then ran a bounded 8/4/4/8 comparison from exact test-only source
+`5c1039b0cf3e7fa4da7ba07dc8ea07bb3116c19a` and one binary SHA-256
+`11e4b9ad55d577b17d70e7876bd0174d8aa593526ec0a759515a3b71980a8769`.
+The private `.skirk-runs/drive-v2-window-20261116g/` ledger says 4/4 arms
+completed. Each used fresh owned Drive v2 files, pinned `www.google.com`,
+the same 100 ms active poll setting, 16 KiB encoded metadata cap, global
+queue of 32, 4,096-claim lifetime cap, fallback behavior and 280,000-unit
+rolling-minute guard. The only selected candidate setting was
+`priority_stream_window: 8`; control used 4. Every arm matched the exact
+16 MiB file in both directions and all 41 text echoes, had no origin bad
+bodies, joined both writers, verified Drive cleanup, and recorded zero guard
+denials, timeouts, transport errors, unexpected provider errors and trace
+drops. The four conditional 412s per arm are expected. Cleanup 404s are
+also expected and remain counted in `api_errors`.
+
+The text columns are nearest-rank p95 of twenty 64-byte TLS frames in each
+bulk direction, using scheduled-to-completion time. File throughput is
+16 MiB × 8 / file elapsed seconds, in decimal Mb/s. `Upper` is the local
+conservative Drive quota reservation, not billed or observed bytes.
+
+| Arm, in run order | Window | Warm frame | Down text p95 | Up text p95 | File down | File up |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| First | 8 | 1,677 ms | 1,552 ms | 1,552 ms | 23.91 Mb/s | 36.10 Mb/s |
+| Second | 4 | 1,433 ms | 2,547 ms | 2,240 ms | 25.03 Mb/s | 38.26 Mb/s |
+| Third | 4 | 1,036 ms | 1,899 ms | 2,039 ms | 23.57 Mb/s | 35.95 Mb/s |
+| Fourth | 8 | 1,180 ms | 1,358 ms | 1,444 ms | 24.90 Mb/s | 35.37 Mb/s |
+
+| Arm | Visible Drive calls | Whole-arm upper units | Rolling-minute upper units | Published physical fallbacks | API errors (412 + cleanup 404) | Cleanup |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| First, window 8 | 564 | 209,000 | 206,320 | 0 | 24 (4 + 20) | Verified |
+| Second, window 4 | 643 | 228,120 | 223,720 | 7 | 38 (4 + 34) | Verified |
+| Third, window 4 | 620 | 236,680 | 225,720 | 8 | 45 (4 + 41) | Verified |
+| Fourth, window 8 | 590 | 207,720 | 204,200 | 0 | 26 (4 + 22) | Verified |
+
+With two arms per setting, the descriptive median is the midpoint of the two
+observations. Relative to window 4, window 8 had down text p95
+1,455 versus 2,223 ms (**34.6% lower**) and up text p95 1,498 versus
+2,140 ms (**30.0% lower**). Median file rates were 24.41 versus 24.30 Mb/s
+down (**0.4% higher**) and 35.74 versus 37.10 Mb/s up (**3.7% lower**).
+The warm-frame median was 1,429 versus 1,234 ms (**15.7% higher**). Median
+visible calls were 577 versus 631.5 (**8.6% lower**); whole-arm upper
+units 208,360 versus 232,400 (**10.3% lower**); rolling-minute upper
+205,260 versus 224,720 (**8.7% lower**). Window 8 had zero physical
+fallbacks in both arms versus seven and eight with window 4. The measured
+tail improvement and disappearance of fallback agree with the earlier
+four-outstanding-claims attribution, but this run still does not map a
+specific TLS frame to its claim or isolate every scheduling contribution.
+
+This is a four-arm result on one secondary account, one network path, one
+payload schedule and a mostly persistent text stream alongside bulk transfer.
+It does not establish a universal latency optimum, fairness under many
+simultaneous active streams, or capacity for 200,000 users. The local tests
+prove that a second stream can enter the global queue while one has eight
+outstanding claims and that the 16 KiB cap still forces immutable fallback;
+they do not replace a multi-client live fairness and quota study. Within the
+measured workload, window 8 is the better text-tail candidate, with no
+measured file-download penalty and a small file-upload reduction.
