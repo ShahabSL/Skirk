@@ -10,6 +10,10 @@ import (
 // projected-v2 backend. The shared TLS/SOCKS test still carries every byte
 // through mux and MemoryStore bulk objects; there is no Google performance claim.
 func driveV2PriorityStores(t *testing.T, traces ...*fsHybridPhaseTrace) (*fsHybridPriorityStore, *fsHybridPriorityStore, *driveV2PriorityFake, *driveV2PriorityCarrier, *driveV2PriorityCarrier, *MemoryStore) {
+	return driveV2PriorityStoresWindow(t, 4, traces...)
+}
+
+func driveV2PriorityStoresWindow(t *testing.T, window int, traces ...*fsHybridPhaseTrace) (*fsHybridPriorityStore, *fsHybridPriorityStore, *driveV2PriorityFake, *driveV2PriorityCarrier, *driveV2PriorityCarrier, *MemoryStore) {
 	t.Helper()
 	if len(traces) > 1 {
 		t.Fatal("one shared trace at most")
@@ -30,7 +34,7 @@ func driveV2PriorityStores(t *testing.T, traces ...*fsHybridPhaseTrace) (*fsHybr
 		t.Fatal(err)
 	}
 	base := NewMemoryStore()
-	cfg := fsHybridStoreConfig{Secret: "public-drive-v2-fixture", Session: [16]byte{1}, Epoch: [16]byte{2}, Direction: DirectionUp, ClientID: "client", RunID: "run", FallbackAfter: time.Second, ACKDelay: time.Millisecond, DiscoveryInterval: time.Millisecond, OperationTimeout: time.Second, Duration: 20 * time.Second, MaxSnapshotBytes: driveV2PriorityCipherMax}
+	cfg := fsHybridStoreConfig{Secret: "public-drive-v2-fixture", Session: [16]byte{1}, Epoch: [16]byte{2}, Direction: DirectionUp, ClientID: "client", RunID: "run", FallbackAfter: time.Second, ACKDelay: time.Millisecond, DiscoveryInterval: time.Millisecond, OperationTimeout: time.Second, Duration: 20 * time.Second, MaxSnapshotBytes: driveV2PriorityCipherMax, InlinePerStream: window}
 	if len(traces) == 1 {
 		cfg.PhaseTrace = traces[0]
 	}

@@ -46,17 +46,18 @@ type fsHybridInbound struct {
 }
 
 type fsHybridState struct {
-	outgoing    *fsHybridCodec
-	incoming    *fsHybridCodec
-	outNames    map[string]*fsHybridOutbound
-	outCipher   map[[32]byte]*fsHybridOutbound
-	outQueue    []*fsHybridOutbound
-	outSeq      uint64
-	outBytes    uint64
-	offered     uint64
-	acked       uint64
-	outByStream map[uint64]int
-	outRetained int
+	outgoing        *fsHybridCodec
+	incoming        *fsHybridCodec
+	outNames        map[string]*fsHybridOutbound
+	outCipher       map[[32]byte]*fsHybridOutbound
+	outQueue        []*fsHybridOutbound
+	outSeq          uint64
+	outBytes        uint64
+	offered         uint64
+	acked           uint64
+	outByStream     map[uint64]int
+	outPerStreamMax int
+	outRetained     int
 
 	rxNames          map[string]*fsHybridInbound
 	rxIDs            map[string]*fsHybridInbound
@@ -76,7 +77,7 @@ type fsHybridState struct {
 }
 
 func newFSHybridState(outgoing, incoming *fsHybridCodec) *fsHybridState {
-	return &fsHybridState{outgoing: outgoing, incoming: incoming, outNames: make(map[string]*fsHybridOutbound), outCipher: make(map[[32]byte]*fsHybridOutbound), outByStream: make(map[uint64]int), rxNames: make(map[string]*fsHybridInbound), rxIDs: make(map[string]*fsHybridInbound), rxSeq: make(map[uint64]*fsHybridInbound), rxCipher: make(map[[32]byte]*fsHybridInbound), rxPhysical: make(map[string]*fsHybridInbound)}
+	return &fsHybridState{outgoing: outgoing, incoming: incoming, outNames: make(map[string]*fsHybridOutbound), outCipher: make(map[[32]byte]*fsHybridOutbound), outByStream: make(map[uint64]int), outPerStreamMax: 4, rxNames: make(map[string]*fsHybridInbound), rxIDs: make(map[string]*fsHybridInbound), rxSeq: make(map[uint64]*fsHybridInbound), rxCipher: make(map[[32]byte]*fsHybridInbound), rxPhysical: make(map[string]*fsHybridInbound)}
 }
 
 func (s *fsHybridState) admission(name string, sealed []byte, deadline time.Time) (*fsHybridOutbound, bool, error) {
@@ -124,7 +125,7 @@ func (s *fsHybridState) enqueue(r *fsHybridOutbound) bool {
 		return false
 	}
 	for _, stream := range r.streams {
-		if s.outByStream[stream] >= 4 {
+		if s.outByStream[stream] >= s.outPerStreamMax {
 			return false
 		}
 	}

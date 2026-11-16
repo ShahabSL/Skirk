@@ -30,25 +30,26 @@ const (
 )
 
 type fsHybridLiveSettings struct {
-	Mode             string `json:"mode"`
-	Workload         string `json:"workload,omitempty"`
-	SessionID        string `json:"session_id"`
-	Epoch            string `json:"epoch"`
-	Secret           string `json:"secret"`
-	ClientID         string `json:"client_id"`
-	RunID            string `json:"run_id"`
-	PayloadSeedHex   string `json:"payload_seed_hex"`
-	Database         string `json:"database"`
-	UpDocument       string `json:"up_document"`
-	DownDocument     string `json:"down_document"`
-	ClientConfig     string `json:"client_config"`
-	ExitConfig       string `json:"exit_config"`
-	OwnerTokenFile   string `json:"owner_token_file"`
-	ClientTokenFile  string `json:"client_token_file"`
-	ExitTokenFile    string `json:"exit_token_file"`
-	TokensValidUntil string `json:"tokens_valid_until"`
-	CampaignLedger   string `json:"campaign_ledger"`
-	ArmID            string `json:"arm_id"`
+	Mode                 string `json:"mode"`
+	Workload             string `json:"workload,omitempty"`
+	PriorityStreamWindow int    `json:"priority_stream_window,omitempty"`
+	SessionID            string `json:"session_id"`
+	Epoch                string `json:"epoch"`
+	Secret               string `json:"secret"`
+	ClientID             string `json:"client_id"`
+	RunID                string `json:"run_id"`
+	PayloadSeedHex       string `json:"payload_seed_hex"`
+	Database             string `json:"database"`
+	UpDocument           string `json:"up_document"`
+	DownDocument         string `json:"down_document"`
+	ClientConfig         string `json:"client_config"`
+	ExitConfig           string `json:"exit_config"`
+	OwnerTokenFile       string `json:"owner_token_file"`
+	ClientTokenFile      string `json:"client_token_file"`
+	ExitTokenFile        string `json:"exit_token_file"`
+	TokensValidUntil     string `json:"tokens_valid_until"`
+	CampaignLedger       string `json:"campaign_ledger"`
+	ArmID                string `json:"arm_id"`
 }
 
 func fsHybridPrivateRead(path string, max int64) ([]byte, error) {
@@ -97,6 +98,13 @@ func fsHybridLoadLiveSettings(dir string) (fsHybridLiveSettings, error) {
 		return s, errFSHybridBounds
 	}
 	if s.Mode == "drive_v2" && (s.Database != "" || s.UpDocument != "" || s.DownDocument != "" || s.OwnerTokenFile != "") {
+		return s, errFSHybridBounds
+	}
+	if s.Mode == "drive_v2" {
+		if s.PriorityStreamWindow != 0 && s.PriorityStreamWindow != 4 && s.PriorityStreamWindow != 8 {
+			return s, errFSHybridBounds
+		}
+	} else if s.PriorityStreamWindow != 0 {
 		return s, errFSHybridBounds
 	}
 	if len(s.ArmID) < 3 || len(s.ArmID) > 64 || !isSafeObjectSegment(s.ArmID) || !filepath.IsAbs(s.CampaignLedger) || !strings.Contains(filepath.Clean(s.CampaignLedger), string(filepath.Separator)+".skirk-runs"+string(filepath.Separator)) {

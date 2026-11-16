@@ -20,13 +20,17 @@ type fsHybridStoreConfig struct {
 	MaxSnapshotBytes                                                       int
 	FallbackAfter, OperationTimeout, ACKDelay, Duration, DiscoveryInterval time.Duration
 	PhaseTrace                                                             *fsHybridPhaseTrace
+	InlinePerStream                                                        int
 }
 
 func (c fsHybridStoreConfig) normalized() (fsHybridStoreConfig, error) {
 	if c.MaxSnapshotBytes == 0 {
 		c.MaxSnapshotBytes = fsHybridWireMax
 	}
-	if c.MaxSnapshotBytes < 1024 || c.MaxSnapshotBytes > fsHybridWireMax {
+	if c.InlinePerStream == 0 {
+		c.InlinePerStream = 4
+	}
+	if c.MaxSnapshotBytes < 1024 || c.MaxSnapshotBytes > fsHybridWireMax || c.InlinePerStream != 4 && c.InlinePerStream != 8 {
 		return c, errFSHybridBounds
 	}
 	if c.FallbackAfter == 0 {
@@ -122,6 +126,7 @@ func newFSHybridPriorityStore(parent context.Context, base BlobStore, carrier fs
 	out.wireMax, in.wireMax = cfg.MaxSnapshotBytes, cfg.MaxSnapshotBytes
 	ctx, cancel := context.WithTimeout(parent, cfg.Duration)
 	s := &fsHybridPriorityStore{ctx: ctx, cancel: cancel, base: base, carrier: carrier, cfg: cfg, state: newFSHybridState(out, in), ready: make(chan struct{}), wake: make(chan struct{}, 1), fallbackWake: make(chan struct{}, 1), fallbackJobs: make(chan *fsHybridOutbound, fsHybridQueueMax), counters: make(map[string]int64), cleanupQueued: make(map[string]bool), deletedPhysical: make(map[string]bool), discoverWake: make(chan struct{}, 1), prefetchJobs: make(chan ObjectInfo, 64), prefetchAdmission: make(chan struct{}, 66), prefetchPending: make(map[string]ObjectInfo), space: make(chan struct{})}
+	s.state.outPerStreamMax = cfg.InlinePerStream
 	readCtx, stop := context.WithTimeout(ctx, cfg.OperationTimeout)
 	s.own, err = carrier.ReadOwn(readCtx)
 	stop()

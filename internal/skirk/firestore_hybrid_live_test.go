@@ -816,6 +816,11 @@ func runPinnedHybridLiveArm(t *testing.T, dir string, settings fsHybridLiveSetti
 	report := map[string]any{"mode": settings.Mode, "workload": settings.Workload, "arm_id": settings.ArmID, "workload_ok": runErr == nil, "stop_ok": stopErr == nil, "writers_joined": r.joined, "drive_cleanup_verified": cleanupErr == nil, "firestore_cleanup_required": settings.Mode == "hybrid", "rows": j.rows, "drive_guard": r.driveBudget.snapshot(), "firestore_guard": r.fsBudget.snapshot(), "stores": stores, "carriers": carriers, "drive_v2_carriers": v2Carriers, "drive_quotas": driveQuota, "origin_counts": map[string]int64{"gets": r.gets.Load(), "posts": r.posts.Load(), "text_echoes": r.texts.Load(), "bad": r.bad.Load()}, "private_log": bounded.stats(), "route": "google_front_pinned", "sni": "www.google.com", "product_credentials_changed": false, "experimental": true}
 	if r.v2PhaseTrace != nil {
 		report["v2_priority_phase_trace"] = r.v2PhaseTrace.snapshot()
+		window := settings.PriorityStreamWindow
+		if window == 0 {
+			window = 4
+		}
+		report["priority_stream_window"] = window
 	}
 	if err = fsHybridLiveExclusiveJSON(filepath.Join(dir, "summary.json"), report); err != nil {
 		runErr = errors.Join(runErr, err)
