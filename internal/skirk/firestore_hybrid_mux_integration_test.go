@@ -65,8 +65,15 @@ func (f *fsHybridMuxFixture) startMux(m *driveMux) {
 func fsHybridFullMuxFixture(t *testing.T, socks bool) *fsHybridMuxFixture {
 	t.Helper()
 	c, e, cloud, base := fsHybridMemoryStores(t)
+	f := fsHybridFullMuxFixtureWithStores(t, c, e, base, socks)
+	f.cloud = cloud
+	return f
+}
+
+func fsHybridFullMuxFixtureWithStores(t *testing.T, c, e *fsHybridPriorityStore, base *MemoryStore, socks bool) *fsHybridMuxFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
-	f := &fsHybridMuxFixture{ctx: ctx, cancel: cancel, client: c, exit: e, cloud: cloud, base: base}
+	f := &fsHybridMuxFixture{ctx: ctx, cancel: cancel, client: c, exit: e, base: base}
 	t.Cleanup(func() { f.close(t) })
 	cfg := &Config{Secret: c.cfg.Secret, SessionID: hex.EncodeToString(c.cfg.Session[:]), Client: ClientConfig{ID: c.cfg.ClientID, RunID: c.cfg.RunID}, Tunnel: TunnelConfig{Profile: "fixed", PollIntervalMS: 5, ChunkSize: 4 << 20, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true}}
 	cfg.ApplyDefaults()
@@ -223,6 +230,11 @@ func (f *fsHybridMuxFixture) close(t *testing.T) {
 
 func TestFSHybridRealSOCKS16MiBEachDirectionMixedTextFallbackReconnect(t *testing.T) {
 	f := fsHybridFullMuxFixture(t, true)
+	runFSHybridTLSMixedWorkload(t, f, nil, nil, nil)
+}
+
+func runFSHybridTLSMixedWorkload(t *testing.T, f *fsHybridMuxFixture, before, afterGET, afterStop func()) {
+	t.Helper()
 	const size = 16 << 20
 	down := make([]byte, size)
 	up := make([]byte, size)
@@ -342,7 +354,12 @@ func TestFSHybridRealSOCKS16MiBEachDirectionMixedTextFallbackReconnect(t *testin
 	}
 	// A dropped/coalesced cumulative notification must yield a normal Drive
 	// fallback of the exact prepared priority record, not a different OPEN.
-	f.cloud.setDrop(0, true)
+	if f.cloud != nil {
+		f.cloud.setDrop(0, true)
+	}
+	if before != nil {
+		before()
+	}
 	type result struct {
 		body []byte
 		err  error
@@ -396,10 +413,15 @@ func TestFSHybridRealSOCKS16MiBEachDirectionMixedTextFallbackReconnect(t *testin
 	}
 	assertPhysicalNormal(DirectionDown)
 	fsHybridEventually(t, func() bool { return f.client.Snapshot()["fallback_published"] > 0 })
-	f.cloud.setDrop(0, false)
-	f.cloud.failWatch(1, context.DeadlineExceeded)
-	fsHybridEventually(t, func() bool { return f.exit.Snapshot()["watch_reconnects"] == 1 })
-	f.cloud.deliver(0)
+	if f.cloud != nil {
+		f.cloud.setDrop(0, false)
+		f.cloud.failWatch(1, context.DeadlineExceeded)
+		fsHybridEventually(t, func() bool { return f.exit.Snapshot()["watch_reconnects"] == 1 })
+		f.cloud.deliver(0)
+	}
+	if afterGET != nil {
+		afterGET()
+	}
 	textBatch := func(seed int, bulkBytes *atomic.Int64) {
 		t.Helper()
 		for i := 0; i < 20; i++ {
@@ -476,6 +498,9 @@ func TestFSHybridRealSOCKS16MiBEachDirectionMixedTextFallbackReconnect(t *testin
 	}
 	if remaining, _ := f.base.List(context.Background(), ""); len(remaining) != 1 {
 		t.Fatal("normal/priority cleanup left objects", remaining)
+	}
+	if afterStop != nil {
+		afterStop()
 	}
 	t.Logf("loopback only: exact independent16MiB GET+POST,40 overlapping text echoes; processing receipts client=%d exit=%d; fallback=%d reconnect=%d; no live speed claim", beforeC["processed_receipts"], beforeE["processed_receipts"], beforeC["fallback_published"], beforeE["watch_reconnects"])
 }
