@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -104,6 +105,9 @@ func TestFSHybridLiveAggregateResponseBoundAndDirectOriginRejection(t *testing.T
 	g.stop()
 }
 func TestFSHybridLiveCohortPersistsTimeoutsAndRejectsReuse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +188,9 @@ func TestFSHybridLiveStoppedActivePoolCannotBlockSeparateCleanup(t *testing.T) {
 }
 
 func TestFSHybridLiveCohort64ThresholdSurvivesPriorArms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX private-file permission fixture")
+	}
 	dir, e := filepath.EvalSymlinks(t.TempDir())
 	if e != nil {
 		t.Fatal(e)

@@ -152,14 +152,17 @@ func (r *fsHybridLiveRun) loadDrive(name, tokenFile string, cleanup bool) (*Driv
 	cfg.Secret = r.settings.Secret
 	cfg.SessionID = r.settings.SessionID
 	cfg.Client = ClientConfig{ID: r.settings.ClientID, RunID: r.settings.RunID}
-	cfg.Tunnel = TunnelConfig{Profile: "fixed", PollIntervalMS: 250, ChunkSize: 4 << 20, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true, Observe: true}
+	cfg.Tunnel = TunnelConfig{Profile: "fixed", PollIntervalMS: 1000, ChunkSize: 4 << 20, Concurrency: 16, CleanupProcessed: true, SparsePriority: true, InteractionEpoch: true, Observe: true}
 	cfg.Drive.MetadataOnlyPriority = false
 	cfg.Drive.MetadataSlotV1 = false
 	cfg.Drive.MetadataSlotDeliveryV1 = false
 	cfg.Drive.MetadataSlotAsyncV1 = false
 	cfg.Drive.MetadataSlotPrimaryV1 = false
 	cfg.Drive.CombinedMuxDiscovery = false
-	cfg.Drive.AdaptiveMuxDiscovery = false
+	// The Drive-only control uses the proven one-list sparse discovery path.
+	// The hybrid retains the local p0-first path so its Watch notification
+	// cannot wait behind a normal Drive list request.
+	cfg.Drive.AdaptiveMuxDiscovery = r.settings.Mode == "drive"
 	cfg.Drive.InlineSmallObjects = true
 	cfg.Drive.NormalListPageSize = 100
 	cfg.Drive.SeparateUploadPool = !cleanup
@@ -241,7 +244,7 @@ func (r *fsHybridLiveRun) setup() error {
 			}
 			r.carriers = append(r.carriers, carrier)
 			r.activeGates = append(r.activeGates, fsHybridLiveAttach(carrier.client, r.fsBudget, false))
-			store, e := newFSHybridPriorityStore(r.ctx, base, carrier, fsHybridStoreConfig{Secret: r.settings.Secret, Session: sid, Epoch: epoch, Direction: direction, ClientID: r.settings.ClientID, RunID: r.settings.RunID, FallbackAfter: 2 * time.Second, OperationTimeout: 10 * time.Second, ACKDelay: 10 * time.Millisecond, Duration: fsHybridLiveDuration, DiscoveryInterval: 250 * time.Millisecond})
+			store, e := newFSHybridPriorityStore(r.ctx, base, carrier, fsHybridStoreConfig{Secret: r.settings.Secret, Session: sid, Epoch: epoch, Direction: direction, ClientID: r.settings.ClientID, RunID: r.settings.RunID, FallbackAfter: 2 * time.Second, OperationTimeout: 10 * time.Second, ACKDelay: 10 * time.Millisecond, Duration: fsHybridLiveDuration, DiscoveryInterval: time.Second})
 			if e != nil {
 				return e
 			}
