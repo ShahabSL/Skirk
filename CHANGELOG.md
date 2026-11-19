@@ -17,7 +17,8 @@
   renewing existing authorizations.
 - Android VPN can route all apps except a saved selection. Thanks to
   [@tagh6668-dot for the split-tunneling contribution](https://github.com/ShahabSL/Skirk/pull/31).
-
+- Removing the last Android profile also clears credentials left by older builds
+  after their saved profile records disappeared. Thanks to [@pouyabrn for the cleanup fix in PR #2](https://github.com/ShahabSL/Skirk/pull/2).
 - Simplified the filesystem checks reported by [@motixo in PR #27](https://github.com/ShahabSL/Skirk/pull/27).
 
 ## v0.1.55 - 2026-05-21
