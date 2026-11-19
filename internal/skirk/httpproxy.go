@@ -3,6 +3,7 @@ package skirk
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -70,7 +71,7 @@ func (s *HTTPProxyServer) handleConnect(ctx context.Context, conn net.Conn, read
 	s.Handler(ctx, target, bufferedConn{Conn: conn, reader: reader})
 }
 
-func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn, req *http.Request) {
+func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client bufferedConn, req *http.Request) {
 	if req.URL == nil || req.URL.Host == "" {
 		writeProxyError(client, http.StatusBadRequest, "absolute proxy URL is required")
 		return
@@ -146,6 +147,10 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 	if err := req.Write(proxySide); err != nil {
 		return
 	}
+	if len(protocols) == 0 {
+		stopWatching := watchHTTPClientReset(client.Conn, cancel)
+		defer stopWatching()
+	}
 	reader := bufio.NewReader(proxySide)
 	resp, err := http.ReadResponse(reader, req)
 	// An informational response does not complete the request or switch the
@@ -162,6 +167,9 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 		resp, err = http.ReadResponse(reader, req)
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		if s.Logger != nil {
 			s.Logger.Printf("http proxy target=%s response failed: %s", targetFingerprint(target), errorSummary(err))
 		}
@@ -198,6 +206,28 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client net.Conn
 	resp.Close = true
 	_ = resp.Write(client)
 	// A complete HTTP response ends this stream even if the origin delays FIN.
+}
+
+// An ordinary request consumes its full body and closes after one response.
+// A reset can arrive while the proxy is waiting for a silent origin. EOF is a
+// valid TCP half-close: the client may still be waiting for the response.
+func watchHTTPClientReset(client net.Conn, cancel context.CancelFunc) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// One read also bounds work if the client starts a pipelined request.
+		var next [1]byte
+		_, err := client.Read(next[:])
+		var netErr net.Error
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) &&
+			!(errors.As(err, &netErr) && netErr.Timeout()) {
+			cancel()
+		}
+	}()
+	return func() {
+		_ = client.Close()
+		<-done
+	}
 }
 
 func stripProxyConnectionHeaders(h http.Header) {

@@ -493,6 +493,131 @@ func TestHTTPProxyDisconnectDoesNotDrainStalledResponse(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyResetCancelsSilentOrigin(t *testing.T) {
+	accepted := make(chan struct{})
+	client, _, done := upgradeTestProxy(t, func(ctx context.Context, _ string, conn net.Conn) {
+		if _, err := http.ReadRequest(bufio.NewReader(conn)); err != nil {
+			t.Errorf("origin request: %v", err)
+			return
+		}
+		close(accepted)
+		<-ctx.Done() // The proxy has no response bytes to write to the client.
+	})
+	if _, err := io.WriteString(client, "GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-accepted:
+	case <-done:
+		t.Fatal("proxy stopped before forwarding the request")
+	case <-time.After(time.Second):
+		t.Fatal("origin did not receive the request")
+	}
+	if err := client.SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reset failed to cancel a silent origin")
+	}
+}
+
+func TestHTTPProxyHalfClosedClientReceivesCompleteResponse(t *testing.T) {
+	const request = "POST http://example.test/ HTTP/1.1\r\nHost: example.test\r\nContent-Length: 5\r\n\r\nhello"
+	for _, tc := range []struct{ name, extra string }{
+		{"single", ""},
+		{"pipelined", "GET http://example.test/next HTTP/1.1\r\nHost: example.test\r\n\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			client, _, _ := upgradeTestProxy(t, func(ctx context.Context, _ string, conn net.Conn) {
+				req, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					t.Errorf("origin request: %v", err)
+					return
+				}
+				body, err := io.ReadAll(req.Body)
+				if err != nil || string(body) != "hello" {
+					t.Errorf("origin received body %q, error %v", body, err)
+					return
+				}
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return
+				}
+				_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nworld")
+			})
+			if _, err := io.WriteString(client, request+tc.extra); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.CloseWrite(); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			resp, err := http.ReadResponse(bufio.NewReader(client), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || resp.StatusCode != http.StatusOK || string(body) != "world" {
+				t.Fatalf("response status=%d body=%q error=%v", resp.StatusCode, body, err)
+			}
+		})
+	}
+}
+
+func TestHTTPProxyFailedBodyWriteCancelsBeforeDraining(t *testing.T) {
+	client, server := net.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	release := make(chan struct{})
+	done := make(chan struct{})
+	proxy := HTTPProxyServer{Handler: func(ctx context.Context, _ string, conn net.Conn) {
+		if _, err := http.ReadRequest(bufio.NewReader(conn)); err != nil {
+			t.Errorf("origin request: %v", err)
+			return
+		}
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n")
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return
+		}
+		_, _ = io.WriteString(conn, "x")
+		<-ctx.Done()
+	}}
+	go func() {
+		defer close(done)
+		proxy.handle(ctx, server)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = client.Close()
+		<-done
+	})
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(client, "GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := http.ReadResponse(bufio.NewReader(client), nil); err != nil {
+		t.Fatal(err)
+	}
+	// net.Pipe delivers EOF on the read side and fails the very next write.
+	// Only the failed response-body write can cancel this origin.
+	_ = client.Close()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("failed body write drained an incomplete upstream response")
+	}
+}
+
 func TestHTTPProxyFailedRequestWriteDoesNotDrainClientBody(t *testing.T) {
 	client, _, done := upgradeTestProxy(t, func(_ context.Context, _ string, conn net.Conn) {
 		if _, err := http.ReadRequest(bufio.NewReader(conn)); err != nil {
