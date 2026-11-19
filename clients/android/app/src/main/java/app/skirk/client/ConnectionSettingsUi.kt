@@ -405,19 +405,24 @@ private fun PortField(label: String, value: String, error: String?, onChange: (S
     )
 }
 
-private data class VpnAppEntry(val packageName: String, val label: String)
+internal data class VpnAppEntry(val packageName: String, val label: String, val hasLauncher: Boolean) {
+    fun matchesSearch(query: String, selected: Boolean): Boolean =
+        if (query.isEmpty()) hasLauncher || selected
+        else label.contains(query, ignoreCase = true) || packageName.contains(query, ignoreCase = true)
+}
 
 @Suppress("DEPRECATION")
-private fun queryVpnApps(context: Context): List<VpnAppEntry> {
+internal fun queryVpnApps(context: Context): List<VpnAppEntry> {
     val manager = context.packageManager
     val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return manager.queryIntentActivities(launcher, 0)
-        .mapNotNull { activity ->
-            val name = activity.activityInfo?.packageName ?: return@mapNotNull null
-            if (name == context.packageName) return@mapNotNull null
-            VpnAppEntry(name, activity.loadLabel(manager).toString().ifBlank { name })
+    val launchers = manager.queryIntentActivities(launcher, 0).associateBy { it.activityInfo.packageName }
+    return manager.getInstalledApplications(0)
+        .filterNot { it.packageName == context.packageName }
+        .map { app ->
+            val activity = launchers[app.packageName]
+            val label = (activity?.loadLabel(manager) ?: app.loadLabel(manager)).toString().ifBlank { app.packageName }
+            VpnAppEntry(app.packageName, label, hasLauncher = activity != null)
         }
-        .distinctBy { it.packageName }
         .sortedWith(compareBy<VpnAppEntry> { it.label.lowercase() }.thenBy { it.packageName })
 }
 
@@ -448,9 +453,10 @@ internal fun VpnAppsPage(
     val duplicatedLabels = remember(installed) { installed.orEmpty().groupingBy { it.label }.eachCount() }
     val selectedCount = selectedPackages.count { it in installedNames }
     val visibleApps = remember(installed, selectedPackages, search) {
-        val missing = selectedPackages.filterNot { it in installedNames }.map { VpnAppEntry(it, it) }
-        (installed.orEmpty() + missing).filter {
-            it.label.contains(search.trim(), ignoreCase = true) || it.packageName.contains(search.trim(), ignoreCase = true)
+        val query = search.trim()
+        val missing = selectedPackages.filterNot { it in installedNames }.map { VpnAppEntry(it, it, hasLauncher = false) }
+        (installed.orEmpty() + missing).filter { app ->
+            app.matchesSearch(query, app.packageName in selectedPackages)
         }
     }
 
@@ -480,7 +486,7 @@ internal fun VpnAppsPage(
                         OutlinedTextField(
                             value = search,
                             onValueChange = { search = it },
-                            label = { Text("Search installed apps") },
+                            label = { Text("Search apps or package names") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -504,8 +510,8 @@ internal fun VpnAppsPage(
                         items(visibleApps, key = { it.packageName }) { app ->
                             val checked = app.packageName in selectedPackages
                             val detail = when {
-                                app.packageName !in installedNames -> "No longer installed"
-                                (duplicatedLabels[app.label] ?: 0) > 1 -> app.packageName
+                                app.packageName !in installedNames -> "Unavailable to Skirk"
+                                (!app.hasLauncher || (duplicatedLabels[app.label] ?: 0) > 1) && app.packageName != app.label -> app.packageName
                                 else -> null
                             }
                             Row(
