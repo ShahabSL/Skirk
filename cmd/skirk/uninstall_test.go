@@ -112,6 +112,26 @@ func TestDeleteKitDirectoryRejectsCurrentWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestDeleteKitDirectoryRejectsCurrentWorkingDirectorySymlink(t *testing.T) {
+	dir := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "kit-link")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, name := range []string{"exit.json", "client.json", "client.skirk"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+	if err := deleteKitDirectory(filepath.Join(alias, "exit.json")); err == nil || !strings.Contains(err.Error(), "current working directory") {
+		t.Fatalf("deleteKitDirectory error = %v, want current directory refusal", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("working directory was removed: %v", err)
+	}
+}
+
 func TestAssertSkirkWireproxyPathAcceptsManagedConfig(t *testing.T) {
 	dir := t.TempDir()
 	profile := filepath.Join(dir, "wgcf-profile.conf")

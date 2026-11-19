@@ -8,10 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
-import android.net.ConnectivityManager
 import android.net.IpPrefix
-import android.net.Network
 import android.net.VpnService
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
@@ -23,141 +22,138 @@ import kotlin.concurrent.thread
 
 class SkirkVpnService : VpnService() {
     private val engine by lazy {
-        AndroidSkirkEngine(this, "skirk-vpn-client.log") { code ->
+        AndroidSkirkEngine(this, "skirk-vpn-client.log") { attemptId, code, message ->
             thread(name = "skirk-vpn-engine-exit", start = true) {
-                stopTunnel("Skirk engine exited with code $code", failed = true)
+                stopTunnel(
+                    message,
+                    failed = true,
+                    allowQueuedRestart = code != 78,
+                    expectedAttemptId = attemptId,
+                )
             }
         }
     }
     private val tunnel by lazy { HevTun2Socks() }
     private val connectionState by lazy { ConnectionStateStore(this) }
     private val lifecycleLock = Any()
+    private var connectionOwner: ConnectionState? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var detachedTunFd: Int? = null
     private var nativeStarted = false
     private var activeStartGeneration = 0L
-    private var pendingStartProfile: ClientProfile? = null
+    private var pendingStart: Pair<ClientProfile, ConnectionState>? = null
     @Volatile
     private var workerStarted = false
     @Volatile
     private var stopRequested = false
     @Volatile
     private var vpnPhase = VpnPhase.STOPPED
+    @Volatile
+    private var persistentVpnForeground = false
     private var latestStartId = 0
 
     override fun onBind(intent: Intent?): IBinder? = super.onBind(intent)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        synchronized(lifecycleLock) {
-            latestStartId = startId
-        }
-        if (intent == null) {
-            Log.w(TAG, "Ignoring VPN service restart without an explicit start intent")
-            connectionState.stopped("VPN stopped")
-            stopSelfResult(startId)
-            return START_NOT_STICKY
-        }
-        if (intent.action == ACTION_STOP) {
-            synchronized(lifecycleLock) {
-                if (vpnPhase != VpnPhase.STOPPED) {
+        synchronized(lifecycleLock) { latestStartId = startId }
+        val attemptId = intent?.getStringExtra(CONNECTION_ATTEMPT_EXTRA)
+        val current = connectionState.read()
+        if (intent?.action == ACTION_STOP) {
+            val pending = synchronized(lifecycleLock) {
+                if (!current.ownsAttempt(ClientProfile.CONNECTION_MODE_VPN, attemptId) ||
+                    connectionOwner?.let { it.attemptId != attemptId } == true
+                ) null
+                else if (stopRequested) {
+                    pendingStart = null
+                    null
+                } else {
                     stopRequested = true
-                    pendingStartProfile = null
+                    pendingStart = null
+                    connectionState.disconnecting(current)
                 }
             }
-            thread(name = "skirk-vpn-stop", start = true) {
-                stopTunnel("Disconnected", allowQueuedRestart = false)
-                stopSelfResult(startId)
+            if (pending == null) stopIfIdle(startId)
+            else thread(name = "skirk-vpn-stop") {
+                stopTunnel("Disconnected", allowQueuedRestart = false, explicitStop = pending, expectedAttemptId = attemptId)
             }
             return START_NOT_STICKY
         }
-		if (intent.action != ACTION_START) {
-			Log.w(TAG, "Ignoring VPN service intent with action=${intent.action}")
-			stopSelfResult(startId)
-			return START_NOT_STICKY
-		}
-            if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-                SkirkProxyService.stop(this)
-            }
-
-			val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
-				?.let { ClientProfile.fromJson(JSONObject(it)) }
-            ?: ProfileStore(this).selectedProfile()
-
-        if (profile == null) {
-            connectionState.stopped("No profile selected")
-            stopSelfResult(startId)
+        if (intent?.action != ACTION_START || !current.acceptsStart(ClientProfile.CONNECTION_MODE_VPN, attemptId)) {
+            stopIfIdle(startId)
             return START_NOT_STICKY
         }
 
-        val foregroundStarted = runCatching {
-            startForegroundCompat(if (vpnPhase == VpnPhase.RUNNING) "Connected" else "Connecting")
-        }.onFailure { error ->
-            Log.e(TAG, "Could not start VPN foreground service", error)
-            connectionState.failed("VPN failed: ${error.message ?: "foreground service failed"}")
-            stopSelfResult(startId)
-        }.isSuccess
-        if (!foregroundStarted) {
+        val profile = runCatching {
+            intent.getStringExtra(EXTRA_PROFILE_JSON)?.let { ClientProfile.fromJson(JSONObject(it)) }
+        }.getOrNull()
+        if (profile == null || !current.canCompleteStart(profile.connectionMode, profile.id)) {
+            connectionState.finish(current, "Could not start the selected VPN profile", failed = true)
+            stopIfIdle(startId)
             return START_NOT_STICKY
         }
-        var queuedAfterStop = false
+
         val generation = synchronized(lifecycleLock) {
-            if (!workerStarted && vpnPhase == VpnPhase.STOPPED) {
+            if (!connectionState.read().acceptsStart(ClientProfile.CONNECTION_MODE_VPN, attemptId)) {
+                null
+            } else if (vpnPhase == VpnPhase.STOPPED && !workerStarted) {
+                connectionOwner = current
                 stopRequested = false
                 workerStarted = true
                 vpnPhase = VpnPhase.STARTING
-                activeStartGeneration++
-                activeStartGeneration
-            } else if (stopRequested || vpnPhase == VpnPhase.STOPPING) {
-                pendingStartProfile = profile
-                queuedAfterStop = true
-                null
+                ++activeStartGeneration
             } else {
+                if (vpnPhase == VpnPhase.STOPPING && connectionOwner?.attemptId != attemptId) {
+                    pendingStart = profile to current
+                }
                 null
             }
         }
         if (generation == null) {
-            if (vpnPhase == VpnPhase.RUNNING) {
-                connectionState.connected(profile, "VPN connected")
-            } else if (queuedAfterStop) {
-                connectionState.connecting(profile, "VPN reconnecting")
-                Log.i(TAG, "Queued VPN start until current stop completes")
-            } else {
-                connectionState.connecting(profile, "VPN connecting")
-                Log.i(TAG, "Ignoring duplicate VPN start while worker is active")
-            }
+            stopIfIdle(startId)
             return START_NOT_STICKY
         }
 
-        connectionState.connecting(profile, "VPN connecting")
-        thread(name = "skirk-vpn-start", start = true) {
-            runCatching { startTunnel(profile, generation) }
+        val foregroundStarted = runCatching { startForegroundCompat("Connecting", current.attemptId) }
+            .onFailure { error ->
+                Log.e(TAG, "Could not start VPN foreground service", error)
+                stopTunnel("VPN failed: ${error.message ?: "foreground service failed"}", failed = true, expectedAttemptId = current.attemptId)
+            }.isSuccess
+        if (!foregroundStarted) return START_NOT_STICKY
+
+        thread(name = "skirk-vpn-start") {
+            runCatching { startTunnel(profile, generation, current) }
                 .onFailure { error ->
                     Log.e(TAG, "VPN start failed", error)
-                    if (isCurrentStart(generation)) {
-                        stopTunnel("VPN failed: ${error.message ?: "start failed"}", failed = true)
-                    } else {
-                        Log.i(TAG, "Ignoring failure from stale VPN start generation=$generation", error)
-                    }
+                    stopTunnel("VPN failed: ${error.message ?: "start failed"}", failed = true, expectedAttemptId = current.attemptId)
                 }
         }
         return START_NOT_STICKY
     }
 
-	override fun onRevoke() {
-		thread(name = "skirk-vpn-revoke-stop", start = true) {
-			stopTunnel("VPN permission was revoked", failed = true, allowQueuedRestart = false)
-		}
-		super.onRevoke()
-	}
+    private fun stopIfIdle(startId: Int) {
+        if (synchronized(lifecycleLock) { vpnPhase == VpnPhase.STOPPED && connectionOwner == null }) {
+            stopSelfResult(startId)
+        }
+    }
 
-		override fun onDestroy() {
-			thread(name = "skirk-vpn-destroy-stop", start = true) {
-				stopTunnel("service destroyed", stopService = false, allowQueuedRestart = false)
-			}
-			super.onDestroy()
-		}
+    override fun onRevoke() {
+        val attemptId = synchronized(lifecycleLock) { connectionOwner?.attemptId }
+        if (attemptId != null) thread(name = "skirk-vpn-revoke-stop") {
+            stopTunnel("VPN permission was revoked", failed = true, allowQueuedRestart = false, expectedAttemptId = attemptId)
+        }
+        super.onRevoke()
+    }
+
+    override fun onDestroy() {
+        val attemptId = synchronized(lifecycleLock) { connectionOwner?.attemptId }
+        if (attemptId != null) thread(name = "skirk-vpn-destroy-stop") {
+            stopTunnel("service destroyed", stopService = false, allowQueuedRestart = false, expectedAttemptId = attemptId)
+        }
+        super.onDestroy()
+    }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
+        val attemptId = synchronized(lifecycleLock) { connectionOwner?.attemptId } ?: return
         Log.w(TAG, "VPN foreground service timed out type=$fgsType")
         thread(name = "skirk-vpn-timeout-stop", start = true) {
             stopTunnel(
@@ -165,20 +161,22 @@ class SkirkVpnService : VpnService() {
                 failed = true,
                 stopService = false,
                 allowQueuedRestart = false,
+                expectedAttemptId = attemptId,
             )
             stopSelfResult(startId)
         }
     }
 
-    private fun startTunnel(profile: ClientProfile, generation: Long) {
+    private fun startTunnel(profile: ClientProfile, generation: Long, start: ConnectionState) {
         val localProfile = profile.copy(shareLan = false, connectionMode = ClientProfile.CONNECTION_MODE_VPN)
-        val underlyingNetworks = currentUnderlyingNetworks()
+        val config = SkirkConfig.parse(localProfile.rawConfig)
+        val routing = AndroidVpnRouting(config.udpPreviewIpv6, config.udpPreviewRemoteDns)
         Log.i(TAG, "Starting VPN engine on 127.0.0.1:${localProfile.socksPort}")
         synchronized(lifecycleLock) {
             if (isStartCancelledLocked(generation)) {
                 return
             }
-            engine.start(localProfile)
+            engine.start(localProfile, start.attemptId)
         }
         engine.waitUntilReady("local SOCKS proxy", "127.0.0.1", localProfile.socksPort)
         Log.i(TAG, "VPN engine ready on 127.0.0.1:${localProfile.socksPort}")
@@ -193,21 +191,30 @@ class SkirkVpnService : VpnService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        // Keep the VPN IPv4-only until Skirk can apply the same exit-side
-        // DNS/family policy to literal IPv6 targets produced by app stacks.
+        // The excluded engine uses unbound sockets, so Android tracks the default network.
         val builder = Builder()
             .setSession("Skirk")
-            .setMtu(DEFAULT_MTU)
-            .addAddress(TUN_IPV4_ADDRESS, 30)
+            .setMtu(AndroidVpnRouting.MTU)
+            .addAddress(AndroidVpnRouting.IPV4_ADDRESS, 30)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer(MAP_DNS_ADDRESS)
+            .addDnsServer(AndroidVpnRouting.DNS_ADDRESS)
             .setConfigureIntent(configureIntent)
 
-        addLocalNetworkExclusions(builder)
-        runCatching { builder.addDisallowedApplication(packageName) }
-            .getOrElse { throw IllegalStateException("Could not exclude Skirk app from its VPN route", it) }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            builder.setUnderlyingNetworks(underlyingNetworks)
+        val ipv6Address = routing.ipv6Address
+        if (ipv6Address != null) {
+            // Both address families must enter HEV for the dual-stack test,
+            // including local ICE candidates that would mask route failures.
+            builder.addAddress(ipv6Address, 128).addRoute("::", 0)
+        } else {
+            addLocalNetworkExclusions(builder)
+        }
+        applyVpnApps(localProfile, packageName) { entry, allowed ->
+            try {
+                if (allowed) builder.addAllowedApplication(entry) else builder.addDisallowedApplication(entry)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // A Drive-backed VPN should look expensive to apps so media clients
@@ -233,7 +240,9 @@ class SkirkVpnService : VpnService() {
             return
         }
 
-        val configFile = writeTunnelConfig(localProfile.socksPort)
+        val configFile = File(cacheDir, "skirk-vpn.yml").apply {
+            writeText(routing.hevConfig(localProfile.socksPort))
+        }
         val tunFd = establishedInterface.detachFd()
         val keepDetachedFd = synchronized(lifecycleLock) {
             vpnInterface = null
@@ -296,10 +305,17 @@ class SkirkVpnService : VpnService() {
         if (!connected) {
             return
         }
-        startForegroundCompat("Connected")
-        connectionState.connected(localProfile, "VPN connected")
+        synchronized(lifecycleLock) {
+            if (activeStartGeneration != generation || stopRequested ||
+                vpnPhase != VpnPhase.RUNNING || !nativeStarted
+            ) return
+            val owner = engine.metricsOwner ?: return
+            if (!connectionState.read().acceptsStart(ClientProfile.CONNECTION_MODE_VPN, start.attemptId)) return
+            startForegroundCompat("Connected", start.attemptId)
+            if (!connectionState.connected(start, localProfile, connectedStatusMessage(), owner)) return
+        }
         Log.i(TAG, "VPN connected through SOCKS 127.0.0.1:${localProfile.socksPort}")
-        monitorNativeTunnel(generation)
+        monitorNativeTunnel(generation, start)
     }
 
     private fun stopTunnel(
@@ -307,28 +323,40 @@ class SkirkVpnService : VpnService() {
         failed: Boolean = false,
         stopService: Boolean = true,
         allowQueuedRestart: Boolean = true,
+        explicitStop: ConnectionState? = null,
+        expectedAttemptId: String? = null,
     ) {
         val activeInterface: ParcelFileDescriptor?
         val detachedFd: Int?
         val shouldStopNative: Boolean
+        val pending: ConnectionState?
         synchronized(lifecycleLock) {
+            val activeOwner = connectionOwner
+            if (expectedAttemptId != null && activeOwner?.attemptId != expectedAttemptId &&
+                !(activeOwner == null && explicitStop?.attemptId == expectedAttemptId)
+            ) return
             if (vpnPhase == VpnPhase.STOPPING) {
                 if (!allowQueuedRestart || failed || !stopService) {
-                    pendingStartProfile = null
+                    pendingStart = null
                 }
                 Log.i(TAG, "VPN stop already in progress: $reason")
                 return
             }
             if (vpnPhase == VpnPhase.STOPPED && !workerStarted && vpnInterface == null && detachedTunFd == null && !nativeStarted) {
                 if (!allowQueuedRestart) {
-                    pendingStartProfile = null
+                    pendingStart = null
                 }
+                stopRequested = false
+                val stopStartId = latestStartId
+                connectionState.finish(explicitStop, reason, failed)
+                if (stopService) stopSelfResult(stopStartId)
                 return
             }
             stopRequested = true
             vpnPhase = VpnPhase.STOPPING
+            pending = explicitStop ?: activeOwner?.let(connectionState::disconnecting)
             if (!allowQueuedRestart) {
-                pendingStartProfile = null
+                pendingStart = null
             }
             activeInterface = vpnInterface
             vpnInterface = null
@@ -357,43 +385,24 @@ class SkirkVpnService : VpnService() {
             }
         } finally {
             engine.stop()
-            val restartProfile = synchronized(lifecycleLock) {
+            var stopStartId: Int? = null
+            val restart = synchronized(lifecycleLock) {
+                runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
                 vpnPhase = VpnPhase.STOPPED
+                connectionOwner = null
+                persistentVpnForeground = false
                 stopRequested = false
-                if (stopFailure == null && stopService) {
-                    pendingStartProfile.also { pendingStartProfile = null }
-                } else {
-                    pendingStartProfile = null
-                    null
-                }
+                val next = pendingStart
+                pendingStart = null
+                val message = stopFailure?.message?.let { "$reason: $it" } ?: reason
+                val eligible = next?.takeIf { stopFailure == null && stopService && allowQueuedRestart &&
+                    connectionState.read().acceptsStart(ClientProfile.CONNECTION_MODE_VPN, it.second.attemptId) }
+                if (eligible == null && stopService) stopStartId = latestStartId
+                connectionState.finish(pending, message, failed || stopFailure != null)
+                eligible
             }
-            if (restartProfile != null) {
-                connectionState.connecting(restartProfile, "VPN reconnecting")
-                start(this, restartProfile)
-                return
-            }
-			synchronized(lifecycleLock) {
-				pendingStartProfile = null
-			}
-			if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_VPN) {
-				if (failed || stopFailure != null) {
-					val message = stopFailure?.message?.let { "$reason: $it" } ?: reason
-					connectionState.failed(message)
-				} else {
-					connectionState.stopped(reason)
-				}
-			}
-			runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-            val stopStartId = synchronized(lifecycleLock) {
-                if (stopService && vpnPhase == VpnPhase.STOPPED && !workerStarted && pendingStartProfile == null) {
-                    latestStartId
-                } else {
-                    null
-                }
-            }
-            if (stopStartId != null) {
-                stopSelfResult(stopStartId)
-            }
+            if (restart != null) start(this, restart.first, restart.second)
+            else stopStartId?.let(::stopSelfResult)
             if (stopFailure != null) {
                 thread(name = "skirk-vpn-native-stop-failed-exit", isDaemon = true) {
                     Thread.sleep(250)
@@ -403,23 +412,19 @@ class SkirkVpnService : VpnService() {
         }
     }
 
-    private fun monitorNativeTunnel(generation: Long) {
+    private fun monitorNativeTunnel(generation: Long, owner: ConnectionState) {
         thread(name = "skirk-vpn-native-watch", start = true) {
             while (isCurrentRunning(generation)) {
                 if (!tunnel.TProxyIsRunning()) {
                     if (isCurrentRunning(generation)) {
                         Log.w(TAG, "tun2socks exited while VPN was marked running")
-                        stopTunnel("tun2socks exited unexpectedly", failed = true)
+                        stopTunnel("tun2socks exited unexpectedly", failed = true, expectedAttemptId = owner.attemptId)
                     }
                     return@thread
                 }
                 Thread.sleep(1_000L)
             }
         }
-    }
-
-    private fun isCurrentStart(generation: Long): Boolean = synchronized(lifecycleLock) {
-        activeStartGeneration == generation
     }
 
     private fun isCurrentRunning(generation: Long): Boolean = synchronized(lifecycleLock) {
@@ -452,34 +457,6 @@ class SkirkVpnService : VpnService() {
         }
     }
 
-    private fun writeTunnelConfig(socksPort: Int): File {
-        val configFile = File(cacheDir, "skirk-vpn.yml")
-        configFile.writeText(
-            """
-            tunnel:
-              mtu: $DEFAULT_MTU
-              ipv4: $TUN_IPV4_ADDRESS
-
-            socks5:
-              address: 127.0.0.1
-              port: $socksPort
-              udp: 'tcp'
-              pipeline: true
-
-            mapdns:
-              address: $MAP_DNS_ADDRESS
-              port: 53
-              network: 240.0.0.0
-              netmask: 240.0.0.0
-              cache-size: 10000
-
-            misc:
-              log-level: warn
-            """.trimIndent() + "\n",
-        )
-        return configFile
-    }
-
     private fun addLocalNetworkExclusions(builder: Builder) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return
@@ -501,18 +478,27 @@ class SkirkVpnService : VpnService() {
         }
     }
 
-    private fun currentUnderlyingNetworks(): Array<Network>? {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val activeNetwork = runCatching { connectivityManager?.activeNetwork }
-            .onFailure { Log.w(TAG, "Could not read active network", it) }
-            .getOrNull()
-            ?: return null
-        return arrayOf(activeNetwork)
-    }
-
-    private fun startForegroundCompat(status: String) {
+    private fun startForegroundCompat(status: String, attemptId: String) {
         ensureNotificationChannel()
-        val notification = buildNotification(status)
+        var notification = buildNotification(status, attemptId)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && vpnPhase == VpnPhase.RUNNING) {
+            // Android 15 limits dataSync foreground services to six hours per day.
+            // The VPN-only type is eligible once VpnService.Builder.establish() succeeds.
+            try {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                )
+                persistentVpnForeground = true
+                return
+            } catch (error: SecurityException) {
+                // Some devices may not yet recognize this app as the active VPN.
+                Log.w(TAG, "Android rejected the active VPN foreground type; using dataSync", error)
+                notification = buildNotification("Connected (time limited)", attemptId)
+            }
+        }
+        persistentVpnForeground = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -524,7 +510,14 @@ class SkirkVpnService : VpnService() {
         }
     }
 
-    private fun buildNotification(status: String): Notification {
+    private fun connectedStatusMessage(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && !persistentVpnForeground) {
+            "VPN connected; Android may stop it when data sync time runs out"
+        } else {
+            "VPN connected"
+        }
+
+    private fun buildNotification(status: String, attemptId: String): Notification {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -534,8 +527,8 @@ class SkirkVpnService : VpnService() {
         val stopIntent = PendingIntent.getService(
             this,
             1,
-            Intent(this, SkirkVpnService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            connectionStopIntent(this, SkirkVpnService::class.java, ACTION_STOP, attemptId),
+            PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
@@ -569,26 +562,28 @@ class SkirkVpnService : VpnService() {
         private const val EXTRA_PROFILE_JSON = "profileJson"
         private const val CHANNEL_ID = "skirk_vpn"
         private const val NOTIFICATION_ID = 1908
-        private const val DEFAULT_MTU = 1280
-        private const val TUN_IPV4_ADDRESS = "198.18.0.1"
-        private const val MAP_DNS_ADDRESS = "198.18.0.2"
-        fun start(context: Context, profile: ClientProfile) {
+        fun start(context: Context, profile: ClientProfile, owner: ConnectionState? = null) {
+            val state = ConnectionStateStore(context)
+            val requested = owner?.takeIf {
+                state.read().acceptsStart(ClientProfile.CONNECTION_MODE_VPN, it.attemptId)
+            } ?: if (owner == null) state.connecting(profile, "VPN connecting") else null
+            if (requested == null) return
             val intent = Intent(context, SkirkVpnService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_PROFILE_JSON, profile.toJson().toString())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                .putExtra(CONNECTION_ATTEMPT_EXTRA, requested.attemptId)
+            runCatching {
                 context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            }.onFailure { error ->
+                state.finish(requested, "Could not start the Android VPN", failed = true)
+                Log.w(TAG, "Could not dispatch VPN start", error)
             }
         }
 
-        fun stop(context: Context) {
-            val intent = Intent(context, SkirkVpnService::class.java).setAction(ACTION_STOP)
-            if (runCatching { context.startService(intent) }.isFailure) {
-                context.stopService(Intent(context, SkirkVpnService::class.java))
-            }
-        }
+        fun stop(context: Context, owner: ConnectionState = ConnectionStateStore(context).read()): Boolean =
+            owner.ownsAttempt(ClientProfile.CONNECTION_MODE_VPN, owner.attemptId) && requestConnectionStop(
+                context, connectionStopIntent(context, SkirkVpnService::class.java, ACTION_STOP, owner.attemptId),
+            )
     }
 
     private enum class VpnPhase {

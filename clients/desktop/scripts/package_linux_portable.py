@@ -7,6 +7,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from package_licenses import package_licenses
+
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[3]
@@ -59,28 +61,13 @@ def main() -> int:
             tunnel_target = sidecar_dir / "skirk-tunnel"
             shutil.copy2(tunnel, tunnel_target)
             make_executable(tunnel_target)
-    tunnel_license_candidates = [
-        desktop / "src-tauri" / "resources" / "sidecars" / "linux" / "sing-box-LICENSE.txt",
-        desktop / "src-tauri" / "resources" / "sidecars" / "linux" / "LICENSE",
-    ]
-    tunnel_license = next((path for path in tunnel_license_candidates if path.exists()), None)
-    if tunnel_license is not None:
-        (out_dir / "third_party").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(tunnel_license, out_dir / "third_party" / "sing-box-LICENSE.txt")
-
-    for relative in ("LICENSE", "DISCLAIMER.md", "SECURITY.md", "third_party/NOTICE.md"):
-        source = repo / relative
-        if source.exists():
-            destination = out_dir / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+    package_licenses(repo, out_dir, tunnel)
     (out_dir / "skirk-portable").write_text("portable mode marker\n", encoding="utf-8")
     (out_dir / "START_HERE.txt").write_text(
         "Open ./Skirk to use the Skirk desktop app.\n"
         "The files under sidecars/ are internal engine binaries and are not the app UI.\n"
-        "Proxy mode supports local and trusted-LAN SOCKS/HTTP listeners.\n"
-        "VPN mode creates a Linux TUN interface and requires root or CAP_NET_ADMIN privileges.\n"
-        "System Proxy mode is Windows-only in this release.\n",
+        "Choose Proxy for apps configured to use a local or trusted-LAN SOCKS5 or HTTP proxy.\n"
+        "Choose VPN to route system traffic through a Linux TUN interface. VPN requires root or CAP_NET_ADMIN.\n",
         encoding="utf-8",
     )
     (out_dir / "portable-data" / "README.txt").write_text(

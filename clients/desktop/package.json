@@ -1,13 +1,14 @@
 {
   "name": "skirk-desktop",
   "private": true,
-  "version": "0.1.55",
+  "version": "0.1.56",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:snapshot": "node --experimental-strip-types --test tests/snapshotGuard.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",

@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -35,6 +36,7 @@
 #include "hev-compiler.h"
 #include "hev-mapped-dns.h"
 #include "hev-config-const.h"
+#include "hev-udp-payload.h"
 #include "hev-socks5-session-tcp.h"
 #include "hev-socks5-session-udp.h"
 
@@ -139,6 +141,12 @@ netif_output_v6_handler (struct netif *netif, struct pbuf *p,
 static err_t
 netif_init_handler (struct netif *netif)
 {
+    const unsigned int mtu = hev_config_get_tunnel_mtu ();
+
+    if (!mtu || mtu > UINT16_MAX)
+        return ERR_VAL;
+
+    netif->mtu = mtu;
     netif->output = netif_output_v4_handler;
     netif->output_ip6 = netif_output_v6_handler;
 
@@ -196,15 +204,21 @@ dns_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
 {
     HevMappedDNS *dns = arg;
     struct pbuf *b;
+    unsigned char copy[UDP_BUF_SIZE];
+    void *payload;
     int res;
 
     LOG_D ("%p mapped dns handle", dns);
+
+    payload = hev_udp_payload (p, copy);
+    if (!payload)
+        goto exit;
 
     b = pbuf_alloc (PBUF_TRANSPORT, UDP_BUF_SIZE, PBUF_RAM);
     if (!b)
         goto exit;
 
-    res = hev_mapped_dns_handle (dns, p->payload, p->len, b->payload, b->len);
+    res = hev_mapped_dns_handle (dns, payload, p->tot_len, b->payload, b->len);
     if (res < 0)
         goto free;
 
@@ -447,7 +461,8 @@ gateway_init (void)
     ip4_addr_t addr4, mask, gw;
     ip6_addr_t addr6;
 
-    netif_add_noaddr (&netif, NULL, netif_init_handler, ip_input);
+    if (!netif_add_noaddr (&netif, NULL, netif_init_handler, ip_input))
+        return -1;
 
     ip4_addr_set_loopback (&addr4);
     ip4_addr_set_any (&mask);
@@ -602,6 +617,10 @@ mapped_dns_init (void)
     dns = hev_mapped_dns_new (network, netmask, cache_size);
     if (!dns)
         return -1;
+
+    if (hev_config_get_mapdns_ipv6_network ())
+        hev_mapped_dns_set_ipv6_network (
+            dns, hev_config_get_mapdns_ipv6_network ());
 
     hev_mapped_dns_put (dns);
 

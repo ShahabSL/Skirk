@@ -8,6 +8,20 @@ import (
 	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
+func TestProxyDisplayAddressStripsCredentialsAndPrivateOptions(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"", ""},
+		{" socks5h://127.0.0.1:8080 ", "socks5h://127.0.0.1:8080"},
+		{"https://user:password@[::1]:443/private?secret=value#secret", "https://[::1]:443"},
+		{"socks5://user:%00@proxy.example:1080", "socks5://proxy.example:1080"},
+		{"https://user:password@bad host:443", "invalid"},
+	} {
+		if got := proxyDisplayAddress(tc.input); got != tc.want {
+			t.Errorf("proxy display address = %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func TestUpdateExitProxyConfigSetsAndUnsetsProxy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "exit.json")
 	cfg := skirk.Config{Secret: "test-secret"}

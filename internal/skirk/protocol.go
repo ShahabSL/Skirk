@@ -151,6 +151,52 @@ func DeriveMuxLaneKeyV4(secret string, sid [16]byte, direction byte, clientID, r
 	return hkdfSHA256(base, []byte("skirk-v4-mux-lane-salt"), info, keyLen), nil
 }
 
+// DeriveMuxLaneKeyV5 separates every sender process generation. A sequence
+// counter may restart only after a fresh generation has changed the AEAD key.
+func DeriveMuxLaneKeyV5(secret string, sid [16]byte, direction byte, clientID, runID string, lane int, generation string) ([]byte, error) {
+	base, err := DeriveKey(secret)
+	if err != nil {
+		return nil, err
+	}
+	if lane < 0 || lane > 255 || (direction != DirectionUp && direction != DirectionDown) {
+		return nil, errors.New("mux v5 lane or direction invalid")
+	}
+	if clientID != strings.TrimSpace(clientID) || runID != strings.TrimSpace(runID) ||
+		!isSafeObjectSegment(clientID) || !isSafeObjectSegment(runID) {
+		return nil, errors.New("mux v5 client or run id invalid")
+	}
+	gen, err := parseMuxGenerationV5(generation)
+	if err != nil {
+		return nil, err
+	}
+	info := make([]byte, 0, len("skirk-mux-lane-aead-v5")+sessionIDLen+len(clientID)+len(runID)+20)
+	info = append(info, "skirk-mux-lane-aead-v5"...)
+	info = append(info, sid[:]...)
+	info = append(info, direction)
+	info = append(info, clientID...)
+	info = append(info, 0)
+	info = append(info, runID...)
+	info = append(info, 0, byte(lane))
+	info = append(info, gen[:]...)
+	return hkdfSHA256(base, []byte("skirk-v5-mux-lane-salt"), info, keyLen), nil
+}
+
+func parseMuxGenerationV5(generation string) ([16]byte, error) {
+	var parsed [16]byte
+	if len(generation) != 32 {
+		return parsed, errors.New("mux v5 generation must be 128-bit lowercase hex")
+	}
+	raw, err := hex.DecodeString(generation)
+	if err != nil || hex.EncodeToString(raw) != generation {
+		return parsed, errors.New("mux v5 generation invalid")
+	}
+	copy(parsed[:], raw)
+	if parsed == [16]byte{} {
+		return parsed, errors.New("mux v5 generation must be nonzero")
+	}
+	return parsed, nil
+}
+
 func hkdfSHA256(ikm, salt, info []byte, length int) []byte {
 	extract := hmac.New(sha256.New, salt)
 	extract.Write(ikm)

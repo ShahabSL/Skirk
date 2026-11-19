@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased
+## v0.1.56 — 2026-11-19
+
+- New exit kits support shared UDP, remote DNS and mux v5 alongside TCP. Setup
+  checks the exit's IPv6 route before enabling dual-stack service.
+- A queued UDP packet can expire without discarding the other packets that
+  are still fresh in its upload batch.
+- UDP destination lookups recover their capacity after a resolver outage.
+  Existing destinations stay pinned so active connections keep their address.
+- Android supports pasting a profile and refreshing the tunnel's network path
+  when the phone switches between Wi-Fi and mobile data.
+- Setup and OAuth renewal generate commands that read the private profile
+  from a file. Desktop paste import passes the profile to the decoder through
+  standard input.
+- The self-managed setup guide covers publishing a personal OAuth app and
+  renewing existing authorizations.
+- Android VPN can route all apps except a saved selection. Thanks to
+  [@tagh6668-dot for the split-tunneling contribution](https://github.com/ShahabSL/Skirk/pull/31).
+
+- Simplified the filesystem checks reported by [@motixo in PR #27](https://github.com/ShahabSL/Skirk/pull/27).
 
 ## v0.1.55 - 2026-05-21
 

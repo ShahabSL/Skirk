@@ -6,10 +6,38 @@ import (
 )
 
 type ObjectInfo struct {
-	Name    string
-	ID      string
-	Size    int64
-	Updated string
+	Name       string
+	ID         string
+	Size       int64
+	Updated    string
+	InlineData []byte // Optional encrypted object bytes from discovery metadata.
+}
+
+// MetadataOnlyPriorityStore can place a small sealed priority object entirely
+// in Drive metadata. The caller must negotiate reader support before use.
+type MetadataOnlyPriorityStore interface {
+	MetadataOnlyPriorityEnabled() bool
+	PutMetadataOnlyObject(ctx context.Context, name string, sealed []byte) (ObjectInfo, error)
+}
+
+// MetadataSlotInfo is the exact file metadata needed by an authenticated
+// fixed-slot protocol. Version is only a change hint, not a delivery sequence.
+type MetadataSlotInfo struct {
+	ID          string
+	Name        string
+	Description string
+	Version     uint64
+	Parents     []string
+	Spaces      []string
+}
+
+// MetadataSlotStore is an opt-in Drive primitive. The protocol owns single-
+// writer PATCH serialization, readback after ambiguous writes, and cleanup.
+type MetadataSlotStore interface {
+	MetadataSlotEnabled() bool
+	CreateMetadataSlot(ctx context.Context, generatedID, name string) (MetadataSlotInfo, error)
+	GetMetadataSlot(ctx context.Context, fileID, expectedName string) (MetadataSlotInfo, error)
+	PatchMetadataSlot(ctx context.Context, fileID, expectedName, description string) (MetadataSlotInfo, error)
 }
 
 type ObjectListInfo struct {
@@ -65,6 +93,27 @@ type ObjectIDStore interface {
 	DeleteID(ctx context.Context, fileID string) error
 }
 
+// MuxProcessingReceiptStore is optional. After a mux object has successfully
+// entered mux-owned processing, the receiver can record a bounded in-memory
+// receipt independently of deferred physical deletion. Implementations must not
+// perform I/O, wait for the peer, or discard an unrecorded receipt. This is not
+// a durable destination/application acknowledgement.
+type MuxProcessingReceiptStore interface {
+	NoteMuxProcessed(name, objectID string) error
+}
+
+// MuxObjectMetadataStore verifies one exact object ID after a failed priority
+// enqueue. The bool is false when that ID is outside the configured mailbox.
+type MuxObjectMetadataStore interface {
+	GetMuxObjectMetadataByID(ctx context.Context, fileID string) (ObjectInfo, bool, error)
+}
+
+// NormalObjectIDStore lets the mux isolate large normal media reads from its
+// control HTTP pool without changing the path for priority or small objects.
+type NormalObjectIDStore interface {
+	GetNormalByID(ctx context.Context, fileID string) ([]byte, error)
+}
+
 type RangeObjectStore interface {
 	GetObjectRangeByID(ctx context.Context, fileID string, start, end int64) ([]byte, ObjectRangeInfo, error)
 }
@@ -79,6 +128,12 @@ type FreshListStatusStore interface {
 
 type FreshListPageStatusStore interface {
 	ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error)
+}
+
+// AdaptiveMuxListPageStatusStore keeps the broad mux list bounded while using
+// the store's configured normal page size. Only adaptive discovery calls it.
+type AdaptiveMuxListPageStatusStore interface {
+	ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error)
 }
 
 type FreshListContainsPageStatusStore interface {

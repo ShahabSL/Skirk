@@ -13,115 +13,119 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import org.json.JSONObject
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 class SkirkProxyService : Service() {
-    private val engine by lazy { AndroidSkirkEngine(this, "skirk-client.log") }
+    private val engine by lazy {
+        AndroidSkirkEngine(this, "skirk-client.log") { attemptId, _, message ->
+            thread(name = "skirk-proxy-engine-exit", start = true) {
+                val stop = synchronized(this) {
+                    if (stopRequested || connectionOwner?.attemptId != attemptId) return@thread
+                    requestProxyStop()
+                }
+                stopProxyAndReport(stop, message, failed = true)?.let(::stopSelfResult)
+            }
+        }
+    }
     private val connectionState by lazy { ConnectionStateStore(this) }
-    private val startInProgress = AtomicBoolean(false)
+    @Volatile
+    private var startupThread: Thread? = null
+    @Volatile
+    private var connectionOwner: ConnectionState? = null
     @Volatile
     private var stopRequested = false
+    private var latestStartId = 0
+
+    private data class ProxyStop(val owner: ConnectionState?, val pending: ConnectionState?)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent == null) {
-            Log.w(TAG, "Ignoring proxy service restart without an explicit start intent")
-            connectionState.stopped("Proxy stopped")
-            stopSelfResult(startId)
-            return START_NOT_STICKY
-        }
-		if (intent.action == ACTION_STOP) {
-			stopRequested = true
-			stopProxy()
-			if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-				connectionState.stopped("Disconnected")
-			}
-			stopSelf()
-			return START_NOT_STICKY
-		}
-		if (intent.action != ACTION_START) {
-			Log.w(TAG, "Ignoring proxy service intent with action=${intent.action}")
-			stopSelfResult(startId)
-			return START_NOT_STICKY
-		}
-            if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_VPN) {
-                SkirkVpnService.stop(this)
+        synchronized(this) { latestStartId = startId }
+        val attemptId = intent?.getStringExtra(CONNECTION_ATTEMPT_EXTRA)
+        val current = connectionState.read()
+        if (intent?.action == ACTION_STOP) {
+            val stop = synchronized(this) {
+                if (stopRequested || !current.ownsAttempt(ClientProfile.CONNECTION_MODE_PROXY, attemptId) ||
+                    connectionOwner?.let { it.attemptId != attemptId } == true
+                ) null
+                else requestProxyStop(current)
             }
-
-			val profile = intent.getStringExtra(EXTRA_PROFILE_JSON)
-				?.let { ClientProfile.fromJson(JSONObject(it)) }
-            ?: ProfileStore(this).selectedProfile()
-
-        if (profile == null) {
-            connectionState.stopped("No profile selected")
-            stopSelf()
+            if (stop == null) stopIfIdle(startId)
+            else thread(name = "skirk-proxy-stop") {
+                stopProxyAndReport(stop, "Disconnected")?.let(::stopSelfResult)
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action != ACTION_START || !current.acceptsStart(ClientProfile.CONNECTION_MODE_PROXY, attemptId) ||
+            synchronized(this) { connectionOwner != null || startupThread != null }
+        ) {
+            stopIfIdle(startId)
             return START_NOT_STICKY
         }
 
-        val foregroundStarted = runCatching { startForegroundCompat(profile) }
+        val profile = runCatching {
+            intent.getStringExtra(EXTRA_PROFILE_JSON)?.let { ClientProfile.fromJson(JSONObject(it)) }
+        }.getOrNull()
+        if (profile == null || !current.canCompleteStart(profile.connectionMode, profile.id)) {
+            connectionState.finish(current, "Could not start the selected proxy profile", failed = true)
+            stopIfIdle(startId)
+            return START_NOT_STICKY
+        }
+        val foregroundStarted = runCatching { startForegroundCompat(profile, current.attemptId) }
             .onFailure { error ->
                 Log.e(TAG, "Could not start proxy foreground service", error)
-                connectionState.failed("Proxy failed: ${error.message ?: "foreground service failed"}")
-                stopSelfResult(startId)
+                connectionState.finish(current, "Proxy failed: ${error.message ?: "foreground service failed"}", failed = true)
+                stopIfIdle(startId)
             }
             .isSuccess
-        if (!foregroundStarted) {
-            return START_NOT_STICKY
-        }
-	        stopRequested = false
-	        connectionState.connecting(profile, "Proxy connecting on ${localProxySummary(profile)}")
-        if (startInProgress.compareAndSet(false, true)) {
-            thread(name = "skirk-proxy-start", start = true) {
-                runCatching { startProxy(profile) }
-					.onFailure { error ->
-						Log.e(TAG, "Failed to start Skirk", error)
-						if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-							if (stopRequested) {
-								connectionState.stopped("Disconnected")
-							} else {
-								connectionState.failed("Proxy failed: ${error.message ?: "start failed"}")
-							}
-						}
-						stopProxy()
-						stopSelf()
+        if (!foregroundStarted) return START_NOT_STICKY
+
+        synchronized(this) {
+            connectionOwner = current
+            stopRequested = false
+            val worker = thread(name = "skirk-proxy-start", start = false) {
+                val error = runCatching { startProxy(profile, current) }.exceptionOrNull()
+                startupThread = null
+                if (error != null) {
+                    Log.e(TAG, "Failed to start Skirk", error)
+                    val stop = synchronized(this) {
+                        if (stopRequested || connectionOwner?.attemptId != current.attemptId) return@thread
+                        requestProxyStop()
                     }
-                startInProgress.set(false)
+                    stopProxyAndReport(stop, "Proxy failed: ${error.message ?: "start failed"}", failed = true)
+                        ?.let(::stopSelfResult)
+                }
             }
+            startupThread = worker
+            worker.start()
         }
         return START_NOT_STICKY
     }
 
+    private fun stopIfIdle(startId: Int) {
+        if (synchronized(this) { connectionOwner == null && startupThread == null }) stopSelfResult(startId)
+    }
+
     override fun onDestroy() {
         Log.i(TAG, "Proxy service destroyed")
-        stopProxy()
-        val state = connectionState.read()
-        if (state.running && state.mode == ClientProfile.CONNECTION_MODE_PROXY) {
-            stopRequested = true
-            connectionState.stopped("Proxy stopped")
-        }
+        stopProxyAndReport(requestProxyStop(), "Proxy stopped")
         super.onDestroy()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "Proxy foreground service timed out type=$fgsType")
-        stopRequested = true
-        stopProxy()
-        if (connectionState.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-            connectionState.failed("Proxy stopped by Android foreground service timeout")
-        }
-        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-        stopSelfResult(startId)
+        stopProxyAndReport(requestProxyStop(), "Proxy stopped by Android foreground service timeout", failed = true)
+            ?.let(::stopSelfResult)
     }
 
-	private fun startProxy(profile: ClientProfile) {
-		Log.i(TAG, "Starting proxy on ${localProxySummary(profile)}")
+    private fun startProxy(profile: ClientProfile, start: ConnectionState) {
+		Log.i(TAG, "Starting proxy on ${displayProxySummary(profile)}")
 		stopProxy()
 		if (stopRequested) {
 			return
 		}
-		engine.start(profile)
+		engine.start(profile, start.attemptId)
 		if (stopRequested) {
 			stopProxy()
 			return
@@ -132,7 +136,14 @@ class SkirkProxyService : Service() {
 			stopProxy()
 			return
 		}
-		connectionState.connected(profile, "Proxy connected on ${displayProxySummary(profile)}")
+		synchronized(this) {
+			if (stopRequested) {
+				return
+			}
+			val owner = engine.metricsOwner ?: return
+            if (!connectionState.connected(start, profile, "Proxy connected on ${displayProxySummary(profile)}", owner)) return
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(profile, start.attemptId, ready = true))
+		}
         Log.i(TAG, "Proxy ready on ${displayProxySummary(profile)}")
     }
 
@@ -141,9 +152,37 @@ class SkirkProxyService : Service() {
         engine.stop()
     }
 
-    private fun startForegroundCompat(profile: ClientProfile) {
+    private fun requestProxyStop(requested: ConnectionState? = null): ProxyStop = synchronized(this) {
+        stopRequested = true
+        val owner = connectionOwner
+        ProxyStop(owner, (owner ?: requested)?.let(connectionState::disconnecting))
+    }
+
+    private fun stopProxyAndReport(stop: ProxyStop, message: String, failed: Boolean = false): Int? {
+        val error = runCatching {
+            val starting = synchronized(this) {
+                if (connectionOwner?.attemptId != stop.owner?.attemptId) return null
+                stopProxy()
+                startupThread
+            }
+            // Startup may have been between its cancellation check and engine.start().
+            // It owns stopping that child before we release the connection state.
+            if (starting != Thread.currentThread()) starting?.join()
+        }.exceptionOrNull()
+        if (error != null) Log.e(TAG, "Failed to stop proxy", error)
+        return synchronized(this) {
+            if (connectionOwner?.attemptId != stop.owner?.attemptId) return@synchronized null
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            connectionOwner = null
+            val stopStartId = latestStartId
+            connectionState.finish(stop.pending, if (error == null) message else "Could not stop the local proxy", failed || error != null)
+            stopStartId
+        }
+    }
+
+    private fun startForegroundCompat(profile: ClientProfile, attemptId: String) {
         ensureNotificationChannel()
-        val notification = buildNotification(profile)
+        val notification = buildNotification(profile, attemptId, ready = false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -155,7 +194,7 @@ class SkirkProxyService : Service() {
         }
     }
 
-    private fun buildNotification(profile: ClientProfile): Notification {
+    private fun buildNotification(profile: ClientProfile, attemptId: String, ready: Boolean): Notification {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -165,18 +204,18 @@ class SkirkProxyService : Service() {
         val stopIntent = PendingIntent.getService(
             this,
             1,
-            Intent(this, SkirkProxyService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            connectionStopIntent(this, SkirkProxyService::class.java, ACTION_STOP, attemptId),
+            PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-            .setContentTitle("Skirk is connected")
+            .setContentTitle(if (ready) "Skirk proxy running" else "Starting Skirk proxy")
             .setContentText(displayProxySummary(profile))
             .setContentIntent(contentIntent)
             .addAction(
                 Notification.Action.Builder(
                     Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
-                    "Disconnect",
+                    if (ready) "Disconnect" else "Cancel connection",
                     stopIntent,
                 ).build(),
             )
@@ -197,9 +236,6 @@ class SkirkProxyService : Service() {
     private fun displayProxySummary(profile: ClientProfile): String =
         "SOCKS5 ${displayAddress(profile, profile.socksPort, profile.socksAddress)} · " +
             "HTTP ${displayAddress(profile, profile.httpPort, profile.httpAddress)}"
-
-    private fun localProxySummary(profile: ClientProfile): String =
-        "SOCKS5 ${profile.socksAddress}, HTTP ${profile.httpAddress}"
 
     private fun ensureNotificationChannel() {
         val manager = getSystemService(NotificationManager::class.java)
@@ -223,22 +259,24 @@ class SkirkProxyService : Service() {
         const val EXTRA_PROFILE_JSON = "profileJson"
 
         fun start(context: Context, profile: ClientProfile) {
+            val state = ConnectionStateStore(context)
+            val requested = state.connecting(profile, "Proxy connecting") ?: return
             val intent = Intent(context, SkirkProxyService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_PROFILE_JSON, profile.toJson().toString())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                .putExtra(CONNECTION_ATTEMPT_EXTRA, requested.attemptId)
+            runCatching {
                 context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            }.onFailure { error ->
+                state.finish(requested, "Could not start the local proxy", failed = true)
+                Log.w(TAG, "Could not dispatch proxy start", error)
             }
         }
 
-        fun stop(context: Context) {
-            val intent = Intent(context, SkirkProxyService::class.java).setAction(ACTION_STOP)
-            if (runCatching { context.startService(intent) }.isFailure) {
-                context.stopService(Intent(context, SkirkProxyService::class.java))
-            }
-        }
+        fun stop(context: Context, owner: ConnectionState = ConnectionStateStore(context).read()): Boolean =
+            owner.ownsAttempt(ClientProfile.CONNECTION_MODE_PROXY, owner.attemptId) && requestConnectionStop(
+                context, connectionStopIntent(context, SkirkProxyService::class.java, ACTION_STOP, owner.attemptId),
+            )
 
         fun lanAddresses(port: Int): List<String> {
             return AndroidSkirkEngine.lanAddresses(port)

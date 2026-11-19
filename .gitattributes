@@ -1,0 +1,2 @@
+# Preserve the original license text, including its separators and whitespace.
+clients/licenses/*.txt -whitespace conflict-marker-size=64

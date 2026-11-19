@@ -2,1550 +2,569 @@ package app.skirk.client
 
 import android.Manifest
 import android.app.Activity
-import android.app.ActivityManager
 import android.content.ClipboardManager
-import android.content.Context
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import android.view.View
-import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.CloudQueue
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.ContentPaste
-import androidx.compose.material.icons.rounded.DataUsage
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PowerSettingsNew
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.Storage
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.VpnKey
-import androidx.compose.material.icons.rounded.WifiTethering
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import java.io.File
-import org.json.JSONObject
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF111111),
-    onPrimary = Color.White,
-    surface = Color.White,
-    background = Color(0xFFF6F6F6),
-    onSurface = Color(0xFF111111),
-    surfaceVariant = Color(0xFFF4F4F5),
-    onSurfaceVariant = Color(0xFF71717A),
-    outline = Color(0xFFE4E4E7),
-)
-
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFFF5F5F5),
-    onPrimary = Color(0xFF111111),
-    surface = Color(0xFF252526),
-    background = Color(0xFF1E1E1E),
-    onSurface = Color(0xFFF5F5F5),
-    surfaceVariant = Color(0xFF2D2D30),
-    onSurfaceVariant = Color(0xFFA7A7AD),
-    outline = Color(0xFF3C3C3C),
-)
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            SkirkTheme {
-                ConfigScreen()
-            }
-        }
+        enableEdgeToEdge()
+        val ui = ViewModelProvider(this)[SkirkScreenState::class.java]
+        setContent { SkirkTheme { ConfigScreen(ui) } }
     }
 }
 
-@Composable
-@Suppress("DEPRECATION")
-private fun SkirkTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val colors = if (dark) DarkColors else LightColors
-    val view = LocalView.current
-    SideEffect {
-        val window = (view.context as Activity).window
-        window.statusBarColor = colors.background.toArgb()
-        window.navigationBarColor = colors.background.toArgb()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.decorView.systemUiVisibility = if (dark) {
-                0
-            } else {
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+internal enum class SkirkPage(val title: String) {
+    Home("Skirk"),
+    Profiles("Profiles"),
+    AddProfile("Add profile"),
+    ReplaceProfile("Replace profile"),
+    Settings("Connection settings"),
+    VpnApps("VPN apps"),
+    Performance("Performance"),
+    Logs("Connection logs"),
+}
+
+// Keep profile drafts and permission continuations in memory across rotation.
+// Profile text must never be placed in the activity's saved-state Bundle.
+internal class SkirkScreenState : ViewModel() {
+    var page by mutableStateOf(SkirkPage.Home)
+    var pendingDeleteProfileId by mutableStateOf<String?>(null)
+    var pendingRenameProfileId by mutableStateOf<String?>(null)
+    var replacingProfileId by mutableStateOf<String?>(null)
+    var replacementParent = SkirkPage.Home
+    var logsParent = SkirkPage.Settings
+    var vpnAppsParent = SkirkPage.Settings
+    var profileName by mutableStateOf("")
+    var rawConfig by mutableStateOf("")
+    var importError by mutableStateOf("")
+    var isReadingProfile by mutableStateOf(false)
+    private var profileReadJob: Job? = null
+    val imports = ProfileImportGeneration()
+    var pendingVpnPermission: Pair<ClientProfile, ConnectionState>? = null
+    var pendingNotificationProfile: ClientProfile? = null
+    var notificationPermissionResolved by mutableStateOf(false)
+
+    fun cancelProfileRead() {
+        imports.cancel()
+        profileReadJob?.cancel()
+        profileReadJob = null
+        isReadingProfile = false
+    }
+
+    fun clearDraft() {
+        cancelProfileRead()
+        replacingProfileId = null
+        profileName = ""
+        rawConfig = ""
+        importError = ""
+    }
+
+    fun readProfile(uri: Uri, target: String, canUpdate: () -> Boolean, read: suspend (Uri) -> String) {
+        cancelProfileRead()
+        val request = imports.begin(target)
+        isReadingProfile = true
+        profileReadJob = viewModelScope.launch {
+            try {
+                val text = read(uri)
+                if (imports.owns(request, target) && canUpdate()) {
+                    rawConfig = text
+                    importError = ""
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (imports.owns(request, target) && canUpdate()) {
+                    importError = (error as? IllegalArgumentException)?.message
+                        ?: "Could not read the selected file. Choose it again."
+                }
+            } finally {
+                if (imports.owns(request, target)) isReadingProfile = false
             }
         }
     }
-    MaterialTheme(colorScheme = colors, content = content)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConfigScreen() {
+private fun ConfigScreen(ui: SkirkScreenState) {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val clipboard = LocalClipboardManager.current
-    val store = remember(context) { ProfileStore(context.applicationContext) }
-    val connectionStore = remember(context) { ConnectionStateStore(context.applicationContext) }
+    val store = remember(appContext) { ProfileStore(appContext) }
+    val connectionStore = remember(appContext) { ConnectionStateStore(appContext) }
     var profiles by remember { mutableStateOf(store.listProfiles()) }
     var selectedId by remember { mutableStateOf(store.selectedProfileId()) }
-    var connectionState by remember { mutableStateOf(connectionStore.read()) }
-    var lastConnectionUpdateAt by remember { mutableStateOf(connectionState.updatedAtMillis) }
-    var rawConfig by remember { mutableStateOf("") }
-    var importError by remember { mutableStateOf("") }
-    var profileName by remember { mutableStateOf("Skirk profile") }
-    var socksPort by remember { mutableStateOf(ClientProfile.DEFAULT_SOCKS_PORT.toString()) }
-    var httpPort by remember { mutableStateOf(ClientProfile.DEFAULT_HTTP_PORT.toString()) }
-    var selectedMode by remember { mutableStateOf(ClientProfile.CONNECTION_MODE_VPN) }
-    var proxyShareLan by remember { mutableStateOf(false) }
-    val running = connectionState.running
-    var message by remember { mutableStateOf(connectionState.message) }
-    var logText by remember { mutableStateOf(readSkirkLogs(context, connectionState.mode)) }
-    var driveMetrics by remember { mutableStateOf(readDriveMetrics(context, connectionState.mode)) }
-    var diagnosticsExpanded by remember { mutableStateOf(false) }
-    var pendingVpnProfile by remember { mutableStateOf<ClientProfile?>(null) }
-    var importExpanded by remember { mutableStateOf(profiles.isEmpty()) }
-    var advancedSettingsOpen by remember { mutableStateOf(false) }
-
-    fun refreshConnectionState() {
-        val raw = connectionStore.read()
-        val oldEnoughToValidate = System.currentTimeMillis() - raw.updatedAtMillis > SERVICE_STATE_GRACE_MS
-        if (raw.running && oldEnoughToValidate && !isSkirkServiceRunning(context, raw.mode)) {
-            connectionStore.stopped("Disconnected")
-        }
-        val next = connectionStore.read()
-        connectionState = next
-        if (next.updatedAtMillis > lastConnectionUpdateAt) {
-            lastConnectionUpdateAt = next.updatedAtMillis
-            if (next.message.isNotBlank()) {
-                message = next.message
-            }
-        }
+    var connection by remember { mutableStateOf(connectionStore.read()) }
+    var metrics by remember { mutableStateOf<DriveMetrics?>(null) }
+    var logs by remember { mutableStateOf("") }
+    var exitCheck by remember(connection) { mutableStateOf<ExitCheck>(ExitCheck.Unchecked) }
+    var exitCheckJob by remember(connection) { mutableStateOf<Job?>(null) }
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    val selected = profiles.firstOrNull { it.id == selectedId } ?: profiles.firstOrNull()
+    // The service owns the active connection, even if the saved selection differs.
+    val active = profiles.firstOrNull { it.id == connection.profileId }
+    val panelProfile = if (connection.running) active else selected
+    val panelConnection = connection.forProfile(panelProfile?.id)
+    val names = remember(profiles) { displayProfileNames(profiles) }
+    DisposableEffect(connection) {
+        onDispose { exitCheckJob?.cancel() }
     }
 
-    fun refreshLogs(mode: String = connectionStore.read().mode) {
-        logText = readSkirkLogs(context, mode)
-        driveMetrics = readDriveMetrics(context, mode)
-    }
-
-    val notificationPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) {}
-    val vpnPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val profile = pendingVpnProfile
-        pendingVpnProfile = null
-        if (result.resultCode == Activity.RESULT_OK && profile != null) {
-            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-                SkirkProxyService.stop(context)
-            }
-            connectionStore.connecting(profile, "VPN connecting")
-            refreshConnectionState()
-            SkirkVpnService.start(context, profile)
-            message = "VPN connecting"
-        } else {
-            connectionStore.stopped("VPN permission was not granted")
-            refreshConnectionState()
-            message = "VPN permission was not granted"
-        }
-    }
-
-    fun refresh() {
+    fun refreshProfiles() {
         profiles = store.listProfiles()
         selectedId = store.selectedProfileId()
     }
 
-    fun startProfile(profile: ClientProfile, mode: String, shareLan: Boolean) {
-        val normalizedMode = ClientProfile.normalizeConnectionMode(mode)
-        val runtimeProfile = profile.copy(
-            connectionMode = normalizedMode,
-            shareLan = normalizedMode == ClientProfile.CONNECTION_MODE_PROXY && shareLan,
-        )
-        store.saveProfile(runtimeProfile)
-        refresh()
-        if (runtimeProfile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
-            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_PROXY) {
-                SkirkProxyService.stop(context)
+    fun acceptConnection(next: ConnectionState) {
+        if (next != connection) {
+            if (next.invalidatesDriveMetrics(connection)) metrics = null
+            connection = next
+        }
+    }
+
+    DisposableEffect(connectionStore) {
+        val unsubscribe = connectionStore.observeChanges { acceptConnection(connectionStore.read()) }
+        acceptConnection(connectionStore.read())
+        onDispose { unsubscribe() }
+    }
+
+    fun refreshConnection() {
+        val previous = connectionStore.read()
+        if (previous.running && System.currentTimeMillis() - previous.updatedAtMillis > SERVICE_STATE_GRACE_MS &&
+            !isSkirkServiceRunning(appContext, previous.mode)
+        ) {
+            connectionStore.finish(previous, "Disconnected")
+        }
+        acceptConnection(connectionStore.read())
+    }
+
+    fun refreshLogs() {
+        val mode = connectionStore.read().mode
+        scope.launch {
+            val text = withContext(Dispatchers.IO) { runCatching { readSkirkLogs(appContext, mode) }.getOrDefault("") }
+            if (mode == connectionStore.read().mode) logs = text
+        }
+    }
+
+    fun updateSettings(change: (ClientProfile) -> ClientProfile) {
+        if (!connectionStore.read().running) {
+            store.selectedProfile()?.let { store.saveProfile(change(it)) }
+            refreshProfiles()
+        }
+    }
+
+    fun disconnect() {
+        val sent = connectionStore.requestDisconnect { pending ->
+            when (pending.mode) {
+                ClientProfile.CONNECTION_MODE_VPN -> SkirkVpnService.stop(context, pending)
+                ClientProfile.CONNECTION_MODE_PROXY -> SkirkProxyService.stop(context, pending)
+                else -> false
             }
-            val intent = VpnService.prepare(context)
-            if (intent != null) {
-                pendingVpnProfile = runtimeProfile
-                vpnPermission.launch(intent)
-            } else {
-                connectionStore.connecting(runtimeProfile, "VPN connecting")
-                refreshConnectionState()
-                SkirkVpnService.start(context, runtimeProfile)
-                message = "VPN connecting"
+        }
+        refreshConnection()
+        if (!sent) scope.launch { snackbar.showSnackbar("Couldn’t request disconnect. Try again.") }
+    }
+
+    fun startVpn(profile: ClientProfile) {
+        SkirkVpnService.start(context, profile)
+        refreshConnection()
+    }
+
+    val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = ui.pendingVpnPermission
+        ui.pendingVpnPermission = null
+        if (pending != null) {
+            val (profile, previous) = pending
+            if (result.resultCode == Activity.RESULT_OK) {
+                if (connectionStore.read() == previous) startVpn(profile)
+            } else if (connectionStore.finish(previous, "VPN permission was not granted")) {
+                refreshConnection()
+                scope.launch { snackbar.showSnackbar("Allow the Android VPN request to connect.") }
+            }
+        }
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        ui.notificationPermissionResolved = true
+    }
+
+    fun connect(profile: ClientProfile) {
+        if (connectionStore.read().running || ui.pendingVpnPermission != null || ui.pendingNotificationProfile != null) return
+        ui.cancelProfileRead()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !ui.notificationPermissionResolved &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ui.pendingNotificationProfile = profile
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        if (profile.connectionMode == ClientProfile.CONNECTION_MODE_VPN) {
+            val runtimeProfile = profile.copy(shareLan = false)
+            if (runtimeProfile != profile) {
+                store.saveProfile(runtimeProfile)
+                refreshProfiles()
+            }
+            val consent = VpnService.prepare(context)
+            if (consent == null) startVpn(runtimeProfile)
+            else {
+                val previous = connectionStore.read()
+                if (previous.running) return
+                ui.pendingVpnPermission = runtimeProfile to previous
+                vpnPermission.launch(consent)
             }
         } else {
-            if (connectionStore.read().mode == ClientProfile.CONNECTION_MODE_VPN) {
-                SkirkVpnService.stop(context)
-            }
-            connectionStore.connecting(runtimeProfile, "Proxy connecting on ${proxyAddress(runtimeProfile, runtimeProfile.shareLan)}")
-            refreshConnectionState()
-            SkirkProxyService.start(context, runtimeProfile)
-            message = "Proxy connecting on ${proxyAddress(runtimeProfile, runtimeProfile.shareLan)}"
+            SkirkProxyService.start(context, profile)
+            refreshConnection()
         }
     }
 
-    fun disconnectActive(reason: String = "Disconnected") {
-        when (connectionStore.read().mode) {
-            ClientProfile.CONNECTION_MODE_VPN -> SkirkVpnService.stop(context)
-            ClientProfile.CONNECTION_MODE_PROXY -> SkirkProxyService.stop(context)
-            else -> {
-                SkirkVpnService.stop(context)
-                SkirkProxyService.stop(context)
-            }
-        }
-        connectionStore.stopped(reason)
-        refreshConnectionState()
-        message = reason
-    }
-
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    LaunchedEffect(ui.notificationPermissionResolved) {
+        if (ui.notificationPermissionResolved) {
+            val profile = ui.pendingNotificationProfile
+            ui.pendingNotificationProfile = null
+            profile?.let(::connect)
         }
     }
-
     LaunchedEffect(Unit) {
         while (true) {
-            refreshConnectionState()
-            val next = connectionStore.read()
-            if (next.running) {
-                refreshLogs(next.mode)
+            refreshConnection()
+            val current = connection
+            if (current.canShowDriveMetrics) {
+                val measurement = withContext(Dispatchers.IO) { readDriveMetrics(appContext, current) }
+                val actual = connectionStore.read()
+                if (actual.sharesLiveDiagnostics(current)) {
+                    metrics = measurement
+                } else {
+                    refreshConnection()
+                }
             }
             delay(2_000L)
         }
     }
-
-    val selected = profiles.firstOrNull { it.id == selectedId } ?: profiles.firstOrNull()
-    LaunchedEffect(selected?.id) {
-        selectedMode = selected?.connectionMode ?: ClientProfile.CONNECTION_MODE_VPN
-        proxyShareLan = selected?.shareLan ?: false
+    LaunchedEffect(ui.page, connection.mode) {
+        if (ui.page == SkirkPage.Logs) refreshLogs()
     }
-    LaunchedEffect(profiles.isEmpty()) {
-        if (profiles.isEmpty()) {
-            importExpanded = true
+
+    fun fileTarget(): String? = when (ui.page) {
+        SkirkPage.Home -> "new".takeIf { store.listProfiles().isEmpty() }
+        SkirkPage.AddProfile -> "new"
+        SkirkPage.ReplaceProfile -> ui.replacingProfileId?.let { "replace:$it" }
+        else -> null
+    }
+    fun pickedFile(uri: Uri?, replacement: Boolean) {
+        val request = ui.imports.finishPicker(replacement) ?: return
+        if (uri == null || request.target != fileTarget() ||
+            !ui.imports.owns(request, request.target) || connectionStore.read().running
+        ) return
+        ui.readProfile(uri, request.target, {
+            fileTarget() == request.target && !connectionStore.read().running
+        }) { readProfileDocument(appContext, it) }
+    }
+    val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
+        pickedFile(it, replacement = false)
+    }
+    val replacementPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
+        pickedFile(it, replacement = true)
+    }
+
+    fun pasteProfile() {
+        ui.cancelProfileRead()
+        val manager = context.getSystemService(ClipboardManager::class.java)
+        val text = manager?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text
+        ui.importError = when {
+            text != null && SkirkConfig.isOversizedDraft(text.length) -> PROFILE_TEXT_TOO_LARGE
+            text.isNullOrBlank() -> "Copy the profile text and try again, or choose a profile file."
+            else -> {
+                ui.rawConfig = text.toString()
+                ""
+            }
         }
     }
-
-    fun pasteProfileFromClipboard() {
-        val clipboard = context.getSystemService(ClipboardManager::class.java)
-        rawConfig = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
-        importError = ""
-    }
-
-    fun importProfile() {
+    fun saveProfile() {
+        ui.cancelProfileRead()
+        val previous = connectionStore.read()
+        if (previous.running) {
+            ui.importError = "Disconnect before changing profiles."
+            return
+        }
         try {
-            val port = socksPort.toIntOrNull()
-                ?.let { ClientProfile.validateSocksPort(it) }
-                ?: error("Local SOCKS port is required")
-            val httpProxyPort = httpPort.toIntOrNull()
-                ?.let { ClientProfile.validateHttpPort(it, port) }
-                ?: error("Local HTTP proxy port is required")
-            val profile = ClientProfile.fromRawConfig(
-                name = profileName,
-                rawConfig = rawConfig,
-                socksPort = port,
-                httpPort = httpProxyPort,
-                shareLan = false,
-                connectionMode = ClientProfile.CONNECTION_MODE_VPN,
-            )
-            store.saveProfile(profile)
-            rawConfig = ""
-            importError = ""
-            selectedMode = profile.connectionMode
-            proxyShareLan = false
-            importExpanded = false
-            message = "Imported ${profile.name}"
-            refresh()
+            val replacing = ui.replacingProfileId
+            if (replacing != null) {
+                val original = profiles.firstOrNull { it.id == replacing }
+                    ?: error("This profile was removed. Try adding a new profile.")
+                store.saveProfile(original.withRenewedConfig(ui.rawConfig))
+                if (previous.profileId == replacing) connectionStore.finish(previous, "Ready to connect")
+                ui.page = ui.replacementParent
+            } else {
+                val name = ui.profileName.trim().ifBlank { nextProfileName(profiles) }
+                val profile = ClientProfile.fromRawConfig(
+                    name = name,
+                    rawConfig = ui.rawConfig,
+                    socksPort = ClientProfile.DEFAULT_SOCKS_PORT,
+                    httpPort = ClientProfile.DEFAULT_HTTP_PORT,
+                    shareLan = false,
+                    connectionMode = ClientProfile.CONNECTION_MODE_VPN,
+                ).copy(routeMode = ClientProfile.ROUTE_GOOGLE_FRONT)
+                store.saveProfile(profile, makeSelected = true)
+                ui.page = SkirkPage.Home
+            }
+            ui.clearDraft()
+            refreshProfiles()
+            refreshConnection()
+            scope.launch { snackbar.showSnackbar(if (replacing == null) "Profile saved" else "Profile updated") }
         } catch (error: Exception) {
-            val nextError = error.message ?: "Import failed"
-            importError = nextError
-            message = nextError
-            Toast.makeText(context, nextError, Toast.LENGTH_LONG).show()
+            ui.importError = error.message ?: "Could not save the profile. Check the profile text."
         }
+    }
+    fun openReplacement(profile: ClientProfile) {
+        ui.clearDraft()
+        ui.replacementParent = ui.page
+        ui.replacingProfileId = profile.id
+        ui.page = SkirkPage.ReplaceProfile
+    }
+    fun up() {
+        val parent = when (ui.page) {
+            SkirkPage.Profiles, SkirkPage.Settings -> SkirkPage.Home
+            SkirkPage.AddProfile -> SkirkPage.Profiles
+            SkirkPage.ReplaceProfile -> ui.replacementParent
+            SkirkPage.VpnApps -> ui.vpnAppsParent
+            SkirkPage.Performance -> SkirkPage.Settings
+            SkirkPage.Logs -> ui.logsParent
+            SkirkPage.Home -> SkirkPage.Home
+        }
+        if (ui.page == SkirkPage.AddProfile || ui.page == SkirkPage.ReplaceProfile) ui.clearDraft()
+        ui.page = parent
+    }
+    BackHandler(enabled = ui.page != SkirkPage.Home, onBack = ::up)
+
+    val profileForm: @Composable () -> Unit = {
+        ProfileForm(
+            replacingName = ui.replacingProfileId?.let(names::get),
+            profileName = ui.profileName,
+            rawConfig = ui.rawConfig,
+            error = ui.importError,
+            reading = ui.isReadingProfile,
+            enabled = !connection.running,
+            showHeading = ui.page == SkirkPage.Home,
+            onNameChange = { ui.profileName = it },
+            onTextChange = {
+                ui.cancelProfileRead()
+                if (SkirkConfig.isOversizedDraft(it.length)) {
+                    ui.importError = PROFILE_TEXT_TOO_LARGE
+                } else {
+                    ui.rawConfig = it
+                    ui.importError = ""
+                }
+            },
+            onPaste = ::pasteProfile,
+            onChooseFile = {
+                ui.cancelProfileRead()
+                fileTarget()?.let { target ->
+                    ui.imports.beginPicker(target)?.let {
+                        if (ui.replacingProfileId == null) profilePicker.launch("*/*")
+                        else replacementPicker.launch("*/*")
+                    }
+                }
+            },
+            onCancelRead = ui::cancelProfileRead,
+            onSave = ::saveProfile,
+        )
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(34.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            color = Color.White,
-                        ) {
-                            Image(
-                                painter = painterResource(R.drawable.logo_mark),
-                                contentDescription = "Skirk",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.padding(5.dp),
-                            )
-                        }
-                        Column {
-                            Text("Skirk", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "v${BuildConfig.VERSION_NAME}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
-            )
-        },
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (profiles.isEmpty()) {
-                item {
-                    ImportPanel(
-                        profileName = profileName,
-                        socksPort = socksPort,
-                        httpPort = httpPort,
-                        rawConfig = rawConfig,
-                        importError = importError,
-                        onProfileNameChange = { profileName = it },
-                        onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
-                        onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
-                        onRawConfigChange = {
-                            rawConfig = it
-                            importError = ""
-                        },
-                        onPaste = ::pasteProfileFromClipboard,
-                        onImport = ::importProfile,
-                    )
-                }
-            } else {
-                item {
-                    ProfilesPanel(
-                        profiles = profiles,
-                        selectedId = selected?.id,
-                        running = running,
-                        onSelect = { profile ->
-                            store.selectProfile(profile.id)
-                            selectedMode = profile.connectionMode
-                            proxyShareLan = profile.shareLan
-                            refresh()
-                        },
-                        onDelete = { profile ->
-                            if (running && selected?.id == profile.id) {
-                                disconnectActive()
-                            }
-                            store.deleteProfile(profile.id)
-                            refresh()
-                        },
-                    )
-                }
-                item {
-                    if (importExpanded) {
-                        ImportPanel(
-                            profileName = profileName,
-                            socksPort = socksPort,
-                            httpPort = httpPort,
-                            rawConfig = rawConfig,
-                            importError = importError,
-                            onProfileNameChange = { profileName = it },
-                            onSocksPortChange = { socksPort = it.filter(Char::isDigit).take(5) },
-                            onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
-                            onRawConfigChange = {
-                                rawConfig = it
-                                importError = ""
-                            },
-                            onPaste = ::pasteProfileFromClipboard,
-                            onImport = ::importProfile,
-                        )
-                    } else {
-                        AddProfilePanel(onExpand = { importExpanded = true })
-                    }
-                }
-            }
-
-            item {
-                ConnectionPanel(
-                    selected = selected,
-                    selectedMode = selectedMode,
-                    proxyShareLan = proxyShareLan,
-                    running = running,
-                    message = message,
-                    metrics = driveMetrics,
-                    onModeChange = { selectedMode = it },
-                    onProxyShareLanChange = { proxyShareLan = it },
-                    onOpenAdvanced = { advancedSettingsOpen = true },
-                    onConnect = { selected?.let { startProfile(it, selectedMode, proxyShareLan) } },
-                    onDisconnect = { disconnectActive() },
-                )
-            }
-
-            item {
-                DiagnosticsPanel(
-                    logText = logText,
-                    expanded = diagnosticsExpanded,
-                    onToggleExpanded = { diagnosticsExpanded = !diagnosticsExpanded },
-                    onRefresh = { refreshLogs() },
-                    onCopy = {
-                        clipboard.setText(AnnotatedString(logText))
-                        Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
-                    },
-                )
-            }
-        }
-        if (advancedSettingsOpen) {
-            AdvancedSettingsDialog(
-                performance = selected?.performance ?: PerformanceSettings.recommended(),
-                metrics = driveMetrics,
-                enabled = selected != null && !running,
-                onDismiss = { advancedSettingsOpen = false },
-                onPerformanceChange = { performance ->
-                    selected?.let { profile ->
-                        store.saveProfile(profile.copy(performance = performance))
-                        refresh()
-                    }
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ConnectionPanel(
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-    running: Boolean,
-    message: String,
-    metrics: DriveMetrics?,
-    onModeChange: (String) -> Unit,
-    onProxyShareLanChange: (Boolean) -> Unit,
-    onOpenAdvanced: () -> Unit,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-) {
-    val uiState = connectionUiState(running, selected, message)
-    Panel {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = uiState.title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = connectionDetail(
-                        state = uiState,
-                        selected = selected,
-                        selectedMode = selectedMode,
-                        proxyShareLan = proxyShareLan,
-                        message = message,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-        Button(
-            onClick = if (running) onDisconnect else onConnect,
-            enabled = running || selected != null,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ),
-        ) {
-            Icon(
-                if (running) Icons.Rounded.PowerSettingsNew else Icons.Rounded.PlayArrow,
-                contentDescription = null,
-            )
-            Text(if (running) "Disconnect" else "Connect")
-        }
-        DriveUsageSummary(
-            metrics = metrics,
-            performance = selected?.performance ?: PerformanceSettings.recommended(),
-            onOpenAdvanced = onOpenAdvanced,
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        SectionHeader(Icons.Rounded.PowerSettingsNew, "Connection mode", modeLabel(selectedMode))
-        ModeSelector(
-            selectedMode = selectedMode,
-            enabled = selected != null && !running,
-            onModeChange = onModeChange,
-        )
-        if (selectedMode == ClientProfile.CONNECTION_MODE_PROXY) {
-            SwitchRow(
-                title = "Share on LAN",
-                detail = proxyAddress(selected, proxyShareLan),
-                checked = proxyShareLan,
-                enabled = !running,
-                onCheckedChange = onProxyShareLanChange,
-            )
-        } else {
-            InfoRow(Icons.Rounded.VpnKey, "VPN mode", "Routes Android app traffic through Skirk.")
-        }
-    }
-}
-
-@Composable
-private fun AdvancedSettingsDialog(
-    performance: PerformanceSettings,
-    metrics: DriveMetrics?,
-    enabled: Boolean,
-    onDismiss: () -> Unit,
-    onPerformanceChange: (PerformanceSettings) -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Done")
-            }
-        },
-        icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
-        title = { Text("Advanced settings") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 520.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                DriveUsageDetails(metrics = metrics, performance = performance)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                PerformanceSettingsPanel(
-                    performance = performance,
-                    enabled = enabled,
-                    onPerformanceChange = onPerformanceChange,
-                )
-            }
-        },
-    )
-}
-
-@Composable
-private fun PerformanceSettingsPanel(
-    performance: PerformanceSettings,
-    enabled: Boolean,
-    onPerformanceChange: (PerformanceSettings) -> Unit,
-) {
-    SectionHeader(Icons.Rounded.Speed, "Performance", performancePresetLabel(performance.preset))
-    listOf(
-        listOf(PerformanceSettings.PRESET_LOWER_USAGE, PerformanceSettings.PRESET_RECOMMENDED),
-        listOf(PerformanceSettings.PRESET_RESPONSIVE, PerformanceSettings.PRESET_BULK_TRANSFER),
-    ).forEach { row ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            row.forEach { preset ->
-                ModeCard(
-                    icon = Icons.Rounded.Speed,
-                    title = performancePresetLabel(preset),
-                    subtitle = performancePresetDetail(PerformanceSettings.forPreset(preset)),
-                    selected = performance.preset == preset,
-                    enabled = enabled,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onPerformanceChange(PerformanceSettings.forPreset(preset)) },
-                )
-            }
-        }
-    }
-    OutlinedButton(
-        onClick = { onPerformanceChange(performance.copy(preset = PerformanceSettings.PRESET_CUSTOM)) },
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Icon(Icons.Rounded.Settings, contentDescription = null)
-        Text("Custom keeps current values")
-    }
-    if (performance.preset == PerformanceSettings.PRESET_CUSTOM) {
-        AdjustValueRow(
-            title = "Check interval",
-            detail = "Higher values use fewer Drive list calls.",
-            valueText = "${performance.pollMs} ms",
-            enabled = enabled,
-            onDecrease = {
-                onPerformanceChange(performance.copy(pollMs = (performance.pollMs - 250).coerceAtLeast(PerformanceSettings.CUSTOM_MIN_POLL_MS)))
-            },
-            onIncrease = {
-                onPerformanceChange(performance.copy(pollMs = (performance.pollMs + 250).coerceAtMost(60000)))
-            },
-        )
-        AdjustValueRow(
-            title = "Upload workers",
-            detail = "More workers can open streams faster but spend quota sooner.",
-            valueText = performance.uploadConcurrency.toString(),
-            enabled = enabled,
-            onDecrease = {
-                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency - 2).coerceAtLeast(1)))
-            },
-            onIncrease = {
-                onPerformanceChange(performance.copy(uploadConcurrency = (performance.uploadConcurrency + 2).coerceAtMost(PerformanceSettings.CUSTOM_MAX_UPLOAD_WORKERS)))
-            },
-        )
-        AdjustValueRow(
-            title = "Download workers",
-            detail = "More workers help bulk downloads and can crowd interactive traffic.",
-            valueText = performance.downloadConcurrency.toString(),
-            enabled = enabled,
-            onDecrease = {
-                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency - 2).coerceAtLeast(1)))
-            },
-            onIncrease = {
-                onPerformanceChange(performance.copy(downloadConcurrency = (performance.downloadConcurrency + 2).coerceAtMost(PerformanceSettings.CUSTOM_MAX_DOWNLOAD_WORKERS)))
-            },
-        )
-        SwitchRow(
-            title = "Burst polling",
-            detail = "Faster short window after traffic; useful but costly.",
-            checked = performance.burstPoll,
-            enabled = enabled,
-            onCheckedChange = { onPerformanceChange(performance.copy(burstPoll = it)) },
-        )
-    }
-    InfoRow(
-        Icons.Rounded.Tune,
-        "Current limits",
-        "${performance.pollMs}ms check · ${performance.uploadConcurrency} up · ${performance.downloadConcurrency} down · ${if (performance.burstPoll) "burst on" else "burst off"}",
-    )
-    if (performance.burstPoll) {
-        InfoRow(
-            Icons.Rounded.CloudQueue,
-            "Drive API warning",
-            "Burst polling checks faster after traffic and can burn list quota quickly.",
-        )
-    }
-    if (performance.preset == PerformanceSettings.PRESET_CUSTOM) {
-        InfoRow(
-            Icons.Rounded.Tune,
-            "Custom warning",
-            "Low check intervals and high workers can burn Drive quota quickly.",
-        )
-    }
-}
-
-@Composable
-private fun AdjustValueRow(
-    title: String,
-    detail: String,
-    valueText: String,
-    enabled: Boolean,
-    onDecrease: () -> Unit,
-    onIncrease: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        OutlinedButton(onClick = onDecrease, enabled = enabled) {
-            Text("-")
-        }
-        Text(valueText, fontWeight = FontWeight.SemiBold)
-        OutlinedButton(onClick = onIncrease, enabled = enabled) {
-            Text("+")
-        }
-    }
-}
-
-@Composable
-private fun DriveUsageSummary(
-    metrics: DriveMetrics?,
-    performance: PerformanceSettings,
-    onOpenAdvanced: () -> Unit,
-) {
-    val displayUnits = metrics?.unitsPerMinute ?: estimatedIdleUnits(performance)
-    val errors = metrics?.errorsPerMinute ?: 0.0
-    val label = drivePressureLabel(displayUnits, errors, metrics?.lastErrorReason.orEmpty())
-    val percent = drivePressurePercent(displayUnits)
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.DataUsage, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Drive API pressure", fontWeight = FontWeight.Medium)
-                        Text(
-                            if (metrics == null) "Idle estimate from this phone." else "Measured from this phone.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
-                TextButton(onClick = onOpenAdvanced) {
-                    Icon(Icons.Rounded.Settings, contentDescription = null)
-                    Text("Advanced")
-                }
-            }
-            QuotaBar(unitsPerMinute = displayUnits, errorsPerMinute = errors)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("$label · $percent%", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "~${displayUnits.toInt()} units/min",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Text(
-                "Performance: ${performancePresetLabel(performance.preset)} · ${performancePresetDetail(performance)}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (metrics?.backoffActive == true) {
-                Text(
-                    "Drive cooldown: ${metrics.backoffReason.ifBlank { "rate limited" }} · ${metrics.backoffWaitSeconds.toInt()}s",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DriveUsageDetails(metrics: DriveMetrics?, performance: PerformanceSettings) {
-    val idleEstimate = estimatedIdleUnits(performance)
-    val measuredUnits = metrics?.unitsPerMinute
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(
-            Icons.Rounded.CloudQueue,
-            "Drive API usage",
-            measuredUnits?.let { drivePressureLabel(it, metrics.errorsPerMinute, metrics.lastErrorReason) } ?: "Estimate",
-        )
-        QuotaBar(unitsPerMinute = measuredUnits ?: idleEstimate, errorsPerMinute = metrics?.errorsPerMinute ?: 0.0)
-        InfoRow(
-            Icons.Rounded.DataUsage,
-            "Current phone",
-            measuredUnits?.let { "${it.toInt()} units/min · ${metrics.ops.ifBlank { "no ops yet" }}" }
-                ?: "Connect to measure this phone's local Drive API usage.",
-        )
-        InfoRow(
-            Icons.Rounded.Speed,
-            "Idle estimate",
-            "~${idleEstimate.toInt()} units/min from the selected check interval.",
-        )
-        InfoRow(
-            Icons.Rounded.CloudQueue,
-            "What this means",
-            "Skirk uses Google Drive requests, not Drive storage. The exit and other clients share the same Google budget.",
-        )
-        if (metrics?.backoffActive == true) {
-            InfoRow(
-                Icons.Rounded.CloudQueue,
-                "Drive cooldown",
-                "${metrics.backoffReason.ifBlank { "rate limited" }} · ${metrics.backoffWaitSeconds.toInt()}s remaining",
-            )
-        }
-    }
-}
-
-@Composable
-private fun QuotaBar(unitsPerMinute: Double, errorsPerMinute: Double) {
-    val pressure = drivePressureFraction(unitsPerMinute)
-    val color = when {
-        errorsPerMinute > 0.0 -> Color(0xFFDC2626)
-        pressure >= 0.7f -> Color(0xFFEA580C)
-        pressure >= 0.3f -> Color(0xFFEAB308)
-        else -> Color(0xFF22C55E)
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(9.dp)
-            .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(999.dp)),
-    ) {
+        contentWindowInsets = WindowInsets.safeDrawing,
+        snackbarHost = { SnackbarHost(snackbar) },
+        topBar = { SkirkTopBar(ui.page, ::up) },
+    ) { insets ->
         Box(
-            modifier = Modifier
-                .fillMaxWidth(pressure.coerceIn(0.03f, 1f))
-                .height(9.dp)
-                .background(color, RoundedCornerShape(999.dp)),
-        )
-    }
-}
-
-@Composable
-private fun DiagnosticsPanel(
-    logText: String,
-    expanded: Boolean,
-    onToggleExpanded: () -> Unit,
-    onRefresh: () -> Unit,
-    onCopy: () -> Unit,
-) {
-    Panel {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Storage, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("Diagnostics", fontWeight = FontWeight.SemiBold)
-                }
-                Text(
-                    if (expanded) "Sidecar logs and support capture" else "Logs are collapsed until you need them.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            TextButton(onClick = onToggleExpanded) {
-                Text(if (expanded) "Hide" else "Show")
-            }
-        }
-        if (expanded) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp, max = 260.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            ) {
-                Text(
-                    text = logText.ifBlank { "No logs yet." },
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .padding(12.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onRefresh) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = null)
-                    Text("Refresh")
-                }
-                OutlinedButton(onClick = onCopy, enabled = logText.isNotBlank()) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = null)
-                    Text("Copy")
-                }
-            }
-        } else {
-            InfoRow(
-                Icons.Rounded.Storage,
-                "Diagnostics are secondary",
-                "Open this section for startup failures, tunnel output, or support capture.",
-            )
-        }
-    }
-}
-
-@Composable
-private fun AddProfilePanel(onExpand: () -> Unit) {
-    Panel {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Add profile", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Import another config",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
+            Box(Modifier.widthIn(max = if (ui.page == SkirkPage.Home && panelProfile != null) 860.dp else 640.dp)
+                .fillMaxWidth().fillMaxSize()) {
+                when (ui.page) {
+                    SkirkPage.Home -> if (profiles.isEmpty() && !connection.running) profileForm() else {
+                        ConnectionHome(
+                            profile = panelProfile,
+                            profileName = panelProfile?.id?.let(names::get),
+                            connection = panelConnection,
+                            backgroundFailureName = active?.id?.takeIf {
+                                connection.phase == ConnectionPhase.FAILED && it != panelProfile?.id
+                            }?.let(names::get),
+                            metrics = metrics,
+                            exitCheck = exitCheck,
+                            onCheckExit = {
+                                val profile = active
+                                if (profile != null && exitCheck != ExitCheck.Checking && connection.canShowDriveMetrics) {
+                                    val attempt = connection
+                                    if (!connectionStore.read().sharesLiveDiagnostics(attempt)) {
+                                        refreshConnection()
+                                        return@ConnectionHome
+                                    }
+                                    exitCheck = ExitCheck.Checking
+                                    exitCheckJob = scope.launch {
+                                        val result = try {
+                                            val result = runInterruptible(Dispatchers.IO) { probeExit(appContext, profile) }
+                                            if (result.verified) ExitCheck.Replied(result.roundTripMs) else ExitCheck.NoReply
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            ExitCheck.CouldNotCheck
+                                        }
+                                        if (connectionStore.read().sharesLiveDiagnostics(attempt)) exitCheck = result
+                                        else refreshConnection()
+                                    }
+                                }
+                            },
+                            onConnect = { selected?.let(::connect) },
+                            onDisconnect = ::disconnect,
+                            onReplace = { selected?.let(::openReplacement) },
+                            onOpenProfiles = { ui.page = SkirkPage.Profiles },
+                            onOpenSettings = { ui.page = SkirkPage.Settings },
+                            onOpenVpnApps = { ui.vpnAppsParent = SkirkPage.Home; ui.page = SkirkPage.VpnApps },
+                            onOpenLogs = { ui.logsParent = SkirkPage.Home; ui.page = SkirkPage.Logs },
+                        )
+                    }
+                    SkirkPage.Profiles -> ProfilesPage(
+                        profiles = profiles,
+                        names = names,
+                        currentId = panelProfile?.id,
+                        running = connection.running,
+                        onSelect = { profile ->
+                            if (!connectionStore.read().running) {
+                                store.selectProfile(profile.id)
+                                refreshProfiles()
+                                ui.page = SkirkPage.Home
+                            }
+                        },
+                        onAdd = { ui.clearDraft(); ui.page = SkirkPage.AddProfile },
+                        onReplace = ::openReplacement,
+                        onRename = { ui.pendingRenameProfileId = it.id },
+                        onRemove = { ui.pendingDeleteProfileId = it.id },
                     )
+                    SkirkPage.AddProfile, SkirkPage.ReplaceProfile -> profileForm()
+                    SkirkPage.Settings -> panelProfile?.let { profile ->
+                        SettingsPage(
+                            profile = profile,
+                            running = connection.running,
+                            onModeChange = { mode -> updateSettings { it.copy(connectionMode = mode) } },
+                            onRouteModeChange = { route -> updateSettings { it.copy(routeMode = route) } },
+                            onProxyShareLanChange = { share -> updateSettings { it.copy(shareLan = share) } },
+                            onProxyPortsChange = { socks, http -> updateSettings { it.copy(socksPort = socks, httpPort = http) } },
+                            onOpenVpnApps = { ui.vpnAppsParent = SkirkPage.Settings; ui.page = SkirkPage.VpnApps },
+                            onOpenPerformance = { ui.page = SkirkPage.Performance },
+                            onOpenLogs = { ui.logsParent = SkirkPage.Settings; ui.page = SkirkPage.Logs },
+                        )
+                    }
+                    SkirkPage.VpnApps -> selected?.let { profile ->
+                        VpnAppsPage(profile, enabled = !connection.running, onSave = { mode, allowed, excluded ->
+                            val attempt = connectionStore.read()
+                            updateSettings { it.copy(vpnAppMode = mode, vpnAllowedApps = allowed, vpnExcludedApps = excluded) }
+                            if (attempt.phase == ConnectionPhase.FAILED && attempt.profileId == profile.id &&
+                                isVpnAppSelectionFailure(attempt.message)
+                            ) {
+                                connectionStore.finish(attempt, "Ready to connect")
+                                refreshConnection()
+                            }
+                            ui.page = ui.vpnAppsParent
+                        })
+                    }
+                    SkirkPage.Performance -> panelProfile?.let { profile ->
+                        PerformancePage(profile.performance, metrics, enabled = !connection.running, onPerformanceChange = {
+                            updateSettings { current -> current.copy(performance = it) }
+                        })
+                    }
+                    SkirkPage.Logs -> LogsPage(logs, onRefresh = ::refreshLogs, onCopy = {
+                        clipboard.setText(AnnotatedString(logs))
+                        scope.launch { snackbar.showSnackbar("Logs copied") }
+                    })
                 }
-            }
-            OutlinedButton(onClick = onExpand) {
-                Icon(Icons.Rounded.Add, contentDescription = null)
-                Text("Add")
             }
         }
     }
-}
 
-@Composable
-private fun ImportPanel(
-    profileName: String,
-    socksPort: String,
-    httpPort: String,
-    rawConfig: String,
-    importError: String,
-    onProfileNameChange: (String) -> Unit,
-    onSocksPortChange: (String) -> Unit,
-    onHttpPortChange: (String) -> Unit,
-    onRawConfigChange: (String) -> Unit,
-    onPaste: () -> Unit,
-    onImport: () -> Unit,
-) {
-    Panel {
-        SectionHeader(Icons.Rounded.Add, "Import profile", "One-line config")
-        OutlinedTextField(
-            value = rawConfig,
-            onValueChange = onRawConfigChange,
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 5,
-            label = { Text("Skirk profile or client.json") },
-            isError = importError.isNotBlank(),
-            supportingText = {
-                if (importError.isNotBlank()) {
-                    Text(importError)
-                } else {
-                    Text("Paste the one-line skirk: profile or generated client.json.")
+    profiles.firstOrNull { it.id == ui.pendingRenameProfileId }?.let { profile ->
+        RenameProfileDialog(
+            name = profile.name,
+            onDismiss = { ui.pendingRenameProfileId = null },
+            onSave = { name ->
+                if (!connectionStore.read().running) {
+                    store.saveProfile(profile.copy(name = name))
+                    refreshProfiles()
                 }
+                ui.pendingRenameProfileId = null
             },
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onImport,
-                enabled = rawConfig.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = null)
-                Text("Import")
-            }
-            OutlinedButton(onClick = onPaste) {
-                Icon(Icons.Rounded.ContentPaste, contentDescription = null)
-                Text("Paste")
-            }
-        }
-        OutlinedTextField(
-            value = profileName,
-            onValueChange = onProfileNameChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Profile name") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = socksPort,
-            onValueChange = onSocksPortChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Local SOCKS port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
-        OutlinedTextField(
-            value = httpPort,
-            onValueChange = onHttpPortChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Local HTTP proxy port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
     }
-}
-
-@Composable
-private fun ProfilesPanel(
-    profiles: List<ClientProfile>,
-    selectedId: String?,
-    running: Boolean,
-    onSelect: (ClientProfile) -> Unit,
-    onDelete: (ClientProfile) -> Unit,
-) {
-    Panel {
-        SectionHeader(Icons.Rounded.AccountCircle, "Profiles", "${profiles.size} saved")
-        if (profiles.isEmpty()) {
-            EmptyState()
-        } else {
-            profiles.forEach { profile ->
-                ProfileRow(
-                    profile = profile,
-                    selected = profile.id == selectedId,
-                    enabled = !running,
-                    onSelect = { onSelect(profile) },
-                    onDelete = { onDelete(profile) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Panel(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            content = content,
-        )
-    }
-}
-
-@Composable
-private fun SectionHeader(icon: ImageVector, title: String, detail: String, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(title, fontWeight = FontWeight.SemiBold)
-        }
-        Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun ModeSelector(
-    selectedMode: String,
-    enabled: Boolean,
-    onModeChange: (String) -> Unit,
-) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ModeCard(
-            icon = Icons.Rounded.VpnKey,
-            title = "VPN",
-            subtitle = "All apps",
-            selected = selectedMode == ClientProfile.CONNECTION_MODE_VPN,
-            enabled = enabled,
-            modifier = Modifier.weight(1f),
-            onClick = { onModeChange(ClientProfile.CONNECTION_MODE_VPN) },
-        )
-        ModeCard(
-            icon = Icons.Rounded.WifiTethering,
-            title = "Proxy",
-            subtitle = "SOCKS5 + HTTP",
-            selected = selectedMode == ClientProfile.CONNECTION_MODE_PROXY,
-            enabled = enabled,
-            modifier = Modifier.weight(1f),
-            onClick = { onModeChange(ClientProfile.CONNECTION_MODE_PROXY) },
-        )
-    }
-}
-
-@Composable
-private fun ModeCard(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Surface(
-        modifier = modifier.selectable(
-            selected = selected,
-            enabled = enabled,
-            role = Role.RadioButton,
-            onClick = onClick,
-        ),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(
-            1.dp,
-            if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-        ),
-        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    detail: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(
-            checked = checked,
-            enabled = enabled,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun InfoRow(icon: ImageVector, title: String, detail: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun ProfileRow(
-    profile: ClientProfile,
-    selected: Boolean,
-    enabled: Boolean,
-    onSelect: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(
-            1.dp,
-            if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-        ),
-        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (selected) {
-                        Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    } else {
-                        Icon(Icons.Rounded.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+    profiles.firstOrNull { it.id == ui.pendingDeleteProfileId }?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { ui.pendingDeleteProfileId = null },
+            title = { Text("Remove profile?") },
+            text = { Text("Remove ${names.getValue(profile.id)} from this device. You’ll need the original profile to add it again.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!connectionStore.read().running) {
+                        store.deleteProfile(profile.id)
+                        refreshProfiles()
+                        if (profiles.isEmpty()) ui.page = SkirkPage.Home
                     }
-                    Text(profile.name, fontWeight = FontWeight.SemiBold)
-                }
-                Text(
-                    "${profile.routeMode} / SOCKS ${profile.socksAddress} / HTTP ${profile.httpAddress}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (!selected) {
-                OutlinedButton(onClick = onSelect, enabled = enabled) {
-                    Text("Select")
-                }
-            }
-            IconButton(onClick = onDelete, enabled = enabled) {
-                Icon(Icons.Rounded.Delete, contentDescription = "Delete ${profile.name}")
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState() {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(Icons.Rounded.Storage, contentDescription = null)
-            Text("No profiles yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-private enum class ConnectionUiState(val title: String) {
-    Setup("Setup"),
-    Ready("Ready"),
-    Connecting("Connecting"),
-    Connected("Connected"),
-    Error("Needs attention"),
-}
-
-private fun connectionUiState(running: Boolean, selected: ClientProfile?, message: String): ConnectionUiState = when {
-    selected == null -> ConnectionUiState.Setup
-    running && message.contains("connecting", ignoreCase = true) -> ConnectionUiState.Connecting
-    running -> ConnectionUiState.Connected
-    isConnectionErrorMessage(message) -> ConnectionUiState.Error
-    else -> ConnectionUiState.Ready
-}
-
-private fun connectionDetail(
-    state: ConnectionUiState,
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-    message: String,
-): String {
-    if (selected == null) {
-        return "Import a profile below to enable connection."
-    }
-    val actionableMessage = connectionActionableMessage(message)
-    if (state == ConnectionUiState.Error && actionableMessage != null) {
-        return actionableMessage
-    }
-    return "${selected.name} · ${connectionRouteDetail(selected, selectedMode, proxyShareLan)}"
-}
-
-private fun connectionActionableMessage(message: String): String? {
-    val normalized = message.trim()
-    if (normalized.isBlank()) {
-        return null
-    }
-    val lower = normalized.lowercase()
-    if (
-        lower == "disconnected" ||
-        lower == "vpn connected" ||
-        lower.startsWith("socks connected") ||
-        lower.startsWith("proxy connected") ||
-        lower.endsWith("stopped") ||
-        lower.startsWith("imported ")
-    ) {
-        return null
-    }
-    return normalized
-}
-
-private fun isConnectionErrorMessage(message: String): Boolean {
-    val lower = message.trim().lowercase()
-    return lower.contains("failed") ||
-        lower.contains("error") ||
-        lower.contains("not granted") ||
-        lower.contains("revoked")
-}
-
-private fun modeLabel(mode: String): String =
-    if (mode == ClientProfile.CONNECTION_MODE_PROXY) "Proxy" else "VPN"
-
-private fun routeSummary(
-    selected: ClientProfile?,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-): String = when {
-    selected == null -> "Not configured"
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan -> "LAN enabled"
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY -> "Local proxy"
-    else -> "Device VPN"
-}
-
-private fun connectionRouteDetail(
-    selected: ClientProfile,
-    selectedMode: String,
-    proxyShareLan: Boolean,
-): String = when {
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY && proxyShareLan ->
-        "LAN proxy · ${proxyEndpoints(selected, true)}"
-    selectedMode == ClientProfile.CONNECTION_MODE_PROXY ->
-        "Local proxy · ${proxyEndpoints(selected, false)}"
-    else -> "Device VPN · no manual proxy setup"
-}
-
-private fun proxyAddress(profile: ClientProfile?, shareLan: Boolean): String {
-    if (profile == null) {
-        return "Import or select a profile first."
-    }
-    if (!shareLan) {
-        return "This phone only: ${proxyEndpoints(profile, false)}"
-    }
-    return "Use only on trusted networks: ${proxyEndpoints(profile, true)}"
-}
-
-private fun proxyEndpoints(profile: ClientProfile, shareLan: Boolean): String {
-    if (!shareLan) {
-        return "SOCKS5 ${profile.socksAddress} · HTTP ${profile.httpAddress}"
-    }
-    val socksAddress = AndroidSkirkEngine.lanAddresses(profile.socksPort)
-        .firstOrNull()
-        ?: "0.0.0.0:${profile.socksPort}"
-    val httpAddress = AndroidSkirkEngine.lanAddresses(profile.httpPort)
-        .firstOrNull()
-        ?: "0.0.0.0:${profile.httpPort}"
-    return "SOCKS5 $socksAddress · HTTP $httpAddress"
-}
-
-@Suppress("DEPRECATION")
-private fun isSkirkServiceRunning(context: Context, mode: String): Boolean {
-    val manager = context.getSystemService(ActivityManager::class.java) ?: return true
-    val expectedClass = when (mode) {
-        ClientProfile.CONNECTION_MODE_PROXY -> SkirkProxyService::class.java.name
-        ClientProfile.CONNECTION_MODE_VPN -> SkirkVpnService::class.java.name
-        else -> return false
-    }
-    return manager.getRunningServices(Int.MAX_VALUE)
-        .any { service -> service.service.className == expectedClass }
-}
-
-private fun readSkirkLogs(context: Context, activeMode: String): String {
-    val logsDir = File(context.filesDir, "logs")
-    if (!logsDir.exists()) {
-        return ""
-    }
-    val files = logsDir.listFiles()
-        ?.filter { it.isFile && it.name.endsWith(".log") }
-        .orEmpty()
-    val ordered = when (activeMode) {
-        ClientProfile.CONNECTION_MODE_PROXY -> files.filter { it.name == "skirk-client.log" }
-        ClientProfile.CONNECTION_MODE_VPN -> files.filter { it.name == "skirk-vpn-client.log" }
-        else -> files.sortedBy { it.name }
-    }
-    return ordered
-        .joinToString("\n\n") { file ->
-            val text = file.readTail(maxBytes = 64 * 1024, maxLines = 240)
-            "== ${file.name} ==\n$text"
-        }
-        .takeLast(96 * 1024)
-}
-
-private data class DriveMetrics(
-    val unitsPerMinute: Double,
-    val errorsPerMinute: Double,
-    val lastErrorReason: String,
-    val ops: String,
-    val backoffActive: Boolean,
-    val backoffReason: String,
-    val backoffWaitSeconds: Double,
-)
-
-private fun readDriveMetrics(context: Context, activeMode: String): DriveMetrics? {
-    val logsDir = File(context.filesDir, "logs")
-    val fileName = when (activeMode) {
-        ClientProfile.CONNECTION_MODE_PROXY -> "skirk-client.metrics.json"
-        ClientProfile.CONNECTION_MODE_VPN -> "skirk-vpn-client.metrics.json"
-        else -> return null
-    }
-    val file = File(logsDir, fileName)
-    if (!file.exists() || file.length() == 0L) {
-        return null
-    }
-    return runCatching {
-        val json = JSONObject(file.readText())
-        val rate = json.optJSONObject("recent_quota_per_minute")
-            ?: json.optJSONObject("recentQuotaPerMinute")
-            ?: JSONObject()
-        val backoff = json.optJSONObject("drive_backoff")
-            ?: json.optJSONObject("driveBackoff")
-            ?: JSONObject()
-        DriveMetrics(
-            unitsPerMinute = rate.optDouble("units", 0.0),
-            errorsPerMinute = rate.optDouble("errors", 0.0),
-            lastErrorReason = rate.optString("last_error_reason", rate.optString("lastErrorReason", "")),
-            ops = json.optString(
-                "recent_quota_ops",
-                json.optString("recentQuotaOps", ""),
-            ),
-            backoffActive = backoff.optBoolean("active", false),
-            backoffReason = backoff.optString("reason", ""),
-            backoffWaitSeconds = backoff.optDouble("wait_seconds", backoff.optDouble("waitSeconds", 0.0)),
+                    ui.pendingDeleteProfileId = null
+                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { ui.pendingDeleteProfileId = null }) { Text("Cancel") } },
         )
-    }.getOrNull()
-}
-
-private fun estimatedIdleUnits(performance: PerformanceSettings): Double =
-    (60_000.0 / performance.pollMs.coerceAtLeast(PerformanceSettings.CUSTOM_MIN_POLL_MS)) *
-        DRIVE_LIST_UNITS *
-        if (performance.burstPoll) 2.0 else 1.0
-
-private fun drivePressureFraction(unitsPerMinute: Double): Float =
-    (unitsPerMinute / DRIVE_USER_UNITS_PER_MINUTE).coerceIn(0.0, 1.0).toFloat()
-
-private fun drivePressurePercent(unitsPerMinute: Double): Int =
-    (drivePressureFraction(unitsPerMinute) * 100).toInt().coerceAtLeast(if (unitsPerMinute > 0.0) 1 else 0)
-
-private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double): String = when {
-    errorsPerMinute > 0.0 -> driveErrorReasonLabel("")
-    unitsPerMinute <= 0.0 -> "Not measured"
-    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.08 -> "Normal"
-    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.30 -> "Moderate"
-    unitsPerMinute < DRIVE_USER_UNITS_PER_MINUTE * 0.70 -> "High"
-    else -> "Limit risk"
-}
-
-private fun drivePressureLabel(unitsPerMinute: Double, errorsPerMinute: Double, reason: String): String = when {
-    errorsPerMinute > 0.0 -> driveErrorReasonLabel(reason)
-    else -> drivePressureLabel(unitsPerMinute, errorsPerMinute)
-}
-
-private fun driveErrorReasonLabel(reason: String): String {
-    val value = reason.lowercase()
-    val compact = value.filter { it.isLetterOrDigit() }
-    return when {
-        "storagequotaexceeded" in compact -> "Drive storage full"
-        "ratelimit" in compact || "toomany" in compact || compact == "status429" -> "Drive rate limited"
-        "unauthorized" in compact || compact == "status401" -> "Google login expired"
-        "notfound" in compact -> "Drive mailbox missing"
-        "timeout" in compact || "deadline" in compact -> "Drive timeout"
-        else -> "Drive errors"
-    }
-}
-
-private fun performancePresetLabel(preset: String): String = when (preset) {
-    PerformanceSettings.PRESET_LOWER_USAGE -> "Lower usage"
-    PerformanceSettings.PRESET_RESPONSIVE -> "Responsive"
-    PerformanceSettings.PRESET_BULK_TRANSFER -> "Bulk transfer"
-    PerformanceSettings.PRESET_CUSTOM -> "Custom"
-    else -> "Recommended"
-}
-
-private fun performancePresetDetail(performance: PerformanceSettings): String =
-    "${performance.pollMs}ms · ${performance.uploadConcurrency}/${performance.downloadConcurrency}" +
-        if (performance.burstPoll) " · burst" else ""
-
-private const val SERVICE_STATE_GRACE_MS = 3_000L
-private const val DRIVE_LIST_UNITS = 100.0
-private const val DRIVE_USER_UNITS_PER_MINUTE = 325_000.0
-
-private fun File.readTail(maxBytes: Int, maxLines: Int): String {
-    if (!exists() || length() == 0L) {
-        return ""
-    }
-    val start = (length() - maxBytes).coerceAtLeast(0L)
-    inputStream().use { input ->
-        var remaining = start
-        while (remaining > 0L) {
-            val skipped = input.skip(remaining)
-            if (skipped <= 0L) {
-                break
-            }
-            remaining -= skipped
-        }
-        return input.bufferedReader()
-            .readLines()
-            .takeLast(maxLines)
-            .joinToString("\n")
     }
 }

@@ -66,6 +66,14 @@ hev_socks5_udp_get_fd (HevSocks5UDP *self)
     return iface->get_fd (self);
 }
 
+static int
+hev_socks5_udp_tcp_failed (HevSocks5UDP *self)
+{
+    /* Framing cannot recover; also wake the sibling forwarding direction. */
+    shutdown (hev_socks5_udp_get_fd (self), SHUT_RDWR);
+    return -1;
+}
+
 int
 hev_socks5_udp_sendto (HevSocks5UDP *self, const void *buf, size_t len,
                        const HevSocks5Addr *addr)
@@ -110,8 +118,19 @@ hev_socks5_udp_sendto (HevSocks5UDP *self, const void *buf, size_t len,
 
     res = hev_task_io_socket_sendmsg (hev_socks5_udp_get_fd (self), &mh,
                                       MSG_WAITALL, task_io_yielder, self);
-    if (res <= 0)
+    if (res < 0) {
         LOG_D ("%p socks5 udp write udp", self);
+        /* A timeout can hide a partial frame. Do not resume this stream. */
+        if (HEV_SOCKS5 (self)->type == HEV_SOCKS5_TYPE_UDP_IN_TCP)
+            return hev_socks5_udp_tcp_failed (self);
+        return res;
+    }
+    if ((size_t)res != 3U + addrlen + len) {
+        LOG_D ("%p socks5 udp short write", self);
+        if (HEV_SOCKS5 (self)->type == HEV_SOCKS5_TYPE_UDP_IN_TCP)
+            return hev_socks5_udp_tcp_failed (self);
+        return -1;
+    }
 
     return res;
 }
@@ -123,23 +142,33 @@ hev_socks5_udp_recvfrom_tcp (HevSocks5UDP *self, void *buf, size_t len,
     HevSocks5UDPHdr udp;
     struct iovec iov[2];
     struct msghdr mh;
+    size_t offset = 0;
+    int addrlen;
     int res;
     int fd;
 
     LOG_D ("%p socks5 udp recvfrom tcp", self);
 
     fd = hev_socks5_udp_get_fd (self);
-    res = hev_task_io_socket_recv (fd, &udp, 5, MSG_WAITALL, task_io_yielder,
-                                   self);
-    if (res <= 0) {
-        LOG_D ("%p socks5 udp read udp head", self);
-        return res;
+    /* WAITALL hides partial progress on timeout. Only an untouched header
+     * may time out without losing the record boundary. */
+    while (offset < 5) {
+        res = hev_task_io_socket_recv (fd, (unsigned char *)&udp + offset,
+                                       5 - offset, 0, task_io_yielder, self);
+        if (res <= 0) {
+            LOG_D ("%p socks5 udp read udp head", self);
+            if (res == -2 && offset == 0)
+                return -2;
+            return hev_socks5_udp_tcp_failed (self);
+        }
+        offset += res;
     }
 
     udp.datlen = ntohs (udp.datlen);
-    if (udp.datlen > len) {
-        LOG_D ("%p socks5 udp data len", self);
-        return -1;
+    addrlen = hev_socks5_addr_len (&udp.addr);
+    if (addrlen < 2 || udp.hdrlen != 3 + addrlen || udp.datlen > len) {
+        LOG_D ("%p socks5 udp record len", self);
+        return hev_socks5_udp_tcp_failed (self);
     }
 
     memset (&mh, 0, sizeof (mh));
@@ -147,15 +176,15 @@ hev_socks5_udp_recvfrom_tcp (HevSocks5UDP *self, void *buf, size_t len,
     mh.msg_iovlen = 2;
 
     iov[0].iov_base = &addr->domain.addr;
-    iov[0].iov_len = udp.hdrlen - 5;
+    iov[0].iov_len = addrlen - 2;
     iov[1].iov_base = buf;
     iov[1].iov_len = udp.datlen;
 
     res = hev_task_io_socket_recvmsg (fd, &mh, MSG_WAITALL, task_io_yielder,
                                       self);
-    if (res <= 0) {
+    if (res != addrlen - 2 + udp.datlen) {
         LOG_D ("%p socks5 udp read udp data", self);
-        return res;
+        return hev_socks5_udp_tcp_failed (self);
     }
 
     addr->atype = udp.addr.atype;
@@ -192,7 +221,7 @@ hev_socks5_udp_recvfrom_udp (HevSocks5UDP *self, void *buf, size_t len,
                                         &alen, task_io_yielder, self);
     if (rlen < 4) {
         LOG_D ("%p socks5 udp read", self);
-        return rlen;
+        return rlen < 0 ? rlen : -1;
     }
 
     if (saddr) {
@@ -257,7 +286,7 @@ hev_socks5_udp_fwd_f (HevSocks5UDP *self, HevSocks5UDPSplice *splice)
     LOG_D ("%p socks5 udp fwd f", self);
 
     res = hev_socks5_udp_recvfrom (self, buf, sizeof (buf), &taddr);
-    if (res <= 0) {
+    if (res < 0) {
         if (res < -1) {
             splice->alive &= ~HEV_SOCKS5_UDP_ALIVE_F;
             if (splice->alive && hev_socks5_get_timeout (HEV_SOCKS5 (self)))
@@ -288,8 +317,8 @@ hev_socks5_udp_fwd_f (HevSocks5UDP *self, HevSocks5UDPSplice *splice)
     }
 
     res = sendto (splice->fd, buf, res, 0, saddr, sizeof (addr));
-    if (res <= 0) {
-        if ((res < 0) && (errno == EAGAIN))
+    if (res < 0) {
+        if (errno == EAGAIN)
             return 0;
         LOG_D ("%p socks5 udp fwd f send", self);
         return -1;
@@ -314,7 +343,7 @@ hev_socks5_udp_fwd_b (HevSocks5UDP *self, HevSocks5UDPSplice *splice)
     res = hev_task_io_socket_recvfrom (splice->fd, buf, sizeof (buf), 0,
                                        (struct sockaddr *)&addr, &addrlen,
                                        task_io_yielder, self);
-    if (res > 0) {
+    if (res >= 0) {
         HevSocks5Addr taddr;
         hev_socks5_addr_from_sockaddr6 (&taddr, &addr);
         res = hev_socks5_udp_sendto (self, buf, res, &taddr);

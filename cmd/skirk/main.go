@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,8 +32,9 @@ var (
 	commit  = "unknown"
 	date    = "unknown"
 
-	errDownloadStalled = errors.New("download stalled")
-	errDownloadSlow    = errors.New("download below minimum throughput")
+	errExitConfigInaccessible = errors.New("the exit service cannot read its config")
+	errDownloadStalled        = errors.New("download stalled")
+	errDownloadSlow           = errors.New("download below minimum throughput")
 )
 
 func main() {
@@ -41,8 +43,18 @@ func main() {
 			os.Exit(130)
 		}
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(exitStatusForError(os.Args, err))
 	}
+}
+
+func exitStatusForError(args []string, err error) int {
+	if len(args) > 1 && (skirk.IsTerminalOAuthTokenError(err) || errors.Is(err, errExitConfigInaccessible)) {
+		switch args[1] {
+		case "serve-exit", "exit", "serve-client", "client", "--config", "-config":
+			return 78
+		}
+	}
+	return 1
 }
 
 func run(args []string) error {
@@ -59,6 +71,9 @@ func run(args []string) error {
 	}()
 	if len(args) < 2 {
 		return menu(ctx)
+	}
+	if isImplicitServeClient(args[1:]) {
+		return serveClient(ctx, args[1:])
 	}
 	switch args[1] {
 	case "help", "--help", "-h":
@@ -92,6 +107,8 @@ func run(args []string) error {
 		return benchLive(ctx, args[2:])
 	case "bench-drive":
 		return benchDrive(ctx, args[2:])
+	case "probe-exit":
+		return probeExit(ctx, args[2:])
 	case "serve-client":
 		return serveClient(ctx, args[2:])
 	case "client":
@@ -110,15 +127,24 @@ func run(args []string) error {
 	}
 }
 
+func isImplicitServeClient(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return args[0] == "--config" || args[0] == "-config"
+}
+
 func usage() {
 	fmt.Println(`skirk commands:
   help
   version
   keygen
   sample-config --out skirk.json --secret SECRET
-  setup init --out skirk-kit --reset-google-login [--oauth-mode easy|personal] [--start-exit=false] [--exit-service-name skirk-exit] [--oauth-client-file oauth-client.json]
+  setup init --out skirk-kit [--oauth-client-file oauth-client.json] [--start-exit=false]
+  setup init --help  (personal OAuth, UDP on, IPv6 auto by default)
+  setup renew-oauth --kit skirk-kit [--oauth-client-file oauth-client.json] [--restart-exit]
   config export --config skirk-kit/client.json [--out client.skirk]
-  config decode --config client.skirk --out client.json
+  config decode (--config client.skirk | --stdin) --out client.json
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
   cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete
   repair-mailbox --kit skirk-kit [--start-exit]
@@ -126,12 +152,49 @@ func usage() {
   service status|start|stop|restart|uninstall [--name skirk-exit]
   uninstall --dry-run
   uninstall --yes [--name skirk-exit] [--bin /path/to/skirk] [--delete-kit] [--revoke-oauth] [--delete-drive] [--wireproxy]
+  --config skirk.json --listen 127.0.0.1:18080  (compatibility alias for serve-client)
   bench-live --config skirk-kit/client.skirk [--small-url http://example.com/] [--bulk-url URL]
   bench-drive --config skirk-kit/client.skirk [--mode lifecycle|known-id|range] [--sizes 256K,1M,2M] [--concurrency 4,8,16]
+  probe-exit --config skirk-kit/client.skirk --socks 127.0.0.1:18080
   revoke --config skirk-kit/exit.json [--revoke-oauth]
   serve-exit --config skirk.json [--exit-proxy socks5h://127.0.0.1:40000]
   serve-client --config skirk.json [--listen 127.0.0.1:18080] [--client-id my-device]
   client-ui --config skirk.json [--socks 127.0.0.1:18080] [--ui 127.0.0.1:18280]`)
+}
+
+type exitProbeOutput struct {
+	Status      string `json:"status"`
+	RoundTripMS int64  `json:"round_trip_ms,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+func probeExit(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("probe-exit", flag.ContinueOnError)
+	configPath := fs.String("config", "", "client config path or inline config text")
+	socksAddress := fs.String("socks", "", "running local SOCKS5 listener")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*configPath) == "" || strings.TrimSpace(*socksAddress) == "" {
+		return errors.New("probe-exit needs --config and --socks")
+	}
+	cfg, err := skirk.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	duration, err := skirk.ProbeExit(ctx, *socksAddress, cfg.Secret)
+	if err != nil {
+		reason := "unverified"
+		var networkError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+			reason = "timeout"
+		}
+		if printErr := printJSON(exitProbeOutput{Status: "unverified", Reason: reason}); printErr != nil {
+			return printErr
+		}
+		return skirk.ErrExitNotVerified
+	}
+	return printJSON(exitProbeOutput{Status: "verified", RoundTripMS: duration.Milliseconds()})
 }
 
 func configCommand(args []string) error {
@@ -158,25 +221,61 @@ func configCommand(args []string) error {
 			fmt.Println(text)
 			return nil
 		}
-		return os.WriteFile(*out, []byte(text+"\n"), 0600)
+		return writePrivateConfigOutput(*out, []byte(text+"\n"))
 	case "decode":
-		fs := flag.NewFlagSet("config decode", flag.ExitOnError)
-		configText := fs.String("config", "", "config path or inline config text")
-		out := fs.String("out", "client.json", "output JSON path")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if strings.TrimSpace(*configText) == "" {
-			return fmt.Errorf("--config is required")
-		}
-		cfg, err := skirk.LoadConfig(*configText)
-		if err != nil {
-			return err
-		}
-		return writeJSONFile(*out, cfg)
+		return decodeConfig(args[1:], os.Stdin, os.Stdout)
 	default:
 		return fmt.Errorf("unknown config command %q", args[0])
 	}
+}
+
+func decodeConfig(args []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet("config decode", flag.ContinueOnError)
+	configPath := fs.String("config", "", "config path or inline config text")
+	fromStdin := fs.Bool("stdin", false, "read the profile from standard input")
+	out := fs.String("out", "client.json", "output JSON path, or - for standard output")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *fromStdin == (strings.TrimSpace(*configPath) != "") {
+		return errors.New("select exactly one of --config and --stdin")
+	}
+	var cfg *skirk.Config
+	var err error
+	if *fromStdin {
+		// An encoded profile can exceed its decoded size due to base64 and wrapping.
+		const maxInput = 8 << 20
+		var data []byte
+		data, err = io.ReadAll(io.LimitReader(stdin, maxInput+1))
+		if err == nil {
+			if len(data) > maxInput {
+				return errors.New("profile input exceeds 8 MiB")
+			}
+			cfg, err = skirk.ParseConfig(data)
+		}
+	} else {
+		cfg, err = skirk.LoadConfig(*configPath)
+	}
+	if err != nil {
+		return err
+	}
+	if *out == "-" {
+		return json.NewEncoder(stdout).Encode(cfg)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writePrivateConfigOutput(*out, append(data, '\n'))
+}
+
+func writePrivateConfigOutput(path string, data []byte) error {
+	staged, err := stagePrivateFile(path, data)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(staged)
+	return os.Rename(staged, path)
 }
 
 func load(path string) (*skirk.Config, *skirk.DriveStore, error) {
@@ -212,16 +311,16 @@ func revoke(ctx context.Context, args []string) error {
 func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
-	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to muxv4/")
+	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to Skirk runtime prefixes")
 	all := fs.Bool("all", false, "delete/list every non-trashed object in the configured Skirk Drive mailbox")
-	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration")
+	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration; UDP preview defaults to 2m with a 1m minimum")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")
 	maxPages := fs.Int("max-pages", 256, "maximum Drive list pages to scan")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, drive, err := load(*configPath)
+	cfg, drive, err := load(*configPath)
 	if err != nil {
 		return err
 	}
@@ -243,13 +342,19 @@ func cleanup(ctx context.Context, args []string) error {
 	}
 	cleanupPrefixes := []string{strings.TrimSpace(*prefix)}
 	if cleanupPrefixes[0] == "" {
-		cleanupPrefixes = []string{"muxv4/"}
+		cleanupPrefixes = defaultCleanupPrefixes(len(cfg.Tunnel.UDPPreviewTargets) != 0 || cfg.Tunnel.UDPPreviewPublicIPv4)
 	}
+	explicitAge := false
+	fs.Visit(func(f *flag.Flag) { explicitAge = explicitAge || f.Name == "older-than" })
 	results := make([]skirk.DriveCleanupResult, 0, len(cleanupPrefixes))
 	for _, cleanupPrefix := range cleanupPrefixes {
+		age := *olderThan
+		if cleanupPrefix == skirk.UDPPreviewCleanupPrefix && !explicitAge {
+			age = skirk.UDPPreviewCleanupDefaultAge
+		}
 		result, err := drive.Cleanup(ctx, skirk.DriveCleanupOptions{
 			Prefix:            cleanupPrefix,
-			OlderThan:         *olderThan,
+			OlderThan:         age,
 			DryRun:            !*deleteObjects,
 			DeleteConcurrency: *concurrency,
 			MaxPages:          *maxPages,
@@ -271,14 +376,14 @@ func serveClient(ctx context.Context, args []string) error {
 	listen := fs.String("listen", "", "SOCKS5 listen address")
 	httpProxyListen := fs.String("http-proxy-listen", "", "optional HTTP/HTTPS proxy listen address")
 	upstreamProxy := fs.String("upstream-proxy", "", "override config route proxy, for example socks5h://127.0.0.1:11093")
-	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
+	routeMode := fs.String("route-mode", "", "override config route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned, google_front_h3_pinned")
 	googleIP := fs.String("google-ip", "", "override config Google edge IP for pinned route modes")
 	burstPoll := fs.Bool("burst-poll", false, "enable bounded adaptive burst polling after local uploads")
 	noBurstPoll := fs.Bool("no-burst-poll", false, "disable bounded adaptive burst polling even if enabled in config")
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -287,6 +392,7 @@ func serveClient(ctx context.Context, args []string) error {
 	metricsPath := fs.String("metrics-path", "", "write runtime metrics JSON to this path")
 	clientID := fs.String("client-id", "", "stable per-device client id; generated automatically when omitted")
 	watchParentPID := fs.Int("watch-parent-pid", 0, "exit when this parent process disappears")
+	networkEventsStdin := fs.Bool("network-events-stdin", false, "read private network handoff events from the launcher")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -357,8 +463,11 @@ func serveClient(ctx context.Context, args []string) error {
 		return err
 	}
 	startRuntimeMetricsWriter(ctx, *metricsPath, "client", cfg, drive, tunnel)
+	if *networkEventsStdin {
+		go watchClientNetworkEvents(ctx, os.Stdin, tunnel.RefreshNetworkPath)
+	}
 	addr := firstNonEmpty(*listen, cfg.Tunnel.Listen)
-	log.Printf("skirk client SOCKS5 listening on %s session=%s client=%s run=%s route=%s transport=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Client.ID, cfg.Client.RunID, cfg.Route.Mode, cfg.Tunnel.Transport, firstNonEmpty(cfg.Route.Proxy, "none"))
+	log.Printf("skirk client SOCKS5 listening on %s session=%s client=%s run=%s route=%s transport=%s upstream=%s", addr, skirk.SessionString(tunnel.SessionID), cfg.Client.ID, cfg.Client.RunID, cfg.Route.Mode, cfg.Tunnel.Transport, firstNonEmpty(proxyDisplayAddress(cfg.Route.Proxy), "none"))
 	errCh := make(chan error, 2)
 	go func() { errCh <- tunnel.ServeClient(ctx, addr) }()
 	if strings.TrimSpace(*httpProxyListen) != "" {
@@ -372,7 +481,7 @@ func serveExit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve-exit", flag.ExitOnError)
 	configPath := fs.String("config", "skirk.json", "config path")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -386,6 +495,11 @@ func serveExit(ctx context.Context, args []string) error {
 	}
 	cfg, drive, err := load(*configPath)
 	if err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && filepath.Clean(pathErr.Path) == filepath.Clean(*configPath) &&
+			(errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist)) {
+			return fmt.Errorf("%w: %w. Check the service user and the permissions on the file and its parent directories", errExitConfigInaccessible, err)
+		}
 		return err
 	}
 	if strings.TrimSpace(*exitProxy) != "" {
@@ -413,20 +527,28 @@ func serveExit(ctx context.Context, args []string) error {
 	}
 	defer lock.Close()
 	startRuntimeMetricsWriter(ctx, *metricsPath, "exit", cfg, drive, tunnel)
-	startMailboxJanitor(ctx, drive)
-	log.Printf("skirk exit polling session=%s transport=%s exit_proxy=%s exit_ip_family=%s", skirk.SessionString(tunnel.SessionID), cfg.Tunnel.Transport, firstNonEmpty(tunnel.ExitProxy, "none"), firstNonEmpty(tunnel.ExitIPFamily, "prefer_ipv4"))
+	startMailboxJanitor(ctx, drive, tunnel.UDPPreviewSnapshot() != nil)
+	log.Printf("skirk exit polling session=%s transport=%s exit_proxy=%s exit_ip_family=%s", skirk.SessionString(tunnel.SessionID), cfg.Tunnel.Transport, skirk.OutboundProxyMode(tunnel.ExitProxy), firstNonEmpty(tunnel.ExitIPFamily, "prefer_ipv4"))
 	return tunnel.ServeExit(ctx)
 }
 
-const mailboxJanitorDefaultOlderThan = 10 * time.Minute
+const mailboxJanitorDefaultOlderThan = 24 * time.Hour
 const mailboxJanitorDefaultInterval = 2 * time.Minute
 const mailboxJanitorDefaultDeleteConcurrency = 2
 const mailboxJanitorDefaultMaxDeletesPerPrefix = 500
 const mailboxJanitorDefaultDeleteDelay = 100 * time.Millisecond
 
-var mailboxJanitorPrefixes = []string{"muxv4/", "bench-drive/", "setup/"}
+var mailboxJanitorPrefixes = []string{"muxv4/", "muxv5/", "bench-drive/", "setup/"}
 
-func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
+func defaultCleanupPrefixes(udpPreview bool) []string {
+	prefixes := append(append([]string(nil), mailboxJanitorPrefixes...), "slotv1/")
+	if udpPreview {
+		prefixes = append(prefixes, skirk.UDPPreviewCleanupPrefix)
+	}
+	return prefixes
+}
+
+func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, udpPreview bool) {
 	if drive == nil || envBool("SKIRK_DISABLE_JANITOR") {
 		return
 	}
@@ -447,13 +569,49 @@ func startMailboxJanitor(ctx context.Context, drive *skirk.DriveStore) {
 			}
 		}
 	}()
+	if udpPreview {
+		go func() {
+			runUDPMailboxJanitor(ctx, drive, maxDeletes, deleteDelay)
+			ticker := time.NewTicker(min(interval, time.Minute))
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					runUDPMailboxJanitor(ctx, drive, maxDeletes, deleteDelay)
+				}
+			}
+		}()
+	}
+}
+
+func runUDPMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, maxDeletes int, deleteDelay time.Duration) {
+	result, err := drive.Cleanup(ctx, skirk.DriveCleanupOptions{
+		Prefix: skirk.UDPPreviewCleanupPrefix, OlderThan: skirk.UDPPreviewCleanupDefaultAge,
+		MaxDeletes: maxDeletes, DeleteDelay: deleteDelay,
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("UDP mailbox janitor error=%s", err)
+		}
+		return
+	}
+	if result.Matched != 0 || result.Failed != 0 {
+		log.Printf("UDP mailbox janitor scanned=%d matched=%d deleted=%d failed=%d bytes=%d pages=%d truncated=%t",
+			result.Scanned, result.Matched, result.Deleted, result.Failed, result.MatchedSize, result.Pages, result.Truncated)
+	}
 }
 
 func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan time.Duration, maxDeletes int, deleteDelay time.Duration) {
 	if drive == nil || olderThan <= 0 {
 		return
 	}
-	for _, prefix := range mailboxJanitorPrefixes {
+	prefixes := mailboxJanitorPrefixes
+	if drive.MetadataSlotEnabled() {
+		prefixes = append(append([]string(nil), prefixes...), "slotv1/")
+	}
+	for _, prefix := range prefixes {
 		cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
 			Prefix:            prefix,
@@ -558,28 +716,31 @@ type benchQuotaRequestSummary struct {
 }
 
 type runtimeMetricsFile struct {
-	Version                     int                                   `json:"version"`
-	Role                        string                                `json:"role"`
-	StartedAt                   string                                `json:"started_at"`
-	UpdatedAt                   string                                `json:"updated_at"`
-	DurationSeconds             float64                               `json:"duration_seconds"`
-	RouteMode                   string                                `json:"route_mode"`
-	Transport                   string                                `json:"transport"`
-	PollMS                      int                                   `json:"poll_ms"`
-	UploadConcurrency           int                                   `json:"upload_concurrency"`
-	DownloadConcurrency         int                                   `json:"download_concurrency"`
-	BurstPoll                   bool                                  `json:"burst_poll"`
-	BurstPollMS                 int                                   `json:"burst_poll_ms"`
-	BurstPollWindowMS           int                                   `json:"burst_poll_window_ms"`
-	EstimatedProjectUnitsPerMin int64                                 `json:"estimated_project_units_per_min"`
-	EstimatedUserUnitsPerMin    int64                                 `json:"estimated_user_units_per_min"`
-	Quota                       skirk.DriveQuotaSnapshot              `json:"quota"`
-	RecentQuota                 skirk.DriveQuotaSnapshot              `json:"recent_quota"`
-	RecentQuotaPerMinute        benchQuotaMinuteSummary               `json:"recent_quota_per_minute"`
-	RecentQuotaOps              string                                `json:"recent_quota_ops"`
-	DriveBackoff                skirk.DriveQuotaBackoffSnapshot       `json:"drive_backoff"`
-	DriveOps                    map[string]skirk.DriveQuotaOpSnapshot `json:"drive_ops"`
-	Note                        string                                `json:"note"`
+	Version                      int                                   `json:"version"`
+	Role                         string                                `json:"role"`
+	StartedAt                    string                                `json:"started_at"`
+	UpdatedAt                    string                                `json:"updated_at"`
+	DurationSeconds              float64                               `json:"duration_seconds"`
+	RouteMode                    string                                `json:"route_mode"`
+	Transport                    string                                `json:"transport"`
+	PollMS                       int                                   `json:"poll_ms"`
+	UploadConcurrency            int                                   `json:"upload_concurrency"`
+	DownloadConcurrency          int                                   `json:"download_concurrency"`
+	BurstPoll                    bool                                  `json:"burst_poll"`
+	BurstPollMS                  int                                   `json:"burst_poll_ms"`
+	BurstPollWindowMS            int                                   `json:"burst_poll_window_ms"`
+	EstimatedProjectUnitsPerMin  int64                                 `json:"estimated_project_units_per_min"`
+	EstimatedUserUnitsPerMin     int64                                 `json:"estimated_user_units_per_min"`
+	Quota                        skirk.DriveQuotaSnapshot              `json:"quota"`
+	RecentQuota                  skirk.DriveQuotaSnapshot              `json:"recent_quota"`
+	RecentQuotaPerMinute         benchQuotaMinuteSummary               `json:"recent_quota_per_minute"`
+	RecentQuotaOps               string                                `json:"recent_quota_ops"`
+	DriveBackoff                 skirk.DriveQuotaBackoffSnapshot       `json:"drive_backoff"`
+	DriveOps                     map[string]skirk.DriveQuotaOpSnapshot `json:"drive_ops"`
+	UDPPreview                   *skirk.UDPPreviewMetrics              `json:"udp_preview,omitempty"`
+	RecentUDPAdmissionLimitHits  uint64                                `json:"recent_udp_admission_limit_hits,omitempty"`
+	RecentUDPRemoteExitLimitHits uint64                                `json:"recent_udp_remote_exit_limit_hits,omitempty"`
+	Note                         string                                `json:"note"`
 }
 
 type benchDriveResult struct {
@@ -661,7 +822,7 @@ func benchLive(ctx context.Context, args []string) error {
 	burstPollMS := fs.Int("burst-poll-ms", 0, "override burst poll interval in milliseconds")
 	burstPollWindowMS := fs.Int("burst-poll-window-ms", 0, "override burst poll warm window in milliseconds")
 	chunkSize := fs.Int("chunk-size", 0, "override tunnel chunk size in bytes")
-	transport := fs.String("transport", "", "override mux transport: muxv4")
+	transport := fs.String("transport", "", "override mux transport: muxv5 (default) or muxv4 (legacy)")
 	pollMS := fs.Int("poll-ms", 0, "override mailbox poll interval in milliseconds")
 	concurrency := fs.Int("concurrency", 0, "override fixed-profile Drive concurrency; use split flags for auto-profile upload/download caps")
 	uploadConcurrency := fs.Int("upload-concurrency", 0, "override Drive upload concurrency")
@@ -783,7 +944,7 @@ func benchLive(ctx context.Context, args []string) error {
 		Listen:          addr,
 		RouteMode:       cfg.Route.Mode,
 		Transport:       cfg.Tunnel.Transport,
-		UpstreamProxy:   cfg.Route.Proxy,
+		UpstreamProxy:   proxyDisplayAddress(cfg.Route.Proxy),
 		DurationSeconds: duration.Seconds(),
 		Small:           summarizeHTTPSamples(smallSamples),
 		Bulk:            bulkSummary,
@@ -1393,7 +1554,7 @@ func sampleConfig(args []string) error {
 	secret := fs.String("secret", "", "secret from keygen")
 	session := fs.String("session", "", "fixed 32-hex session id")
 	proxy := fs.String("proxy", "socks5h://127.0.0.1:1080", "upstream restricted-network proxy")
-	routeMode := fs.String("route-mode", "google_front_pinned", "route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
+	routeMode := fs.String("route-mode", "google_front_pinned", "route mode: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned, google_front_h3_pinned")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routing")
 	concurrency := fs.Int("concurrency", 8, "Drive upload/download concurrency")
 	if err := fs.Parse(args); err != nil {
@@ -1427,6 +1588,23 @@ func printJSON(value any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(value)
+}
+
+func proxyDisplayAddress(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	proxy, err := url.Parse(raw)
+	if err != nil || proxy.Hostname() == "" {
+		return "invalid"
+	}
+	switch proxy.Scheme {
+	case "socks5", "socks5h", "http", "https":
+		return (&url.URL{Scheme: proxy.Scheme, Host: proxy.Host}).String()
+	default:
+		return "invalid"
+	}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -1784,7 +1962,20 @@ func startRuntimeMetricsWriter(ctx context.Context, path, role string, cfg *skir
 		defer ticker.Stop()
 		previousAt := startedAt
 		previous := drive.QuotaSnapshot()
-		writeRuntimeMetricsFile(path, runtimeMetricsSnapshot(role, startedAt, previousAt, time.Second, cfg, previous, skirk.DriveQuotaSnapshot{}, drive.QuotaBackoffSnapshot()))
+		var previousAdmissionHits, previousRemoteExitHits uint64
+		writeSnapshot := func(metrics runtimeMetricsFile) {
+			metrics.UDPPreview = tunnel.UDPPreviewSnapshot()
+			if metrics.UDPPreview != nil {
+				hits := metrics.UDPPreview.AdmissionLimitHits
+				metrics.RecentUDPAdmissionLimitHits = hits - min(hits, previousAdmissionHits)
+				previousAdmissionHits = hits
+				remote := metrics.UDPPreview.RemoteExitLimitHits
+				metrics.RecentUDPRemoteExitLimitHits = remote - min(remote, previousRemoteExitHits)
+				previousRemoteExitHits = remote
+			}
+			writeRuntimeMetricsFile(path, metrics)
+		}
+		writeSnapshot(runtimeMetricsSnapshot(role, startedAt, previousAt, time.Second, cfg, previous, skirk.DriveQuotaSnapshot{}, drive.QuotaBackoffSnapshot()))
 		for {
 			select {
 			case <-ctx.Done():
@@ -1792,7 +1983,7 @@ func startRuntimeMetricsWriter(ctx context.Context, path, role string, cfg *skir
 			case now := <-ticker.C:
 				current := drive.QuotaSnapshot()
 				recent := current.Delta(previous)
-				writeRuntimeMetricsFile(path, runtimeMetricsSnapshot(role, startedAt, now, now.Sub(previousAt), cfg, current, recent, drive.QuotaBackoffSnapshot()))
+				writeSnapshot(runtimeMetricsSnapshot(role, startedAt, now, now.Sub(previousAt), cfg, current, recent, drive.QuotaBackoffSnapshot()))
 				previous = current
 				previousAt = now
 			}

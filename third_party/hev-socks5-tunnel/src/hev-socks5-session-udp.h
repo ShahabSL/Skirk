@@ -10,6 +10,7 @@
 #ifndef __HEV_SOCKS5_SESSION_UDP_H__
 #define __HEV_SOCKS5_SESSION_UDP_H__
 
+#include <lwip/ip_addr.h>
 #include <hev-socks5-client-udp.h>
 
 #include "hev-socks5-session.h"
@@ -39,7 +40,7 @@ struct _HevSocks5SessionUDP
     struct udp_pcb *pcb;
     HevTaskMutex *mutex;
     int frames;
-    int addr;
+    ip_addr_t addr;
     int port;
 };
 

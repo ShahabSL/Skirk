@@ -4,6 +4,22 @@ set -eu
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+# The installer targets Linux. Simulate its platform on macOS CI too, while
+# keeping the release/download behavior under test identical.
+platformbin="$tmp/platformbin"
+mkdir -p "$platformbin"
+cat >"$platformbin/uname" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 0755 "$platformbin/uname"
+PATH="$platformbin:$PATH"
+export PATH
+
 make_asset() {
   version="$1"
   dir="$2"
@@ -13,6 +29,9 @@ make_asset() {
 if [ "\${1:-}" = "version" ]; then
   echo "skirk $version"
   exit 0
+fi
+if [ "\${1:-}" = "setup" ]; then
+  printf '%s\n' "\$@" >"\$SKIRK_TEST_ARGV"
 fi
 echo "fake skirk $version"
 EOF
@@ -35,6 +54,30 @@ if [ "$("$tmp/install-good/skirk" version)" != "skirk v9.9.9" ]; then
   echo "error: installer smoke installed wrong fake version" >&2
   exit 1
 fi
+
+# No real service is touched. The fake release records the exact argv from the
+# normal installer entry point, including the custom kit, service and identity.
+cat >"$platformbin/systemctl" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+chmod 0755 "$platformbin/systemctl"
+kit="$tmp/team kit"
+for manage in 0 1; do
+  SKIRK_ASSET_BASE="file://$good/assets" SKIRK_INSTALL_DIR="$tmp/team bin" \
+    SKIRK_SETUP_OUT="$kit" SKIRK_SERVICE_NAME=skirk-test-instance \
+    SKIRK_SERVICE_USER=test-runner SKIRK_SERVER_SETUP=1 SKIRK_INSTALL_SYSTEMD="$manage" \
+    SKIRK_TEST_ARGV="$tmp/setup-argv" sh install.sh --dev-install --version v9.9.9 >"$tmp/setup.out" 2>&1
+  {
+    printf '%s\n' setup init --out "$kit"
+    if [ "$manage" = "0" ]; then
+      printf '%s\n' --start-exit=false
+    else
+      printf '%s\n' --exit-service-name skirk-test-instance --exit-service-user test-runner
+    fi
+  } >"$tmp/want-argv"
+  diff -u "$tmp/want-argv" "$tmp/setup-argv"
+done
 
 bad="$tmp/bad"
 make_asset v9.9.8 "$bad"

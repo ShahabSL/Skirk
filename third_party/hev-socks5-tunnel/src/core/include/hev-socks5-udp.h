@@ -33,9 +33,11 @@ void *hev_socks5_udp_iface (void);
 
 int hev_socks5_udp_get_fd (HevSocks5UDP *self);
 
+/* Returns the full framed byte count on success, or a negative error. */
 int hev_socks5_udp_sendto (HevSocks5UDP *self, const void *buf, size_t len,
                            const HevSocks5Addr *addr);
 
+/* Returns the payload length (including zero), or a negative error on EOF or failure. */
 int hev_socks5_udp_recvfrom (HevSocks5UDP *self, void *buf, size_t len,
                              HevSocks5Addr *addr);
 

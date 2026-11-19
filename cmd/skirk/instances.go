@@ -103,25 +103,13 @@ func createExitInstanceFromMenu(ctx context.Context, reader *bufio.Reader) error
 	if _, err := normalizeSystemdServiceName(serviceName); err != nil {
 		return err
 	}
-	fmt.Println("OAuth mode:")
-	fmt.Println("1. Easy Skirk OAuth")
-	fmt.Println("2. Personal Google OAuth project")
-	oauthChoice, err := prompt(ctx, reader, "OAuth mode", "1")
+	oauthMode, oauthFile, err := promptSetupOAuthMode(ctx, reader)
 	if err != nil {
 		return err
 	}
-	args := []string{"--out", kitDir, "--title", firstNonEmpty(title, id), "--exit-service-name", serviceName}
-	switch strings.TrimSpace(oauthChoice) {
-	case "1", "easy":
-		args = append(args, "--oauth-mode", "easy")
-	case "2", "personal":
-		oauthFile, err := promptPersonalOAuthClientFile(ctx, reader, "oauth-client.json")
-		if err != nil {
-			return err
-		}
-		args = append(args, "--oauth-mode", "personal", "--oauth-client-file", oauthFile)
-	default:
-		return fmt.Errorf("unknown OAuth mode %q", oauthChoice)
+	args := []string{"--out", kitDir, "--title", firstNonEmpty(title, id), "--exit-service-name", serviceName, "--oauth-mode", oauthMode}
+	if oauthFile != "" {
+		args = append(args, "--oauth-client-file", oauthFile)
 	}
 	resetLogin, err := promptYesNo(ctx, reader, "Reset Google login before setup", true)
 	if err != nil {
@@ -488,7 +476,7 @@ func existingDefaultKitDir() (string, bool, error) {
 				return "", false, absErr
 			}
 			return kitDir, true, nil
-		} else if err != nil && !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return "", false, err
 		}
 	}
@@ -566,7 +554,7 @@ func printExitInstanceDetails(instance exitInstance) {
 	fmt.Printf("Config:   %s\n", instance.ConfigPath)
 	if cfg, err := skirk.LoadConfig(instance.ConfigPath); err == nil {
 		fmt.Printf("Drive:    %s %s\n", firstNonEmpty(cfg.Drive.Space, "drive"), firstNonEmpty(cfg.Drive.FolderID, "(app folder)"))
-		fmt.Printf("Proxy:    %s\n", firstNonEmpty(cfg.Tunnel.ExitProxy, "direct"))
+		fmt.Printf("Proxy:    %s\n", skirk.OutboundProxyMode(cfg.Tunnel.ExitProxy))
 		fmt.Printf("Tuning:   poll=%dms upload=%s download=%s burst=%v\n",
 			cfg.Tunnel.PollIntervalMS,
 			concurrencyLabel(cfg.Tunnel.UploadConcurrency),

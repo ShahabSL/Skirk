@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,8 @@ type oauthClientCredentials struct {
 	Flow         string `json:"skirk_oauth_flow,omitempty"`
 }
 
+const generatedClientCommand = "skirk serve-client --config ./client.skirk\n"
+
 const defaultCustomOAuthScopes = "https://www.googleapis.com/auth/drive.file"
 
 var (
@@ -42,11 +45,13 @@ var (
 
 func setup(ctx context.Context, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("setup needs init")
+		return fmt.Errorf("setup needs init or renew-oauth")
 	}
 	switch args[0] {
 	case "init":
 		return setupInit(ctx, args[1:])
+	case "renew-oauth":
+		return setupRenewOAuth(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown setup command %q", args[0])
 	}
@@ -60,15 +65,19 @@ func setupInit(ctx context.Context, args []string) error {
 	adcPath := fs.String("adc", "", "Application Default Credentials JSON path")
 	noLogin := fs.Bool("no-gcloud-login", false, "fail instead of starting Google login if ADC is missing")
 	googleLogin := fs.Bool("google-login", false, "run Google login even if existing credentials are present")
-	resetGoogleLogin := fs.Bool("reset-google-login", false, "remove local ADC credentials before Google login")
-	oauthMode := fs.String("oauth-mode", "auto", "Google OAuth mode: auto, easy, or personal")
+	resetGoogleLogin := fs.Bool("reset-google-login", false, "start a new Google login for this run")
+	oauthMode := fs.String("oauth-mode", "personal", "Google OAuth mode: personal, easy (shared), or auto (interactive choice)")
 	oauthFlow := fs.String("oauth-flow", "auto", "Google OAuth flow: auto, device, or desktop")
 	oauthClientFile := fs.String("oauth-client-file", "", "override Google OAuth client JSON")
+	quotaProject := fs.String("quota-project", "", "optional user-owned Google Cloud project for Drive API quota; requires enabled Drive API and serviceusage.services.use")
 	oauthScopes := fs.String("oauth-scopes", defaultCustomOAuthScopes, "comma- or space-separated scopes used for Google OAuth login")
 	clientRoute := fs.String("client-route", "google_front_pinned", "client Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
-	exitRoute := fs.String("exit-route", "direct", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
+	exitRoute := fs.String("exit-route", "google_front_pinned", "exit Google API route: direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned")
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
+	enableUDP := fs.Bool("udp", true, "enable shared UDP and exit DNS using a dedicated Drive folder")
+	ipv6Mode := setupIPv6Mode("auto")
+	fs.Var(&ipv6Mode, "ipv6", "IPv6 for UDP kits: auto, on, or off")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
 	listen := fs.String("listen", "127.0.0.1:18080", "client SOCKS5 listen address")
 	chunkSize := fs.Int("chunk-size", 8*1024*1024, "maximum tunnel chunk size")
@@ -90,6 +99,29 @@ func setupInit(ctx context.Context, args []string) error {
 	}
 	if *adcPath != "" && (*googleLogin || *resetGoogleLogin || *oauthClientFile != "") {
 		return fmt.Errorf("--adc supplies explicit credentials and cannot be combined with --google-login, --reset-google-login, or --oauth-client-file")
+	}
+	if ipv6Mode == "on" && !*enableUDP {
+		return fmt.Errorf("--ipv6 requires --udp")
+	}
+	explicitUDP := false
+	fs.Visit(func(option *flag.Flag) { explicitUDP = explicitUDP || option.Name == "udp" })
+	requireUDP := explicitUDP || ipv6Mode == "on"
+	if *enableUDP && usesHTTPExitProxy(*exitProxy) {
+		if requireUDP {
+			return fmt.Errorf("HTTP exit proxies carry TCP only; use SOCKS5 with UDP support or --udp=false")
+		}
+		*enableUDP = false
+		if !*jsonOut {
+			fmt.Println("HTTP exit proxy selected. The kit will use TCP.")
+		}
+	}
+	if value := strings.TrimSpace(*quotaProject); value != "" {
+		if err := skirk.ValidateGoogleProjectID(value); err != nil {
+			return fmt.Errorf("--quota-project: %w", err)
+		}
+	}
+	if err := checkSetupOutput(*outDir); err != nil {
+		return err
 	}
 
 	selectedOAuthMode, err := normalizeOAuthMode(*oauthMode)
@@ -114,35 +146,38 @@ func setupInit(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	if selectedOAuthMode == "personal" && oauthClientFileValue == "" && os.Getenv("SKIRK_OAUTH_CLIENT_ID") == "" {
-		oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, getSetupReader(), "oauth-client.json")
+	var oauthClient oauthClientCredentials
+	var oauthSource string
+	if *adcPath == "" && !*noLogin {
+		if selectedOAuthMode == "personal" && oauthClientFileValue == "" && os.Getenv("SKIRK_OAUTH_CLIENT_ID") == "" {
+			const defaultFile = "oauth-client.json"
+			if _, statErr := os.Stat(defaultFile); statErr == nil {
+				oauthClientFileValue = defaultFile
+			} else {
+				if !isInteractiveTerminal() {
+					return errors.New("download your Desktop app OAuth JSON and pass --oauth-client-file PATH (see docs/personal-google-setup.md)")
+				}
+				oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, getSetupReader(), defaultFile)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		oauthClient, oauthSource, err = resolveOAuthClientCredentialsForMode(oauthClientFileValue, selectedOAuthMode != "personal")
 		if err != nil {
 			return err
 		}
-	}
-
-	oauthClient, oauthSource, oauthErr := resolveOAuthClientCredentialsForMode(oauthClientFileValue, selectedOAuthMode != "personal")
-	if oauthErr != nil {
-		return oauthErr
-	}
-	selectedOAuthFlow, err = resolveSetupOAuthFlow(selectedOAuthMode, selectedOAuthFlow, oauthClient)
-	if err != nil {
-		return err
-	}
-	if selectedOAuthMode == "personal" && isInteractiveTerminal() && !*jsonOut {
-		if err := confirmPersonalOAuthConsentReady(ctx, getSetupReader()); err != nil {
+		selectedOAuthFlow, err = resolveSetupOAuthFlow(selectedOAuthMode, selectedOAuthFlow, oauthClient)
+		if err != nil {
 			return err
+		}
+		if selectedOAuthMode == "personal" && !*jsonOut {
+			printPersonalOAuthPublishingNote()
 		}
 	}
 	credsPath := firstNonEmpty(*adcPath, defaultADCPath())
 	creds, err := readADCCredentials(credsPath)
-	loginRequested := *googleLogin || oauthSource != ""
-	if *resetGoogleLogin {
-		fmt.Printf("Resetting local Google credentials before login.\n\n")
-		_ = os.Remove(credsPath)
-		creds = adcCredentials{}
-		err = errors.New("Google login was reset")
-	}
+	loginRequested := *googleLogin || *resetGoogleLogin || oauthSource != ""
 	if loginRequested || err != nil {
 		if *noLogin {
 			return fmt.Errorf("google ADC unavailable at %s: %w", credsPath, err)
@@ -171,17 +206,14 @@ func setupInit(ctx context.Context, args []string) error {
 		return err
 	}
 	sessionID := skirk.SessionString(session)
-	baseDrive, folderID, err := setupDriveMailbox(ctx, auth, *googleIP, sessionID)
-	if err != nil {
-		return err
-	}
+	exitGoogleRoute := skirk.RouteConfig{Mode: *exitRoute, GoogleIP: *googleIP, TimeoutSeconds: 240}
+	clientTunnel := setupTunnelConfig(*listen, *chunkSize, *pollMS, *clientUploadConcurrency, *clientDownloadConcurrency)
 	clientCfg := skirk.Config{
 		Secret:    secret,
 		SessionID: sessionID,
 		Auth:      auth,
 		Route:     skirk.RouteConfig{Mode: *clientRoute, Proxy: *clientProxy, GoogleIP: *googleIP, TimeoutSeconds: 240},
-		Drive:     baseDrive,
-		Tunnel:    setupTunnelConfig(*listen, *chunkSize, *pollMS, *clientUploadConcurrency, *clientDownloadConcurrency),
+		Tunnel:    clientTunnel,
 	}
 	exitTunnel := setupTunnelConfig(*listen, *chunkSize, *pollMS, *exitUploadConcurrency, *exitDownloadConcurrency)
 	exitTunnel.ExitProxy = strings.TrimSpace(*exitProxy)
@@ -189,13 +221,75 @@ func setupInit(ctx context.Context, args []string) error {
 		Secret:    secret,
 		SessionID: sessionID,
 		Auth:      auth,
-		Route:     skirk.RouteConfig{Mode: *exitRoute, GoogleIP: *googleIP, TimeoutSeconds: 240},
-		Drive:     baseDrive,
+		Route:     exitGoogleRoute,
 		Tunnel:    exitTunnel,
+	}
+	quotaProjectID := strings.TrimSpace(*quotaProject)
+	if *enableUDP {
+		configureSetupUDP(&clientCfg.Tunnel, ipv6Mode == "on")
+		configureSetupUDP(&exitCfg.Tunnel, ipv6Mode == "on")
+	}
+	for _, candidate := range []skirk.Config{clientCfg, exitCfg} {
+		candidate.Drive = skirk.DriveConfig{FolderID: "setup-validation", QuotaProject: quotaProjectID}
+		candidate.ApplyDefaults()
+		if err := candidate.Validate(); err != nil {
+			return fmt.Errorf("invalid setup options: %w", err)
+		}
+	}
+	if *enableUDP && exitTunnel.ExitProxy != "" {
+		proxyUDP, err := setupExitProxyUDP(ctx, exitTunnel.ExitProxy, requireUDP)
+		if err != nil {
+			return err
+		}
+		if !proxyUDP {
+			*enableUDP = false
+			clientCfg.Tunnel, exitCfg.Tunnel = clientTunnel, exitTunnel
+			if !*jsonOut {
+				fmt.Println("The SOCKS5 exit proxy does not support UDP. The kit will use TCP.")
+			}
+		}
+	}
+	if *enableUDP {
+		if err := skirk.ProbeExitDNS(ctx, exitTunnel.ExitProxy); err != nil {
+			return errors.New("exit DNS check failed: allow DNS over TLS to dns.google on TCP port 853 through the exit route, then retry. Use --udp=false for a TCP kit")
+		}
+		if ipv6Mode == "auto" {
+			ipv6 := skirk.ProbeExitIPv6(ctx, exitTunnel.ExitProxy)
+			clientCfg.Tunnel.UDPPreviewIPv6, exitCfg.Tunnel.UDPPreviewIPv6 = ipv6, ipv6
+			if !*jsonOut && !ipv6 {
+				fmt.Println("The exit IPv6 probe did not pass. The kit will use IPv4. Use --ipv6=on if you have verified the exit separately.")
+			}
+		}
 	}
 	if err := os.MkdirAll(*outDir, 0700); err != nil {
 		return err
 	}
+	lockPath := filepath.Join(*outDir, ".setup-in-progress")
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("another setup is using this directory; use a fresh --out directory if the earlier setup was interrupted")
+		}
+		return err
+	}
+	defer os.Remove(lockPath)
+	if err := lock.Close(); err != nil {
+		return err
+	}
+	if err := checkSetupOutput(*outDir); err != nil {
+		return err
+	}
+	var baseDrive skirk.DriveConfig
+	var folderID string
+	if *enableUDP {
+		baseDrive, folderID, err = createVisibleDriveMailbox(ctx, auth, exitGoogleRoute, "skirk-mailbox-"+sessionID, sessionID, quotaProjectID)
+	} else {
+		baseDrive, folderID, err = setupDriveMailbox(ctx, auth, exitGoogleRoute, sessionID, quotaProjectID)
+	}
+	if err != nil {
+		return err
+	}
+	clientCfg.Drive, exitCfg.Drive = baseDrive, baseDrive
 	clientPath := filepath.Join(*outDir, "client.json")
 	clientTextPath := filepath.Join(*outDir, "client.skirk")
 	clientCommandPath := filepath.Join(*outDir, "client-command.txt")
@@ -214,8 +308,7 @@ func setupInit(ctx context.Context, args []string) error {
 	if err := writeTextFile(clientTextPath, clientText+"\n"); err != nil {
 		return err
 	}
-	clientCommand := fmt.Sprintf("skirk serve-client --config '%s' --listen %s\n", clientText, *listen)
-	if err := writeTextFile(clientCommandPath, clientCommand); err != nil {
+	if err := writeTextFile(clientCommandPath, generatedClientCommand); err != nil {
 		return err
 	}
 	if err := writeSetupReadme(readmePath, setupSummary{
@@ -244,7 +337,7 @@ func setupInit(ctx context.Context, args []string) error {
 		ClientTextPath:    clientTextPath,
 		ClientCommandPath: clientCommandPath,
 		ClientText:        clientText,
-		ClientCommand:     strings.TrimSpace(clientCommand),
+		ClientCommand:     strings.TrimSpace(generatedClientCommand),
 		ExitPath:          exitPath,
 		ReadmePath:        readmePath,
 		DriveFolderID:     folderID,
@@ -274,12 +367,25 @@ func setupInit(ctx context.Context, args []string) error {
 			"drive_folder_id":     result.DriveFolderID,
 			"client_route":        result.ClientRoute,
 			"exit_route":          result.ExitRoute,
+			"udp_enabled":         clientCfg.Tunnel.UDPPreviewSharedUDP,
+			"ipv6_enabled":        clientCfg.Tunnel.UDPPreviewIPv6,
 			"note":                "generated configs contain Google refresh credentials; treat them like passwords",
 			"transport":           result.Transport,
 			"exit_runtime":        result.ExitRuntime,
 		})
 	}
 	printSetupResult(result)
+	return nil
+}
+
+func checkSetupOutput(directory string) error {
+	for _, name := range []string{"client.json", "client.skirk", "client-command.txt", "exit.json", "README.md"} {
+		if _, err := os.Lstat(filepath.Join(directory, name)); err == nil {
+			return fmt.Errorf("setup output %s already contains %s; choose a fresh --out directory or use setup renew-oauth", directory, name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -333,7 +439,7 @@ func repairMailbox(ctx context.Context, args []string) error {
 		return err
 	}
 
-	validationErr := validateDriveMailbox(ctx, exitCfg.Auth, exitCfg.Drive, exitCfg.Route.GoogleIP, exitCfg.SessionID)
+	validationErr := validateDriveMailbox(ctx, exitCfg.Auth, exitCfg.Drive, exitCfg.Route, exitCfg.SessionID)
 	if validationErr == nil && !*force {
 		result := map[string]any{
 			"result":  "ok",
@@ -348,8 +454,28 @@ func repairMailbox(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	clientPath := filepath.Join(kit, "client.json")
+	clientTextPath := filepath.Join(kit, "client.skirk")
+	var clientCfg *skirk.Config
+	var command *kitFileUpdate
+	if _, statErr := os.Stat(clientPath); statErr == nil {
+		clientCfg, err = skirk.LoadConfig(clientPath)
+		if err != nil {
+			return err
+		}
+		if clientCfg.SessionID != exitCfg.SessionID || clientCfg.Secret != exitCfg.Secret {
+			return fmt.Errorf("client config %s does not match exit session/secret; refusing to rewrite it", clientPath)
+		}
+		command, err = planClientCommandUpdate(kit, clientCfg.Tunnel.Listen)
+		if err != nil {
+			return err
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+
 	folderName := "skirk-mailbox-" + exitCfg.SessionID
-	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route.GoogleIP, folderName, exitCfg.SessionID)
+	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route, folderName, exitCfg.SessionID, exitCfg.Drive.QuotaProject)
 	if err != nil {
 		return fmt.Errorf("repair mailbox failed after validation error (%v): %w", validationErr, err)
 	}
@@ -359,18 +485,8 @@ func repairMailbox(ctx context.Context, args []string) error {
 		return err
 	}
 
-	clientPath := filepath.Join(kit, "client.json")
-	clientTextPath := filepath.Join(kit, "client.skirk")
-	clientCommandPath := filepath.Join(kit, "client-command.txt")
-	clientUpdated := false
-	if _, statErr := os.Stat(clientPath); statErr == nil {
-		clientCfg, err := skirk.LoadConfig(clientPath)
-		if err != nil {
-			return err
-		}
-		if clientCfg.SessionID != exitCfg.SessionID || clientCfg.Secret != exitCfg.Secret {
-			return fmt.Errorf("client config %s does not match exit session/secret; refusing to rewrite it", clientPath)
-		}
+	clientUpdated := clientCfg != nil
+	if clientUpdated {
 		clientCfg.Drive = driveCfg
 		if err := writeJSONFile(clientPath, *clientCfg); err != nil {
 			return err
@@ -382,17 +498,11 @@ func repairMailbox(ctx context.Context, args []string) error {
 		if err := writeTextFile(clientTextPath, clientText+"\n"); err != nil {
 			return err
 		}
-		listen := strings.TrimSpace(clientCfg.Tunnel.Listen)
-		if listen == "" {
-			listen = "127.0.0.1:18080"
+		if command != nil {
+			if err := writeTextFile(command.path, string(command.replacement)); err != nil {
+				return err
+			}
 		}
-		clientCommand := fmt.Sprintf("skirk serve-client --config '%s' --listen %s\n", clientText, listen)
-		if err := writeTextFile(clientCommandPath, clientCommand); err != nil {
-			return err
-		}
-		clientUpdated = true
-	} else if !os.IsNotExist(statErr) {
-		return statErr
 	}
 
 	runtimeStatus := ""
@@ -433,15 +543,15 @@ func repairMailbox(ctx context.Context, args []string) error {
 	return nil
 }
 
-func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, sessionID string) (skirk.DriveConfig, string, error) {
-	appDataDrive := skirk.DriveConfig{Space: "appDataFolder"}
-	if err := validateDriveMailbox(ctx, auth, appDataDrive, googleIP, sessionID); err != nil {
+func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, route skirk.RouteConfig, sessionID, quotaProject string) (skirk.DriveConfig, string, error) {
+	appDataDrive := skirk.DriveConfig{Space: "appDataFolder", QuotaProject: quotaProject}
+	if err := validateDriveMailbox(ctx, auth, appDataDrive, route, sessionID); err != nil {
 		if !isAppDataScopeError(err) {
 			return skirk.DriveConfig{}, "", err
 		}
 		fmt.Printf("Google OAuth cannot access Drive appDataFolder with the current scope; creating a Skirk-owned Drive mailbox folder instead.\n\n")
 		folderName := "skirk-mailbox-" + sessionID
-		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, googleIP, folderName, sessionID)
+		folderDrive, folderID, fallbackErr := createVisibleDriveMailbox(ctx, auth, route, folderName, sessionID, quotaProject)
 		if fallbackErr != nil {
 			return skirk.DriveConfig{}, "", fmt.Errorf("drive appDataFolder unavailable (%v); Drive folder mailbox setup failed: %w", err, fallbackErr)
 		}
@@ -466,11 +576,12 @@ func isAppDataScopeError(err error) bool {
 		(strings.Contains(text, "application data folder") || strings.Contains(text, "appdatafolder"))
 }
 
-func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googleIP, folderName, sessionID string) (skirk.DriveConfig, string, error) {
+func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, route skirk.RouteConfig, folderName, sessionID, quotaProject string) (skirk.DriveConfig, string, error) {
 	cfg := skirk.Config{
 		Secret: "setup-only",
 		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Route:  route,
+		Drive:  skirk.DriveConfig{QuotaProject: quotaProject},
 		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
 	cfg.ApplyDefaults()
@@ -486,18 +597,18 @@ func createVisibleDriveMailbox(ctx context.Context, auth skirk.AuthConfig, googl
 	if folderID == "" {
 		return skirk.DriveConfig{}, "", errors.New("drive mailbox folder create returned empty id")
 	}
-	driveCfg := skirk.DriveConfig{FolderID: folderID}
-	if err := validateDriveMailbox(ctx, auth, driveCfg, googleIP, sessionID); err != nil {
+	driveCfg := skirk.DriveConfig{FolderID: folderID, QuotaProject: quotaProject}
+	if err := validateDriveMailbox(ctx, auth, driveCfg, route, sessionID); err != nil {
 		return skirk.DriveConfig{}, "", err
 	}
 	return driveCfg, folderID, nil
 }
 
-func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, googleIP, sessionID string) error {
+func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg skirk.DriveConfig, route skirk.RouteConfig, sessionID string) error {
 	cfg := skirk.Config{
 		Secret: "setup-only",
 		Auth:   auth,
-		Route:  skirk.RouteConfig{Mode: "direct", GoogleIP: googleIP, TimeoutSeconds: 240},
+		Route:  route,
 		Drive:  driveCfg,
 		Tunnel: skirk.TunnelConfig{Profile: "fixed", ChunkSize: 4096, PollIntervalMS: 1200, Concurrency: 1, CleanupProcessed: true},
 	}
@@ -507,11 +618,24 @@ func validateDriveMailbox(ctx context.Context, auth skirk.AuthConfig, driveCfg s
 		return err
 	}
 	name := "setup/" + sessionID + "/marker.json"
-	if err := drive.Put(ctx, name, []byte(`{"ok":true}`)); err != nil {
+	marker := []byte(`{"ok":true}`)
+	info, err := drive.PutObject(ctx, name, marker)
+	if err != nil {
 		return fmt.Errorf("drive mailbox validation upload failed: %w", err)
 	}
-	if err := drive.Delete(ctx, name); err != nil {
-		return fmt.Errorf("drive mailbox validation cleanup failed: %w", err)
+	if strings.TrimSpace(info.ID) == "" {
+		return errors.New("drive mailbox validation upload returned no file id")
+	}
+	got, readErr := drive.GetByID(ctx, info.ID)
+	cleanupErr := drive.DeleteID(ctx, info.ID)
+	if readErr != nil {
+		return fmt.Errorf("drive mailbox validation download failed: %w", errors.Join(readErr, cleanupErr))
+	}
+	if !bytes.Equal(got, marker) {
+		return errors.Join(errors.New("drive mailbox validation downloaded different content"), cleanupErr)
+	}
+	if cleanupErr != nil {
+		return fmt.Errorf("drive mailbox validation cleanup failed: %w", cleanupErr)
 	}
 	return nil
 }
@@ -520,6 +644,7 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 	cfg := skirk.TunnelConfig{
 		Listen:           listen,
 		Profile:          "auto",
+		Transport:        "muxv5",
 		ChunkSize:        chunkSize,
 		PollIntervalMS:   pollMS,
 		Concurrency:      32,
@@ -532,6 +657,55 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 		cfg.DownloadConcurrency = downloadConcurrency
 	}
 	return cfg
+}
+
+func configureSetupUDP(cfg *skirk.TunnelConfig, ipv6 bool) {
+	cfg.UDPPreviewPublicIPv4 = true
+	cfg.UDPPreviewIPv6 = ipv6
+	cfg.UDPPreviewRemoteDNS = true
+	cfg.UDPPreviewNamedUDP = true
+	cfg.UDPPreviewStableUDP = true
+	cfg.UDPPreviewSharedUDP = true
+	cfg.UDPPreviewSharedAssociations = 32
+	cfg.UDPPreviewBatchBytes = 16 * 1024
+	cfg.UDPPreviewMedia = true
+	cfg.UDPPreviewMediaBytes = 128 * 1024
+	cfg.UDPPreviewAdaptiveUploads = true
+}
+
+type setupIPv6Mode string
+
+func (mode *setupIPv6Mode) String() string { return string(*mode) }
+func (*setupIPv6Mode) IsBoolFlag() bool    { return true }
+
+func (mode *setupIPv6Mode) Set(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto":
+		*mode = "auto"
+	case "on", "true", "1":
+		*mode = "on"
+	case "off", "false", "0":
+		*mode = "off"
+	default:
+		return fmt.Errorf("IPv6 mode must be auto, on, or off")
+	}
+	return nil
+}
+
+func usesHTTPExitProxy(address string) bool {
+	u, err := url.Parse(strings.TrimSpace(address))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
+func setupExitProxyUDP(ctx context.Context, proxyURL string, required bool) (bool, error) {
+	capable, err := skirk.ProbeExitProxyUDP(ctx, proxyURL)
+	if err != nil {
+		return false, fmt.Errorf("could not verify UDP through the SOCKS5 exit proxy. Check UDP forwarding or use --udp=false for a TCP-only kit: %w", err)
+	}
+	if !capable && required {
+		return false, errors.New("the SOCKS5 exit proxy does not support UDP ASSOCIATE. Use a SOCKS5 proxy with UDP support or --udp=false for a TCP-only kit")
+	}
+	return capable, nil
 }
 
 func (c adcCredentials) AuthConfig() skirk.AuthConfig {
@@ -589,7 +763,7 @@ func driveOAuthClientRequiredError(credsPath string, cause error) error {
 	}
 	return fmt.Errorf("Google Drive setup needs a Google OAuth client.\n"+
 		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
-		"Official release builds should include Skirk's OAuth client automatically. Source/dev builds can set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_FLOW=desktop, or pass --oauth-client-file for testing.\n"+
+		"Create a Desktop app OAuth client in your Google project, then pass its downloaded JSON with --oauth-client-file. For environment-based setup, set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_FLOW=desktop. See docs/personal-google-setup.md.\n"+
 		"Current ADC path was %s; original credential error: %w", credsPath, cause)
 }
 
@@ -910,6 +1084,31 @@ func writeJSONFile(path string, value any) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+// Migrate only the exact command emitted by older kits. A user-owned command
+// using a file stays untouched, including its options and permissions.
+func planClientCommandUpdate(kitDir, listen string) (*kitFileUpdate, error) {
+	path := filepath.Join(kitDir, "client-command.txt")
+	command, err := readRegularFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &kitFileUpdate{path: path, replacement: []byte(generatedClientCommand)}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read client-command.txt: %w", err)
+	}
+	if !bytes.Contains(command, []byte(skirk.ConfigTextPrefix)) {
+		return nil, nil
+	}
+	profile, err := readRegularFile(filepath.Join(kitDir, "client.skirk"))
+	if err != nil {
+		return nil, fmt.Errorf("read client.skirk for command migration: %w", err)
+	}
+	legacy := fmt.Sprintf("skirk serve-client --config '%s' --listen %s", bytes.TrimSpace(profile), listen)
+	if strings.TrimSpace(string(command)) != legacy {
+		return nil, errors.New("client-command.txt contains a custom inline profile; change its --config argument to ./client.skirk before updating this kit")
+	}
+	return &kitFileUpdate{path: path, original: command, replacement: []byte(generatedClientCommand)}, nil
+}
+
 func writeTextFile(path string, text string) error {
 	return os.WriteFile(path, []byte(text), 0600)
 }
@@ -952,15 +1151,9 @@ type setupResult struct {
 func printSetupResult(result setupResult) {
 	fmt.Println()
 	fmt.Println("Skirk kit created.")
-	fmt.Printf("Google account: %s\n", result.Account)
 	fmt.Printf("Exit config: %s\n", result.ExitPath)
-	fmt.Printf("Client JSON config: %s\n", result.ClientPath)
-	fmt.Printf("Client text config: %s\n", result.ClientTextPath)
-	fmt.Printf("Ready client command: %s\n", result.ClientCommandPath)
-	fmt.Printf("Transport: %s\n", result.Transport)
-	if result.DriveFolderID != "" {
-		fmt.Printf("Data folder: %s\n", result.DriveFolderID)
-	}
+	fmt.Printf("Client profile: %s\n", result.ClientTextPath)
+	fmt.Printf("Setup guide: %s\n", result.ReadmePath)
 	fmt.Println()
 	if strings.TrimSpace(result.ExitRuntime) != "" {
 		fmt.Printf("Exit runtime: %s\n", result.ExitRuntime)
@@ -971,16 +1164,8 @@ func printSetupResult(result setupResult) {
 		fmt.Printf("skirk serve-exit --config %s\n", result.ExitPath)
 		fmt.Println()
 	}
-	fmt.Println("Copy and send this one-line client config:")
-	fmt.Println()
-	fmt.Println(result.ClientText)
-	fmt.Println()
-	fmt.Println("Or copy and send this full client command:")
-	fmt.Println()
-	fmt.Println(result.ClientCommand)
-	fmt.Println()
-	fmt.Println("Anyone using the client config does not need Google login or gcloud.")
-	fmt.Println("Treat the client config like a password. Revoke/delete the kit if it leaks.")
+	fmt.Println("Open Skirk on the client and paste the contents of the client profile.")
+	fmt.Println("Keep both config files private. They contain Google credentials.")
 }
 
 func writeSetupReadme(path string, summary setupSummary) error {
@@ -1015,18 +1200,13 @@ skirk serve-client --config %s --listen %s
 curl --socks5-hostname %s http://example.com/
 `+"```"+`
 
-Or send the one-line text config instead of a JSON file:
+In the Android or desktop app, paste the contents of %s into the profile importer.
+
+For a CLI client, copy the private profile to the client machine as `+"`client.skirk`"+`.
+From the directory containing that file, run the command saved in %s:
 
 `+"```bash"+`
-read -r SKIRK_CLIENT_CONFIG
-# paste the contents of %s, press Enter, then run:
-skirk serve-client --config "$SKIRK_CLIENT_CONFIG" --listen %s
-`+"```"+`
-
-A ready-to-copy command is also written to:
-
-`+"```text"+`
-%s
+skirk serve-client --config ./client.skirk
 `+"```"+`
 
 ## Config Handling
@@ -1039,9 +1219,11 @@ All generated client and exit configs contain Google refresh credentials and the
 - do not paste them into logs or chats;
 - regenerate the kit if one leaks.
 
+This kit uses the `+"`muxv5`"+` transport. Upgrade the exit and all clients together: older Skirk versions watch a separate `+"`muxv4/`"+` mailbox and cannot answer this kit. If Test exit does not verify after upgrading, check both versions and the exit status before renewing Google authorization.
+
 ## Cleanup / Disconnect
 
-Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. To inspect old mux objects manually:
+Processed mailbox objects are deleted during normal runtime, and `+"`serve-exit`"+` starts a janitor for stale leftovers. Without `+"`--prefix`"+`, manual cleanup scans Skirk runtime object prefixes (`+"`muxv5/`"+`, `+"`muxv4/`"+`, `+"`bench-drive/`"+`, and `+"`setup/`"+`):
 
 `+"```bash"+`
 skirk cleanup --config %s --older-than 2h
@@ -1080,7 +1262,7 @@ To immediately invalidate every config generated from this OAuth login, revoke t
 ## Notes
 
 The exit can be a VPS, a home server, or a laptop. It does not need an inbound port because both sides exchange encrypted chunks through Google Drive. A VPS is still best for reliability because laptops sleep, move networks, and disappear when closed.
-`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.Listen, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, serviceName)
+`, summary.Title, summary.Account, summary.ADCPath, summary.Transport, summary.DriveFolderID, summary.ClientRoute, summary.ExitRoute, serviceSection, summary.ClientPath, summary.Listen, summary.Listen, summary.ClientTextPath, summary.ClientCommandPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, summary.ExitPath, serviceName)
 	return os.WriteFile(path, []byte(content), 0600)
 }
 

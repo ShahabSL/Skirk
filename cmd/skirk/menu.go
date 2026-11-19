@@ -21,8 +21,10 @@ func menu(ctx context.Context) error {
 	for {
 		fmt.Println()
 		fmt.Print(skirkBanner)
-		fmt.Println("1. Create Google kit (easy Skirk OAuth)")
-		fmt.Println("2. Create Google kit (personal Google OAuth project)")
+		if sharedOAuthAvailable() {
+			fmt.Println("1. Create kit with the configured shared OAuth project")
+		}
+		fmt.Println("2. Create kit with your own Google project")
 		fmt.Println("3. Run exit in this terminal")
 		fmt.Println("4. Run client SOCKS in this terminal")
 		fmt.Println("5. Run optional desktop dashboard")
@@ -34,7 +36,7 @@ func menu(ctx context.Context) error {
 			fmt.Println("10. Uninstall Skirk from this Linux machine")
 		}
 		fmt.Println("0. Quit")
-		choice, err := prompt(ctx, reader, "Select", "1")
+		choice, err := prompt(ctx, reader, "Select", "2")
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
@@ -43,6 +45,10 @@ func menu(ctx context.Context) error {
 		}
 		switch choice {
 		case "1":
+			if !sharedOAuthAvailable() {
+				fmt.Println("Choose 2 to create a kit with your Google project.")
+				continue
+			}
 			return createGoogleKitFromMenu(ctx, reader, "easy")
 		case "2":
 			return createGoogleKitFromMenu(ctx, reader, "personal")
@@ -231,17 +237,11 @@ func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMod
 	if err != nil {
 		return err
 	}
-	args := []string{"--out", out}
+	args := []string{"--out", out, "--oauth-mode", oauthMode}
 	if title != "" {
 		args = append(args, "--title", title)
 	}
-	reset, err := promptYesNo(ctx, reader, "Reset Google login before setup", true)
-	if err != nil {
-		return err
-	}
-	if reset {
-		args = append(args, "--reset-google-login")
-	}
+	fmt.Println("New kits enable UDP and check whether the exit can use IPv6.")
 	switch oauthMode {
 	case "easy":
 		fmt.Println("Google OAuth: easy Skirk OAuth client")
@@ -262,18 +262,16 @@ func createGoogleKitFromMenu(ctx context.Context, reader *bufio.Reader, oauthMod
 	if !startExit {
 		args = append(args, "--start-exit=false")
 	}
-	if runtime.GOOS == "linux" {
-		configureProxy, err := promptYesNo(ctx, reader, "Set outbound exit proxy now", false)
+	configureProxy, err := promptYesNo(ctx, reader, "Set outbound exit proxy now", false)
+	if err != nil {
+		return err
+	}
+	if configureProxy {
+		proxyURL, err := promptProxyURL(ctx, reader, "Outbound proxy URL", "socks5h://127.0.0.1:40000")
 		if err != nil {
 			return err
 		}
-		if configureProxy {
-			proxyURL, err := promptProxyURL(ctx, reader, "Outbound proxy URL", "socks5h://127.0.0.1:40000")
-			if err != nil {
-				return err
-			}
-			args = append(args, "--exit-proxy", proxyURL)
-		}
+		args = append(args, "--exit-proxy", proxyURL)
 	}
 	return setupInit(ctx, args)
 }
@@ -352,7 +350,7 @@ func outboundProxyMenuForConfig(ctx context.Context, reader *bufio.Reader, servi
 		return err
 	}
 	current := strings.TrimSpace(cfg.Tunnel.ExitProxy)
-	fmt.Printf("Current outbound proxy: %s\n", firstNonEmpty(current, "direct"))
+	fmt.Printf("Current outbound proxy: %s\n", skirk.OutboundProxyMode(current))
 	fmt.Println("1. Set custom proxy URL")
 	if runtime.GOOS == "linux" {
 		fmt.Println("2. Install WARP wireproxy and use it")
@@ -377,7 +375,7 @@ func outboundProxyMenuForConfig(ctx context.Context, reader *bufio.Reader, servi
 		if err := updateExitProxyConfig(configPath, proxyURL); err != nil {
 			return err
 		}
-		fmt.Printf("Updated %s: outbound proxy is %s\n", configPath, proxyURL)
+		fmt.Printf("Updated %s: outbound proxy is %s\n", configPath, proxyDisplayAddress(proxyURL))
 	case "2":
 		if runtime.GOOS != "linux" {
 			if err := setDirectExitProxy(ctx, serviceName, configPath); err != nil {
@@ -491,11 +489,17 @@ func validateProxyListenAddr(value string) error {
 }
 
 func promptProxyURL(ctx context.Context, reader *bufio.Reader, label, fallback string) (string, error) {
+	shownFallback := proxyDisplayAddress(fallback)
+	if shownFallback != fallback {
+		label += " (Enter keeps " + shownFallback + ")"
+		shownFallback = ""
+	}
 	for {
-		value, err := prompt(ctx, reader, label, fallback)
+		value, err := prompt(ctx, reader, label, shownFallback)
 		if err != nil {
 			return "", err
 		}
+		value = firstNonEmpty(value, fallback)
 		cfg := &skirk.Config{Secret: "validate-only", Tunnel: skirk.TunnelConfig{ExitProxy: strings.TrimSpace(value)}}
 		cfg.ApplyDefaults()
 		if err := cfg.Validate(); err == nil {
@@ -778,7 +782,12 @@ func deleteKitDirectory(configPath string) error {
 }
 
 func sameCleanPath(a, b string) bool {
-	return filepath.Clean(a) == filepath.Clean(b)
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	left, leftErr := os.Stat(a)
+	right, rightErr := os.Stat(b)
+	return leftErr == nil && rightErr == nil && os.SameFile(left, right)
 }
 
 const skirkBanner = `             ##################

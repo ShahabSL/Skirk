@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,6 +60,29 @@ type OAuthAccessToken struct {
 	Source    string
 }
 
+type OAuthTokenError struct {
+	Status      int
+	Code        string
+	Description string
+}
+
+func (e *OAuthTokenError) Error() string {
+	return fmt.Sprintf("oauth token refresh failed status=%d error=%s description=%s", e.Status, e.Code, e.Description)
+}
+
+func IsTerminalOAuthTokenError(err error) bool {
+	var tokenErr *OAuthTokenError
+	if !errors.As(err, &tokenErr) {
+		return false
+	}
+	switch tokenErr.Code {
+	case "invalid_grant", "invalid_client", "unauthorized_client", "access_denied", "deleted_client":
+		return true
+	default:
+		return false
+	}
+}
+
 type AccessTokenSource struct {
 	auth  AuthConfig
 	route RouteConfig
@@ -68,6 +92,7 @@ type AccessTokenSource struct {
 	expiresAt          time.Time
 	source             string
 	refreshing         bool
+	refreshGeneration  uint64
 	nextRefreshAttempt time.Time
 	Logger             *log.Logger
 }
@@ -80,29 +105,99 @@ type RouteConfig struct {
 }
 
 type DriveConfig struct {
-	FolderID string `json:"folder_id,omitempty"`
-	Space    string `json:"space,omitempty"`
+	FolderID                  string `json:"folder_id,omitempty"`
+	Space                     string `json:"space,omitempty"`
+	QuotaProject              string `json:"quota_project,omitempty"`
+	InlineSmallObjects        bool   `json:"inline_small_objects,omitempty"`
+	MetadataOnlyPriority      bool   `json:"metadata_only_priority,omitempty"`
+	MetadataOnlyMaxBytes      int    `json:"metadata_only_max_bytes,omitempty"`
+	MetadataSlotV1            bool   `json:"metadata_slot_v1,omitempty"`
+	MetadataSlotDeliveryV1    bool   `json:"metadata_slot_delivery_v1,omitempty"`
+	MetadataSlotAsyncV1       bool   `json:"metadata_slot_async_v1,omitempty"`
+	MetadataSlotPrimaryV1     bool   `json:"metadata_slot_primary_v1,omitempty"`
+	SeparateMetadataSlotPools bool   `json:"separate_metadata_slot_pools,omitempty"`
+	// CombinedMuxDiscovery uses one legacy prefix list for both mux classes.
+	CombinedMuxDiscovery bool `json:"combined_mux_discovery,omitempty"`
+	// AdaptiveMuxDiscovery uses one bounded prefix list, adding a p0 list only when it is partial.
+	AdaptiveMuxDiscovery bool `json:"adaptive_mux_discovery,omitempty"`
+	// IndexedClassProperties tags new mux objects for a query probe; mux discovery stays legacy.
+	IndexedClassProperties bool `json:"indexed_class_properties,omitempty"`
+	// NormalListPageSize applies to broad p1 and opt-in adaptive mux discovery queries.
+	// Zero uses the measured default of 1000; 500 and 100 remain available.
+	NormalListPageSize          int   `json:"normal_list_page_size,omitempty"`
+	UploadHedgeDelayMS          int   `json:"upload_hedge_delay_ms,omitempty"`
+	UploadStallHedgeDelayMS     int   `json:"upload_stall_hedge_delay_ms,omitempty"`
+	UploadStallHedgeBudgetBytes int64 `json:"upload_stall_hedge_budget_bytes,omitempty"`
+	SeparateUploadPool          bool  `json:"separate_upload_pool,omitempty"`
+	SeparateBulkMediaPool       bool  `json:"separate_bulk_media_pool,omitempty"`
+}
+
+// ValidateGoogleProjectID accepts the standard, user-assigned Cloud project ID
+// form used by X-Goog-User-Project. An empty value is not a project ID.
+func ValidateGoogleProjectID(id string) error {
+	const requirement = "Google Cloud project ID must be 6-30 lowercase letters, digits, or hyphens; start with a letter and not end with a hyphen"
+	if len(id) < 6 || len(id) > 30 || id[0] < 'a' || id[0] > 'z' || id[len(id)-1] == '-' {
+		return errors.New(requirement)
+	}
+	for i := 1; i < len(id); i++ {
+		ch := id[i]
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
+			return errors.New(requirement)
+		}
+	}
+	return nil
 }
 
 type TunnelConfig struct {
-	Listen              string `json:"listen,omitempty"`
-	Profile             string `json:"profile,omitempty"`
-	Transport           string `json:"transport,omitempty"`
-	ExitProxy           string `json:"exit_proxy,omitempty"`
-	ExitIPFamily        string `json:"exit_ip_family,omitempty"`
-	BurstPoll           bool   `json:"burst_poll,omitempty"`
-	BurstPollMS         int    `json:"burst_poll_ms,omitempty"`
-	BurstPollWindowMS   int    `json:"burst_poll_window_ms,omitempty"`
-	ChunkSize           int    `json:"chunk_size,omitempty"`
-	PollIntervalMS      int    `json:"poll_interval_ms,omitempty"`
-	Concurrency         int    `json:"concurrency,omitempty"`
-	UploadConcurrency   int    `json:"upload_concurrency,omitempty"`
-	DownloadConcurrency int    `json:"download_concurrency,omitempty"`
-	CleanupProcessed    bool   `json:"cleanup_processed,omitempty"`
-	Observe             bool   `json:"observe,omitempty"`
+	Listen                       string   `json:"listen,omitempty"`
+	Profile                      string   `json:"profile,omitempty"`
+	Transport                    string   `json:"transport,omitempty"`
+	ExitProxy                    string   `json:"exit_proxy,omitempty"`
+	ExitIPFamily                 string   `json:"exit_ip_family,omitempty"`
+	ExitDNSAddress               string   `json:"exit_dns_address,omitempty"`
+	ExitDNSTLSName               string   `json:"exit_dns_tls_name,omitempty"`
+	BurstPoll                    bool     `json:"burst_poll,omitempty"`
+	BurstPollMS                  int      `json:"burst_poll_ms,omitempty"`
+	BurstPollWindowMS            int      `json:"burst_poll_window_ms,omitempty"`
+	SparsePriority               bool     `json:"sparse_priority,omitempty"`
+	InteractionEpoch             bool     `json:"interaction_epoch,omitempty"`
+	ChunkSize                    int      `json:"chunk_size,omitempty"`
+	PollIntervalMS               int      `json:"poll_interval_ms,omitempty"`
+	Concurrency                  int      `json:"concurrency,omitempty"`
+	UploadConcurrency            int      `json:"upload_concurrency,omitempty"`
+	DownloadConcurrency          int      `json:"download_concurrency,omitempty"`
+	ExitMaxStreams               int      `json:"exit_max_streams,omitempty"`
+	CleanupProcessed             bool     `json:"cleanup_processed,omitempty"`
+	Observe                      bool     `json:"observe,omitempty"`
+	UDPPreviewTargets            []string `json:"udp_preview_targets,omitempty"`
+	UDPPreviewPublicIPv4         bool     `json:"udp_preview_public_ipv4,omitempty"`
+	UDPPreviewIPv6               bool     `json:"udp_preview_ipv6,omitempty"`
+	UDPPreviewRemoteDNS          bool     `json:"udp_preview_remote_dns,omitempty"`
+	UDPPreviewNamedUDP           bool     `json:"udp_preview_named_udp,omitempty"`
+	UDPPreviewBatchBytes         int      `json:"udp_preview_batch_bytes,omitempty"`
+	UDPPreviewMedia              bool     `json:"udp_preview_media,omitempty"`
+	UDPPreviewMediaBytes         int      `json:"udp_preview_media_bytes,omitempty"`
+	UDPPreviewStableUDP          bool     `json:"udp_preview_stable_udp,omitempty"`
+	UDPPreviewSharedUDP          bool     `json:"udp_preview_shared_udp,omitempty"`
+	UDPPreviewSharedAssociations int      `json:"udp_preview_shared_associations,omitempty"`
+	UDPPreviewExitCarriers       int      `json:"udp_preview_exit_carriers,omitempty"`
+	UDPPreviewGroupedDiscovery   bool     `json:"udp_preview_grouped_discovery,omitempty"`
+	// Sender-local scheduling only; both peers still agree on the media format.
+	UDPPreviewAdaptiveUploads bool `json:"udp_preview_adaptive_uploads,omitempty"`
 }
 
-const autoProfilePollFloorMS = 1000
+const (
+	autoProfilePollFloorMS = 1000
+	defaultExitStreamLimit = 1024
+	maxExitStreamLimit     = 4096
+)
+
+func validateExitStreamLimit(limit int) error {
+	if limit < 0 || limit > maxExitStreamLimit {
+		return fmt.Errorf("config.tunnel.exit_max_streams must be 0 or between 1 and %d", maxExitStreamLimit)
+	}
+	return nil
+}
 
 func LoadConfig(path string) (*Config, error) {
 	if cfg, ok, err := ParseInlineConfig(path); ok || err != nil {
@@ -271,7 +366,7 @@ func isRawURLBase64Rune(r rune) bool {
 
 func (c *Config) ApplyDefaults() {
 	if c.Route.Mode == "" {
-		c.Route.Mode = "real_pinned"
+		c.Route.Mode = "google_front_pinned"
 	}
 	if c.Route.GoogleIP == "" {
 		c.Route.GoogleIP = "216.239.38.120"
@@ -289,7 +384,7 @@ func (c *Config) ApplyDefaults() {
 		c.Tunnel.Profile = "auto"
 	}
 	if c.Tunnel.Transport == "" {
-		c.Tunnel.Transport = "muxv4"
+		c.Tunnel.Transport = "muxv5"
 	}
 	if c.Tunnel.ExitIPFamily == "" {
 		c.Tunnel.ExitIPFamily = "prefer_ipv4"
@@ -315,10 +410,33 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.Secret) == "" {
 		return errors.New("config.secret is required")
 	}
+	if c.Drive.QuotaProject != "" {
+		if err := ValidateGoogleProjectID(c.Drive.QuotaProject); err != nil {
+			return fmt.Errorf("config.drive.quota_project: %w", err)
+		}
+	}
+	if delay := c.Drive.UploadHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
+		return errors.New("config.drive.upload_hedge_delay_ms must be 0 or between 1000 and 10000")
+	}
+	if delay := c.Drive.UploadStallHedgeDelayMS; delay != 0 && (delay < 1000 || delay > 10000) {
+		return errors.New("config.drive.upload_stall_hedge_delay_ms must be 0 or between 1000 and 10000")
+	}
+	if c.Drive.UploadHedgeDelayMS != 0 && c.Drive.UploadStallHedgeDelayMS != 0 {
+		return errors.New("choose only one upload hedge mode")
+	}
+	if budget := c.Drive.UploadStallHedgeBudgetBytes; budget != 0 && (budget < 128*1024 || budget > 64*1024*1024) {
+		return errors.New("config.drive.upload_stall_hedge_budget_bytes must be 0 or between 128KiB and 64MiB")
+	}
+	if size := c.Drive.NormalListPageSize; size != 0 && size != 100 && size != 500 && size != 1000 {
+		return errors.New("config.drive.normal_list_page_size must be 100, 500, or 1000")
+	}
+	if size := c.Drive.MetadataOnlyMaxBytes; size != 0 && size != 8192 && size != 16384 {
+		return errors.New("config.drive.metadata_only_max_bytes must be 0, 8192, or 16384")
+	}
 	switch strings.TrimSpace(c.Route.Mode) {
-	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned":
+	case "", "direct", "real_pinned", "google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned":
 	default:
-		return fmt.Errorf("config.route.mode must be direct, real_pinned, google_front, google_front_pinned, google_front_h1, or google_front_h1_pinned")
+		return fmt.Errorf("config.route.mode must be direct, real_pinned, google_front, google_front_pinned, google_front_h1, google_front_h1_pinned, or google_front_h3_pinned")
 	}
 	if strings.TrimSpace(c.Client.ID) != "" && !isSafeObjectSegment(c.Client.ID) {
 		return fmt.Errorf("config.client.id may contain only letters, digits, underscore, hyphen, and dot")
@@ -338,9 +456,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config.tunnel.profile must be auto or fixed")
 	}
 	switch strings.TrimSpace(c.Tunnel.Transport) {
-	case "", "muxv4":
+	case "", "muxv4", "muxv5":
 	default:
-		return fmt.Errorf("config.tunnel.transport must be muxv4")
+		return fmt.Errorf("config.tunnel.transport must be muxv4 or muxv5")
+	}
+	if len(c.Tunnel.UDPPreviewTargets) != 0 || c.Tunnel.UDPPreviewPublicIPv4 {
+		if _, err := previewUDPAllowlist(c); err != nil {
+			return err
+		}
+	}
+	if _, err := previewUDPBatchBytes(c.Tunnel); err != nil {
+		return err
+	}
+	if _, err := previewUDPMediaBytes(c.Tunnel); err != nil {
+		return err
 	}
 	switch strings.TrimSpace(c.Tunnel.ExitIPFamily) {
 	case "", "auto", "prefer_ipv4", "ipv4_only", "prefer_ipv6", "ipv6_only":
@@ -361,6 +490,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Tunnel.DownloadConcurrency < 0 || c.Tunnel.DownloadConcurrency > 64 {
 		return fmt.Errorf("config.tunnel.download_concurrency must be between 0 and 64")
+	}
+	if err := validateExitStreamLimit(c.Tunnel.ExitMaxStreams); err != nil {
+		return err
+	}
+	if _, err := configuredExitPreviewDNS(c.Tunnel); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Tunnel.ExitProxy) != "" {
 		u, err := url.Parse(c.Tunnel.ExitProxy)
@@ -410,7 +545,7 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 		if staleSafeTokenRefresh(s.route) && tokenUsableDuringRefresh(now, s.expiresAt) {
 			if !s.refreshing && !now.Before(s.nextRefreshAttempt) {
 				s.refreshing = true
-				go s.refreshInBackground()
+				go s.refreshInBackground(s.refreshGeneration)
 			}
 			return s.token, nil
 		}
@@ -429,6 +564,8 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 	s.token = token.Token
 	s.expiresAt = token.ExpiresAt
 	s.source = token.Source
+	s.refreshGeneration++
+	s.refreshing = false
 	s.nextRefreshAttempt = time.Time{}
 	if s.Logger != nil {
 		if s.expiresAt.IsZero() {
@@ -440,10 +577,14 @@ func (s *AccessTokenSource) Token(ctx context.Context) (string, error) {
 	return s.token, nil
 }
 
-func (s *AccessTokenSource) refreshInBackground() {
+func (s *AccessTokenSource) refreshInBackground(generation uint64) {
 	token, err := s.auth.accessTokenForRoute(context.Background(), s.route)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A rejected token or newer foreground refresh supersedes this request.
+	if generation != s.refreshGeneration {
+		return
+	}
 	s.refreshing = false
 	if err != nil {
 		s.nextRefreshAttempt = time.Now().Add(tokenRefreshRetryDelay)
@@ -468,10 +609,25 @@ func (s *AccessTokenSource) refreshInBackground() {
 func (s *AccessTokenSource) Invalidate() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.invalidateLocked()
+}
+
+func (s *AccessTokenSource) invalidateRejectedToken(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Concurrent requests can return a late 401 for an already-replaced token.
+	if s.token != token {
+		return
+	}
+	s.invalidateLocked()
+}
+
+func (s *AccessTokenSource) invalidateLocked() {
 	s.token = ""
 	s.expiresAt = time.Time{}
 	s.source = ""
 	s.refreshing = false
+	s.refreshGeneration++
 	s.nextRefreshAttempt = time.Time{}
 }
 
@@ -573,12 +729,28 @@ func (a AuthConfig) refreshAccessToken(ctx context.Context, route RouteConfig) (
 	if tokenURL == "https://oauth2.googleapis.com/token" {
 		return refreshAccessTokenViaGoogleEndpoints(ctx, route, values)
 	}
+	// A custom token URL intentionally overrides the Google front: arbitrary
+	// hosts cannot be routed through it. Keep any explicit SOCKS proxy.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return OAuthAccessToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{CheckRedirect: keepGoogleHTTPRedirectResponse}
+	if route.Proxy != "" {
+		transport := &http.Transport{ForceAttemptHTTP2: true}
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport = base.Clone()
+		}
+		transport.Proxy = nil
+		transport.DialTLSContext = nil
+		transport.DialContext = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
+			return dialViaSOCKS5(ctx, route.Proxy, addr)
+		}
+		client.Transport = transport
+		defer transport.CloseIdleConnections()
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return OAuthAccessToken{}, err
 	}
@@ -658,37 +830,30 @@ func oauthTokenAttempts(route RouteConfig) []oauthTokenAttempt {
 			timeout: baseTimeout,
 		},
 	}
-	if route.Proxy != "" || isGoogleFrontRoute(route.Mode) {
+	if isGoogleFrontRoute(route.Mode) {
 		frontRoute := route
-		if !isGoogleFrontRoute(frontRoute.Mode) {
-			frontRoute.Mode = "google_front"
+		if route.Mode == "google_front_h3_pinned" {
+			// A failed H3 handshake already falls back to H2 within the HTTP
+			// client. Also allow a distinct fronted H2 attempt if an H3 HTTP
+			// response is unusable. Neither attempt changes the user's route
+			// selection to Direct.
+			frontRoute.Mode = "google_front_pinned"
+			attempts = append(attempts, oauthTokenAttempt{
+				source: "refresh_token:oauth2_front_h2", route: frontRoute,
+				host: "oauth2.googleapis.com", path: "/token", timeout: 12 * time.Second,
+			})
 		}
-		directRoute := route
-		directRoute.Mode = "direct"
-		directRoute.GoogleIP = ""
-		attempts = append(attempts,
-			oauthTokenAttempt{
-				source:  "refresh_token:accounts_fronted",
-				route:   frontRoute,
-				host:    "accounts.google.com",
-				path:    "/o/oauth2/token",
-				timeout: 12 * time.Second,
-			},
-			oauthTokenAttempt{
-				source:  "refresh_token:accounts_direct",
-				route:   directRoute,
-				host:    "accounts.google.com",
-				path:    "/o/oauth2/token",
-				timeout: 20 * time.Second,
-			},
-			oauthTokenAttempt{
-				source:  "refresh_token:oauth2_direct",
-				route:   directRoute,
-				host:    "oauth2.googleapis.com",
-				path:    "/token",
-				timeout: 12 * time.Second,
-			},
-		)
+		attempts = append(attempts, oauthTokenAttempt{
+			source: "refresh_token:accounts_fronted", route: frontRoute,
+			host: "accounts.google.com", path: "/o/oauth2/token", timeout: 12 * time.Second,
+		})
+	} else {
+		// Direct and real-pinned routes may try another token endpoint, but
+		// never silently change to the Google front. Preserve any proxy.
+		attempts = append(attempts, oauthTokenAttempt{
+			source: "refresh_token:accounts_direct", route: route,
+			host: "accounts.google.com", path: "/o/oauth2/token", timeout: 20 * time.Second,
+		})
 	}
 	return attempts
 }
@@ -724,7 +889,7 @@ func parseOAuthTokenResponse(status int, body []byte) (OAuthAccessToken, error) 
 	}
 	if status < 200 || status >= 300 {
 		if payload.Error != "" {
-			return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d error=%s description=%s", status, payload.Error, payload.ErrorDescription)
+			return OAuthAccessToken{}, &OAuthTokenError{Status: status, Code: payload.Error, Description: payload.ErrorDescription}
 		}
 		return OAuthAccessToken{}, fmt.Errorf("oauth token refresh failed status=%d body=%q", status, string(body))
 	}

@@ -57,9 +57,7 @@ Important fields:
 - `tunnel.exit_proxy`: optional proxy for target traffic from the exit.
 - `tunnel.cleanup_processed`: deletes processed mux objects.
 
-For the production transport design, see [Architecture](architecture.md). For
-protocol experiments and promotion gates, see
-[Transport Research](transport-research.md).
+For the production transport design, see [Architecture](architecture.md).
 
 ## Drive Mailbox
 
@@ -113,28 +111,30 @@ priority over deleting old objects.
 
 `serve-exit` also starts a janitor:
 
-- default age: 10 minutes;
+- default age: 24 hours;
 - default interval: startup, then every 2 minutes;
 - prefixes: mux transport, Drive benchmark, and setup marker prefixes.
 
 The janitor is for crash leftovers. Runtime cleanup already deletes consumed
-mux objects and yields to active traffic, while the janitor uses a stale-object
-age window and low delete concurrency so cleanup still runs during long VPN or
-multi-client sessions without treating transient Drive delay as stale data.
+mux objects and yields to active traffic, while the janitor uses a long
+stale-object age window and low delete concurrency so very slow long-running
+downloads are not treated as stale data.
 
 Environment controls:
 
 ```bash
 SKIRK_DISABLE_JANITOR=1
-SKIRK_JANITOR_OLDER_THAN=6h
-SKIRK_JANITOR_INTERVAL=1h
+SKIRK_JANITOR_OLDER_THAN=48h
+SKIRK_JANITOR_INTERVAL=2h
 ```
 
-Manual cleanup:
+Manual cleanup. Without `--prefix`, cleanup scans Skirk's runtime object
+prefixes (`muxv4/`, `bench-drive/`, and `setup/`):
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
+# Emergency only: stop clients and the exit before deleting the whole mailbox.
 skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
 ```
 

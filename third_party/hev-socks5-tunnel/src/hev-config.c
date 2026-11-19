@@ -34,6 +34,8 @@ static int mapdns_port;
 static int mapdns_network;
 static int mapdns_netmask;
 static int mapdns_cache_size;
+static uint8_t mapdns_ipv6_network[16];
+static int mapdns_ipv6_enabled;
 
 static char log_file[1024];
 static char pid_file[1024];
@@ -287,6 +289,14 @@ hev_config_parse_mapdns (yaml_document_t *doc, yaml_node_t *base)
             inet_pton (AF_INET, value, &mapdns_netmask);
         else if (0 == strcmp (key, "cache-size"))
             mapdns_cache_size = strtoul (value, NULL, 10);
+        else if (0 == strcmp (key, "ipv6-network")) {
+            if (inet_pton (AF_INET6, value, mapdns_ipv6_network) != 1 ||
+                mapdns_ipv6_network[0] != 0xfd ||
+                mapdns_ipv6_network[12] || mapdns_ipv6_network[13] ||
+                mapdns_ipv6_network[14] || mapdns_ipv6_network[15])
+                return -1;
+            mapdns_ipv6_enabled = 1;
+        }
     }
 
     mapdns_network = ntohl (mapdns_network);
@@ -362,6 +372,7 @@ hev_config_parse_doc (yaml_document_t *doc)
     yaml_node_pair_t *pair;
     int min_task_stack_size;
 
+    mapdns_ipv6_enabled = 0;
     root = yaml_document_get_root_node (doc);
     if (!root || YAML_MAPPING_NODE != root->type)
         return -1;
@@ -561,6 +572,12 @@ int
 hev_config_get_mapdns_cache_size (void)
 {
     return mapdns_cache_size;
+}
+
+const unsigned char *
+hev_config_get_mapdns_ipv6_network (void)
+{
+    return mapdns_ipv6_enabled ? mapdns_ipv6_network : NULL;
 }
 
 int

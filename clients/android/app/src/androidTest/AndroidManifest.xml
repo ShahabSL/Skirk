@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="app.skirk.client" />
+    </queries>
+    <application>
+        <!-- Test APK only. Cross-UID instrumentation requires exported=true;
+             fixture entry points enforce exact target/test UID and signature. -->
+        <provider
+            android:name="app.skirk.client.ProfileReaderTestProvider"
+            android:authorities="app.skirk.client.test.profile_reader"
+            android:process=":profile_reader_fixture"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+    </application>
+</manifest>

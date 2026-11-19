@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build for preflight, without the v prefix"
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -9,6 +15,9 @@ permissions:
   contents: read
   attestations: write
   id-token: write
+
+env:
+  SKIRK_RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 jobs:
   release:
@@ -29,11 +38,9 @@ jobs:
           python-version: "3.13"
 
       - name: Build release archives
-        env:
-          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
-          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
-        run: VERSION="${GITHUB_REF_NAME}" scripts/package_release.sh
+        run: |
+          test "v$(jq -r .version clients/desktop/package.json)" = "$SKIRK_RELEASE_TAG"
+          VERSION="$SKIRK_RELEASE_TAG" scripts/package_release.sh
 
       - uses: actions/upload-artifact@v7
         with:
@@ -90,17 +97,31 @@ jobs:
           test -n "$SKIRK_ANDROID_KEYSTORE_PASSWORD"
           test -n "$SKIRK_ANDROID_KEY_ALIAS"
           test -n "$SKIRK_ANDROID_KEY_PASSWORD"
-          ./gradlew :app:assembleRelease -Pskirk.version="${GITHUB_REF_NAME#v}" --console=plain
+          ./gradlew :app:assembleRelease -Pskirk.version="${SKIRK_RELEASE_TAG#v}" --console=plain
 
       - name: Verify release APK signature
         run: |
-          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          test -n "$apksigner"
-          find clients/android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print0 \
-            | while IFS= read -r -d '' apk; do
-                echo "Verifying $apk"
-                "$apksigner" verify --print-certs "$apk"
-              done
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1 | xargs dirname)"
+          # SHA-256 of the certificate on the official v0.1.55 update channel.
+          signer="45c73cd055ad189ff421e4bd84facbc2512ab26e505aed4b0d867ee6e9c347cf"
+          version="${SKIRK_RELEASE_TAG#v}"
+          for apk in clients/android/app/build/outputs/apk/release/*.apk; do
+            cert="$("$build_tools/apksigner" verify --print-certs "$apk")"
+            # The label changed in build-tools 37. Compare every signer digest across schemes.
+            actual="$(sed -nE 's/^.* certificate SHA-256 digest: ([0-9a-f]{64})$/\1/p' <<<"$cert" | sort -u)"
+            if [ "$actual" != "$signer" ]; then
+              echo "::error::Unexpected Android signing certificate on $(basename "$apk"): ${actual:-unrecognized certificate report}"
+              exit 1
+            fi
+            package="$("$build_tools/aapt" dump badging "$apk" | sed -n '/^package:/p')"
+            [[ "$package" == *"name='app.skirk.client'"* && "$package" == *"versionName='$version'"* ]]
+            code="$(sed -E "s/.*versionCode='([0-9]+)'.*/\1/" <<<"$package")"
+            [[ "$code" =~ ^[0-9]+$ && "$code" -gt 55 ]]
+            for notices in mobile android; do
+              unzip -p "$apk" "assets/licenses/$notices.txt" | cmp - "clients/licenses/$notices.txt"
+            done
+          done
 
       - name: Prepare Android release APK
         run: |
@@ -193,24 +214,11 @@ jobs:
 
       - name: Build Skirk Windows sidecar
         shell: pwsh
-        env:
-          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
-          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
         run: |
           New-Item -ItemType Directory -Force clients/desktop/src-tauri/resources/sidecars/windows | Out-Null
           $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $commit = "${env:GITHUB_SHA}".Substring(0, 7)
-          $ldflags = "-s -w -X main.version=${env:GITHUB_REF_NAME} -X main.commit=$commit -X main.date=$date"
-          if ($env:SKIRK_REQUIRE_BUILTIN_OAUTH -eq "1" -and (-not $env:SKIRK_OAUTH_CLIENT_ID -or -not $env:SKIRK_OAUTH_CLIENT_SECRET)) {
-            throw "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET for the built-in device-code OAuth client"
-          }
-          if ($env:SKIRK_OAUTH_CLIENT_ID -or $env:SKIRK_OAUTH_CLIENT_SECRET) {
-            if (-not $env:SKIRK_OAUTH_CLIENT_ID) {
-              throw "SKIRK_OAUTH_CLIENT_ID must be set when SKIRK_OAUTH_CLIENT_SECRET is set"
-            }
-            $ldflags = "$ldflags -X main.defaultOAuthClientID=$env:SKIRK_OAUTH_CLIENT_ID -X main.defaultOAuthClientSecret=$env:SKIRK_OAUTH_CLIENT_SECRET"
-          }
+          $ldflags = "-s -w -X main.version=${env:SKIRK_RELEASE_TAG} -X main.commit=$commit -X main.date=$date"
           go build -trimpath -ldflags "$ldflags" -o clients/desktop/src-tauri/resources/sidecars/windows/skirk-sidecar.exe ./cmd/skirk
 
       - name: Stage Windows VPN sidecar
@@ -241,9 +249,11 @@ jobs:
 
       - name: Build Tauri desktop app
         working-directory: clients/desktop
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
           npm ci
-          npm run tauri build -- --no-bundle
+          npm run tauri build -- --no-bundle --target x86_64-pc-windows-msvc
 
       - name: Build portable zip
         run: python clients/desktop/scripts/package_windows_portable.py
@@ -257,11 +267,32 @@ jobs:
           $app = Join-Path $extract "Skirk\Skirk.exe"
           $sidecar = Join-Path $extract "Skirk\sidecars\windows\skirk-sidecar.exe"
           $tunnel = Join-Path $extract "Skirk\sidecars\windows\skirk-tunnel.exe"
+          $wintun = Join-Path $extract "Skirk/third_party/wintun-LICENSE.txt"
+          $original = "third_party/hev-socks5-tunnel/third-part/wintun/LICENSE.txt"
+          if ((Get-FileHash $wintun).Hash -ne (Get-FileHash $original).Hash) { throw "Wintun license mismatch" }
           if (!(Test-Path $app)) { throw "Skirk.exe missing from portable zip" }
           if (!(Test-Path $sidecar)) { throw "skirk-sidecar.exe missing from portable zip" }
           if (!(Test-Path $tunnel)) { throw "skirk-tunnel.exe missing from portable zip" }
           & $sidecar version
           & $tunnel version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged tunnel failed to start" }
+          $process = Start-Process -FilePath $app -WorkingDirectory (Split-Path $app) -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            do {
+              Start-Sleep -Milliseconds 500
+              $process.Refresh()
+              if ($process.HasExited) { throw "Skirk.exe exited with code $($process.ExitCode)" }
+            } until ($process.MainWindowHandle -ne 0 -or (Get-Date) -ge $deadline)
+            if ($process.MainWindowHandle -eq 0) { throw "Skirk desktop window never opened" }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Verify Windows TUN and SOCKS5 data flow
+        shell: pwsh
+        run: |
+          python clients/desktop/tests/portable_vpn.py "$env:RUNNER_TEMP/windows-portable-smoke/Skirk/sidecars/windows/skirk-tunnel.exe"
 
       - name: Prepare Windows release checksums
         shell: pwsh
@@ -314,11 +345,7 @@ jobs:
             wget
 
       - name: Build Skirk Linux sidecar
-        env:
-          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
-          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
-        run: clients/desktop/scripts/stage_sidecars.sh
+        run: VERSION="$SKIRK_RELEASE_TAG" clients/desktop/scripts/stage_sidecars.sh
 
       - name: Stage Linux VPN sidecar
         run: |
@@ -412,28 +439,39 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
-      - name: Build Skirk macOS sidecar
+      - name: Select macOS signing mode
+        id: mac_signing
         env:
-          SKIRK_OAUTH_CLIENT_ID: ${{ secrets.SKIRK_OAUTH_CLIENT_ID }}
-          SKIRK_OAUTH_CLIENT_SECRET: ${{ secrets.SKIRK_OAUTH_CLIENT_SECRET }}
-          SKIRK_REQUIRE_BUILTIN_OAUTH: "1"
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          configured=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY APPLE_API_ISSUER APPLE_API_PRIVATE_KEY; do
+            if [ -n "${!name}" ]; then
+              configured=$((configured + 1))
+            fi
+          done
+          if [ "$configured" -eq 0 ]; then
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple Developer ID secrets are absent; macOS artifacts will be labeled unsigned and may be blocked by Gatekeeper."
+          elif [ "$configured" -eq 5 ]; then
+            echo "mode=signed_notarized" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::macOS signing needs all five Apple secrets or none; refusing a partially configured release."
+            exit 1
+          fi
+
+      - name: Build Skirk macOS sidecar
         run: |
           set -euo pipefail
           mkdir -p clients/desktop/src-tauri/resources/sidecars/macos
           date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           commit="${GITHUB_SHA::7}"
-          ldflags="-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${commit} -X main.date=${date}"
-          if [ "${SKIRK_REQUIRE_BUILTIN_OAUTH}" = "1" ] && { [ -z "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -z "${SKIRK_OAUTH_CLIENT_SECRET}" ]; }; then
-            echo "release builds require SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET for the built-in device-code OAuth client" >&2
-            exit 1
-          fi
-          if [ -n "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -n "${SKIRK_OAUTH_CLIENT_SECRET}" ]; then
-            if [ -z "${SKIRK_OAUTH_CLIENT_ID}" ] || [ -z "${SKIRK_OAUTH_CLIENT_SECRET}" ]; then
-              echo "SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET must be set together" >&2
-              exit 1
-            fi
-            ldflags="${ldflags} -X main.defaultOAuthClientID=${SKIRK_OAUTH_CLIENT_ID} -X main.defaultOAuthClientSecret=${SKIRK_OAUTH_CLIENT_SECRET}"
-          fi
+          ldflags="-s -w -X main.version=${SKIRK_RELEASE_TAG} -X main.commit=${commit} -X main.date=${date}"
           GOOS=darwin GOARCH="${{ matrix.goarch }}" CGO_ENABLED=0 go build -trimpath -ldflags "${ldflags}" -o clients/desktop/src-tauri/resources/sidecars/macos/skirk ./cmd/skirk
           chmod +x clients/desktop/src-tauri/resources/sidecars/macos/skirk
 
@@ -443,18 +481,79 @@ jobs:
           npm ci
           npm run tauri build -- --target "${{ matrix.rust_target }}" --bundles app --no-sign
 
+      - name: Sign and notarize macOS app
+        if: steps.mac_signing.outputs.mode == 'signed_notarized'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          app="clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos/Skirk.app"
+          sidecar="$app/Contents/Resources/resources/sidecars/macos/skirk"
+          test -x "$sidecar"
+          keychain="$RUNNER_TEMP/skirk-signing.keychain-db"
+          certificate="$RUNNER_TEMP/skirk-developer-id.p12"
+          api_key_file="$RUNNER_TEMP/skirk-notary-key.p8"
+          submission_zip="$RUNNER_TEMP/skirk-notary-submission.zip"
+          response="$RUNNER_TEMP/skirk-notary-response.json"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$certificate" "$api_key_file" "$submission_zip" "$response"
+          }
+          trap cleanup EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A > "$certificate"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$api_key_file"
+          keychain_password="$(openssl rand -hex 32)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -t 3600 -u "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
+          test -n "$identity"
+
+          # Sign the bundled Go executable before sealing the outer app bundle.
+          codesign --force --sign "$identity" --keychain "$keychain" --options runtime --timestamp "$sidecar"
+          codesign --verify --strict --verbose=2 "$sidecar"
+          codesign --force --sign "$identity" --keychain "$keychain" --options runtime --timestamp "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$submission_zip"
+          xcrun notarytool submit "$submission_zip" --key "$api_key_file" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --output-format json > "$response"
+          if ! python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); print("Notarization status:", data.get("status")); sys.exit(0 if data.get("status") == "Accepted" else 1)' "$response"; then
+            cat "$response"
+            exit 1
+          fi
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+
       - name: Smoke macOS bundle
         run: |
           set -euo pipefail
           app="$(find "clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -name 'Skirk.app' -type d | head -n 1)"
           test -d "$app"
           plutil -lint "$app/Contents/Info.plist"
+          cmp clients/licenses/engine.txt "$app/Contents/Resources/licenses/Skirk-Engine.txt"
           app_exe="$app/Contents/MacOS/skirk-desktop"
           sidecar="$app/Contents/Resources/resources/sidecars/macos/skirk"
           test -x "$app_exe"
           test -x "$sidecar"
-          file "$app_exe" | grep -F "${{ matrix.file_arch }}"
-          file "$sidecar" | grep -F "${{ matrix.file_arch }}"
+          expected_arch="${{ matrix.file_arch }}"
+          lipo "$app_exe" -verify_arch "$expected_arch"
+          lipo "$sidecar" -verify_arch "$expected_arch"
+          while IFS= read -r -d '' binary; do
+            if [[ "$(file -b "$binary")" == Mach-O* ]] && ! lipo "$binary" -verify_arch "$expected_arch"; then
+              echo "::error::${binary#"$app/"} is missing architecture $expected_arch"
+              exit 1
+            fi
+          done < <(find "$app" -type f -print0)
           "$sidecar" version
 
       - name: Package macOS app zip
@@ -463,19 +562,21 @@ jobs:
           app="$(find "clients/desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -name 'Skirk.app' -type d | head -n 1)"
           out_dir="dist/macos-${{ matrix.arch }}"
           mkdir -p "$out_dir"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$out_dir/Skirk_macos_${{ matrix.arch }}.app.zip"
-          (cd "$out_dir" && shasum -a 256 "Skirk_macos_${{ matrix.arch }}.app.zip" > "Skirk_macos_${{ matrix.arch }}.app.zip.sha256")
+          archive="Skirk_macos_${{ matrix.arch }}_${{ steps.mac_signing.outputs.mode }}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$out_dir/$archive"
+          (cd "$out_dir" && shasum -a 256 "$archive" > "$archive.sha256")
 
       - uses: actions/upload-artifact@v7
         with:
           name: macos-desktop-${{ matrix.arch }}-release
           path: |
-            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}.app.zip
-            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}.app.zip.sha256
+            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}_*.app.zip
+            dist/macos-${{ matrix.arch }}/Skirk_macos_${{ matrix.arch }}_*.app.zip.sha256
           if-no-files-found: error
 
-  publish:
-    name: Publish GitHub Release
+  draft:
+    name: Stage GitHub release for review
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     needs:
       - release
@@ -487,8 +588,13 @@ jobs:
       actions: read
       contents: write
       attestations: write
+      artifact-metadata: write
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
       - name: Download release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -521,38 +627,73 @@ jobs:
             dist-release/skirk-android-universal.apk
             dist-release/skirk-linux-amd64.tar.gz
             dist-release/skirk-linux-arm64.tar.gz
+            dist-release/skirk-darwin-amd64.tar.gz
+            dist-release/skirk-darwin-arm64.tar.gz
             dist-release/skirk-windows-amd64.zip
+            dist-release/skirk-windows-arm64.zip
             dist-release/Skirk_linux_x64_portable.zip
-            dist-release/Skirk_macos_arm64.app.zip
-            dist-release/Skirk_macos_x64.app.zip
+            dist-release/Skirk_macos_arm64_*.app.zip
+            dist-release/Skirk_macos_x64_*.app.zip
             dist-release/Skirk_windows_x64_portable.zip
 
-      - name: Publish release assets
+      - name: Stage draft release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          ref="refs/tags/$SKIRK_RELEASE_TAG"
+          tag_commit="$(git ls-remote --exit-code origin "$ref" "$ref^{}" |
+            awk -v ref="$ref" '$2 == ref { direct = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : direct }')"
+          build_commit="$(git rev-parse --verify "$GITHUB_SHA^{commit}")"
+          if [ "$tag_commit" != "$build_commit" ]; then
+            echo "::error::The tag now points to a different build. Keep this run's assets in Actions."
+            exit 1
+          fi
           mapfile -t assets < <(find dist-release -type f | sort)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "no release assets found" >&2
             exit 1
           fi
-          stale_android_asset="skirk-${GITHUB_REF_NAME}-android-arm64.apk"
+          stale_android_asset="skirk-${SKIRK_RELEASE_TAG}-android-arm64.apk"
           stale_android_checksum="${stale_android_asset}.sha256"
-          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- Skirk_linux_x64_portable.zip: Linux GUI portable app with proxy and VPN modes, local/LAN SOCKS, and local/LAN HTTP proxy endpoints. Extract it and run ./Skirk; VPN mode needs root or CAP_NET_ADMIN.\n- Skirk_macos_arm64.app.zip: macOS Apple Silicon desktop app, proxy mode only in this release.\n- Skirk_macos_x64.app.zip: macOS Intel desktop app, proxy mode only in this release.\n- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-android-universal.apk: release-signed Android APK for arm64-v8a and armeabi-v7a devices.\n- skirk-android-arm64-v8a.apk: smaller Android APK for 64-bit ARM devices.\n- skirk-android-armeabi-v7a.apk: smaller Android APK for 32-bit ARM devices.\n- skirk-android-arm64.apk: compatibility alias for skirk-android-arm64-v8a.apk.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APKs.\n- GitHub artifact attestations are generated for the APKs and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            existing_assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
-            for stale in "${stale_android_asset}" "${stale_android_checksum}"; do
-              if grep -Fxq "${stale}" <<<"${existing_assets}"; then
-                gh release delete-asset "${GITHUB_REF_NAME}" "${stale}" -y
-              fi
-            done
-            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
-            gh release edit "${GITHUB_REF_NAME}" --notes "$release_notes"
-          else
-            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" --title "${GITHUB_REF_NAME}" --generate-notes --notes "$release_notes"
+          mapfile -t mac_arm64_assets < <(find dist-release -maxdepth 1 -type f -name 'Skirk_macos_arm64_*.app.zip' -printf '%f\n')
+          mapfile -t mac_x64_assets < <(find dist-release -maxdepth 1 -type f -name 'Skirk_macos_x64_*.app.zip' -printf '%f\n')
+          if [ "${#mac_arm64_assets[@]}" -ne 1 ] || [ "${#mac_x64_assets[@]}" -ne 1 ]; then
+            echo "expected exactly one macOS app zip per architecture" >&2
+            exit 1
           fi
-          published_assets="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name')"
+          if [[ "${mac_arm64_assets[0]}" == *_signed_notarized.app.zip && "${mac_x64_assets[0]}" == *_signed_notarized.app.zip ]]; then
+            mac_status="Developer ID signed and notarized."
+          elif [[ "${mac_arm64_assets[0]}" == *_unsigned.app.zip && "${mac_x64_assets[0]}" == *_unsigned.app.zip ]]; then
+            mac_status="Unsigned; macOS Gatekeeper may block normal launch."
+          else
+            echo "macOS artifact names disagree about signing status" >&2
+            exit 1
+          fi
+          release_notes=$'Assets:\n- Skirk_windows_x64_portable.zip: Windows GUI portable app with proxy, system proxy, and VPN modes. Extract it and open Skirk.exe.\n- Skirk_linux_x64_portable.zip: Linux GUI portable app with proxy and VPN modes, local/LAN SOCKS, and local/LAN HTTP proxy endpoints. Extract it and run ./Skirk; VPN mode needs root or CAP_NET_ADMIN.\n'
+          release_notes+="- ${mac_arm64_assets[0]}: macOS Apple Silicon desktop app with local and macOS system proxy modes. ${mac_status} Use this on M-series Macs."$'\n'
+          release_notes+="- ${mac_x64_assets[0]}: macOS Intel desktop app with local and macOS system proxy modes. ${mac_status} Running this through Rosetta on Apple Silicon may show macOS Intel-support warnings."$'\n'
+          release_notes+=$'- skirk-windows-amd64.zip: Windows CLI-only build for PowerShell/manual use.\n- skirk-android-universal.apk: release-signed Android APK for arm64-v8a and armeabi-v7a devices.\n- skirk-android-arm64-v8a.apk: smaller Android APK for 64-bit ARM devices.\n- skirk-android-armeabi-v7a.apk: smaller Android APK for 32-bit ARM devices.\n- skirk-android-arm64.apk: compatibility alias for skirk-android-arm64-v8a.apk.\n\nIntegrity:\n- SHA256SUMS covers the published archives/APKs.\n- GitHub artifact attestations are generated for the APKs and archives; verify with `gh attestation verify <asset> -R ShahabSL/Skirk`.\n'
+          release_notes+=$'\nSetup guides are included in the CLI archives. From the extracted folder, open docs/install.md for English or docs/install.fa.md for فارسی.\n'
+          if gh release view "${SKIRK_RELEASE_TAG}" >/dev/null 2>&1; then
+            if [ "$(gh release view "${SKIRK_RELEASE_TAG}" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "::error::This version is already public. Build a new tag."
+              exit 1
+            fi
+            existing_assets="$(gh release view "${SKIRK_RELEASE_TAG}" --json assets --jq '.assets[].name')"
+            while IFS= read -r stale; do
+              case "$stale" in
+                "$stale_android_asset"|"$stale_android_checksum"|Skirk_macos_*.app.zip|Skirk_macos_*.app.zip.sha256)
+                  gh release delete-asset "${SKIRK_RELEASE_TAG}" "$stale" -y
+                  ;;
+              esac
+            done <<<"$existing_assets"
+            gh release upload "${SKIRK_RELEASE_TAG}" "${assets[@]}" --clobber
+            gh release edit "${SKIRK_RELEASE_TAG}" --notes "$release_notes"
+          else
+            gh release create "${SKIRK_RELEASE_TAG}" "${assets[@]}" --draft --verify-tag --title "${SKIRK_RELEASE_TAG}" --notes "$release_notes"
+          fi
+          published_assets="$(gh release view "${SKIRK_RELEASE_TAG}" --json assets --jq '.assets[].name')"
           for asset in ${published_assets}; do
             case "${asset}" in
               skirk-v*-android-arm64.apk|skirk-v*-android-arm64.apk.sha256)

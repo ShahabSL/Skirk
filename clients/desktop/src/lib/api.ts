@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type ConnectionPhase = "disconnected" | "connecting" | "connected" | "disconnecting" | "error";
 export type ConnectionMode = "proxy" | "system" | "vpn";
+export type UserRouteMode = "google_front_pinned" | "direct";
+export type ExitProbeResult = { status: "verified" | "unverified"; roundTripMs: number; reason: string };
 export type PerformancePreset = "lower_usage" | "recommended" | "responsive" | "bulk_transfer" | "custom";
 
 export type ClientPerformanceSettings = {
@@ -84,6 +86,7 @@ export type DesktopSnapshot = {
     lanAddresses: string[];
     lanHttpAddresses: string[];
     systemProxyEnabled: boolean;
+    systemProxyRestorePending: boolean;
     tunnelActive: boolean;
     tunnelInterfaceName: string | null;
     message: string;
@@ -127,9 +130,12 @@ let mockProfiles: ClientProfile[] = [
 ];
 let mockSelectedProfileId: string | null = "mock-profile";
 let mockConnected = false;
+let mockOauthRenewed = false;
 const mockPlatform = browserPreviewPlatform();
 
 function mockSnapshot(): DesktopSnapshot {
+  const mockGrantExpired = !mockConnected && !mockOauthRenewed &&
+    new URLSearchParams(window.location.search).get("oauth") === "expired";
   const profile = mockProfiles.find((item) => item.id === mockSelectedProfileId) ?? mockProfiles[0];
   const socksAddress = profile ? `${profile.shareLan ? "0.0.0.0" : "127.0.0.1"}:${profile.socksPort}` : null;
   const httpAddress = profile ? `${profile.shareLan ? "0.0.0.0" : "127.0.0.1"}:${profile.httpPort}` : null;
@@ -137,7 +143,7 @@ function mockSnapshot(): DesktopSnapshot {
     profiles: [...mockProfiles],
     selectedProfileId: profile?.id ?? null,
     connection: {
-      phase: mockConnected ? "connected" : "disconnected",
+      phase: mockConnected ? "connected" : mockGrantExpired ? "error" : "disconnected",
       mode: mockMode,
       activeProfileId: mockConnected ? profile?.id ?? null : null,
       pid: mockConnected ? 4242 : null,
@@ -147,9 +153,10 @@ function mockSnapshot(): DesktopSnapshot {
       lanAddresses: mockConnected && profile?.shareLan ? [`192.168.1.20:${profile.socksPort}`] : [],
       lanHttpAddresses: mockConnected && profile?.shareLan ? [`192.168.1.20:${profile.httpPort}`] : [],
       systemProxyEnabled: mockConnected && mockMode === "system",
+      systemProxyRestorePending: false,
       tunnelActive: mockConnected && mockMode === "vpn",
       tunnelInterfaceName: mockConnected && mockMode === "vpn" ? "Skirk Tunnel" : null,
-      message: mockConnected ? `Connected in ${modeLabel(mockMode)} mode` : "Disconnected",
+      message: mockConnected ? `Connected in ${modeLabel(mockMode)} mode` : mockGrantExpired ? "Google token refresh failed: invalid_grant" : "Disconnected",
     },
     logsDir: "portable-data/logs",
     configDir: "portable-data/config",
@@ -165,7 +172,7 @@ function mockSnapshot(): DesktopSnapshot {
           updatedAt: new Date().toISOString(),
           durationSeconds: 60,
           routeMode: "google_front_pinned",
-          transport: "muxv4",
+          transport: "muxv5",
           pollMs: profile?.performance.pollMs ?? 1000,
           uploadConcurrency: profile?.performance.uploadConcurrency ?? 8,
           downloadConcurrency: profile?.performance.downloadConcurrency ?? 16,
@@ -181,7 +188,7 @@ function mockSnapshot(): DesktopSnapshot {
       : null,
     platform: mockPlatform,
     capabilities: {
-      systemProxySupported: mockPlatform === "windows",
+      systemProxySupported: mockPlatform === "windows" || mockPlatform === "macos",
       vpnModeSupported: mockPlatform === "windows",
       vpnRequiresAdmin: mockPlatform === "windows",
       vpnAdmin: false,
@@ -194,14 +201,19 @@ const tauriApi = {
   loadSnapshot: () => invoke<DesktopSnapshot>("load_snapshot"),
   importConfig: (name: string, rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) =>
     invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, httpPort, shareLan }),
+  replaceProfileConfig: (profileId: string, rawConfig: string) =>
+    invoke<DesktopSnapshot>("replace_profile_config", { profileId, rawConfig }),
   deleteProfile: (profileId: string) => invoke<DesktopSnapshot>("delete_profile", { profileId }),
   selectProfile: (profileId: string | null) =>
     invoke<DesktopSnapshot>("select_profile", { profileId }),
   setConnectionMode: (mode: ConnectionMode) => invoke<DesktopSnapshot>("set_connection_mode", { mode }),
   updateProfilePerformance: (profileId: string, performance: ClientPerformanceSettings) =>
     invoke<DesktopSnapshot>("update_profile_performance", { profileId, performance }),
+  updateProfileRoute: (profileId: string, routeMode: UserRouteMode) =>
+    invoke<DesktopSnapshot>("update_profile_route", { profileId, routeMode }),
   connect: () => invoke<DesktopSnapshot>("connect"),
   disconnect: () => invoke<DesktopSnapshot>("disconnect"),
+  probeExit: () => invoke<ExitProbeResult>("probe_exit"),
 };
 
 const browserPreviewApi = {
@@ -229,6 +241,13 @@ const browserPreviewApi = {
     mockSelectedProfileId = id;
     return mockSnapshot();
   },
+  replaceProfileConfig: async (profileId: string, _rawConfig: string) => {
+    if (!mockProfiles.some((profile) => profile.id === profileId)) {
+      throw new Error("profile was not found");
+    }
+    mockOauthRenewed = true;
+    return mockSnapshot();
+  },
   deleteProfile: async (profileId: string) => {
     mockProfiles = mockProfiles.filter((profile) => profile.id !== profileId);
     if (mockSelectedProfileId === profileId) {
@@ -250,6 +269,12 @@ const browserPreviewApi = {
     );
     return mockSnapshot();
   },
+  updateProfileRoute: async (profileId: string, routeMode: UserRouteMode) => {
+    mockProfiles = mockProfiles.map((profile) =>
+      profile.id === profileId ? { ...profile, routeMode } : profile,
+    );
+    return mockSnapshot();
+  },
   connect: async () => {
     mockConnected = true;
     return mockSnapshot();
@@ -258,6 +283,10 @@ const browserPreviewApi = {
     mockConnected = false;
     return mockSnapshot();
   },
+  probeExit: async (): Promise<ExitProbeResult> =>
+    new URLSearchParams(window.location.search).get("exit") === "unverified"
+      ? { status: "unverified", roundTripMs: 0, reason: "timeout" }
+      : { status: "verified", roundTripMs: 825, reason: "" },
 };
 
 export const desktopApi = useBrowserPreview ? browserPreviewApi : tauriApi;
@@ -281,6 +310,9 @@ function browserPreviewPlatform() {
     return "windows";
   }
   const value = new URLSearchParams(window.location.search).get("platform")?.toLowerCase();
+  if (value === "macos") {
+    return "macos";
+  }
   if (value === "linux") {
     return "linux";
   }

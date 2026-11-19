@@ -37,7 +37,7 @@ jobs:
           - name: windows-x64
             runner: windows-2022
             binary: skirk-smoke.exe
-            full_go_tests: false
+            full_go_tests: true
           - name: windows-arm64
             runner: windows-11-arm
             binary: skirk-smoke.exe
@@ -69,6 +69,13 @@ jobs:
         run: |
           go test ./internal/skirk
           go test ./cmd/skirk -run '^$'
+
+      - name: Check mux decoder bounds on 32-bit Linux
+        if: matrix.name == 'linux-x64'
+        env:
+          GOARCH: '386'
+          CGO_ENABLED: '0'
+        run: go test ./internal/skirk -run '^TestDecodeMuxBatchBounds$' -count=1
 
       - name: Build and run CLI
         run: |
@@ -154,6 +161,7 @@ jobs:
         working-directory: clients/desktop
         run: |
           npm ci
+          npm run test:snapshot
           npm run build
 
   desktop-tauri:
@@ -249,6 +257,32 @@ jobs:
             clients/desktop/src-tauri/resources/sidecars/macos/skirk version
           fi
 
+      - name: Stage Windows VPN sidecar
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '1.13.12'
+          $expectedSha256 = 'e93fc531134eb1beb4efa3c74990a24e48456098a31c03b60d5ddf17f223cf98'
+          $zip = Join-Path $env:RUNNER_TEMP "sing-box-$version-windows-amd64.zip"
+          $url = "https://github.com/SagerNet/sing-box/releases/download/v$version/sing-box-$version-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $actualSha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "sing-box checksum mismatch: expected $expectedSha256 got $actualSha256"
+          }
+          $extract = Join-Path $env:RUNNER_TEMP 'sing-box-smoke'
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $tunnel = Get-ChildItem -Path $extract -Recurse -Filter 'sing-box.exe' | Select-Object -First 1
+          $license = Get-ChildItem -Path $extract -Recurse -Filter 'LICENSE*' | Select-Object -First 1
+          if (-not $tunnel -or -not $license) {
+            throw "sing-box executable or license missing from $zip"
+          }
+          $sidecars = 'clients/desktop/src-tauri/resources/sidecars/windows'
+          Copy-Item $tunnel.FullName (Join-Path $sidecars 'skirk-tunnel.exe') -Force
+          Copy-Item $license.FullName (Join-Path $sidecars 'sing-box-LICENSE.txt') -Force
+          & (Join-Path $sidecars 'skirk-tunnel.exe') version
+
       - name: Install desktop dependencies
         working-directory: clients/desktop
         run: npm ci
@@ -280,11 +314,45 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           python clients/desktop/scripts/package_windows_portable.py
-          if (!(Test-Path dist/windows-portable/Skirk_windows_x64_portable.zip)) {
-            throw "Windows portable zip was not created"
+          $zip = 'dist/windows-portable/Skirk_windows_x64_portable.zip'
+          if (!(Test-Path $zip)) {
+            throw 'Windows portable zip was not created'
           }
-          tar -tf dist/windows-portable/Skirk_windows_x64_portable.zip | Select-String -SimpleMatch "Skirk.exe"
+          $extract = Join-Path $env:RUNNER_TEMP 'windows-portable-smoke'
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+          $portable = Join-Path $extract 'Skirk'
+          $app = Join-Path $portable 'Skirk.exe'
+          $sidecar = Join-Path $portable 'sidecars/windows/skirk-sidecar.exe'
+          $tunnel = Join-Path $portable 'sidecars/windows/skirk-tunnel.exe'
+          $license = Join-Path $portable 'third_party/sing-box-LICENSE.txt'
+          $wintunLicense = Join-Path $portable 'third_party/wintun-LICENSE.txt'
+          foreach ($required in @($app, $sidecar, $tunnel, $license, $wintunLicense)) {
+            if (!(Test-Path $required)) { throw "Portable package missing $required" }
+          }
+          & $sidecar version
+          & $tunnel version
+          $process = Start-Process -FilePath $app -WorkingDirectory $portable -PassThru
+          try {
+            Start-Sleep -Seconds 10
+            $process.Refresh()
+            if ($process.HasExited) {
+              throw "Skirk.exe exited during startup with code $($process.ExitCode)"
+            }
+            Write-Host "Skirk.exe remained running for 10 seconds (PID $($process.Id))"
+          }
+          finally {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+      - name: Verify packaged Windows TUN with TCP and UDP
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: python clients/desktop/tests/portable_vpn.py "$env:RUNNER_TEMP/windows-portable-smoke/Skirk/sidecars/windows/skirk-tunnel.exe"
 
       - name: Smoke macOS bundle
         if: matrix.os == 'macos'
@@ -329,7 +397,7 @@ jobs:
 
       - name: Build debug APKs
         working-directory: clients/android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain
 
       - name: Verify APK ABI contents
         run: |
@@ -410,10 +478,7 @@ jobs:
               for meta in service.findall("./meta-data")
           )
           PY
-          grep -Fq '.addAddress(TUN_IPV4_ADDRESS, 30)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
-          grep -Fq '.addRoute("0.0.0.0", 0)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
-          grep -Fq 'addDisallowedApplication(packageName)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
-          grep -Fq 'builder.setMetered(true)' clients/android/app/src/main/java/app/skirk/client/SkirkVpnService.kt
+          # The Gradle unit suite above exercises both families and Android's per-app route policy.
 
       - name: Verify Android package metadata
         run: |

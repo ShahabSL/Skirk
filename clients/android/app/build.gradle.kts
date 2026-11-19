@@ -5,10 +5,17 @@ plugins {
 }
 
 val repoRoot = layout.projectDirectory.dir("../../..")
+val mobileNotices = tasks.register<Sync>("stageMobileNotices") {
+    from(repoRoot.file("clients/licenses/mobile.txt"), repoRoot.file("clients/licenses/android.txt"))
+    into(layout.buildDirectory.dir("generated/skirk-notices/assets/licenses"))
+}
 val generatedSkirkJniLibs = layout.buildDirectory.dir("generated/skirk-go/jniLibs")
 val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jniLibs")
+val hevObjectDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/obj")
+val hevLibraryDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/libs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
-val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.55").get()
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.56").get()
+val skirkNdkVersion = providers.environmentVariable("SKIRK_ANDROID_NDK_VERSION").orElse("27.0.12077973").get()
 val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
 val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("SKIRK_ANDROID_KEY_ALIAS").orNull
@@ -93,6 +100,8 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
     group = "build"
     description = "Build the Android TUN-to-SOCKS bridge used by VPN mode."
     inputs.dir(hevSourceDir)
+    outputs.dir(hevObjectDir)
+    outputs.dir(hevLibraryDir)
     outputs.dir(generatedHevJniLibs)
 
     doLast {
@@ -106,7 +115,7 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
             APP_PLATFORM := android-26
             APP_OPTIM := release
             APP_ABI := ${androidNativeAbis.joinToString(" ")}
-            APP_CFLAGS := -O3 -DPKGNAME=app/skirk/client -DCLSNAME=HevTun2Socks
+            APP_CFLAGS := -O3 "-ffile-prefix-map=${repoRoot.asFile.canonicalPath}=." -DPKGNAME=app/skirk/client -DCLSNAME=HevTun2Socks
             APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
             NDK_TOOLCHAIN_VERSION := clang
             """.trimIndent() + "\n",
@@ -121,6 +130,8 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
                 "NDK_PROJECT_PATH=.",
                 "NDK_APPLICATION_MK=${appMk.absolutePath}",
                 "APP_BUILD_SCRIPT=${hevSourceDir.file("Android.mk").asFile.absolutePath}",
+                "NDK_OUT=${hevObjectDir.get().asFile.absolutePath}",
+                "NDK_LIBS_OUT=${hevLibraryDir.get().asFile.absolutePath}",
                 "V=0",
             )
         }
@@ -128,7 +139,7 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
         androidNativeAbis.forEach { abi ->
             val outputDir = generatedHevJniLibs.get().dir(abi).asFile
             outputDir.mkdirs()
-            hevSourceDir.file("libs/$abi/libhev-socks5-tunnel.so").asFile
+            hevLibraryDir.get().file("$abi/libhev-socks5-tunnel.so").asFile
                 .copyTo(outputDir.resolve("libhev-socks5-tunnel.so"), overwrite = true)
         }
     }
@@ -137,14 +148,15 @@ val buildHevTun2socks = tasks.register("buildHevTun2socks") {
 android {
     namespace = "app.skirk.client"
     compileSdk = 35
-    ndkVersion = "27.0.12077973"
+    ndkVersion = skirkNdkVersion
 
     defaultConfig {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 55
+        versionCode = 56
         versionName = skirkAppVersion
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters += androidNativeAbis
@@ -197,8 +209,12 @@ android {
 
     sourceSets {
         getByName("main") {
+            assets.srcDir(layout.buildDirectory.dir("generated/skirk-notices/assets"))
             jniLibs.srcDir(generatedSkirkJniLibs)
             jniLibs.srcDir(generatedHevJniLibs)
+        }
+        getByName("test") {
+            java.srcDir(layout.projectDirectory.dir("../tests"))
         }
     }
 
@@ -210,6 +226,7 @@ android {
 }
 
 tasks.named("preBuild") {
+    dependsOn(mobileNotices)
     dependsOn(buildSkirkAndroidSidecar)
     dependsOn(buildHevTun2socks)
 }
@@ -223,4 +240,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

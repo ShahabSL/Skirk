@@ -1,0 +1,21 @@
+Skirk for iOS — Privacy policy
+
+Skirk routes traffic from your device through the Google Drive mailbox and network exit in the profile you choose. Connecting authorizes this use of your network information to provide the tunnel. Only connect to an exit operator you trust.
+
+Your device
+Skirk keeps the imported profile, including its Google authorization and tunnel key, in this device’s Keychain. The app and its packet-tunnel extension share access. The app stores a local preference when you acknowledge the VPN disclosure. While connected, it displays locally measured request counts, errors and rate-limit information.
+
+Google Drive
+Skirk authenticates to Google using the authorization in the profile. Google processes network and account information such as source IP addresses, request times, sizes and mailbox activity as part of its service. Skirk encrypts tunnel payloads before writing them to Drive. The client and exit remove consumed transport objects during normal use. An interruption can leave objects for subsequent cleanup.
+
+The exit and the destination
+Your exit operator can see the destinations you contact, timing, traffic volume and data sent without application-level encryption. HTTPS continues to protect its contents between your app and the destination. Destinations normally see the exit’s public IP address. The exit operator controls that system, any upstream proxy and its logging.
+
+The publisher
+The Skirk app includes no advertising, tracking or publisher analytics service. The publisher does not sell network data or collect, use or disclose it for advertising, profiling or any purpose outside providing the connection you request. Google and your chosen exit process the traffic required to carry that connection.
+
+Your controls
+Disconnect in Skirk or iOS VPN settings to stop routing traffic. Remove a saved profile in Skirk to delete its stored configuration from the device. Removing a profile does not revoke a shared Google grant. The mailbox owner can revoke that authorization through the Google account and remove remaining mailbox files in Drive.
+
+Questions
+The official Skirk project is at https://github.com/ShahabSL/Skirk. Use its security reporting instructions for private issues. Never post an authorization, client profile or traffic log publicly.

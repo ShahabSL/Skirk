@@ -157,3 +157,51 @@ func TestHTTPProxyAbsoluteRequest(t *testing.T) {
 		t.Fatalf("target = %q, want example.com:80", got)
 	}
 }
+
+func TestHTTPProxyCompleteResponseCancelsStreamAndStripsProxyCredentials(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	done := make(chan struct{})
+	server := &HTTPProxyServer{Handler: func(ctx context.Context, _ string, conn net.Conn) {
+		req, err := http.ReadRequest(bufio.NewReader(conn))
+		if err != nil {
+			t.Errorf("origin read: %v", err)
+			return
+		}
+		defer req.Body.Close()
+		for _, key := range []string{"Proxy-Authorization", "Proxy-Connection", "X-Hop-Secret"} {
+			if req.Header.Get(key) != "" {
+				t.Errorf("forwarded connection-local header %s", key)
+			}
+		}
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+		// Model a remote socket that keeps its write side open after the body.
+		<-ctx.Done()
+	}}
+	go func() {
+		defer close(done)
+		server.handle(ctx, left)
+	}()
+	_ = right.SetDeadline(time.Now().Add(2 * time.Second))
+	_, err := io.WriteString(right, "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: Basic test-secret\r\nProxy-Connection: keep-alive\r\nConnection: X-Hop-Secret\r\nX-Hop-Secret: local-only\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(right), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || string(body) != "ok" {
+		t.Fatalf("response=%q error=%v", body, err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("complete response kept the mux stream alive waiting for remote FIN")
+	}
+}

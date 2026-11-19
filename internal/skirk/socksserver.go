@@ -15,9 +15,10 @@ import (
 type SOCKSHandler func(ctx context.Context, target string, conn net.Conn)
 
 type SOCKSServer struct {
-	Listen  string
-	Handler SOCKSHandler
-	Logger  *log.Logger
+	Listen     string
+	Handler    SOCKSHandler
+	Logger     *log.Logger
+	udpPreview func(context.Context, socksRequest, net.Conn) bool
 }
 
 type socksRequest struct {
@@ -30,30 +31,22 @@ func (s *SOCKSServer) Serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
-	}()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		go s.handle(ctx, conn)
-	}
+	return serveProxyListener(ctx, listener, s.handle)
 }
 
 func (s *SOCKSServer) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	req, err := socksHandshake(conn)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Printf("socks handshake failed: %v", err)
 		}
+		return
+	}
+	if (req.Command == socksCommandUDPAssociate || req.Command == socksCommandUDPInTCP) &&
+		s.udpPreview != nil && s.udpPreview(ctx, req, conn) {
 		return
 	}
 	if req.Command == socksCommandUDPAssociate {
@@ -97,8 +90,18 @@ func socksHandshake(conn net.Conn) (socksRequest, error) {
 	if _, err := io.ReadFull(conn, methods); err != nil {
 		return socksRequest{}, err
 	}
-	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
+	method := byte(0xff)
+	for _, offered := range methods {
+		if offered == 0x00 {
+			method = 0x00
+			break
+		}
+	}
+	if err := writeAll(conn, []byte{0x05, method}); err != nil {
 		return socksRequest{}, err
+	}
+	if method == 0xff {
+		return socksRequest{}, fmt.Errorf("no acceptable socks5 authentication method")
 	}
 	req := make([]byte, 4)
 	if _, err := io.ReadFull(conn, req); err != nil {
@@ -274,14 +277,11 @@ func (s *SOCKSServer) serveUDPAssociate(ctx context.Context, control net.Conn) e
 }
 
 func socksReplyUDP(conn net.Conn, rep byte, ip net.IP, port int) error {
-	ip4 := ip.To4()
-	if ip4 == nil {
-		ip4 = net.IPv4(127, 0, 0, 1)
+	if ip.To16() == nil {
+		ip = net.IPv4(127, 0, 0, 1)
 	}
-	reply := []byte{0x05, rep, 0x00, 0x01, ip4[0], ip4[1], ip4[2], ip4[3], 0, 0}
-	binary.BigEndian.PutUint16(reply[8:10], uint16(port))
-	_, err := conn.Write(reply)
-	return err
+	reply := append([]byte{0x05, rep, 0x00}, buildSOCKSAddress(ip.String(), port)...)
+	return writeAll(conn, reply)
 }
 
 func readUDPInTCPFrame(r io.Reader) (socksUDPPacket, error) {
@@ -325,11 +325,14 @@ type socksUDPPacket struct {
 	Payload []byte
 }
 
+// SOCKS5 UDP puts the address immediately after the two reserved bytes and FRAG.
+const socksUDPAddressOffset = 3
+
 func parseSOCKSUDPDatagram(data []byte) (socksUDPPacket, error) {
-	if len(data) < 10 || data[0] != 0 || data[1] != 0 || data[2] != 0 {
+	if len(data) < socksUDPAddressOffset || data[0] != 0 || data[1] != 0 || data[2] != 0 {
 		return socksUDPPacket{}, fmt.Errorf("invalid socks udp header")
 	}
-	host, port, offset, err := parseSOCKSAddressWithOffset(data, 4)
+	host, port, offset, err := parseSOCKSAddressWithOffset(data, socksUDPAddressOffset)
 	if err != nil {
 		return socksUDPPacket{}, err
 	}
@@ -366,6 +369,9 @@ func parseSOCKSAddressWithOffset(data []byte, offset int) (string, int, int, err
 			return "", 0, 0, io.ErrUnexpectedEOF
 		}
 		nameLen := int(data[offset])
+		if nameLen == 0 {
+			return "", 0, 0, fmt.Errorf("empty socks address name")
+		}
 		offset++
 		if len(data) < offset+nameLen+2 {
 			return "", 0, 0, io.ErrUnexpectedEOF
@@ -389,9 +395,9 @@ func parseSOCKSAddressWithOffset(data []byte, offset int) (string, int, int, err
 
 func buildSOCKSUDPDatagram(host string, port int, payload []byte) []byte {
 	address := buildSOCKSAddress(host, port)
-	out := make([]byte, 3+len(address)+len(payload))
-	copy(out[3:], address)
-	copy(out[3+len(address):], payload)
+	out := make([]byte, socksUDPAddressOffset+len(address)+len(payload))
+	copy(out[socksUDPAddressOffset:], address)
+	copy(out[socksUDPAddressOffset+len(address):], payload)
 	return out
 }
 
@@ -402,6 +408,13 @@ func buildSOCKSAddress(host string, port int) []byte {
 		out[0] = 0x01
 		copy(out[1:5], ip4)
 		binary.BigEndian.PutUint16(out[5:7], uint16(port))
+		return out
+	}
+	if ip6 := ip.To16(); ip6 != nil {
+		out := make([]byte, 19)
+		out[0] = 0x04
+		copy(out[1:17], ip6)
+		binary.BigEndian.PutUint16(out[17:19], uint16(port))
 		return out
 	}
 	hostBytes := []byte(host)

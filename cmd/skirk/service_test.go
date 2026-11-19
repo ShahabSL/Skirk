@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,10 +28,100 @@ func TestNormalizeSystemdServiceName(t *testing.T) {
 }
 
 func TestNormalizeSystemdServiceNameRejectsUnsafeNames(t *testing.T) {
-	for _, input := range []string{"", "../bad", "bad/name", "bad name"} {
+	for _, input := range []string{"", ".service", "--help", "../bad", "bad/name", "bad name"} {
 		if got, err := normalizeSystemdServiceName(input); err == nil {
 			t.Fatalf("normalizeSystemdServiceName(%q) = %q, want error", input, got)
 		}
+	}
+}
+
+func TestIsSkirkExitSystemdUnitText(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		unit string
+		want bool
+	}{
+		{"generated", systemdUnitText("/opt/Skirk build/skirk-rc", "/etc/skirk/exit.json", "root"), true},
+		{"legacy", "[Service]\nExecStart = /usr/local/bin/skirk serve-exit --config /etc/skirk/exit.json\n", true},
+		{"wireproxy", "[Unit]\n# Managed by Skirk\n[Service]\nExecStart=/usr/local/bin/wireproxy -c /etc/wireproxy/wireproxy.conf\n", false},
+		{"foreign program", "[Service]\nExecStart=/usr/bin/worker serve-exit --config /etc/worker.json\n", false},
+		{"commented command", "[Unit]\n# Managed by Skirk\n[Service]\n#ExecStart=/usr/bin/skirk serve-exit --config /etc/exit.json\nExecStart=/usr/bin/worker\n", false},
+		{"conflicting commands", "[Service]\nExecStart=/usr/bin/skirk serve-exit --config /etc/exit.json\nExecStart=/usr/bin/worker\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSkirkExitSystemdUnitText(tc.unit); got != tc.want {
+				t.Fatalf("isSkirkExitSystemdUnitText(%q) = %v, want %v", tc.unit, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckSystemdExitUnit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake systemctl requires a shell")
+	}
+	commands := t.TempDir()
+	ctl := `#!/bin/sh
+test "$*" = "show --all --property=LoadState,ActiveState,FragmentPath -- skirk-test.service" || exit 93
+printf '%s' "$TEST_SYSTEMCTL_UNIT_STATE"
+`
+	if err := os.WriteFile(filepath.Join(commands, "systemctl"), []byte(ctl), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		name      string
+		file      string
+		load      string
+		active    string
+		fragment  string
+		wantOwned bool
+		wantError bool
+	}{
+		{"free name", "", "not-found", "inactive", "", false, false},
+		{"owned active unit", "managed", "loaded", "active", "local", true, false},
+		{"foreign local unit", "foreign", "loaded", "active", "local", false, true},
+		{"alias to owned file", "symlink", "loaded", "active", "foreign", false, true},
+		{"vendor unit with no local override", "", "loaded", "inactive", "foreign", false, true},
+		{"managed file shadowed by a different fragment", "managed", "loaded", "active", "foreign", false, true},
+		{"masked unit", "", "masked", "inactive", "/dev/null", false, true},
+		{"active unit lost its definition", "", "not-found", "active", "", false, true},
+		{"manager output missing", "", "", "", "", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unitPath := filepath.Join(t.TempDir(), "skirk-test.service")
+			switch tc.file {
+			case "managed", "foreign":
+				contents := "[Service]\nExecStart=/usr/sbin/unrelated\n"
+				if tc.file == "managed" {
+					contents = systemdUnitText("/usr/local/bin/skirk", "/etc/skirk/exit.json", "root")
+				}
+				if err := os.WriteFile(unitPath, []byte(contents), 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				target := filepath.Join(t.TempDir(), "skirk-other.service")
+				contents := systemdUnitText("/usr/local/bin/skirk", "/etc/skirk/exit.json", "root")
+				if err := os.WriteFile(target, []byte(contents), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, unitPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fragment := tc.fragment
+			switch fragment {
+			case "local":
+				fragment = unitPath
+			case "foreign":
+				fragment = "/usr/lib/systemd/system/skirk-test.service"
+			}
+			t.Setenv("TEST_SYSTEMCTL_UNIT_STATE", "LoadState="+tc.load+"\nFragmentPath="+fragment+"\nActiveState="+tc.active+"\n")
+			owned, err := checkSystemdExitUnit(context.Background(), unitPath)
+			if owned != tc.wantOwned || (err != nil) != tc.wantError {
+				t.Fatalf("checkSystemdExitUnit() = %v, %v; want owned=%v, error=%v", owned, err, tc.wantOwned, tc.wantError)
+			}
+		})
 	}
 }
 
@@ -39,9 +131,10 @@ func TestSystemdUnitText(t *testing.T) {
 		"Description=Skirk exit",
 		"# Managed by Skirk",
 		"User=root",
-		"WorkingDirectory=/opt/skirk-kit",
+		"WorkingDirectory=/",
 		"ExecStart=\"/usr/local/bin/skirk\" serve-exit --config \"/opt/skirk-kit/exit.json\"",
 		"Restart=always",
+		"RestartPreventExitStatus=78",
 		"NoNewPrivileges=true",
 	} {
 		if !strings.Contains(unit, want) {
@@ -71,7 +164,7 @@ ExecStart="/usr/local/bin/skirk" serve-exit --config "/opt/skirk-kit/exit.json"
 func TestSystemdUnitTextEscapesWorkingDirectorySpaces(t *testing.T) {
 	unit := systemdUnitText("/opt/skirk bin/skirk", "/opt/skirk kit/exit.json", "root")
 	for _, want := range []string{
-		"WorkingDirectory=/opt/skirk\\skit",
+		"WorkingDirectory=/",
 		"ExecStart=\"/opt/skirk bin/skirk\" serve-exit --config \"/opt/skirk kit/exit.json\"",
 	} {
 		if !strings.Contains(unit, want) {
@@ -89,6 +182,9 @@ func TestValidateSystemdUserRejectsUnsafeValues(t *testing.T) {
 }
 
 func TestValidateServicePathsForUserRejectsRootPrivatePathsForNonRootUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("systemd /root path policy is Unix-specific")
+	}
 	if err := validateServicePathsForUser("/root/.local/bin/skirk", "/home/ubuntu/skirk-kit/exit.json", "ubuntu"); err == nil {
 		t.Fatal("validateServicePathsForUser accepted /root binary for non-root service user")
 	}
@@ -97,6 +193,39 @@ func TestValidateServicePathsForUserRejectsRootPrivatePathsForNonRootUser(t *tes
 	}
 	if err := validateServicePathsForUser("/root/.local/bin/skirk", "/root/skirk-kit/exit.json", "root"); err != nil {
 		t.Fatalf("validateServicePathsForUser rejected root service user: %v", err)
+	}
+}
+
+func TestVerifyServiceFileAccessUsesServiceIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("systemd uses POSIX file permissions")
+	}
+	ctx := t.Context()
+	user, err := currentUsername(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	exe, config := filepath.Join(dir, "test program"), filepath.Join(dir, "secret kit.json")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyServiceFileAccess(ctx, exe, config, user); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyServiceFileAccess(ctx, exe, filepath.Join(dir, "missing.json"), user); err == nil || !strings.Contains(err.Error(), "read the exit config") {
+		t.Fatalf("missing config access result = %v", err)
+	}
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		if _, err := exec.LookPath("runuser"); err != nil {
+			t.Skip("cross-account preflight needs runuser")
+		}
+		if err := verifyServiceFileAccess(ctx, "/bin/sh", config, "nobody"); err == nil || !strings.Contains(err.Error(), "read the exit config") {
+			t.Fatalf("another user's private kit access result = %v", err)
+		}
 	}
 }
 

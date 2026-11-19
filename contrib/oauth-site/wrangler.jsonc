@@ -1,0 +1,17 @@
+{
+  "name": "skirk-information-site",
+  "main": "src/index.js",
+  "account_id": "234986ebc7241d03e8447394a01d3a3e",
+  "compatibility_date": "2026-11-14",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "skirk.getephemra.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1
+  }
+}

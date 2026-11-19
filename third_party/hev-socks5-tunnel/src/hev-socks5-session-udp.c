@@ -8,6 +8,7 @@
  */
 
 #include <errno.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <lwip/udp.h>
@@ -25,6 +26,7 @@
 #include "hev-logger.h"
 #include "hev-compiler.h"
 #include "hev-config-const.h"
+#include "hev-udp-payload.h"
 
 #include "hev-socks5-session-udp.h"
 
@@ -63,7 +65,10 @@ hev_socks5_session_udp_fwd_f (HevSocks5SessionUDP *self)
     HevListNode *node;
     HevSocks5UDP *udp;
     struct pbuf *buf;
-    int res;
+    unsigned char copy[UDP_BUF_SIZE];
+    const void *payload;
+    bool complete;
+    int res = 0;
 
     for (;;) {
         node = hev_list_first (&self->frame_list);
@@ -83,11 +88,16 @@ hev_socks5_session_udp_fwd_f (HevSocks5SessionUDP *self)
     buf = frame->data;
 
     udp = HEV_SOCKS5_UDP (self);
-    res = hev_socks5_udp_sendto (udp, buf->payload, buf->len, &frame->addr);
+    payload = hev_udp_payload (buf, copy);
+    complete = payload != NULL;
+    if (complete)
+        res = hev_socks5_udp_sendto (udp, payload, buf->tot_len, &frame->addr);
     hev_list_del (&self->frame_list, node);
     hev_free (frame);
     pbuf_free (buf);
     self->frames--;
+    if (!complete)
+        return 0;
     if (res <= 0) {
         if (res < -1) {
             self->alive &= ~HEV_SOCKS5_SESSION_UDP_ALIVE_F;
@@ -97,7 +107,7 @@ hev_socks5_session_udp_fwd_f (HevSocks5SessionUDP *self)
         if (HEV_SOCKS5 (self)->type == HEV_SOCKS5_TYPE_UDP_IN_TCP)
             hev_socks5_set_timeout (HEV_SOCKS5 (self), 0);
         LOG_D ("%p socks5 session udp fwd f send", self);
-        res = -1;
+        return -1;
     }
 
     self->alive |= HEV_SOCKS5_SESSION_UDP_ALIVE_F;
@@ -123,7 +133,7 @@ hev_socks5_session_udp_fwd_b (HevSocks5SessionUDP *self)
     }
 
     res = hev_socks5_udp_recvfrom (udp, buf->payload, buf->len, &addr);
-    if (res <= 0) {
+    if (res < 0) {
         if (res < -1) {
             self->alive &= ~HEV_SOCKS5_SESSION_UDP_ALIVE_B;
             if (self->alive && hev_socks5_get_timeout (HEV_SOCKS5 (self))) {
@@ -141,8 +151,8 @@ hev_socks5_session_udp_fwd_b (HevSocks5SessionUDP *self)
     buf->len = res;
     buf->tot_len = res;
 
-    if (self->addr && self->port) {
-        ip_2_ip4 (&saddr)->addr = self->addr;
+    if (self->port) {
+        ip_addr_copy (saddr, self->addr);
         port = self->port;
     } else {
         res = hev_socks5_addr_into_lwip (&addr, &saddr, &port);
@@ -180,7 +190,7 @@ udp_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
         return;
     }
 
-    if (self->frames > UDP_POOL_SIZE) {
+    if (p->tot_len > UDP_BUF_SIZE || self->frames > UDP_POOL_SIZE) {
         pbuf_free (p);
         return;
     }
@@ -196,7 +206,7 @@ udp_recv_handler (void *arg, struct udp_pcb *pcb, struct pbuf *p,
     hev_socks5_addr_from_lwip (&frame->addr, &pcb->local_ip, pcb->local_port);
 
     if (frame->addr.atype == HEV_SOCKS5_ADDR_TYPE_NAME) {
-        self->addr = ip_2_ip4 (&pcb->local_ip)->addr;
+        ip_addr_copy (self->addr, pcb->local_ip);
         self->port = pcb->local_port;
     }
 

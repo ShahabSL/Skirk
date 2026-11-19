@@ -7,34 +7,58 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.nio.file.Files
 import java.time.Instant
-import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
+import java.util.UUID
 
-class AndroidSkirkEngine(
+private val expiredGrantExit = Regex("""^error: .*oauth token refresh failed status=\d+ error=invalid_grant description=""")
+internal const val DRIVE_CLOCK_SKEW_HINT = "Drive and this phone disagree about the time. Check automatic date and time, then reconnect."
+internal const val DRIVE_CLOCK_UNVERIFIED_HINT = "Skirk couldn’t verify the time with Drive. Reconnect when the network is stable."
+
+internal fun skirkEngineExitMessage(code: Int, logTail: String): String {
+    val exitError = logTail.lineSequence().lastOrNull { it.startsWith("error: ") }
+    if (code == 1 && exitError != null) {
+        if (exitError.startsWith("error: device clock differs from Google Drive clock")) return DRIVE_CLOCK_SKEW_HINT
+        if (exitError.startsWith("error: could not verify Google Drive clock")) return DRIVE_CLOCK_UNVERIFIED_HINT
+    }
+    if (code != 78) return "Skirk engine exited with code $code"
+    return if (exitError != null && expiredGrantExit.containsMatchIn(exitError)) GOOGLE_GRANT_EXPIRED
+    else GOOGLE_ACCESS_NEEDS_ATTENTION
+}
+
+internal data class ConnectionDiagnosticsOwner(val id: String, val launchedAtMillis: Long)
+
+internal class AndroidSkirkEngine(
     private val context: Context,
     private val logFileName: String,
-    private val onUnexpectedExit: ((Int) -> Unit)? = null,
+    private val launch: (ProcessBuilder) -> Process = ProcessBuilder::start,
+    private val onUnexpectedExit: ((String, Int, String) -> Unit)? = null,
 ) {
-    private var process: Process? = null
+    private var sidecar: ProfileSidecar? = null
+    private var networkWatch: AutoCloseable? = null
     private var activeProfile: ClientProfile? = null
+    private var activeAttemptId: String? = null
+    private var lastExitMessage: String? = null
+    @get:Synchronized
+    internal var metricsOwner: ConnectionDiagnosticsOwner? = null
+        private set
 
-	@Synchronized
-	fun start(profile: ClientProfile) {
-		if (activeProfile?.runtimeKey == profile.runtimeKey && process?.isAlive == true) {
-			return
-		}
-		stop()
-		waitForListenPortRelease(profile)
+    @Synchronized
+    fun start(profile: ClientProfile, attemptId: String) {
+        if (activeAttemptId == attemptId && activeProfile?.runtimeKey == profile.runtimeKey && sidecar?.process?.isAlive == true) {
+            return
+        }
+        stop()
+        lastExitMessage = null
+        waitForListenPortRelease(profile)
 
-		val configFile = writeRuntimeConfig(profile)
-		val engine = File(context.applicationInfo.nativeLibraryDir, ENGINE_NAME)
+        val engine = File(context.applicationInfo.nativeLibraryDir, ENGINE_NAME)
         check(engine.exists()) { "Skirk engine was not packaged at ${engine.absolutePath}" }
 
         val logsDir = File(context.filesDir, "logs").apply { mkdirs() }
         val logFile = File(logsDir, logFileName)
         val metricsFile = File(logsDir, metricsFileName())
-        metricsFile.delete()
+        Files.deleteIfExists(metricsFile.toPath())
         logFile.writeText("")
         val httpListen = if (profile.httpProxyEnabled) profile.httpAddress else "disabled"
         Log.i(TAG, "Starting ${engine.absolutePath} on SOCKS ${profile.socksAddress} HTTP $httpListen")
@@ -42,30 +66,33 @@ class AndroidSkirkEngine(
             logFile,
             "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen",
         )
-        process = ProcessBuilder(buildProcessArgs(engine, configFile, profile, metricsFile))
-            .directory(context.filesDir)
-            .redirectErrorStream(true)
-            .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
-            .start()
-            .also { child ->
-                watchProcessExit(child, logFile)
-            }
-
-        Thread.sleep(250)
-        process?.let { child ->
-            try {
-                val code = child.exitValue()
-                val tail = logFile.takeIf { it.exists() }
-                    ?.readLines()
-                    ?.takeLast(8)
-                    ?.joinToString("\n")
-                    .orEmpty()
-                error("Skirk engine exited with code $code\n$tail")
-            } catch (_: IllegalThreadStateException) {
-                // The process is still running.
-            }
+        val id = UUID.randomUUID().toString()
+        var launchedAtMillis = 0L
+        val started = ProfileSidecar.start(context.cacheDir, profile.rawConfig) { configFile ->
+            val builder = ProcessBuilder(buildProcessArgs(engine, configFile, profile, metricsFile))
+                .directory(context.filesDir)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+            launchedAtMillis = System.currentTimeMillis()
+            launch(builder)
         }
-        activeProfile = profile
+        sidecar = started
+        activeAttemptId = attemptId
+        metricsOwner = ConnectionDiagnosticsOwner(id, launchedAtMillis)
+        try {
+            watchProcessExit(started, logFile, attemptId)
+            networkWatch = watchDefaultNetwork(context, started.process)
+            Thread.sleep(250)
+            if (!started.process.isAlive) {
+                val code = started.process.exitValue()
+                error(skirkEngineExitMessage(code, readExitLog(logFile)))
+            }
+            activeProfile = profile
+            deleteLegacyRuntimeProfiles(context.filesDir, profile.id)
+        } catch (error: Throwable) {
+            stop()
+            throw error
+        }
     }
 
     fun waitUntilReady(label: String, host: String, port: Int, timeoutMs: Long = 120_000L) {
@@ -90,40 +117,37 @@ class AndroidSkirkEngine(
 
     private fun ensureProcessAlive() {
         val child = synchronized(this) {
-            process ?: error("Skirk engine is not running")
+            sidecar?.process ?: error(lastExitMessage ?: "Skirk engine is not running")
         }
         if (child.isAlive) {
             return
         }
         val code = runCatching { child.exitValue() }.getOrDefault(-1)
         val logFile = File(File(context.filesDir, "logs"), logFileName)
-        val tail = logFile.takeIf { it.exists() }
-            ?.readLines()
-            ?.takeLast(8)
-            ?.joinToString("\n")
-            .orEmpty()
+        val message = skirkEngineExitMessage(code, readExitLog(logFile))
         synchronized(this) {
-            if (process === child) {
-                process = null
+            if (sidecar?.process === child) {
+                sidecar = null
+                stopNetworkWatch()
                 activeProfile = null
+                activeAttemptId = null
+                metricsOwner = null
+                lastExitMessage = message
             }
         }
-        error("Skirk engine exited with code $code\n$tail")
+        error(message)
     }
 
-	@Synchronized
-	fun stop() {
-		val child = process
-		process = null
-		activeProfile = null
-		child?.destroy()
-		runCatching {
-			if (child?.waitFor(2, TimeUnit.SECONDS) == false) {
-				child.destroyForcibly()
-				child.waitFor(1, TimeUnit.SECONDS)
-			}
-		}
-	}
+    @Synchronized
+    fun stop() {
+        val previous = sidecar
+        sidecar = null
+        stopNetworkWatch()
+        activeProfile = null
+        activeAttemptId = null
+        metricsOwner = null
+        previous?.stop()
+    }
 
     private fun waitForListenPortRelease(profile: ClientProfile, timeoutMs: Long = 3_000L) {
         waitForPortRelease("local SOCKS port", readinessHost(profile.socksHost), profile.socksPort, timeoutMs)
@@ -150,36 +174,42 @@ class AndroidSkirkEngine(
 			}
 		}.isSuccess
 
-    private fun watchProcessExit(child: Process, logFile: File) {
-        thread(name = "skirk-engine-watch", start = true) {
-            val code = runCatching { child.waitFor() }.getOrNull() ?: return@thread
+    private fun watchProcessExit(child: ProfileSidecar, logFile: File, attemptId: String) {
+        child.watchExit { code ->
+            val tail = readExitLog(logFile)
+            val message = skirkEngineExitMessage(code, tail)
             val unexpected = synchronized(this) {
-                if (process !== child) {
+                if (sidecar !== child) {
                     false
                 } else {
-                    process = null
+                    sidecar = null
+                    stopNetworkWatch()
                     activeProfile = null
+                    activeAttemptId = null
+                    metricsOwner = null
+                    lastExitMessage = message
                     true
                 }
             }
             if (!unexpected) {
                 appendLogLine(logFile, "android stopped code=$code")
                 Log.i(TAG, "Skirk engine stopped code=$code")
-                return@thread
+                return@watchExit
             }
-            val tail = logFile.takeIf { it.exists() }
-                ?.readLines()
-                ?.takeLast(12)
-                ?.joinToString("\n")
-                .orEmpty()
             appendLogLine(logFile, "android exited unexpectedly code=$code")
-            Log.w(TAG, "Skirk engine exited unexpectedly code=$code\n$tail")
-            onUnexpectedExit?.invoke(code)
+            Log.w(TAG, "Skirk engine exited unexpectedly code=$code: $message")
+            onUnexpectedExit?.invoke(attemptId, code, message)
         }
     }
 
+    private fun readExitLog(file: File): String = runCatching { file.readTail(16 * 1024, 12) }.getOrDefault("")
+
+    private fun stopNetworkWatch() {
+        networkWatch?.close()
+        networkWatch = null
+    }
+
     private fun buildProcessArgs(engine: File, configFile: File, profile: ClientProfile, metricsFile: File): List<String> {
-        val routeMode = "google_front_pinned"
         val performance = profile.performance
         val args = mutableListOf(
             engine.absolutePath,
@@ -191,7 +221,7 @@ class AndroidSkirkEngine(
             "--client-id",
             profile.id,
             "--route-mode",
-            routeMode,
+            profile.routeMode,
         )
         if (profile.httpProxyEnabled) {
             args += listOf(
@@ -221,6 +251,7 @@ class AndroidSkirkEngine(
             metricsFile.absolutePath,
             "--watch-parent-pid",
             android.os.Process.myPid().toString(),
+            "--network-events-stdin",
         )
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             args += "--observe"
@@ -236,14 +267,6 @@ class AndroidSkirkEngine(
 
     private fun readinessHost(host: String): String =
         if (host == "0.0.0.0") "127.0.0.1" else host
-
-    private fun writeRuntimeConfig(profile: ClientProfile): File {
-        val configsDir = File(context.filesDir, "configs").apply { mkdirs() }
-        val suffix = if (profile.rawConfig.trim().startsWith("skirk:")) "skirk" else "json"
-        val configFile = File(configsDir, "${profile.id}.$suffix")
-        configFile.writeText(profile.rawConfig)
-        return configFile
-    }
 
     companion object {
         private const val TAG = "SkirkEngine"

@@ -41,13 +41,25 @@ build_one() {
   echo "Building $name"
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/skirk
   cp README.md README.fa.md LICENSE DISCLAIMER.md SECURITY.md CHANGELOG.md "$dist/$name/"
-  mkdir -p "$dist/$name/docs" "$dist/$name/third_party"
-  cp docs/setup.md docs/skirk_modes.md docs/go_skirk.md docs/architecture.md "$dist/$name/docs/"
+  mkdir -p "$dist/$name/docs/images" "$dist/$name/third_party"
+  cp docs/install.md docs/install.fa.md docs/setup.md docs/personal-google-setup.md docs/personal-google-setup.fa.md docs/skirk_modes.md docs/go_skirk.md docs/architecture.md docs/udp-preview-platform-parity.md "$dist/$name/docs/"
+  cp -R docs/images/. "$dist/$name/docs/images/"
+  cp clients/licenses/engine.txt "$dist/$name/third_party/Go-licenses.txt"
   cp third_party/NOTICE.md "$dist/$name/third_party/"
   if [ "$os" = "windows" ]; then
-    (cd "$dist/$name" && python3 -c 'import pathlib, zipfile; z=zipfile.ZipFile("../skirk-windows-amd64.zip", "w", zipfile.ZIP_DEFLATED); [z.write(p, p.as_posix()) for p in pathlib.Path(".").rglob("*") if p.is_file()]; z.close()')
+    (cd "$dist/$name" && python3 - "$name" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+with zipfile.ZipFile(f"../{sys.argv[1]}.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    for path in sorted(pathlib.Path(".").rglob("*")):
+        if path.is_file():
+            archive.write(path, path.as_posix())
+PY
+    )
   else
-    (cd "$dist/$name" && tar -czf "../$name.tar.gz" .)
+    (cd "$dist/$name" && COPYFILE_DISABLE=1 tar -czf "../$name.tar.gz" .)
   fi
 }
 
@@ -60,7 +72,10 @@ main() {
   mkdir -p "$dist"
   build_one linux amd64
   build_one linux arm64
+  build_one darwin amd64
+  build_one darwin arm64
   build_one windows amd64
+  build_one windows arm64
   (cd "$dist" && sha256sum skirk-*.tar.gz skirk-*.zip > SHA256SUMS)
   echo "Release artifacts written to $dist"
 }

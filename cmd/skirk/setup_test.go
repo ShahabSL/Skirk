@@ -2,12 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"github.com/ShahabSL/Skirk/internal/skirk"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
 func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
@@ -22,6 +30,230 @@ func TestDriveOAuthClientRequiredErrorExplainsRecovery(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestProfileDecoderPrivatePipe(t *testing.T) {
+	cfg := skirk.Config{Secret: "private-test-value", Drive: skirk.DriveConfig{FolderID: "fixture"}}
+	profile, err := skirk.EncodeConfigText(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := decodeConfig([]string{"--stdin", "--out", "-"}, strings.NewReader(profile), &output); err != nil {
+		t.Fatal(err)
+	}
+	var got skirk.Config
+	if err := json.Unmarshal(output.Bytes(), &got); err != nil || got.Secret != cfg.Secret {
+		t.Fatal("private pipe did not round-trip the profile")
+	}
+	// A user may have left an earlier export with permissive file permissions.
+	path := filepath.Join(t.TempDir(), "private profile.json")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeConfig([]string{"--stdin", "--out", path}, strings.NewReader(profile), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
+		t.Fatal("decoded profile did not receive private file permissions")
+	}
+	for _, tc := range []struct {
+		args []string
+		data string
+	}{
+		{[]string{"--stdin", "--out", "-"}, "invalid"},
+		{[]string{"--stdin", "--out", "-"}, strings.Repeat("x", (8<<20)+1)},
+		{[]string{"--stdin", "--config", profile, "--out", "-"}, profile},
+		{[]string{"--out", "-"}, ""},
+	} {
+		output.Reset()
+		err := decodeConfig(tc.args, strings.NewReader(tc.data), &output)
+		if err == nil || output.Len() != 0 || strings.Contains(err.Error(), profile) {
+			t.Fatal("invalid import must fail without writing profile data")
+		}
+	}
+}
+
+func TestGeneratedClientCommandReadsCopiedProfile(t *testing.T) {
+	kit := t.TempDir()
+	_, client, profile := writeTestOAuthRenewKit(t, kit, "test-secret")
+	commandPath := filepath.Join(kit, "client-command.txt")
+	for _, tc := range []struct {
+		name    string
+		command string
+		write   bool
+		reject  bool
+	}{
+		{name: "missing", write: true},
+		{name: "already migrated", command: generatedClientCommand},
+		{name: "custom file command", command: "custom-client --profile /private/selected-profile"},
+		{name: "legacy", command: "skirk serve-client --config '" + profile + "' --listen " + client.Tunnel.Listen + "\n", write: true},
+		{name: "unrecognized inline command", command: "custom-client --profile '" + profile + "'", reject: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.command == "" {
+				if err := os.Remove(commandPath); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := writeTextFile(commandPath, tc.command); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := planClientCommandUpdate(kit, client.Tunnel.Listen)
+			if (err != nil) != tc.reject || (plan != nil) != tc.write {
+				t.Fatalf("unexpected command migration: planned=%t err=%v", plan != nil, err)
+			}
+			if plan != nil {
+				if string(plan.replacement) != generatedClientCommand || string(plan.original) != tc.command {
+					t.Fatal("incorrect migration or backup")
+				}
+				fields := strings.Fields(generatedClientCommand)
+				if len(fields) != 4 || strings.Join(fields[:3], " ") != "skirk serve-client --config" {
+					t.Fatal("client command must take a single private profile path")
+				}
+				cfg, err := skirk.LoadConfig(filepath.Join(kit, fields[3]))
+				if err != nil || cfg.Tunnel.Listen != client.Tunnel.Listen || cfg.Auth.RefreshToken != client.Auth.RefreshToken {
+					t.Fatal("copied file does not supply the intended settings and grant")
+				}
+			}
+		})
+	}
+}
+
+func TestSetupKitUsesMuxV5AndRenewRejectsMixedTransport(t *testing.T) {
+	created := setupTunnelConfig("127.0.0.1:18080", 1024, 100, 0, 0)
+	if created.Transport != "muxv5" {
+		t.Fatalf("new kit transport = %q, want muxv5", created.Transport)
+	}
+	exit := &skirk.Config{Tunnel: created}
+	client := &skirk.Config{Tunnel: created}
+	if err := checkOAuthRenewClientIdentity(exit, client); err != nil {
+		t.Fatalf("matching kit transports rejected: %v", err)
+	}
+	client.Tunnel.Transport = "muxv4"
+	if err := checkOAuthRenewClientIdentity(exit, client); err == nil || !strings.Contains(err.Error(), "transport version") {
+		t.Fatalf("mixed kit transports did not fail with upgrade guidance: %v", err)
+	}
+}
+
+func TestSetupUDPProfileValidatesAndRequiresDriveFolder(t *testing.T) {
+	for _, ipv6 := range []bool{false, true} {
+		cfg := skirk.Config{
+			Secret: "synthetic-secret",
+			Drive:  skirk.DriveConfig{FolderID: "test-mailbox"},
+			Tunnel: setupTunnelConfig("127.0.0.1:18080", 8<<20, 1000, 0, 0),
+		}
+		configureSetupUDP(&cfg.Tunnel, ipv6)
+		cfg.ApplyDefaults()
+		if err := cfg.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Tunnel.UDPPreviewSharedUDP || !cfg.Tunnel.UDPPreviewRemoteDNS || cfg.Tunnel.UDPPreviewIPv6 != ipv6 {
+			t.Fatalf("unexpected UDP capabilities for IPv6=%t", ipv6)
+		}
+		cfg.Drive = skirk.DriveConfig{Space: "appDataFolder"}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("UDP setup accepted appDataFolder")
+		}
+	}
+}
+
+func TestSetupWithExplicitADCValidatesWithoutGoogleLogin(t *testing.T) {
+	t.Setenv("SKIRK_OAUTH_CLIENT_ID", "unused-oauth-client")
+	adc := filepath.Join(t.TempDir(), "adc.json")
+	if err := os.WriteFile(adc, []byte(`{"type":"authorized_user","client_id":"synthetic","refresh_token":"synthetic"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := setupInit(t.Context(), []string{"--adc", adc, "--no-gcloud-login", "--udp", "--exit-proxy", "socks5h://127.0.0.1:40000?unexpected=1"})
+	if err == nil || !strings.Contains(err.Error(), "invalid setup options") {
+		t.Fatalf("explicit ADC must validate UDP proxy options before Google access, got %v", err)
+	}
+}
+
+func TestSetupExitProxyUDPUsesTCPForDefinitiveRefusalOnly(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		name := "automatic UDP"
+		if required {
+			name = "explicit UDP"
+		}
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					done <- err
+					return
+				}
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(time.Second))
+				var greeting [3]byte
+				if _, err := io.ReadFull(conn, greeting[:]); err != nil || greeting != [3]byte{5, 1, 0} {
+					done <- errors.New("invalid SOCKS5 greeting")
+					return
+				}
+				if _, err := conn.Write([]byte{5, 0}); err != nil {
+					done <- err
+					return
+				}
+				var request [10]byte
+				if _, err := io.ReadFull(conn, request[:]); err != nil || !bytes.Equal(request[:4], []byte{5, 3, 0, 1}) {
+					done <- errors.New("expected SOCKS5 UDP ASSOCIATE")
+					return
+				}
+				_, err = conn.Write([]byte{5, 7, 0, 1, 0, 0, 0, 0, 0, 0})
+				done <- err
+			}()
+			proxy := "socks5h://" + listener.Addr().String()
+			if required {
+				adc := filepath.Join(t.TempDir(), "adc.json")
+				if err := os.WriteFile(adc, []byte(`{"type":"authorized_user","client_id":"synthetic","refresh_token":"synthetic"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				err := setupInit(t.Context(), []string{"--adc", adc, "--no-gcloud-login", "--udp", "--exit-proxy", proxy, "--out", t.TempDir()})
+				if err == nil || !strings.Contains(err.Error(), "does not support UDP ASSOCIATE") || !strings.Contains(err.Error(), "--udp=false") {
+					t.Fatalf("explicit UDP denied without guidance: %v", err)
+				}
+			} else if ok, err := setupExitProxyUDP(t.Context(), proxy, false); ok || err != nil {
+				t.Fatalf("automatic UDP must select TCP after explicit refusal, got (%t, %v)", ok, err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSetupRefusesToOverwriteExistingKit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "exit.json")
+	if err := os.WriteFile(path, []byte("existing kit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := setupInit(t.Context(), []string{"--out", dir})
+	if err == nil || !strings.Contains(err.Error(), "setup renew-oauth") {
+		t.Fatalf("expected existing kit guidance, got %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "existing kit" {
+		t.Fatalf("existing setup config changed: %v", err)
+	}
+}
+
+func TestSetupIPv6SwitchAcceptsLegacyAndAutomaticValues(t *testing.T) {
+	for input, want := range map[string]setupIPv6Mode{"true": "on", "false": "off", "off": "off", "on": "on", "auto": "auto"} {
+		var got setupIPv6Mode
+		if err := got.Set(input); err != nil || got != want {
+			t.Fatalf("IPv6 switch %q = %q (%v), want %q", input, got, err, want)
 		}
 	}
 }
@@ -175,7 +407,7 @@ func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatalf("oauth client file mode = %o, want 0600", info.Mode().Perm())
 	}
 	creds, err := readOAuthClientCredentials(path)
@@ -412,6 +644,13 @@ func TestApplyTunnelOverridesSplitCapsRemainExplicit(t *testing.T) {
 	}
 }
 
+func TestSetupRejectsInvalidQuotaProjectBeforeGoogleLogin(t *testing.T) {
+	err := setupInit(context.Background(), []string{"--quota-project", "invalid_project", "--no-gcloud-login"})
+	if err == nil || !strings.Contains(err.Error(), "--quota-project") {
+		t.Fatalf("setup error = %v, want quota-project validation error", err)
+	}
+}
+
 func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "README.md")
 	err := writeSetupReadme(path, setupSummary{
@@ -439,6 +678,7 @@ func TestWriteSetupReadmeDocumentsCurrentCommands(t *testing.T) {
 	for _, want := range []string{
 		"skirk service install --config skirk-kit/exit.json --name skirk-exit",
 		"skirk serve-client --config skirk-kit/client.json --listen 127.0.0.1:18080",
+		"skirk serve-client --config ./client.skirk",
 		"skirk cleanup --config skirk-kit/exit.json --older-than 2h",
 		"skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000",
 		"skirk revoke --config skirk-kit/exit.json --revoke-oauth",

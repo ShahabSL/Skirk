@@ -3,6 +3,9 @@ package skirk
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +16,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,16 +25,38 @@ import (
 )
 
 type DriveStore struct {
-	http        *GoogleHTTPClient
-	tokenSource *AccessTokenSource
-	folderID    string
-	space       string
-	quota       *driveQuotaStats
-	backoff     *driveQuotaBackoff
-	Logger      *log.Logger
+	http                   *GoogleHTTPClient
+	normalUploadHTTP       *GoogleHTTPClient
+	normalDownloadHTTP     *GoogleHTTPClient
+	slotReadHTTP           *GoogleHTTPClient
+	slotWriteHTTP          *GoogleHTTPClient
+	tokenSource            *AccessTokenSource
+	folderID               string
+	space                  string
+	quotaProject           string
+	inlineSmallObjects     bool
+	metadataOnlyPriority   bool
+	metadataOnlyMaxBytes   int
+	metadataSlotV1         bool
+	indexedClassProperties bool
+	normalListPageSize     int
+	uploadHedgeDelay       time.Duration
+	uploadHedgeSlots       chan struct{}
+	uploadStallHedgeDelay  time.Duration
+	uploadStallHedgeBudget int64
+	uploadStallHedgeSlots  chan struct{}
+	uploadStallBudgetMu    sync.Mutex
+	uploadStallCharges     []driveUploadDuplicateCharge
+	newHedgeHTTPClient     func() *GoogleHTTPClient
+	quota                  *driveQuotaStats
+	backoff                *driveQuotaBackoff
+	metadataSlotMu         sync.Mutex
+	metadataSlotNames      map[string]string
+	Logger                 *log.Logger
 }
 
 const driveListPageSize = "100"
+const driveNormalListDefaultPageSize = 1000
 const driveListMaxPages = 16
 const driveMuxFreshListMaxPages = 4
 const defaultDriveCleanupMaxPages = 256
@@ -42,6 +68,29 @@ const driveQuotaBackoffBase = 5 * time.Second
 const driveQuotaBackoffMax = 64 * time.Second
 const driveQuotaBackoffJitter = time.Second
 const driveQuotaBackoffLogInterval = 5 * time.Second
+const driveInlineMaxBytes = 8192
+const driveMetadataOnlyLargeMaxBytes = 16384
+const driveLargeMetadataListMaxBytes = 8 * 1024 * 1024
+
+func metadataOnlyByteLimit(configured int) int {
+	if configured == driveMetadataOnlyLargeMaxBytes {
+		return configured
+	}
+	return driveInlineMaxBytes
+}
+
+const driveInlineMarker = "skirk-sealed-v1:"
+const driveMetadataOnlyMarker = "skirk-sealed-v2:"
+const driveMetadataOnlyNameSuffix = ".mo1"
+const driveIndexedClassProperty = "skirkClass"
+const driveClockTolerance = 3 * time.Second
+const driveClockCheckMaxDuration = time.Minute
+
+var ErrDriveClockSkew = errors.New("device clock differs from Google Drive clock; enable automatic date and time, then reconnect")
+var ErrDriveClockUnverified = errors.New("could not verify Google Drive clock; reconnect when the connection is stable")
+
+const driveUploadHedgeMinBytes = 128 * 1024
+const driveUploadHedgeMaxConcurrent = 4
 
 type DriveCleanupOptions struct {
 	Prefix            string
@@ -80,7 +129,115 @@ func NewDriveStoreWithTokenSource(httpClient *GoogleHTTPClient, tokenSource *Acc
 		space = "appDataFolder"
 		folderID = ""
 	}
-	return &DriveStore{http: httpClient, tokenSource: tokenSource, folderID: folderID, space: space, quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+	var normalUploadHTTP, normalDownloadHTTP *GoogleHTTPClient
+	if httpClient != nil && (cfg.SeparateUploadPool || cfg.SeparateBulkMediaPool) {
+		// Keep bulk media on one independent same-route pool. Metadata, list,
+		// priority traffic and cleanup retain the original connection pool.
+		normalUploadHTTP = NewGoogleHTTPClient(httpClient.route)
+		if cfg.SeparateBulkMediaPool {
+			normalDownloadHTTP = normalUploadHTTP
+		}
+	}
+	var slotReadHTTP, slotWriteHTTP *GoogleHTTPClient
+	if httpClient != nil && cfg.MetadataSlotV1 && cfg.SeparateMetadataSlotPools {
+		// Read and write each get a same-route pool. Authentication, quota
+		// accounting, and backoff still belong to this DriveStore.
+		slotReadHTTP = NewGoogleHTTPClient(httpClient.route)
+		slotWriteHTTP = NewGoogleHTTPClient(httpClient.route)
+	}
+	normalListPageSize := cfg.NormalListPageSize
+	if normalListPageSize == 0 {
+		normalListPageSize = driveNormalListDefaultPageSize
+	}
+	if normalListPageSize != 100 && normalListPageSize != 500 && normalListPageSize != 1000 {
+		normalListPageSize = 100 // Direct constructor calls still fail safe without Config.Validate.
+	}
+	return &DriveStore{http: httpClient, normalUploadHTTP: normalUploadHTTP, normalDownloadHTTP: normalDownloadHTTP, slotReadHTTP: slotReadHTTP, slotWriteHTTP: slotWriteHTTP, tokenSource: tokenSource, folderID: folderID, space: space, quotaProject: cfg.QuotaProject, inlineSmallObjects: cfg.InlineSmallObjects, metadataOnlyPriority: cfg.MetadataOnlyPriority, metadataOnlyMaxBytes: metadataOnlyByteLimit(cfg.MetadataOnlyMaxBytes), metadataSlotV1: cfg.MetadataSlotV1, indexedClassProperties: cfg.IndexedClassProperties, normalListPageSize: normalListPageSize, uploadHedgeDelay: time.Duration(cfg.UploadHedgeDelayMS) * time.Millisecond, uploadHedgeSlots: make(chan struct{}, driveUploadHedgeMaxConcurrent), uploadStallHedgeDelay: time.Duration(cfg.UploadStallHedgeDelayMS) * time.Millisecond, uploadStallHedgeBudget: cfg.UploadStallHedgeBudgetBytes, uploadStallHedgeSlots: make(chan struct{}, 1), quota: newDriveQuotaStats(driveQuotaLogInterval()), backoff: newDriveQuotaBackoff()}
+}
+
+func (d *DriveStore) MetadataOnlyPriorityEnabled() bool {
+	return d != nil && d.metadataOnlyPriority
+}
+
+func (d *DriveStore) MetadataOnlyPriorityLimit() int {
+	return metadataOnlyByteLimit(d.metadataOnlyMaxBytes)
+}
+
+func indexedMuxClass(name string) string {
+	parts := strings.Split(name, "/")
+	if len(parts) < 9 || (parts[0] != "muxv4" && parts[0] != "muxv5") || !strings.HasPrefix(parts[len(parts)-2], "l") {
+		return ""
+	}
+	class := parts[len(parts)-4]
+	if class == "p0" || class == "p1" {
+		return class
+	}
+	return ""
+}
+
+func isMuxNamespace(name string) bool {
+	return strings.HasPrefix(name, "muxv4/") || strings.HasPrefix(name, "muxv5/")
+}
+
+func (d *DriveStore) addIndexedClassProperty(metadata map[string]any, name string) {
+	if d == nil || !d.indexedClassProperties {
+		return
+	}
+	if class := indexedMuxClass(name); class != "" {
+		metadata["properties"] = map[string]string{driveIndexedClassProperty: class}
+	}
+}
+
+// PutMetadataOnlyObject uses files.create metadata rather than an upload URL.
+// The sealed bytes are still authenticated by the mux AEAD on the reader.
+func (d *DriveStore) PutMetadataOnlyObject(ctx context.Context, name string, sealed []byte) (ObjectInfo, error) {
+	if !d.MetadataOnlyPriorityEnabled() || !isMetadataOnlyPriorityName(name) {
+		return ObjectInfo{}, errors.New("metadata-only priority upload is disabled or name is invalid")
+	}
+	if len(sealed) == 0 || len(sealed) > metadataOnlyByteLimit(d.metadataOnlyMaxBytes) {
+		return ObjectInfo{}, fmt.Errorf("metadata-only sealed size must be 1-%d bytes", metadataOnlyByteLimit(d.metadataOnlyMaxBytes))
+	}
+	metadata := map[string]any{
+		"name":        name,
+		"mimeType":    "application/octet-stream",
+		"description": driveMetadataOnlyMarker + base64.StdEncoding.EncodeToString(sealed),
+	}
+	d.addIndexedClassProperty(metadata, name)
+	if d.isAppData() {
+		metadata["parents"] = []string{"appDataFolder"}
+	} else if d.folderID != "" {
+		metadata["parents"] = []string{d.folderID}
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	result, err := d.request(ctx, http.MethodPost, "/drive/v3/files?fields=id,name,size", map[string]string{"Content-Type": "application/json; charset=UTF-8"}, body)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if err := require2xx(result, "drive metadata-only create"); err != nil {
+		return ObjectInfo{}, err
+	}
+	if d.Logger != nil && len(sealed) > driveInlineMaxBytes {
+		d.Logger.Printf("drive large metadata publication sealed_bytes=%d configured_limit=%d", len(sealed), metadataOnlyByteLimit(d.metadataOnlyMaxBytes))
+	}
+	var payload struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Size string `json:"size"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ObjectInfo{}, err
+	}
+	if payload.ID == "" || payload.Name != name || (payload.Size != "" && payload.Size != "0") {
+		return ObjectInfo{}, errors.New("drive metadata-only create returned unexpected file metadata")
+	}
+	return ObjectInfo{Name: name, ID: payload.ID, Size: 0}, nil
+}
+
+func isMetadataOnlyPriorityName(name string) bool {
+	return isMuxNamespace(name) && strings.Contains(name, "/p0/") && strings.HasSuffix(name, driveMetadataOnlyNameSuffix)
 }
 
 func (d *DriveStore) Put(ctx context.Context, name string, data []byte) error {
@@ -147,6 +304,11 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 		"name":     name,
 		"mimeType": "application/octet-stream",
 	}
+	d.addIndexedClassProperty(metadata, name)
+	if d.inlineSmallObjects && len(data) > 0 && len(data) <= driveInlineMaxBytes && isMuxNamespace(name) && strings.Contains(name, "/p0/") {
+		// Retain the media body so existing readers can read the same file.
+		metadata["description"] = driveInlineMarker + base64.StdEncoding.EncodeToString(data)
+	}
 	if fileID != "" {
 		metadata["id"] = fileID
 	}
@@ -183,22 +345,167 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 	headers := map[string]string{
 		"Content-Type": "multipart/related; boundary=" + boundary,
 	}
-	result, err := d.request(ctx, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body.Bytes())
+	primaryHTTP := d.http
+	if d.normalUploadHTTP != nil && isNormalGeneratedMuxUpload(fileID, name, len(data)) {
+		primaryHTTP = d.normalUploadHTTP
+	}
+	var proofDigest func() string
+	if fileID != "" {
+		// Most uploads succeed; hash only when a duplicate ID needs proof.
+		proofDigest = func() string {
+			digest := sha256.Sum256(data)
+			return hex.EncodeToString(digest[:])
+		}
+	}
+	upload := func(uploadCtx context.Context, client *GoogleHTTPClient) (ObjectInfo, error) {
+		return d.uploadObjectWithHTTPMode(uploadCtx, client, fileID, name, len(data), headers, body.Bytes(), proofDigest, false)
+	}
+	if d.uploadStallHedgeDelay > 0 && isNormalGeneratedMuxUpload(fileID, name, len(data)) {
+		return d.uploadObjectWithStallHedge(ctx, primaryHTTP, fileID, name, data, headers, body.Bytes())
+	}
+	if d.shouldHedgeUpload(fileID, name, len(data)) {
+		return d.uploadObjectWithHedge(ctx, primaryHTTP, upload)
+	}
+	return upload(ctx, primaryHTTP)
+}
+
+func (d *DriveStore) shouldHedgeUpload(fileID, name string, size int) bool {
+	return d.uploadHedgeDelay > 0 && d.uploadHedgeSlots != nil && isNormalGeneratedMuxUpload(fileID, name, size)
+}
+
+func isNormalGeneratedMuxUpload(fileID, name string, size int) bool {
+	return fileID != "" && size >= driveUploadHedgeMinBytes &&
+		isMuxNamespace(name) && strings.Contains(name, "/p1/")
+}
+
+type driveUploadOutcome struct {
+	info ObjectInfo
+	err  error
+}
+
+// A generated ID makes the second POST safe to issue after an indeterminate
+// first attempt. The extra request gets a fresh connection pool, while both
+// legs retain this store's token, quota accounting, backoff, and logger.
+func (d *DriveStore) uploadObjectWithHedge(ctx context.Context, primaryHTTP *GoogleHTTPClient, upload func(context.Context, *GoogleHTTPClient) (ObjectInfo, error)) (ObjectInfo, error) {
+	legCtx, cancelLegs := context.WithCancel(ctx)
+	defer cancelLegs()
+	primary := make(chan driveUploadOutcome, 1)
+	go func() {
+		info, err := upload(legCtx, primaryHTTP)
+		primary <- driveUploadOutcome{info: info, err: err}
+	}()
+	timer := time.NewTimer(d.uploadHedgeDelay)
+	defer timer.Stop()
+	select {
+	case result := <-primary:
+		return result.info, result.err
+	case <-timer.C:
+	}
+	// Prefer an already-completed primary when the timer and result race.
+	select {
+	case result := <-primary:
+		return result.info, result.err
+	default:
+	}
+	if d.QuotaBackoffSnapshot().Active {
+		result := <-primary
+		return result.info, result.err
+	}
+	if ctx.Err() != nil {
+		result := <-primary
+		return result.info, result.err
+	}
+	select {
+	case d.uploadHedgeSlots <- struct{}{}:
+	default:
+		result := <-primary
+		return result.info, result.err
+	}
+	select {
+	case result := <-primary:
+		<-d.uploadHedgeSlots
+		return result.info, result.err
+	default:
+	}
+	if ctx.Err() != nil || d.QuotaBackoffSnapshot().Active {
+		<-d.uploadHedgeSlots
+		result := <-primary
+		return result.info, result.err
+	}
+	hedgeClient := d.freshHedgeHTTPClient()
+	if hedgeClient == nil {
+		<-d.uploadHedgeSlots
+		result := <-primary
+		return result.info, result.err
+	}
+	hedgeStarted := time.Now()
+	if d.Logger != nil {
+		d.Logger.Printf("drive upload hedge action=start delay=%s active_extra=%d", d.uploadHedgeDelay, len(d.uploadHedgeSlots))
+	}
+	secondary := make(chan driveUploadOutcome, 1)
+	go func() {
+		info, err := upload(legCtx, hedgeClient)
+		hedgeClient.client.CloseIdleConnections()
+		<-d.uploadHedgeSlots
+		secondary <- driveUploadOutcome{info: info, err: err}
+	}()
+	primaryPending, secondaryPending := (<-chan driveUploadOutcome)(primary), (<-chan driveUploadOutcome)(secondary)
+	var primaryResult driveUploadOutcome
+	for primaryPending != nil || secondaryPending != nil {
+		select {
+		case result := <-primaryPending:
+			primaryResult = result
+			primaryPending = nil
+			if primaryResult.err == nil {
+				cancelLegs()
+				if secondaryPending != nil {
+					<-secondaryPending // Join the canceled leg before returning success.
+				}
+				d.logUploadHedgeComplete("primary", hedgeStarted)
+				return primaryResult.info, nil
+			}
+		case result := <-secondaryPending:
+			secondaryPending = nil
+			if result.err == nil {
+				cancelLegs()
+				if primaryPending != nil {
+					<-primaryPending
+				}
+				d.logUploadHedgeComplete("secondary", hedgeStarted)
+				return result.info, nil
+			}
+		}
+	}
+	d.logUploadHedgeComplete("none", hedgeStarted)
+	return primaryResult.info, primaryResult.err
+}
+
+func (d *DriveStore) logUploadHedgeComplete(winner string, started time.Time) {
+	if d.Logger != nil {
+		d.Logger.Printf("drive upload hedge action=complete winner=%s duration=%s", winner, time.Since(started).Round(time.Millisecond))
+	}
+}
+
+func (d *DriveStore) freshHedgeHTTPClient() *GoogleHTTPClient {
+	if d.newHedgeHTTPClient != nil {
+		return d.newHedgeHTTPClient()
+	}
+	if d.http == nil {
+		return nil
+	}
+	return NewGoogleHTTPClient(d.http.route)
+}
+
+func (d *DriveStore) uploadObjectWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, fileID, name string, size int, headers map[string]string, body []byte, proofDigest func() string, singleAttempt bool) (ObjectInfo, error) {
+	result, err := d.requestWithHTTPMode(ctx, httpClient, http.MethodPost, "/upload/drive/v3/files?uploadType=multipart&fields=id,name,size", headers, body, singleAttempt)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	if result.Status == http.StatusConflict && fileID != "" {
-		info, err := d.getObjectInfoByID(ctx, fileID)
-		if err != nil {
-			return ObjectInfo{}, err
+		if proofDigest == nil {
+			return ObjectInfo{}, errors.New("upload conflict has no prepared content digest")
 		}
-		if info.Name != "" && info.Name != name {
-			return ObjectInfo{}, fmt.Errorf("drive upload id conflict name=%q want=%q", info.Name, name)
-		}
-		if info.Size != int64(len(data)) {
-			return ObjectInfo{}, fmt.Errorf("drive upload id conflict size=%d want=%d", info.Size, len(data))
-		}
-		return info, nil
+		return d.proveGeneratedUploadConflict(ctx, httpClient, fileID, name, size, proofDigest())
 	}
 	if err := require2xx(result, "drive upload"); err != nil {
 		return ObjectInfo{}, err
@@ -211,8 +518,31 @@ func (d *DriveStore) putObject(ctx context.Context, fileID, name string, data []
 	if err := json.Unmarshal(result.Body, &payload); err != nil {
 		return ObjectInfo{}, err
 	}
-	size, _ := strconv.ParseInt(payload.Size, 10, 64)
-	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size}, nil
+	parsedSize, _ := strconv.ParseInt(payload.Size, 10, 64)
+	return ObjectInfo{Name: payload.Name, ID: payload.ID, Size: parsedSize}, nil
+}
+
+func (d *DriveStore) proveGeneratedUploadConflict(ctx context.Context, client *GoogleHTTPClient, id, name string, size int, digest string) (ObjectInfo, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		info, committed, err := d.readUploadCommitProof(ctx, client, id, name, size, digest)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		if committed {
+			return info, nil
+		}
+		if attempt == 2 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ObjectInfo{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return ObjectInfo{}, errors.New("upload conflict has no exact content commit proof")
 }
 
 func (d *DriveStore) EnsureFolder(ctx context.Context, name string) (ObjectInfo, error) {
@@ -277,12 +607,69 @@ func (d *DriveStore) EnsureFolder(ctx context.Context, name string) (ObjectInfo,
 }
 
 func (d *DriveStore) getObjectInfoByID(ctx context.Context, fileID string) (ObjectInfo, error) {
+	return d.getObjectInfoByIDWithHTTP(ctx, d.http, fileID)
+}
+
+func (d *DriveStore) GetMuxObjectMetadataByID(ctx context.Context, fileID string) (ObjectInfo, bool, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return ObjectInfo{}, false, errors.New("mux object metadata requires a file id")
+	}
+	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=id,name,size,modifiedTime,description,trashed,parents,spaces"
+	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	if err != nil {
+		return ObjectInfo{}, false, err
+	}
+	if err := require2xx(result, "drive mux object metadata by id"); err != nil {
+		return ObjectInfo{}, false, err
+	}
+	var payload struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		Size         string   `json:"size"`
+		ModifiedTime string   `json:"modifiedTime"`
+		Description  string   `json:"description"`
+		Trashed      bool     `json:"trashed"`
+		Parents      []string `json:"parents"`
+		Spaces       []string `json:"spaces"`
+	}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return ObjectInfo{}, false, err
+	}
+	if payload.ID == "" || payload.ID != fileID {
+		return ObjectInfo{}, false, errors.New("drive mux object metadata returned a mismatched file id")
+	}
+	size, _ := strconv.ParseInt(payload.Size, 10, 64)
+	info := ObjectInfo{Name: payload.Name, ID: payload.ID, Size: size, Updated: payload.ModifiedTime, InlineData: d.decodeInlineData(payload.Name, payload.Description, size)}
+	if payload.Trashed {
+		return info, false, nil
+	}
+	if d.folderID != "" {
+		if payload.Parents == nil {
+			return info, false, errors.New("drive mux object mailbox parents were omitted")
+		}
+		if !slices.Contains(payload.Parents, d.folderID) {
+			return info, false, nil
+		}
+	}
+	if d.isAppData() {
+		if payload.Spaces == nil {
+			return info, false, errors.New("drive mux object mailbox spaces were omitted")
+		}
+		if !slices.Contains(payload.Spaces, "appDataFolder") {
+			return info, false, nil
+		}
+	}
+	return info, true, nil
+}
+
+func (d *DriveStore) getObjectInfoByIDWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, fileID string) (ObjectInfo, error) {
 	fileID = strings.TrimSpace(fileID)
 	if fileID == "" {
 		return ObjectInfo{}, errors.New("drive metadata by id requires file id")
 	}
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=id,name,size,modifiedTime"
-	result, err := d.request(ctx, http.MethodGet, path, nil, nil)
+	result, err := d.requestWithHTTP(ctx, httpClient, http.MethodGet, path, nil, nil)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -319,11 +706,25 @@ func (d *DriveStore) Get(ctx context.Context, name string) ([]byte, error) {
 }
 
 func (d *DriveStore) GetByID(ctx context.Context, fileID string) ([]byte, error) {
+	return d.getByIDWithHTTP(ctx, d.http, fileID)
+}
+
+// GetNormalByID uses the optional bulk pool. The mux calls this only for
+// normal data objects; priority reads and control calls stay on d.http.
+func (d *DriveStore) GetNormalByID(ctx context.Context, fileID string) ([]byte, error) {
+	client := d.normalDownloadHTTP
+	if client == nil {
+		client = d.http
+	}
+	return d.getByIDWithHTTP(withGoogleResponseLimitAtMost(ctx, int64(muxMaxSealedBatch)), client, fileID)
+}
+
+func (d *DriveStore) getByIDWithHTTP(ctx context.Context, client *GoogleHTTPClient, fileID string) ([]byte, error) {
 	path := "/drive/v3/files/" + url.PathEscape(fileID) + "?alt=media"
 	headers := driveMediaDownloadHeaders()
 	var last *HTTPResult
 	for attempt := 0; attempt < 5; attempt++ {
-		result, err := d.mediaRequest(ctx, http.MethodGet, path, headers, nil)
+		result, err := d.requestWithHTTP(ctx, client, http.MethodGet, path, headers, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -437,17 +838,26 @@ func (d *DriveStore) ListFreshStatus(ctx context.Context, prefix string, since t
 }
 
 func (d *DriveStore) ListFreshPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string) (ObjectListInfo, error) {
-	info, err := d.ListFreshContainsPageStatus(ctx, []string{prefix}, since, pageToken, driveListMaxPages)
+	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, driveListMaxPages, driveListPageSize)
+}
+
+func (d *DriveStore) ListFreshAdaptiveMuxPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	if !isMuxNamespace(prefix) {
+		return ObjectListInfo{}, errors.New("adaptive mux list requires a mux prefix")
+	}
+	if maxPages < 1 || maxPages > driveMuxFreshListMaxPages {
+		return ObjectListInfo{}, errors.New("adaptive mux list page budget must be 1..4")
+	}
+	return d.listFreshPrefixPageStatus(ctx, prefix, since, pageToken, maxPages, strconv.Itoa(d.normalListPageSize))
+}
+
+func (d *DriveStore) listFreshPrefixPageStatus(ctx context.Context, prefix string, since time.Time, pageToken string, maxPages int, pageSize string) (ObjectListInfo, error) {
+	info, err := d.listFreshQueryPageStatus(ctx, d.containsQuery([]string{prefix}), since, pageToken, maxPages, pageSize, func(name string) bool {
+		return strings.HasPrefix(name, prefix)
+	})
 	if err != nil {
 		return ObjectListInfo{}, err
 	}
-	filtered := info.Objects[:0]
-	for _, object := range info.Objects {
-		if strings.HasPrefix(object.Name, prefix) {
-			filtered = append(filtered, object)
-		}
-	}
-	info.Objects = filtered
 	return info, nil
 }
 
@@ -521,9 +931,15 @@ func (d *DriveStore) ListChanges(ctx context.Context, pageToken string, includeR
 }
 
 func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]ObjectInfo, error) {
+	if d.metadataOnlyPriority && metadataOnlyByteLimit(d.metadataOnlyMaxBytes) > driveInlineMaxBytes {
+		ctx = withGoogleResponseLimit(ctx, driveLargeMetadataListMaxBytes)
+	}
 	values := url.Values{}
 	values.Set("q", d.containsQuery(contains))
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
+	if d.inlineSmallObjects || d.metadataOnlyPriority {
+		values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime,description)")
+	}
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime desc")
 	if d.isAppData() {
@@ -543,7 +959,7 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 				continue
 			}
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
-			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime})
+			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime, InlineData: d.decodeInlineData(item.Name, item.Description, size)})
 		}
 		return nil
 	})
@@ -555,17 +971,53 @@ func (d *DriveStore) listContains(ctx context.Context, contains []string) ([]Obj
 }
 
 func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains []string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	pageSize := driveListPageSize
+	if len(contains) == 2 && isMuxNamespace(contains[0]) && contains[1] == "/p1/" {
+		pageSize = strconv.Itoa(d.normalListPageSize)
+	}
+	return d.listFreshQueryPageStatus(ctx, d.containsQuery(contains), since, pageToken, maxPages, pageSize, func(name string) bool {
+		for _, value := range contains {
+			if strings.TrimSpace(value) != "" && !strings.Contains(name, value) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// ListFreshIndexedClassPageStatus is a probe path. The mux keeps legacy
+// discovery until mixed-version peers have a negotiated rollout path.
+func (d *DriveStore) ListFreshIndexedClassPageStatus(ctx context.Context, prefix, class string, since time.Time, pageToken string, maxPages int) (ObjectListInfo, error) {
+	if d == nil || !d.indexedClassProperties {
+		return ObjectListInfo{}, errors.New("indexed class properties are disabled")
+	}
+	if !isMuxNamespace(prefix) || (class != "p0" && class != "p1") {
+		return ObjectListInfo{}, errors.New("indexed class query requires a mux prefix and p0 or p1 class")
+	}
+	query := d.containsQuery([]string{prefix}) + fmt.Sprintf(" and properties has { key='%s' and value='%s' }", driveIndexedClassProperty, class)
+	return d.listFreshQueryPageStatus(ctx, query, since, pageToken, maxPages, driveListPageSize, func(name string) bool {
+		return strings.HasPrefix(name, prefix) && indexedMuxClass(name) == class
+	})
+}
+
+func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string, since time.Time, pageToken string, maxPages int, pageSize string, matches func(string) bool) (ObjectListInfo, error) {
+	if d.metadataOnlyPriority && metadataOnlyByteLimit(d.metadataOnlyMaxBytes) > driveInlineMaxBytes {
+		pageSize = driveListPageSize
+		ctx = withGoogleResponseLimit(ctx, driveLargeMetadataListMaxBytes)
+	}
 	if maxPages <= 0 {
 		maxPages = driveMuxFreshListMaxPages
 	}
 	values := url.Values{}
-	query := d.containsQuery(contains)
 	if !since.IsZero() {
 		query += fmt.Sprintf(" and modifiedTime >= '%s'", escapeDriveQuery(since.UTC().Format(time.RFC3339Nano)))
 	}
 	values.Set("q", query)
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
-	values.Set("pageSize", driveListPageSize)
+	if d.inlineSmallObjects || d.metadataOnlyPriority {
+		values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime,description)")
+	}
+	values.Set("pageSize", pageSize)
 	values.Set("orderBy", "modifiedTime desc")
 	if strings.TrimSpace(pageToken) != "" {
 		values.Set("pageToken", strings.TrimSpace(pageToken))
@@ -574,19 +1026,9 @@ func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains [
 		values.Set("spaces", "appDataFolder")
 	}
 	var infos []ObjectInfo
-	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
+	status, err := d.eachFilesPageUntilLimitStatusChecked(ctx, values, "drive list", maxPages, true, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
-			matched := true
-			for _, value := range contains {
-				if strings.TrimSpace(value) == "" {
-					continue
-				}
-				if !strings.Contains(item.Name, value) {
-					matched = false
-					break
-				}
-			}
-			if !matched {
+			if !matches(item.Name) {
 				continue
 			}
 			if !since.IsZero() && item.ModifiedTime != "" {
@@ -596,7 +1038,7 @@ func (d *DriveStore) ListFreshContainsPageStatus(ctx context.Context, contains [
 				}
 			}
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
-			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime})
+			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime, InlineData: d.decodeInlineData(item.Name, item.Description, size)})
 		}
 		return true, nil
 	})
@@ -630,6 +1072,7 @@ func (d *DriveStore) DeleteID(ctx context.Context, fileID string) error {
 		return err
 	}
 	if result.Status == http.StatusNoContent || result.Status == http.StatusOK || result.Status == http.StatusNotFound {
+		d.forgetMetadataSlot(fileID)
 		return nil
 	}
 	return require2xx(result, "drive delete id")
@@ -679,6 +1122,9 @@ func (d *DriveStore) DeleteIDs(ctx context.Context, fileIDs []string, concurrenc
 
 func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
 	prefix := strings.TrimSpace(opts.Prefix)
+	if !opts.All && prefix == UDPPreviewCleanupPrefix {
+		return d.cleanupUDPPreview(ctx, opts)
+	}
 	if prefix == "" && !opts.All {
 		return DriveCleanupResult{}, fmt.Errorf("cleanup prefix is required")
 	}
@@ -852,7 +1298,38 @@ type driveListPayload struct {
 		Name         string `json:"name"`
 		Size         string `json:"size"`
 		ModifiedTime string `json:"modifiedTime"`
+		Description  string `json:"description"`
 	} `json:"files"`
+}
+
+func (d *DriveStore) decodeInlineData(name, description string, size int64) []byte {
+	if isMetadataOnlyPriorityName(name) {
+		if !d.metadataOnlyPriority || size != 0 || !strings.HasPrefix(description, driveMetadataOnlyMarker) {
+			return nil
+		}
+		encoded := strings.TrimPrefix(description, driveMetadataOnlyMarker)
+		limit := metadataOnlyByteLimit(d.metadataOnlyMaxBytes)
+		if len(encoded) > base64.StdEncoding.EncodedLen(limit) {
+			return nil
+		}
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || len(data) == 0 || len(data) > limit {
+			return nil
+		}
+		return data
+	}
+	if !d.inlineSmallObjects || size <= 0 || size > driveInlineMaxBytes || !isMuxNamespace(name) || !strings.Contains(name, "/p0/") || !strings.HasPrefix(description, driveInlineMarker) {
+		return nil
+	}
+	encoded := strings.TrimPrefix(description, driveInlineMarker)
+	if len(encoded) > base64.StdEncoding.EncodedLen(driveInlineMaxBytes) {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || int64(len(data)) != size {
+		return nil
+	}
+	return data
 }
 
 type driveChangesPayload struct {
@@ -898,17 +1375,18 @@ func (d *DriveStore) eachFilesPageUntilLimit(ctx context.Context, values url.Val
 }
 
 func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values url.Values, op string, maxPages int, fn func(driveListPayload) (bool, error)) (driveListPageStatus, error) {
+	return d.eachFilesPageUntilLimitStatusChecked(ctx, values, op, maxPages, false, fn)
+}
+
+func (d *DriveStore) eachFilesPageUntilLimitStatusChecked(ctx context.Context, values url.Values, op string, maxPages int, checkClock bool, fn func(driveListPayload) (bool, error)) (driveListPageStatus, error) {
 	if maxPages <= 0 {
 		maxPages = driveListMaxPages
 	}
 	pageValues := cloneValues(values)
 	incomplete := false
 	for page := 0; page < maxPages; page++ {
-		result, err := d.request(ctx, http.MethodGet, "/drive/v3/files?"+pageValues.Encode(), nil, nil)
+		result, err := d.requestFilesPage(ctx, "/drive/v3/files?"+pageValues.Encode(), op, checkClock)
 		if err != nil {
-			return driveListPageStatus{}, err
-		}
-		if err := require2xx(result, op); err != nil {
 			return driveListPageStatus{}, err
 		}
 		var payload driveListPayload
@@ -933,6 +1411,65 @@ func (d *DriveStore) eachFilesPageUntilLimitStatus(ctx context.Context, values u
 		pageValues.Set("pageToken", payload.NextPageToken)
 	}
 	return driveListPageStatus{}, nil
+}
+
+func (d *DriveStore) requestFilesPage(ctx context.Context, path, op string, checkClock bool) (*HTTPResult, error) {
+	var headers map[string]string
+	for {
+		result, err := d.request(ctx, http.MethodGet, path, headers, nil)
+		if err != nil {
+			return nil, err
+		}
+		if err := require2xx(result, op); err != nil {
+			return nil, err
+		}
+		if !checkClock {
+			return result, nil
+		}
+		err = checkDriveServerClock(result.Header, result.RequestStarted, result.ResponseReceived)
+		if err == nil {
+			return result, nil
+		}
+		if headers != nil {
+			return nil, err
+		}
+		// Discard the entire suspect page. Revalidate the same query once
+		// before letting a single stale Date tear down every active stream.
+		headers = map[string]string{"Cache-Control": "no-cache"}
+	}
+}
+
+// A fresh mailbox query uses Drive's modifiedTime as its lower bound. A device
+// clock far ahead misses new traffic; one far behind can replay an old OPEN.
+// The Date header must fall within the request's local time interval, allowing
+// for HTTP second precision and small server clock differences. Never widen
+// the 30-second startup catch-up to compensate for clock skew.
+func checkDriveServerClock(header http.Header, requestStarted, requestEnded time.Time) error {
+	_, err := verifiedDriveServerTime(header, requestStarted, requestEnded)
+	return err
+}
+
+func verifiedDriveServerTime(header http.Header, requestStarted, requestEnded time.Time) (time.Time, error) {
+	if requestEnded.Before(requestStarted) || requestEnded.Sub(requestStarted) > driveClockCheckMaxDuration {
+		return time.Time{}, fmt.Errorf("%w: Drive list took too long for a reliable time comparison", ErrDriveClockUnverified)
+	}
+	date := strings.TrimSpace(header.Get("Date"))
+	if date == "" {
+		return time.Time{}, fmt.Errorf("%w: Drive list response did not include a Date header", ErrDriveClockUnverified)
+	}
+	serverTime, err := http.ParseTime(date)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: Drive list response had an invalid Date header", ErrDriveClockUnverified)
+	}
+	// HTTP dates have no fractional seconds. Compare the earliest
+	// acceptable second in the same precision as the observation.
+	if serverTime.Before(requestStarted.Add(-driveClockTolerance).Truncate(time.Second)) {
+		return time.Time{}, fmt.Errorf("%w: this device is ahead of Google Drive", ErrDriveClockSkew)
+	}
+	if serverTime.After(requestEnded.Add(driveClockTolerance)) {
+		return time.Time{}, fmt.Errorf("%w: this device is behind Google Drive", ErrDriveClockSkew)
+	}
+	return serverTime, nil
 }
 
 func cloneValues(values url.Values) url.Values {
@@ -985,11 +1522,44 @@ func validateContentRange(header string, wantStart, wantEnd int64, bodyLen int) 
 }
 
 func (d *DriveStore) request(ctx context.Context, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
-	if d.http == nil {
+	return d.requestWithHTTP(ctx, d.http, method, path, headers, body)
+}
+
+func (d *DriveStore) requestWithHTTP(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	return d.requestWithHTTPMode(ctx, httpClient, method, path, headers, body, false)
+}
+
+func (d *DriveStore) requestSlotPatch(ctx context.Context, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
+	httpClient := d.http
+	if d.slotWriteHTTP != nil {
+		httpClient = d.slotWriteHTTP
+	}
+	return d.requestWithHTTPMode(ctx, httpClient, http.MethodPatch, path, headers, body, true)
+}
+
+func (d *DriveStore) requestWithHTTPMode(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte, singleAttempt bool) (*HTTPResult, error) {
+	return d.requestWithHTTPTimeout(ctx, httpClient, method, path, headers, body, singleAttempt, 0)
+}
+
+// A positive timeout bounds each admitted authentication and HTTP attempt.
+// Quota waits, including one before a 401 retry, still obey the caller's context.
+func (d *DriveStore) requestWithHTTPTimeout(ctx context.Context, httpClient *GoogleHTTPClient, method, path string, headers map[string]string, body []byte, singleAttempt bool, timeout time.Duration) (*HTTPResult, error) {
+	if httpClient == nil {
 		return nil, errors.New("drive http client is nil")
+	}
+	if d.quotaProject != "" {
+		if err := ValidateGoogleProjectID(d.quotaProject); err != nil {
+			return nil, fmt.Errorf("drive quota project: %w", err)
+		}
 	}
 	var last *HTTPResult
 	label := driveRequestLabel(method, path)
+	if ctx.Value(driveUploadCommitProbeKey{}) == true && method == http.MethodGet {
+		label = "upload_commit_probe"
+	}
+	if ctx.Value(driveSlotCleanupRequestKey{}) == true && method == http.MethodGet {
+		label = "slot_cleanup_probe"
+	}
 	started := time.Now()
 	for attempt := 0; attempt < 2; attempt++ {
 		if d.backoff != nil {
@@ -997,16 +1567,41 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 				return nil, err
 			}
 		}
-		merged, err := d.authHeaders(ctx)
+		requestCtx := ctx
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			requestCtx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel() // At most two attempts, including token refresh.
+		}
+		merged, err := d.authHeaders(requestCtx)
 		if err != nil {
 			return nil, err
 		}
 		for key, value := range headers {
+			if strings.EqualFold(key, "X-Goog-User-Project") {
+				continue
+			}
 			merged[key] = value
 		}
-		result, err := d.http.RequestNoRateLimitRetry(ctx, method, "www.googleapis.com", path, merged, body)
+		if d.quotaProject != "" {
+			merged["X-Goog-User-Project"] = d.quotaProject
+		}
+		var result *HTTPResult
+		httpStarted := time.Now()
+		if singleAttempt {
+			result, err = httpClient.RequestSingleAttempt(requestCtx, method, "www.googleapis.com", path, merged, body)
+		} else {
+			result, err = httpClient.RequestNoRateLimitRetry(requestCtx, method, "www.googleapis.com", path, merged, body)
+		}
+		if result != nil {
+			result.RequestStarted = httpStarted
+			result.ResponseReceived = time.Now()
+		}
 		if err != nil {
-			d.logDriveRequest(label, 1, 0, nil, time.Since(started), err)
+			if errors.Is(err, errDriveUploadDuplicateBudget) {
+				return nil, err
+			}
+			d.logDriveRequest(label, httpAttemptCount(result, err), 0, nil, time.Since(started), err)
 			return nil, err
 		}
 		last = result
@@ -1014,46 +1609,41 @@ func (d *DriveStore) request(ctx context.Context, method, path string, headers m
 		if httpAttempts < 1 {
 			httpAttempts = 1
 		}
+		d.logDriveRequest(label, httpAttempts, result.Status, result.Body, time.Since(started), nil)
 		if result.Status != http.StatusUnauthorized {
-			d.logDriveRequest(label, httpAttempts, result.Status, result.Body, time.Since(started), nil)
 			if d.backoff != nil {
 				d.backoff.Observe(label, result, d.Logger)
 			}
 			return result, nil
 		}
 		if d.tokenSource == nil {
-			d.logDriveRequest(label, httpAttempts, result.Status, result.Body, time.Since(started), nil)
 			return result, nil
 		}
 		if d.Logger != nil {
 			d.Logger.Printf("drive auth rejected op=%s status=401 action=refresh-token", label)
 		}
-		d.tokenSource.Invalidate()
-	}
-	if last != nil {
-		httpAttempts := last.Attempts
-		if httpAttempts < 1 {
-			httpAttempts = 1
-		}
-		d.logDriveRequest(label, httpAttempts, last.Status, last.Body, time.Since(started), nil)
+		d.tokenSource.invalidateRejectedToken(strings.TrimPrefix(merged["Authorization"], "Bearer "))
+		started = time.Now()
 	}
 	return last, nil
 }
 
 func (d *DriveStore) logDriveRequest(label string, attempts int, status int, body []byte, duration time.Duration, err error) {
-	if errors.Is(err, context.Canceled) {
-		return
-	}
+	canceled := errors.Is(err, context.Canceled)
 	if attempts < 1 {
 		attempts = 1
 	}
 	if d.quota != nil {
-		if report, ok := d.quota.Record(label, status, len(body), duration, err, driveQuotaErrorReason(status, body, err), attempts); ok && d.Logger != nil {
+		quotaErr := err
+		if canceled {
+			quotaErr = nil
+		} // Intentional hedge cancellation is not an API failure.
+		if report, ok := d.quota.Record(label, status, len(body), duration, quotaErr, driveQuotaErrorReason(status, body, quotaErr), attempts); ok && d.Logger != nil {
 			d.Logger.Printf("drive quota window=%s calls=%d est_units=%d errors=%d response_bytes=%d ops=%s",
 				report.Duration.Round(time.Second), report.Calls, report.Units, report.Errors, report.ResponseBytes, report.OpSummary())
 		}
 	}
-	if d.Logger == nil {
+	if canceled || d.Logger == nil {
 		return
 	}
 	statusText := strconv.Itoa(status)
@@ -1146,47 +1736,52 @@ func (b *driveQuotaBackoff) Observe(op string, result *HTTPResult, logger *log.L
 		return
 	}
 	reason := driveErrorReason(result.Body)
-	delay := retryAfter(result)
-	if delay <= 0 {
-		delay = b.nextDelay()
-	}
-	now := time.Now()
-	until := now.Add(delay)
 	b.mu.Lock()
-	if until.After(b.until) {
-		b.until = until
+	defer b.mu.Unlock()
+	now := time.Now()
+	delay := retryAfter(result)
+	// Requests already in flight when another response gated the store are
+	// part of the same rate-limit wave. A delayed response cannot amplify
+	// the local backoff, but an explicit Retry-After still sets a floor.
+	newWave := !now.Before(b.until) && (result.RequestStarted.IsZero() || !result.RequestStarted.Before(b.until))
+	if newWave {
+		if delay <= 0 {
+			delay = b.nextDelayLocked()
+		}
+		b.fails++
 	}
-	b.fails++
+	if delay <= 0 || !now.Add(delay).After(b.until) {
+		return
+	}
+	b.until = now.Add(delay)
 	b.reason = reason
 	b.op = op
 	if logger != nil && time.Since(b.lastLog) >= driveQuotaBackoffLogInterval {
 		logger.Printf("drive quota backoff tripped op=%s status=%d reason=%s delay=%s failures=%d", op, result.Status, reason, time.Until(b.until).Round(time.Millisecond), b.fails)
 		b.lastLog = now
 	}
-	b.mu.Unlock()
 }
 
 func (b *driveQuotaBackoff) noteNonRateLimitedResult(result *HTTPResult) {
 	if result == nil || result.Status < 200 || result.Status >= 300 {
 		return
 	}
-	now := time.Now()
 	b.mu.Lock()
-	if b.until.IsZero() || now.After(b.until) {
+	defer b.mu.Unlock()
+	// A success from an already in-flight request is not evidence that the
+	// provider accepted traffic after the latest cooldown.
+	if !time.Now().Before(b.until) && (result.RequestStarted.IsZero() || !result.RequestStarted.Before(b.until)) {
 		b.fails = 0
 		b.reason = ""
 		b.op = ""
 	}
-	b.mu.Unlock()
 }
 
-func (b *driveQuotaBackoff) nextDelay() time.Duration {
-	b.mu.Lock()
+func (b *driveQuotaBackoff) nextDelayLocked() time.Duration {
 	failures := b.fails
 	base := b.base
 	maximum := b.max
 	jitter := b.jitter
-	b.mu.Unlock()
 	if base <= 0 {
 		base = driveQuotaBackoffBase
 	}
@@ -1222,7 +1817,7 @@ func isDriveRateLimitResult(result *HTTPResult) bool {
 	if result.Status != http.StatusForbidden {
 		return false
 	}
-	reason := strings.ToLower(strings.TrimSpace(driveErrorReason(result.Body)))
+	reason := normalizeGoogleErrorReason(driveErrorReason(result.Body))
 	return reason == "ratelimitexceeded" || reason == "userratelimitexceeded" || reason == "dailylimitexceeded"
 }
 
@@ -1324,16 +1919,24 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	if durationMS < 0 {
 		durationMS = 0
 	}
-	failed := err != nil || status >= 400
+	expectedMissing := status == http.StatusNotFound && (op == "upload_commit_probe" || op == "slot_cleanup_probe")
+	failed := err != nil || status >= 400 && !expectedMissing
+	failedAttempts := attempts - 1 // Every retry follows a failed HTTP attempt.
+	if failed {
+		failedAttempts = attempts
+	}
+	if failedAttempts > 0 && errorReason == "" {
+		errorReason = "retry_recovered"
+	}
 	s.calls += attempts
 	s.units += units
 	s.bytes += int64(responseBytes)
 	s.totalCalls += attempts
 	s.totalUnits += units
 	s.totalBytes += int64(responseBytes)
-	if failed {
-		s.errors += attempts
-		s.totalError += attempts
+	if failedAttempts > 0 {
+		s.errors += failedAttempts
+		s.totalError += failedAttempts
 		s.lastErrorReason = errorReason
 		s.totalLastErrorReason = errorReason
 	}
@@ -1341,8 +1944,8 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	current.Calls += attempts
 	current.Units += units
 	addDriveQuotaDuration(&current, durationMS)
-	if failed {
-		current.Errors += attempts
+	if failedAttempts > 0 {
+		current.Errors += failedAttempts
 		current.LastErrorReason = errorReason
 	}
 	s.ops[op] = current
@@ -1350,8 +1953,8 @@ func (s *driveQuotaStats) Record(op string, status int, responseBytes int, durat
 	totalCurrent.Calls += attempts
 	totalCurrent.Units += units
 	addDriveQuotaDuration(&totalCurrent, durationMS)
-	if failed {
-		totalCurrent.Errors += attempts
+	if failedAttempts > 0 {
+		totalCurrent.Errors += failedAttempts
 		totalCurrent.LastErrorReason = errorReason
 	}
 	s.totalOps[op] = totalCurrent
@@ -1625,7 +2228,7 @@ func driveQuotaUnits(op string) int {
 		return 100
 	case "download":
 		return 200
-	case "upload", "delete", "create":
+	case "upload", "delete", "create", "patch", "update":
 		return 50
 	default:
 		return 5
@@ -1633,29 +2236,15 @@ func driveQuotaUnits(op string) int {
 }
 
 func driveErrorReason(body []byte) string {
-	var payload struct {
-		Error struct {
-			Status  string `json:"status"`
-			Message string `json:"message"`
-			Errors  []struct {
-				Reason string `json:"reason"`
-			} `json:"errors"`
-		} `json:"error"`
+	reason, message := googleAPIErrorDetails(body)
+	if reason != "" {
+		return reason
 	}
-	if err := json.Unmarshal(body, &payload); err == nil {
-		if len(payload.Error.Errors) > 0 && payload.Error.Errors[0].Reason != "" {
-			return payload.Error.Errors[0].Reason
+	if message != "" {
+		if len(message) > 80 {
+			message = message[:80]
 		}
-		if payload.Error.Status != "" {
-			return payload.Error.Status
-		}
-		if payload.Error.Message != "" {
-			message := payload.Error.Message
-			if len(message) > 80 {
-				message = message[:80]
-			}
-			return message
-		}
+		return message
 	}
 	return "unknown"
 }

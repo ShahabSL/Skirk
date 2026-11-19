@@ -4,7 +4,7 @@ Skirk has one production transport:
 
 ```text
 local SOCKS5 / HTTP proxy / Android VPN
--> encrypted Drive Mux v4 objects
+-> encrypted Drive Mux v5 objects
 -> Google Drive mailbox folder
 -> Skirk exit
 -> target TCP
@@ -12,12 +12,14 @@ local SOCKS5 / HTTP proxy / Android VPN
 
 Older alternate-carrier experiments are not part of the production path.
 
-## Drive Mux v4
+## Drive Mux v5
 
-Drive Mux v4 is the default live tunnel transport. Public setup uses a
+New kits default to Drive Mux v5. Public setup uses a
 Skirk-created Drive mailbox folder and the
 `https://www.googleapis.com/auth/drive.file` OAuth scope, which works with
-Google's device-code login flow.
+Google's device-code login flow. V5 keeps the V4 object batching and Drive API
+operations, but uses its own `muxv5/` namespace and a fresh sender generation
+in the encryption key to avoid a reproduced restart key/nonce collision.
 
 The transport groups active TCP streams into bounded mux lanes:
 
@@ -31,19 +33,21 @@ The transport groups active TCP streams into bounded mux lanes:
 - processed objects are cleaned up outside the foreground byte path;
 - stale leftovers are handled by the exit janitor or `skirk cleanup`.
 
-This is the current best shape for Drive because it minimizes object count and
-avoids one Drive polling loop per browser connection.
+This shape minimizes object count and avoids one Drive polling loop per browser
+connection.
 
-Current protocol lab results show muxv4 as the best proven default under the
-current single-mailbox, Google-fronted/pinned-route constraints.
-That conclusion is workload-based: candidates must preserve browsing and media
-behavior during bulk transfers, not only improve one bulk download.
+V5 is the default for restart safety. Exact live comparisons with clean `main`
+V4 show mixed file and short-message success, but upload orders disagree on
+speed and text p95. No stable performance win or universal limit is proven.
+See the [migration guide](mux-v5-migration.md). Old V4 peers do not see
+V5 objects; upgrade both ends together, or select V4 explicitly for a legacy
+pair while migrating.
 
 ## Discovery
 
 ```text
-exit:   fresh prefix list on muxv4/<session>/up/
-client: fresh prefix list on muxv4/<session>/down/<client>/<run>/
+exit:   fresh prefix list on muxv5/<session>/up/
+client: fresh prefix list on muxv5/<session>/down/<client>/<run>/
 ```
 
 Runtime discovery stays prefix-scoped because that keeps the hot path narrow and
@@ -55,7 +59,7 @@ Client profiles default to:
 
 ```text
 client route: google_front_pinned
-exit route: direct
+exit route: google_front_pinned
 ```
 
 Existing Linux profiles generated before v0.1.51 keep their embedded route.
@@ -68,8 +72,10 @@ Available route modes:
 - `direct`: normal Google API hostnames and TLS.
 - `real_pinned`: connect to a configured Google edge IP while preserving the
   real Google API TLS name.
-- `google_front`: use a Google-looking TLS/SNI path for Google API traffic.
-- `google_front_pinned`: same idea pinned to `--google-ip`.
+- `google_front`: use `www.google.com` TLS SNI for Google API traffic while
+  sending the API hostname in the HTTP authority.
+- `google_front_pinned`: the same Google front with an edge IP pinned by
+  `--google-ip`.
 - `google_front_h1` and `google_front_h1_pinned`: HTTP/1.1 variants used for
   route experiments.
 
@@ -84,6 +90,9 @@ normal Google API hostnames are blocked or unreliable.
 - Android app: whole-device VPN mode and optional SOCKS/HTTP LAN sharing.
 - Windows desktop app: profile import, SOCKS/HTTP proxy control, system proxy,
   VPN mode, performance presets, and local Drive API estimate.
+- macOS desktop app: profile import, SOCKS/HTTP proxy control, optional system
+  proxy on the active network service, performance presets, and local Drive API
+  estimate. The system proxy applies to proxy-aware apps, not all Mac traffic.
 
 ## Constraints
 
@@ -92,9 +101,8 @@ still needs object upload, object discovery, exit processing, response upload,
 and response discovery. Skirk removes avoidable extra objects and shares polling
 across streams, but it cannot remove Drive object visibility latency.
 
-Large muxv4-only speedups are therefore unlikely without changing a core
-constraint such as using multiple mailboxes, a broader OAuth/data-plane split,
-or a non-Drive carrier. See [Transport Research](transport-research.md).
+The best achievable speed under these constraints has not been established.
+See [Architecture](architecture.md) for the transport design.
 
 UDP is not a first-class transport. Android VPN mode routes TCP through Skirk;
 apps that rely heavily on UDP or QUIC may need to fall back to TCP.

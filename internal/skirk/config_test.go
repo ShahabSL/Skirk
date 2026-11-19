@@ -3,6 +3,8 @@ package skirk
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -59,6 +61,130 @@ func TestAuthConfigRefreshToken(t *testing.T) {
 	}
 }
 
+func tokenSOCKSProxyFixture(t *testing.T) (string, <-chan string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	targets := make(chan string, 4)
+	proxy := &SOCKSServer{Handler: func(_ context.Context, target string, client net.Conn) {
+		targets <- target
+		upstream, err := net.Dial("tcp", target)
+		if err != nil {
+			t.Errorf("SOCKS upstream dial: %v", err)
+			return
+		}
+		defer upstream.Close()
+		go io.Copy(upstream, client)
+		_, _ = io.Copy(client, upstream)
+	}}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go proxy.handle(context.Background(), conn)
+		}
+	}()
+	return "socks5h://" + listener.Addr().String(), targets
+}
+
+func TestCustomTokenURLHonorsSOCKSProxyInDirectAndFrontModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/custom-token" {
+			t.Errorf("custom token request method=%q path=%q", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil || r.PostForm.Get("refresh_token") != "test-refresh-token" {
+			t.Errorf("custom token POST body: %v", err)
+		}
+		_, _ = io.WriteString(w, `{"access_token":"custom-access-token","expires_in":3600}`)
+	}))
+	defer server.Close()
+	proxyURL, targets := tokenSOCKSProxyFixture(t)
+	for _, mode := range []string{"direct", "google_front_h3_pinned"} {
+		t.Run(mode, func(t *testing.T) {
+			auth := AuthConfig{ClientID: "test-client", RefreshToken: "test-refresh-token", TokenURL: server.URL + "/custom-token"}
+			token, err := auth.refreshAccessToken(context.Background(), RouteConfig{Mode: mode, Proxy: proxyURL})
+			if err != nil || token.Token != "custom-access-token" {
+				t.Fatalf("custom token=%+v err=%v", token, err)
+			}
+			select {
+			case target := <-targets:
+				if target != strings.TrimPrefix(server.URL, "http://") {
+					t.Fatalf("SOCKS target=%q, want token endpoint", target)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("custom token request bypassed configured SOCKS proxy")
+			}
+		})
+	}
+}
+
+func TestCustomTokenURLDoesNotFollowCredentialRedirect(t *testing.T) {
+	var redirected atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer other.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", other.URL+"/receive-credentials")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	proxyURL, targets := tokenSOCKSProxyFixture(t)
+	auth := AuthConfig{ClientID: "test-client", RefreshToken: "test-refresh-token", TokenURL: server.URL}
+	if _, err := auth.refreshAccessToken(context.Background(), RouteConfig{Mode: "google_front", Proxy: proxyURL}); err == nil {
+		t.Fatal("redirect response was accepted as a token")
+	}
+	select {
+	case target := <-targets:
+		if target != strings.TrimPrefix(server.URL, "http://") {
+			t.Fatalf("SOCKS target=%q, want original endpoint", target)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("custom token request bypassed configured SOCKS proxy")
+	}
+	if redirected.Load() != 0 {
+		t.Fatal("OAuth refresh credentials were resent to redirect target")
+	}
+	select {
+	case target := <-targets:
+		t.Fatalf("SOCKS followed token redirect to %q", target)
+	default:
+	}
+}
+
+func TestConfigDefaultsToGoogleFrontButKeepsExplicitDirect(t *testing.T) {
+	cfg := &Config{}
+	cfg.ApplyDefaults()
+	if cfg.Route.Mode != "google_front_pinned" {
+		t.Fatalf("default route = %q, want google_front_pinned", cfg.Route.Mode)
+	}
+	cfg.Route.Mode = "direct"
+	cfg.ApplyDefaults()
+	if cfg.Route.Mode != "direct" {
+		t.Fatalf("explicit route = %q, want direct", cfg.Route.Mode)
+	}
+}
+
+func TestConfigAcceptsExplicitGoogleFrontH3Pinned(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64), Route: RouteConfig{Mode: "google_front_h3_pinned"}}
+	cfg.ApplyDefaults()
+	if cfg.Route.GoogleIP == "" {
+		t.Fatal("H3 pinned route requires the default pinned Google IP")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("explicit H3 route rejected: %v", err)
+	}
+	if cfg.Route.Mode != "google_front_h3_pinned" {
+		t.Fatalf("route mode=%q", cfg.Route.Mode)
+	}
+}
+
 func TestConfigValidatesExitProxy(t *testing.T) {
 	cfg := &Config{
 		Secret: strings.Repeat("a", 64),
@@ -73,6 +199,42 @@ func TestConfigValidatesExitProxy(t *testing.T) {
 	cfg.Tunnel.ExitProxy = "ftp://127.0.0.1:21"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "exit_proxy scheme") {
 		t.Fatalf("err = %v, want exit_proxy scheme error", err)
+	}
+}
+
+func TestConfigExitStreamLimit(t *testing.T) {
+	for _, tc := range []struct {
+		configured int
+		want       int
+	}{
+		{configured: 0, want: automaticExitStreamLimit()},
+		{configured: 17, want: 17},
+		{configured: maxExitStreamLimit, want: maxExitStreamLimit},
+		{configured: -1},
+		{configured: maxExitStreamLimit + 1},
+	} {
+		t.Run(strconv.Itoa(tc.configured), func(t *testing.T) {
+			cfg := Config{Secret: "test-secret", SessionID: "00112233445566778899aabbccddeeff",
+				Tunnel: TunnelConfig{ExitMaxStreams: tc.configured}}
+			cfg.ApplyDefaults()
+			validateErr := cfg.Validate()
+			tunnel, runtimeErr := NewTunnel(NewMemoryStore(), &cfg)
+			if tc.want == 0 {
+				for _, err := range []error{validateErr, runtimeErr} {
+					if err == nil || !strings.Contains(err.Error(), "exit_max_streams") {
+						t.Fatalf("invalid stream limit was accepted: %v", err)
+					}
+				}
+				return
+			}
+			if validateErr != nil || runtimeErr != nil {
+				t.Fatalf("valid stream limit rejected: %v, %v", validateErr, runtimeErr)
+			}
+			mux := &driveMux{t: tunnel}
+			if limit := mux.exitStreamLimit(); limit != tc.want {
+				t.Fatalf("runtime limit = %d, want %d", limit, tc.want)
+			}
+		})
 	}
 }
 
@@ -93,6 +255,90 @@ func TestConfigValidatesClientNamespace(t *testing.T) {
 	cfg.Client.RunID = "x"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.client.run_id") {
 		t.Fatalf("err = %v, want run id validation error", err)
+	}
+}
+
+func TestValidateGoogleProjectID(t *testing.T) {
+	for _, id := range []string{"abcdef", "a-1234", "test-project-123456"} {
+		if err := ValidateGoogleProjectID(id); err != nil {
+			t.Errorf("valid project ID %q: %v", id, err)
+		}
+	}
+	for _, id := range []string{"", "abcde", "1abcde", "Abcdef", "abcde-", "abc_def", " abcdef", "abcdef\n", strings.Repeat("a", 31)} {
+		if err := ValidateGoogleProjectID(id); err == nil {
+			t.Errorf("accepted invalid project ID %q", id)
+		}
+	}
+
+	cfg := &Config{Secret: strings.Repeat("a", 64), Drive: DriveConfig{QuotaProject: "test-project-123456"}}
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid quota project rejected: %v", err)
+	}
+	cfg.Drive.QuotaProject = "bad_project"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.drive.quota_project") {
+		t.Fatalf("invalid quota project error = %v", err)
+	}
+}
+
+func TestConfigNormalListPageSizeChoices(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64)}
+	cfg.ApplyDefaults()
+	for _, size := range []int{0, 100, 500, 1000} {
+		cfg.Drive.NormalListPageSize = size
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("page size %d rejected: %v", size, err)
+		}
+	}
+	for _, size := range []int{-1, 1, 999, 1001} {
+		cfg.Drive.NormalListPageSize = size
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "config.drive.normal_list_page_size") {
+			t.Errorf("page size %d error = %v", size, err)
+		}
+	}
+}
+
+func TestConfigUploadHedgeDelayIsOptInAndBounded(t *testing.T) {
+	cfg := &Config{Secret: strings.Repeat("a", 64)}
+	cfg.ApplyDefaults()
+	if cfg.Drive.UploadHedgeDelayMS != 0 {
+		t.Fatalf("default upload hedge delay = %d, want disabled", cfg.Drive.UploadHedgeDelayMS)
+	}
+	if cfg.Drive.SeparateUploadPool {
+		t.Fatal("separate upload pool enabled by default")
+	}
+	for _, delay := range []int{0, 1000, 3000, 10000} {
+		cfg.Drive.UploadHedgeDelayMS = delay
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("delay %d rejected: %v", delay, err)
+		}
+	}
+	for _, delay := range []int{-1, 1, 999, 10001} {
+		cfg.Drive.UploadHedgeDelayMS = delay
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "upload_hedge_delay_ms") {
+			t.Errorf("delay %d error = %v, want hedge validation", delay, err)
+		}
+	}
+	var decoded struct {
+		Drive DriveConfig `json:"drive"`
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"upload_hedge_delay_ms":3000}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Drive.UploadHedgeDelayMS != 3000 {
+		t.Fatalf("decoded hedge delay = %d, want 3000", decoded.Drive.UploadHedgeDelayMS)
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"separate_upload_pool":true}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Drive.SeparateUploadPool {
+		t.Fatal("separate upload pool JSON option was ignored")
+	}
+	if err := json.Unmarshal([]byte(`{"drive":{"separate_bulk_media_pool":true}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Drive.SeparateBulkMediaPool {
+		t.Fatal("separate bulk media pool JSON option was ignored")
 	}
 }
 
@@ -206,7 +452,7 @@ func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
 		ClientID:     "client-id",
 		RefreshToken: "refresh-token",
 		TokenURL:     server.URL,
-	}, RouteConfig{Mode: "google_front", Proxy: "socks5h://127.0.0.1:11093"})
+	}, RouteConfig{Mode: "google_front"})
 
 	first, err := source.Token(context.Background())
 	if err != nil {
@@ -236,28 +482,95 @@ func TestAccessTokenSourceUsesCachedTokenDuringHostileRefresh(t *testing.T) {
 	}
 }
 
-func TestOAuthTokenAttemptsIncludeHostileRoutes(t *testing.T) {
+func TestAccessTokenSourceLate401KeepsNewToken(t *testing.T) {
+	source := NewAccessTokenSource(AuthConfig{}, RouteConfig{})
+	source.token = "new-token"
+	source.expiresAt = time.Now().Add(time.Hour)
+	source.invalidateRejectedToken("old-token")
+	if token, err := source.Token(context.Background()); err != nil || token != "new-token" {
+		t.Fatalf("late 401 discarded newer token: token=%q err=%v", token, err)
+	}
+	source.invalidateRejectedToken("new-token")
+	if source.token != "" {
+		t.Fatal("rejected current token remained cached")
+	}
+}
+
+func TestAccessTokenSourceOldBackgroundRefreshCannotOverwriteNewGrant(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := "new-token"
+		if requests.Add(1) == 1 {
+			close(entered)
+			<-release
+			token = "superseded-background-token"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": token, "expires_in": 3600})
+	}))
+	defer server.Close()
+	source := NewAccessTokenSource(AuthConfig{ClientID: "test", RefreshToken: "test", TokenURL: server.URL}, RouteConfig{Mode: "direct"})
+	source.token, source.refreshing = "rejected-token", true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		source.refreshInBackground(0)
+	}()
+	<-entered
+	source.invalidateRejectedToken("rejected-token")
+	token, err := source.Token(context.Background())
+	close(release)
+	<-done
+	if err != nil || token != "new-token" {
+		t.Fatalf("foreground refresh token=%q error=%v", token, err)
+	}
+	if got, err := source.Token(context.Background()); err != nil || got != "new-token" {
+		t.Fatalf("old background result replaced new token: token=%q error=%v", got, err)
+	}
+}
+
+func TestOAuthTokenAttemptsStayWithinUserSelectedRoute(t *testing.T) {
 	route := RouteConfig{
 		Mode:           "google_front",
 		Proxy:          "socks5h://127.0.0.1:11093",
 		GoogleIP:       "216.239.38.120",
 		TimeoutSeconds: 240,
 	}
-	attempts := oauthTokenAttempts(route)
-	if len(attempts) != 4 {
-		t.Fatalf("attempt count = %d, want 4", len(attempts))
+	for _, mode := range []string{"google_front", "google_front_pinned", "google_front_h1", "google_front_h1_pinned", "google_front_h3_pinned"} {
+		withMode := route
+		withMode.Mode = mode
+		attempts := oauthTokenAttempts(withMode)
+		wantCount := 2
+		if mode == "google_front_h3_pinned" {
+			wantCount = 3
+		}
+		if len(attempts) != wantCount {
+			t.Fatalf("route=%s attempt count=%d, want %d", mode, len(attempts), wantCount)
+		}
+		if attempts[0].host != "oauth2.googleapis.com" || attempts[len(attempts)-1].host != "accounts.google.com" {
+			t.Fatalf("route=%s endpoints=%+v", mode, attempts)
+		}
+		for _, attempt := range attempts {
+			if !isGoogleFrontRoute(attempt.route.Mode) || attempt.route.Proxy != route.Proxy {
+				t.Fatalf("route=%s silently changed route/proxy: %+v", mode, attempt)
+			}
+		}
+		if mode == "google_front_h3_pinned" && attempts[1].route.Mode != "google_front_pinned" {
+			t.Fatalf("H3 route missing fronted H2 endpoint fallback: %+v", attempts)
+		}
 	}
-	if attempts[0].host != "oauth2.googleapis.com" || attempts[0].route.Mode != "google_front" {
-		t.Fatalf("primary attempt = %+v", attempts[0])
-	}
-	if attempts[1].host != "accounts.google.com" || attempts[1].path != "/o/oauth2/token" || attempts[1].route.Mode != "google_front" || attempts[1].route.Proxy == "" {
-		t.Fatalf("fronted accounts attempt = %+v", attempts[1])
-	}
-	if attempts[2].host != "accounts.google.com" || attempts[2].path != "/o/oauth2/token" || attempts[2].route.Mode != "direct" || attempts[2].route.Proxy == "" {
-		t.Fatalf("direct accounts attempt = %+v", attempts[2])
-	}
-	if attempts[3].host != "oauth2.googleapis.com" || attempts[3].route.Mode != "direct" || attempts[3].route.Proxy == "" {
-		t.Fatalf("direct oauth2 attempt = %+v", attempts[3])
+	for _, mode := range []string{"direct", "real_pinned"} {
+		withMode := route
+		withMode.Mode = mode
+		attempts := oauthTokenAttempts(withMode)
+		if len(attempts) != 2 || attempts[1].host != "accounts.google.com" {
+			t.Fatalf("direct route=%s attempts=%+v", mode, attempts)
+		}
+		for _, attempt := range attempts {
+			if attempt.route.Mode != mode || attempt.route.Proxy != route.Proxy {
+				t.Fatalf("direct route=%s silently changed route/proxy: %+v", mode, attempt)
+			}
+		}
 	}
 }
 
@@ -267,6 +580,14 @@ func TestTerminalOAuthTokenError(t *testing.T) {
 	}
 	if terminalOAuthTokenError(http.StatusNotFound, []byte(`<html>wrong edge</html>`)) {
 		t.Fatal("wrong-edge response should allow another token attempt")
+	}
+	_, err := parseOAuthTokenResponse(http.StatusBadRequest, []byte(`{"error":"invalid_grant","error_description":"expired"}`))
+	if !IsTerminalOAuthTokenError(err) {
+		t.Fatalf("parsed error = %v, want terminal OAuth token error", err)
+	}
+	_, err = parseOAuthTokenResponse(http.StatusBadRequest, []byte(`{"error":"temporarily_unavailable"}`))
+	if IsTerminalOAuthTokenError(err) {
+		t.Fatalf("parsed error = %v, want retryable OAuth token error", err)
 	}
 }
 

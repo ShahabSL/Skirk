@@ -277,7 +277,7 @@ func uninstallWireproxy(ctx context.Context) error {
 			}
 			fmt.Printf("Removed wireproxy path: %s\n", defaultWireproxyDir)
 			removed = true
-		} else if err != nil && !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return err
 		}
 		for _, path := range []string{defaultWireproxyBin, defaultWGCFBin} {
@@ -303,7 +303,7 @@ func uninstallWireproxy(ctx context.Context) error {
 		fmt.Printf("Removed wireproxy path: %s\n", defaultWireproxyDir)
 		fmt.Println("Wireproxy helper binaries left untouched because the Skirk ownership manifest is absent.")
 		removed = true
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if !removed {

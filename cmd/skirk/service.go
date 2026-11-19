@@ -7,13 +7,16 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 )
 
 const defaultServiceName = "skirk-exit"
+const systemdUnitDir = "/etc/systemd/system"
 
 func serviceCommand(ctx context.Context, args []string) error {
 	if len(args) < 1 {
@@ -53,6 +56,13 @@ func serviceCommand(ctx context.Context, args []string) error {
 		case "uninstall":
 			return uninstallSystemdService(ctx, unit)
 		default:
+			owned, err := checkSystemdExitUnit(ctx, filepath.Join(systemdUnitDir, unit))
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return fmt.Errorf("no Skirk exit service named %s; install it first", unit)
+			}
 			return runPrivileged(ctx, "systemctl", args[0], unit)
 		}
 	default:
@@ -81,8 +91,12 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(configPath); err != nil {
+	info, err := os.Stat(configPath)
+	if err != nil {
 		return fmt.Errorf("exit config is not readable at %s: %w", configPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("exit config must be a regular file: %s", configPath)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -105,30 +119,39 @@ func installSystemdService(ctx context.Context, opts serviceInstallOptions) erro
 	if err := validateServicePathsForUser(exe, configPath, user); err != nil {
 		return err
 	}
+	if err := verifyServiceFileAccess(ctx, exe, configPath, user); err != nil {
+		return err
+	}
 	unitText := systemdUnitText(exe, configPath, user)
-	tmp, err := os.CreateTemp("", "skirk-*.service")
+	tmpDir, err := os.MkdirTemp("", "skirk-systemd-")
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(unitText); err != nil {
-		_ = tmp.Close()
+	defer os.RemoveAll(tmpDir)
+	tmpPath := filepath.Join(tmpDir, unit)
+	if err := os.WriteFile(tmpPath, []byte(unitText), 0600); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := verifySystemdUnit(ctx, tmpPath); err != nil {
 		return err
 	}
 
-	unitPath := filepath.Join("/etc/systemd/system", unit)
+	unitPath := filepath.Join(systemdUnitDir, unit)
+	if _, err := checkSystemdExitUnit(ctx, unitPath); err != nil {
+		return err
+	}
 	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "install", "-m", "0644", tmpPath, unitPath); err != nil {
 		return err
 	}
 	if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
-	if err := verifySystemdUnit(ctx, unitPath); err != nil {
+	owned, err := checkSystemdExitUnit(ctx, unitPath)
+	if err != nil {
 		return err
+	}
+	if !owned {
+		return fmt.Errorf("systemd did not load the newly installed Skirk exit service %s", unit)
 	}
 	if opts.Enable {
 		if err := runPrivilegedWithStdout(ctx, commandStdout(opts.Quiet), "systemctl", "enable", unit); err != nil {
@@ -227,15 +250,94 @@ func removeSystemdDropIn(ctx context.Context, unit, name string) error {
 }
 
 func assertSkirkSystemdUnit(unit string) error {
-	unitPath := filepath.Join("/etc/systemd/system", unit)
-	owned, err := isSkirkSystemdUnitFile(unitPath)
+	unitPath := filepath.Join(systemdUnitDir, unit)
+	owned, err := hasSkirkExitUnitFile(unitPath)
 	if err != nil {
 		return err
 	}
 	if !owned {
-		return fmt.Errorf("refusing to modify %s: unit file is not managed by Skirk", unitPath)
+		return &os.PathError{Op: "open", Path: unitPath, Err: os.ErrNotExist}
 	}
 	return nil
+}
+
+func hasSkirkExitUnitFile(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("refusing to modify %s: expected a regular Skirk exit unit file", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	if !isSkirkExitSystemdUnitText(string(data)) {
+		return false, fmt.Errorf("refusing to modify %s: unit file is not a Skirk exit", path)
+	}
+	return true, nil
+}
+
+func checkSystemdExitUnit(ctx context.Context, unitPath string) (bool, error) {
+	owned, err := hasSkirkExitUnitFile(unitPath)
+	if err != nil {
+		return false, err
+	}
+	unit := filepath.Base(unitPath)
+	output, err := exec.CommandContext(ctx, "systemctl", "show", "--all", "--property=LoadState,ActiveState,FragmentPath", "--", unit).Output()
+	if err != nil {
+		return false, fmt.Errorf("cannot check the systemd definition of %s: %w", unit, err)
+	}
+	var loadState, activeState, fragment string
+	for line := range strings.SplitSeq(string(output), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		switch key {
+		case "LoadState":
+			loadState = value
+		case "ActiveState":
+			activeState = value
+		case "FragmentPath":
+			fragment = value
+		}
+	}
+	if owned && loadState == "loaded" && fragment == unitPath {
+		return true, nil
+	}
+	if !owned && loadState == "not-found" && activeState == "inactive" && fragment == "" {
+		return false, nil
+	}
+	return false, fmt.Errorf("refusing to modify %s: systemd reports load state %q and fragment %q; choose a new service name or check the installed unit", unit, loadState, fragment)
+}
+
+var skirkExitExecStart = regexp.MustCompile(`^(?:"((?:[^"\\]|\\.)+)"|'([^']+)'|([^ \t]+))[ \t]+serve-exit[ \t]+--config[ \t]+\S`)
+
+func isSkirkExitSystemdUnitText(text string) bool {
+	var marked, service bool
+	var executable string
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "# Managed by Skirk" {
+			marked = true
+		}
+		if strings.HasPrefix(line, "[") {
+			service = line == "[Service]"
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !service || !found || strings.TrimSpace(key) != "ExecStart" {
+			continue
+		}
+		parts := skirkExitExecStart.FindStringSubmatch(strings.TrimSpace(value))
+		if len(parts) == 0 || executable != "" {
+			return false
+		}
+		executable = firstNonEmpty(parts[1], parts[2], parts[3])
+	}
+	// Unit files contain POSIX paths regardless of where their text is inspected.
+	return path.IsAbs(executable) && (marked || path.Base(executable) == "skirk")
 }
 
 func removeSystemdUnitDependency(ctx context.Context, unit, dependency string) error {
@@ -247,18 +349,16 @@ func removeSystemdUnitDependency(ctx context.Context, unit, dependency string) e
 		return err
 	}
 	unit = normalized
-	unitPath := filepath.Join("/etc/systemd/system", unit)
-	data, err := os.ReadFile(unitPath)
-	if err != nil {
+	unitPath := filepath.Join(systemdUnitDir, unit)
+	if err := assertSkirkSystemdUnit(unit); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	if owned, err := isSkirkSystemdUnitFile(unitPath); err != nil {
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
 		return err
-	} else if !owned {
-		return fmt.Errorf("refusing to edit %s: unit file is not managed by Skirk", unitPath)
 	}
 	next, changed := removeSystemdDependencyFromUnitText(string(data), dependency)
 	if !changed {
@@ -325,21 +425,35 @@ func uninstallSystemdService(ctx context.Context, unit string) error {
 	if err := requireSystemd(); err != nil {
 		return err
 	}
-	unitPath := filepath.Join("/etc/systemd/system", unit)
+	unitPath := filepath.Join(systemdUnitDir, unit)
 	dropInDir := unitPath + ".d"
-	owned, err := isSkirkSystemdUnitFile(unitPath)
+	owned, err := hasSkirkExitUnitFile(unitPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			if err := removeSkirkSystemdDropInDir(ctx, dropInDir); err != nil {
-				return err
-			}
-			fmt.Printf("Systemd service file already absent: %s\n", unitPath)
-			return nil
+		return err
+	}
+	if info, err := os.Lstat(dropInDir); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("refusing to remove %s: expected a drop-in directory", dropInDir)
 		}
+		if err := assertSkirkDropInDir(dropInDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	} else if !owned {
+		fmt.Printf("Systemd service file already absent: %s\n", unitPath)
+		return nil
+	}
+	owned, err = checkSystemdExitUnit(ctx, unitPath)
+	if err != nil {
 		return err
 	}
 	if !owned {
-		return fmt.Errorf("refusing to remove %s: unit file is not managed by Skirk", unitPath)
+		if err := removeSkirkSystemdDropInDir(ctx, dropInDir); err != nil {
+			return err
+		}
+		fmt.Printf("Systemd service file already absent: %s\n", unitPath)
+		return nil
 	}
 	if err := runPrivileged(ctx, "systemctl", "disable", "--now", unit); err != nil {
 		return fmt.Errorf("stop and disable %s: %w", unit, err)
@@ -376,8 +490,8 @@ func assertSkirkDropInDir(dir string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
-			return fmt.Errorf("refusing to remove %s: contains nested directory %s", dir, entry.Name())
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("refusing to remove %s: contains non-regular file %s", dir, entry.Name())
 		}
 		if !strings.HasSuffix(entry.Name(), ".conf") {
 			return fmt.Errorf("refusing to remove %s: contains non-drop-in file %s", dir, entry.Name())
@@ -443,6 +557,9 @@ func normalizeSystemdServiceName(name string) (string, error) {
 		return "", fmt.Errorf("service name is required")
 	}
 	name = strings.TrimSuffix(name, ".service")
+	if name == "" || strings.HasPrefix(name, "-") {
+		return "", fmt.Errorf("invalid service name %q", name)
+	}
 	for _, r := range name {
 		switch {
 		case r >= 'a' && r <= 'z':
@@ -460,7 +577,6 @@ func normalizeSystemdServiceName(name string) (string, error) {
 }
 
 func systemdUnitText(exePath, configPath, serviceUser string) string {
-	workDir := filepath.Dir(configPath)
 	return fmt.Sprintf(`[Unit]
 Description=Skirk exit
 # Managed by Skirk
@@ -470,17 +586,18 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=%s
-WorkingDirectory=%s
+WorkingDirectory=/
 ExecStart=%s serve-exit --config %s
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
-`, systemdUnitValue(serviceUser), systemdUnitValue(workDir), systemdExecArg(exePath), systemdExecArg(configPath))
+`, systemdUnitValue(serviceUser), systemdExecArg(exePath), systemdExecArg(configPath))
 }
 
 func isSkirkSystemdUnitText(text string) bool {
@@ -527,6 +644,43 @@ func validateServicePathsForUser(exePath, configPath, serviceUser string) error 
 	}
 	if isRootPrivatePath(configPath) {
 		return fmt.Errorf("systemd service user %q cannot read Skirk config from %s; move the kit outside /root or run the service as root", serviceUser, configPath)
+	}
+	return nil
+}
+
+// Check access as the identity in User=. Checking as the installer can succeed
+// even when the service cannot traverse a parent directory or read a 0600 kit.
+func verifyServiceFileAccess(ctx context.Context, exe, configPath, serviceUser string) error {
+	current, err := currentUsername(ctx)
+	if err != nil {
+		return err
+	}
+	program, err := exec.LookPath("test")
+	if err != nil {
+		return fmt.Errorf("cannot verify service user access: %w", err)
+	}
+	var prefix []string
+	if serviceUser != current {
+		if _, err := exec.LookPath("runuser"); err == nil && os.Geteuid() == 0 {
+			prefix = []string{"-u", serviceUser, "--", program}
+			program = "runuser"
+		} else if _, err := exec.LookPath("sudo"); err == nil {
+			prefix = []string{"-u", serviceUser, "--", program}
+			program = "sudo"
+		} else {
+			return fmt.Errorf("checking access for service user %q requires runuser as root or sudo", serviceUser)
+		}
+	}
+	for _, check := range []struct{ flag, path, action string }{
+		{"-x", exe, "execute the binary"},
+		{"-r", configPath, "read the exit config"},
+	} {
+		cmd := exec.CommandContext(ctx, program, append(prefix, check.flag, check.path)...)
+		cmd.Stdin = os.Stdin
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("service user %q cannot %s at %s: %w. Give that user access to the path and its parent directories; keep the exit config private", serviceUser, check.action, check.path, err)
+		}
 	}
 	return nil
 }

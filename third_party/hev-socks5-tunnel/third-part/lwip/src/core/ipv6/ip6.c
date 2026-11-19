@@ -464,17 +464,50 @@ ip6_forward(struct pbuf *p, struct ip6_hdr *iphdr, struct netif *inp)
 }
 #endif /* LWIP_IPV6_FORWARD */
 
+/* Classify only transparent TCP/UDP candidates. The existing input walker
+ * below still validates the extension headers and performs reassembly. */
+static int
+ip6_pretend_transport(const struct pbuf *p, u8_t next)
+{
+  u16_t offset = IP6_HLEN;
+  for (;;) {
+    const u8_t *header;
+    u16_t len;
+    if (next == IP6_NEXTH_TCP || next == IP6_NEXTH_UDP) {
+      return 1;
+    }
+    if (p->len - offset < 8) {
+      return 0;
+    }
+    header = (const u8_t *)p->payload + offset;
+#if LWIP_IPV6_REASS
+    if (next == IP6_NEXTH_FRAGMENT) {
+      /* A non-first fragment doesn't contain the transport header. Allow a
+       * destination-options header after reassembly, then check final dispatch. */
+      return header[0] == IP6_NEXTH_TCP || header[0] == IP6_NEXTH_UDP ||
+             header[0] == IP6_NEXTH_DESTOPTS;
+    }
+#endif
+    if (next != IP6_NEXTH_HOPBYHOP && next != IP6_NEXTH_DESTOPTS && next != IP6_NEXTH_ROUTING) {
+      return 0;
+    }
+    len = (u16_t)(8 * (1 + header[1]));
+    if (len > p->len - offset) {
+      return 0;
+    }
+    next = header[0];
+    offset = (u16_t)(offset + len);
+  }
+}
+
 /** Return true if the current input packet should be accepted on this netif */
 static int
-ip6_input_accept(struct netif *netif, const struct ip6_hdr *ip6hdr)
+ip6_input_accept(struct netif *netif, const struct ip6_hdr *ip6hdr, const struct pbuf *p,
+                 u8_t *pretend)
 {
   /* interface is up? */
   if (netif_is_up(netif)) {
     u8_t i;
-    if (netif_is_flag_set(netif, NETIF_FLAG_PRETEND) && ((IP6H_NEXTH(ip6hdr) == IP6_NEXTH_TCP) || (IP6H_NEXTH(ip6hdr) == IP6_NEXTH_UDP))) {
-      /* accept on this netif */
-      return 1;
-    }
     /* unicast to this interface address? address configured? */
     /* If custom scopes are used, the destination zone will be tested as
       * part of the local-address comparison, but we need to test the source
@@ -490,6 +523,11 @@ ip6_input_accept(struct netif *netif, const struct ip6_hdr *ip6hdr)
         /* accept on this netif */
         return 1;
       }
+    }
+    if (netif_is_flag_set(netif, NETIF_FLAG_PRETEND) &&
+        ip6_pretend_transport(p, IP6H_NEXTH(ip6hdr))) {
+      *pretend = 1;
+      return 1;
     }
   }
   return 0;
@@ -512,6 +550,7 @@ ip6_input_accept(struct netif *netif, const struct ip6_hdr *ip6hdr)
 err_t
 ip6_input(struct pbuf *p, struct netif *inp)
 {
+  u8_t pretend = 0;
   struct ip6_hdr *ip6hdr;
   struct netif *netif;
   const u8_t *nexth;
@@ -630,7 +669,7 @@ ip6_input(struct pbuf *p, struct netif *inp)
   } else {
     /* start trying with inp. if that's not acceptable, start walking the
        list of configured netifs. */
-    if (ip6_input_accept(inp, ip6hdr)) {
+    if (ip6_input_accept(inp, ip6hdr, p, &pretend)) {
       netif = inp;
     } else {
       netif = NULL;
@@ -661,7 +700,7 @@ ip6_input(struct pbuf *p, struct netif *inp)
           /* we checked that before already */
           continue;
         }
-        if (ip6_input_accept(netif, ip6hdr)) {
+        if (ip6_input_accept(netif, ip6hdr, p, &pretend)) {
           break;
         }
       }
@@ -1022,6 +1061,8 @@ netif_found:
         nexth = &IP6H_NEXTH(ip6hdr);
         hlen = hlen_tot = IP6_HLEN;
         pbuf_remove_header(p, IP6_HLEN);
+        /* The rebuilt packet starts at its first extension again. */
+        continue;
 
 #else /* LWIP_IPV6_REASS */
         /* free (drop) packet pbufs */
@@ -1049,6 +1090,11 @@ netif_found:
   }
 
 options_done:
+
+  if (pretend && *nexth != IP6_NEXTH_TCP && *nexth != IP6_NEXTH_UDP) {
+    pbuf_free(p);
+    goto ip6_input_cleanup;
+  }
 
   /* send to upper layers */
   ip_data.current_ip_header_tot_len = hlen_tot;

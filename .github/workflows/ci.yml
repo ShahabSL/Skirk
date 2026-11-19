@@ -45,6 +45,7 @@ jobs:
         working-directory: clients/desktop
         run: |
           npm ci
+          npm run test:snapshot
           npm run build
 
   android:
@@ -73,4 +74,4 @@ jobs:
 
       - name: Build debug APK
         working-directory: clients/android
-        run: ./gradlew :app:assembleDebug --console=plain
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --console=plain

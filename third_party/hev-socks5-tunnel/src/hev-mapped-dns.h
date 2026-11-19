@@ -10,6 +10,7 @@
 #ifndef __HEV_MAPPED_DNS_H__
 #define __HEV_MAPPED_DNS_H__
 
+#include <stdint.h>
 #include <hev-list.h>
 #include <hev-rbtree.h>
 #include <hev-object.h>
@@ -34,6 +35,8 @@ struct _HevMappedDNS
     int max;
     int net;
     int mask;
+    int ipv6_enabled;
+    uint8_t ipv6_prefix[12];
 
     HevList list;
     HevRBTree tree;
@@ -53,6 +56,8 @@ HevMappedDNS *hev_mapped_dns_new (int net, int mask, int max);
 
 HevMappedDNS *hev_mapped_dns_get (void);
 void hev_mapped_dns_put (HevMappedDNS *self);
+void hev_mapped_dns_set_ipv6_network (HevMappedDNS *self,
+                                       const uint8_t *network);
 
 int hev_mapped_dns_handle (HevMappedDNS *self, void *req, int qlen, void *res,
                            int slen);

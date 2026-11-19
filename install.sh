@@ -276,6 +276,8 @@ persist_user_path() {
     touch "$profile" 2>/dev/null || true
   fi
   append_path_to_profile "$profile" "$path_expr"
+  append_path_to_profile "$HOME/.bash_profile" "$path_expr"
+  append_path_to_profile "$HOME/.bash_login" "$path_expr"
   append_path_to_profile "$HOME/.bashrc" "$path_expr"
   append_path_to_profile "$HOME/.zprofile" "$path_expr"
   append_path_to_profile "$HOME/.zshrc" "$path_expr"
@@ -822,110 +824,38 @@ run_server_setup() {
     set -- "$@" --exit-proxy "$exit_proxy"
   fi
 
+  # Use the CLI's systemd unit generator for every setup path. It quotes paths,
+  # checks ownership and installs only the requested instance.
+  if [ "$install_systemd" = "0" ] || ! command -v systemctl >/dev/null 2>&1; then
+    set -- "$@" --start-exit=false
+  else
+    set -- "$@" --exit-service-name "$service_name"
+    if [ -n "$service_user" ]; then
+      set -- "$@" --exit-service-user "$service_user"
+    fi
+  fi
   echo
   echo "Running server setup..."
   "$install_dir/skirk" "$@"
 
-  if [ "$install_systemd" = "1" ]; then
-    install_exit_service
-  fi
-}
-
-install_exit_service() {
-  if ! command -v systemctl >/dev/null 2>&1; then
-    echo "Note: systemd is not available; start the exit manually with: $install_dir/skirk serve-exit --config $setup_out/exit.json" >&2
-    return 0
-  fi
-  if [ -z "$service_user" ]; then
-    service_user="$(id -un)"
-  fi
-  config_path="$setup_out/exit.json"
-  case "$config_path" in
-    /*) ;;
-    *) config_path="$(pwd)/$config_path" ;;
-  esac
-  service_bin="$install_dir/skirk"
-  if [ "$service_user" != "root" ]; then
-    case "$service_bin" in
-      /root|/root/*)
-        echo "error: service user $service_user cannot execute Skirk from $service_bin" >&2
-        echo "Install Skirk under /usr/local/bin or run the service as root." >&2
-        exit 1
-        ;;
-    esac
-    case "$config_path" in
-      /root|/root/*)
-        echo "error: service user $service_user cannot read Skirk config from $config_path" >&2
-        echo "Move the kit outside /root or run the service as root." >&2
-        exit 1
-        ;;
-    esac
-  fi
-  service_unit="$(normalize_service_unit "$service_name")"
-  unit="/etc/systemd/system/$service_unit"
-  if [ -e "$unit" ] && ! is_skirk_unit_file "$unit"; then
-    echo "error: refusing to overwrite non-Skirk systemd service: $unit" >&2
-    exit 1
-  fi
-  tmp_unit="$(mktemp)"
-  cat >"$tmp_unit" <<EOF
-[Unit]
-Description=Skirk exit
-# Managed by Skirk
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$service_user
-WorkingDirectory=$(dirname "$config_path")
-ExecStart=$service_bin serve-exit --config $config_path
-Restart=always
-RestartSec=5
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  if [ "$(id -u)" -eq 0 ]; then
-    cp "$tmp_unit" "$unit"
-    remove_skirk_wireproxy_dropin "$unit.d"
-    if [ "$install_wireproxy" = "1" ]; then
-      mkdir -p "$unit.d"
-      cat >"$unit.d/10-wireproxy.conf" <<EOF
+  if [ "$install_systemd" != "0" ] && command -v systemctl >/dev/null 2>&1; then
+    service_unit="$(normalize_service_unit "$service_name")"
+    dropin_dir="/etc/systemd/system/$service_unit.d"
+    if [ "$install_wireproxy" = "1" ] || { [ "$install_systemd" = "1" ] && [ -e "$dropin_dir/10-wireproxy.conf" ]; }; then
+      remove_skirk_wireproxy_dropin "$dropin_dir"
+      if [ "$install_wireproxy" = "1" ]; then
+        cat >"$tmp/skirk-wireproxy.conf" <<'EOF'
 [Unit]
 # Managed by Skirk
 After=wireproxy.service
 Wants=wireproxy.service
 EOF
+        run_root mkdir -p "$dropin_dir"
+        run_root install -m 0644 "$tmp/skirk-wireproxy.conf" "$dropin_dir/10-wireproxy.conf"
+      fi
+      run_root systemctl daemon-reload
     fi
-    systemctl daemon-reload
-    systemctl enable --now "$service_unit"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo cp "$tmp_unit" "$unit"
-    remove_skirk_wireproxy_dropin "$unit.d"
-    if [ "$install_wireproxy" = "1" ]; then
-      tmp_dropin="$(mktemp)"
-      cat >"$tmp_dropin" <<EOF
-[Unit]
-# Managed by Skirk
-After=wireproxy.service
-Wants=wireproxy.service
-EOF
-      sudo mkdir -p "$unit.d"
-      sudo cp "$tmp_dropin" "$unit.d/10-wireproxy.conf"
-      rm -f "$tmp_dropin"
-    fi
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now "$service_unit"
-  else
-    echo "Note: sudo is unavailable; systemd service file was left at $tmp_unit" >&2
-    return 0
   fi
-  rm -f "$tmp_unit"
-  echo "Installed and started systemd service: $service_unit"
 }
 
 main() {
@@ -974,7 +904,7 @@ main() {
   ensure_skirk_command
   echo
   echo "Next: run 'skirk' for guided setup, including easy or personal OAuth."
-  echo "Direct setup is also available: 'skirk setup init --out skirk-kit --reset-google-login'."
+  echo "Direct setup is also available: 'skirk setup init --out skirk-kit'."
 
   run_server_setup
 }

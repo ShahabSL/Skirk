@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,13 +14,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 func DialViaProxy(ctx context.Context, proxyURL, target string) (net.Conn, error) {
 	u, err := url.Parse(proxyURL)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("invalid outbound proxy URL")
 	}
 	switch u.Scheme {
 	case "socks5", "socks5h":
@@ -33,38 +35,35 @@ func DialViaProxy(ctx context.Context, proxyURL, target string) (net.Conn, error
 
 func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, error) {
 	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return nil, err
+	if err != nil || u.Hostname() == "" {
+		return nil, errors.New("invalid outbound SOCKS5 proxy URL")
 	}
 	if u.Scheme != "socks5" && u.Scheme != "socks5h" {
 		return nil, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
 	}
-	proxyAddr := u.Host
-	if !strings.Contains(proxyAddr, ":") {
-		proxyAddr += ":1080"
+	if err := validateSOCKS5User(u.User); err != nil {
+		return nil, err
 	}
+	proxyPort := u.Port()
+	if proxyPort == "" {
+		proxyPort = "1080"
+	}
+	proxyAddr := net.JoinHostPort(u.Hostname(), proxyPort)
 	dialer := &net.Dialer{Timeout: 25 * time.Second, KeepAlive: 30 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	} else {
 		_ = conn.SetDeadline(time.Now().Add(45 * time.Second))
 	}
-	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+	if err := authenticateUpstreamSOCKS5(conn, u.User); err != nil {
 		conn.Close()
 		return nil, err
-	}
-	reply := make([]byte, 2)
-	if _, err := io.ReadFull(conn, reply); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if reply[0] != 0x05 || reply[1] != 0x00 {
-		conn.Close()
-		return nil, fmt.Errorf("socks5 proxy rejected no-auth method")
 	}
 	host, portText, err := net.SplitHostPort(target)
 	if err != nil {
@@ -96,7 +95,7 @@ func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, erro
 	var portBuf [2]byte
 	binary.BigEndian.PutUint16(portBuf[:], uint16(port))
 	request = append(request, portBuf[:]...)
-	if _, err := conn.Write(request); err != nil {
+	if err := writeAll(conn, request); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -105,7 +104,7 @@ func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, erro
 		conn.Close()
 		return nil, err
 	}
-	if head[0] != 0x05 || head[1] != 0x00 {
+	if head[0] != 0x05 || head[2] != 0 || head[1] != 0x00 {
 		conn.Close()
 		return nil, fmt.Errorf("socks5 connect failed rep=0x%02x", head[1])
 	}
@@ -136,28 +135,64 @@ func dialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, erro
 		conn.Close()
 		return nil, err
 	}
-	_ = conn.SetDeadline(time.Time{})
+	if !stop() {
+		_ = conn.Close()
+		return nil, ctx.Err()
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	return conn, nil
+}
+
+// OutboundProxyMode is safe to include in logs even for an authenticated URL.
+func OutboundProxyMode(proxyURL string) string {
+	if strings.TrimSpace(proxyURL) == "" {
+		return "direct"
+	}
+	if u, err := url.Parse(proxyURL); err == nil {
+		switch u.Scheme {
+		case "socks5", "socks5h", "http", "https":
+			return u.Scheme
+		}
+	}
+	return "invalid"
 }
 
 func DialViaSOCKS5(ctx context.Context, proxyURL, target string) (net.Conn, error) {
 	return dialViaSOCKS5(ctx, proxyURL, target)
 }
 
-func dialViaHTTPConnect(ctx context.Context, u *url.URL, target string) (net.Conn, error) {
-	proxyAddr := u.Host
-	if !strings.Contains(proxyAddr, ":") {
+func dialViaHTTPConnect(ctx context.Context, u *url.URL, target string) (_ net.Conn, err error) {
+	if u.Hostname() == "" {
+		return nil, errors.New("invalid outbound HTTP proxy URL")
+	}
+	proxyPort := u.Port()
+	if proxyPort == "" {
 		if u.Scheme == "https" {
-			proxyAddr += ":443"
+			proxyPort = "443"
 		} else {
-			proxyAddr += ":80"
+			proxyPort = "80"
 		}
 	}
+	proxyAddr := net.JoinHostPort(u.Hostname(), proxyPort)
 	dialer := &net.Dialer{Timeout: 25 * time.Second, KeepAlive: 30 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, err
 	}
+	raw := conn
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	defer stop()
+	defer func() {
+		if err != nil {
+			_ = raw.Close()
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+		}
+	}()
 	if u.Scheme == "https" {
 		host := u.Hostname()
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
@@ -199,11 +234,39 @@ func dialViaHTTPConnect(ctx context.Context, u *url.URL, target string) (net.Con
 		conn.Close()
 		return nil, err
 	}
-	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		conn.Close()
 		return nil, fmt.Errorf("http proxy CONNECT failed status=%d", resp.StatusCode)
 	}
-	_ = conn.SetDeadline(time.Time{})
+	// A successful CONNECT switches to opaque tunnel bytes. Closing an HTTP
+	// body or discarding read-ahead would consume a server's immediate banner.
+	if !stop() {
+		return nil, ctx.Err()
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		return nil, err
+	}
+	if reader.Buffered() != 0 {
+		return &bufferedProxyConn{Conn: conn, reader: reader}, nil
+	}
 	return conn, nil
+}
+
+type bufferedProxyConn struct {
+	net.Conn
+	reader *bufio.Reader
+	readMu sync.Mutex
+}
+
+func (c *bufferedProxyConn) Read(p []byte) (int, error) {
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
+	return c.reader.Read(p)
+}
+
+func (c *bufferedProxyConn) CloseWrite() error {
+	if half, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return half.CloseWrite()
+	}
+	return errors.ErrUnsupported
 }

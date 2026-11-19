@@ -52,6 +52,10 @@ const (
 	exitFamilyPreferenceTimeout    = 2 * time.Second
 	cleanupQuietWindow             = 15 * time.Second
 	cleanupMaxForegroundDelay      = 10 * time.Second
+	cleanupForegroundPressureQueue = 32
+	cleanupForegroundBatchMin      = 2
+	cleanupForegroundBatchMid      = 8
+	cleanupForegroundBatchMax      = 16
 	cleanupForegroundDeleteDelay   = 1 * time.Second
 	cleanupIdleDeleteDelay         = 1 * time.Second
 	cleanupDeleteTimeout           = 60 * time.Second
@@ -64,66 +68,124 @@ const (
 )
 
 type Tunnel struct {
-	Data                 BlobStore
-	Secret               string
-	SessionID            [16]byte
-	ClientID             string
-	RunID                string
-	ChunkSize            int
-	Transport            string
-	Concurrency          int
-	UploadConcurrency    int
-	DownloadConcurrency  int
-	Profile              string
-	RouteProxy           string
-	ExitProxy            string
-	ExitIPFamily         string
-	BurstPoll            bool
-	BurstPollInterval    time.Duration
-	BurstPollWindow      time.Duration
-	Observe              bool
-	role                 string
-	activeStreams        atomic.Int64
-	limiterMu            sync.Mutex
-	uploadLimiter        *adaptiveLimiter
-	downloadLimiter      *adaptiveLimiter
-	muxMu                sync.Mutex
-	clientMux            *driveMux
-	lastActivityNS       atomic.Int64
-	lastUploadNS         atomic.Int64
-	burstDisabledUntilNS atomic.Int64
-	PollInterval         time.Duration
-	CleanupProcessed     bool
-	Logger               *log.Logger
+	Data                   BlobStore
+	Secret                 string
+	SessionID              [16]byte
+	ClientID               string
+	RunID                  string
+	ChunkSize              int
+	Transport              string
+	Concurrency            int
+	UploadConcurrency      int
+	DownloadConcurrency    int
+	ExitMaxStreams         int
+	Profile                string
+	RouteProxy             string
+	ExitProxy              string
+	ExitIPFamily           string
+	exitDNSUpstream        previewDNSResolver
+	BurstPoll              bool
+	BurstPollInterval      time.Duration
+	BurstPollWindow        time.Duration
+	SparsePriority         bool
+	InteractionEpoch       bool
+	Observe                bool
+	MetadataOnlyPriority   bool
+	MetadataOnlyMaxBytes   int
+	MetadataSlotV1         bool
+	MetadataSlotDeliveryV1 bool
+	MetadataSlotAsyncV1    bool
+	MetadataSlotPrimaryV1  bool
+	CombinedMuxDiscovery   bool
+	AdaptiveMuxDiscovery   bool
+	udpPreview             *datagramPreview
+	slotAttempted          atomic.Bool // One bounded shadow generation per client process/run.
+	role                   string
+	activeStreams          atomic.Int64
+	limiterMu              sync.Mutex
+	uploadLimiter          *adaptiveLimiter
+	downloadLimiter        *adaptiveLimiter
+	muxMu                  sync.Mutex
+	clientMux              *driveMux
+	clientMuxListeners     int
+	lastActivityNS         atomic.Int64
+	lastUploadNS           atomic.Int64
+	burstDisabledUntilNS   atomic.Int64
+	PollInterval           time.Duration
+	CleanupProcessed       bool
+	Logger                 *log.Logger
+	roleOnce               sync.Once
+}
+
+func (t *Tunnel) setRole(role string) {
+	t.roleOnce.Do(func() { t.role = role })
 }
 
 func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
+	if err := validateExitStreamLimit(cfg.Tunnel.ExitMaxStreams); err != nil {
+		return nil, err
+	}
+	if _, err := previewUDPBatchBytes(cfg.Tunnel); err != nil {
+		return nil, err
+	}
+	if _, err := previewUDPMediaBytes(cfg.Tunnel); err != nil {
+		return nil, err
+	}
+	exitDNSUpstream, err := configuredExitPreviewDNS(cfg.Tunnel)
+	if err != nil {
+		return nil, err
+	}
 	sid, err := ParseSessionID(cfg.SessionID)
 	if err != nil {
 		return nil, err
 	}
+	transport := strings.TrimSpace(cfg.Tunnel.Transport)
+	if transport == "" {
+		transport = "muxv5"
+	}
 	t := &Tunnel{
-		Data:                data,
-		Secret:              cfg.Secret,
-		SessionID:           sid,
-		ClientID:            strings.TrimSpace(cfg.Client.ID),
-		RunID:               strings.TrimSpace(cfg.Client.RunID),
-		ChunkSize:           cfg.Tunnel.ChunkSize,
-		Transport:           strings.TrimSpace(cfg.Tunnel.Transport),
-		Concurrency:         cfg.Tunnel.Concurrency,
-		UploadConcurrency:   cfg.Tunnel.UploadConcurrency,
-		DownloadConcurrency: cfg.Tunnel.DownloadConcurrency,
-		Profile:             cfg.Tunnel.Profile,
-		RouteProxy:          cfg.Route.Proxy,
-		ExitProxy:           strings.TrimSpace(cfg.Tunnel.ExitProxy),
-		ExitIPFamily:        strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
-		BurstPoll:           cfg.Tunnel.BurstPoll,
-		BurstPollInterval:   time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
-		BurstPollWindow:     time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
-		Observe:             cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
-		PollInterval:        cfg.PollInterval(),
-		CleanupProcessed:    cfg.Tunnel.CleanupProcessed,
-		Logger:              log.Default(),
+		Data:                   data,
+		Secret:                 cfg.Secret,
+		SessionID:              sid,
+		ClientID:               strings.TrimSpace(cfg.Client.ID),
+		RunID:                  strings.TrimSpace(cfg.Client.RunID),
+		ChunkSize:              cfg.Tunnel.ChunkSize,
+		Transport:              transport,
+		Concurrency:            cfg.Tunnel.Concurrency,
+		UploadConcurrency:      cfg.Tunnel.UploadConcurrency,
+		DownloadConcurrency:    cfg.Tunnel.DownloadConcurrency,
+		ExitMaxStreams:         cfg.Tunnel.ExitMaxStreams,
+		Profile:                cfg.Tunnel.Profile,
+		RouteProxy:             cfg.Route.Proxy,
+		ExitProxy:              strings.TrimSpace(cfg.Tunnel.ExitProxy),
+		ExitIPFamily:           strings.TrimSpace(cfg.Tunnel.ExitIPFamily),
+		exitDNSUpstream:        exitDNSUpstream,
+		BurstPoll:              cfg.Tunnel.BurstPoll,
+		BurstPollInterval:      time.Duration(cfg.Tunnel.BurstPollMS) * time.Millisecond,
+		BurstPollWindow:        time.Duration(cfg.Tunnel.BurstPollWindowMS) * time.Millisecond,
+		SparsePriority:         cfg.Tunnel.SparsePriority,
+		InteractionEpoch:       cfg.Tunnel.InteractionEpoch,
+		Observe:                cfg.Tunnel.Observe || envBool("SKIRK_OBSERVE"),
+		MetadataOnlyPriority:   cfg.Drive.MetadataOnlyPriority,
+		MetadataOnlyMaxBytes:   cfg.Drive.MetadataOnlyMaxBytes,
+		MetadataSlotV1:         cfg.Drive.MetadataSlotV1,
+		MetadataSlotDeliveryV1: cfg.Drive.MetadataSlotDeliveryV1,
+		MetadataSlotAsyncV1:    cfg.Drive.MetadataSlotAsyncV1,
+		MetadataSlotPrimaryV1:  cfg.Drive.MetadataSlotPrimaryV1,
+		CombinedMuxDiscovery:   cfg.Drive.CombinedMuxDiscovery,
+		AdaptiveMuxDiscovery:   cfg.Drive.AdaptiveMuxDiscovery,
+		PollInterval:           cfg.PollInterval(),
+		CleanupProcessed:       cfg.Tunnel.CleanupProcessed,
+		Logger:                 log.Default(),
+	}
+	if t.ExitMaxStreams == 0 {
+		t.ExitMaxStreams = automaticExitStreamLimit()
+	}
+	if len(cfg.Tunnel.UDPPreviewTargets) != 0 || cfg.Tunnel.UDPPreviewPublicIPv4 {
+		t.udpPreview, err = newDatagramPreview(t, cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	t.markActivity()
 	return t, nil
@@ -249,7 +311,7 @@ func (t *Tunnel) burstPollActive(now time.Time) bool {
 	if now.Sub(time.Unix(0, lastUpload)) > t.BurstPollWindow {
 		return false
 	}
-	return t.activeStreams.Load() > 0 || t.recentActivity()
+	return t.activeStreams.Load() > 0
 }
 
 func (t *Tunnel) recentActivity() bool {
@@ -273,7 +335,8 @@ func (t *Tunnel) deleteData(ctx context.Context, name, fileID string) error {
 func (t *Tunnel) dialExitTarget(ctx context.Context, target string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, exitDialTimeout)
 	defer cancel()
-	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" && !bypassExitProxy(target) {
+	strictProxy := t.udpPreview != nil && t.udpPreview.sharedUDP
+	if proxy := strings.TrimSpace(t.ExitProxy); proxy != "" && (strictProxy || !bypassExitProxy(target)) {
 		return DialViaProxy(ctx, proxy, target)
 	}
 	return dialDirectExitTarget(ctx, target, t.ExitIPFamily)
@@ -724,6 +787,10 @@ func (l *adaptiveLimiter) release(priority bool, err error, duration time.Durati
 	if priority && l.priorityBusy > 0 {
 		l.priorityBusy--
 	}
+	// Local stream cancellation says nothing about provider capacity.
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	oldLimit := l.limit
 	reason := ""
 	now := time.Now()
@@ -827,13 +894,14 @@ type cleanupTask struct {
 	id   string
 }
 
-func (t *Tunnel) deleteCleanupTask(ctx context.Context, task cleanupTask) {
+func (t *Tunnel) deleteCleanupTask(ctx context.Context, task cleanupTask) bool {
 	if t == nil || !t.CleanupProcessed || (task.name == "" && task.id == "") {
-		return
+		return false
 	}
 	taskCtx, cancel := context.WithTimeout(ctx, cleanupDeleteTimeout)
-	_ = t.deleteData(taskCtx, task.name, task.id)
+	err := t.deleteData(taskCtx, task.name, task.id)
 	cancel()
+	return err == nil
 }
 
 func (t *Tunnel) foregroundBusy() bool {
@@ -852,21 +920,35 @@ func readChunk(reader io.Reader, buffer []byte) (int, error) {
 }
 
 func readChunkWithPolicy(reader io.Reader, buffer []byte, forceBulk bool) (int, error) {
+	return readChunkWithPolicyFunc(reader, buffer, func() bool { return forceBulk })
+}
+
+func readChunkWithPolicyFunc(reader io.Reader, buffer []byte, forceBulk func() bool) (int, error) {
 	n, err := reader.Read(buffer)
 	if n <= 0 || err != nil || n == len(buffer) {
 		return n, err
 	}
+	return coalesceChunkWithPolicyFunc(reader, buffer, n, forceBulk)
+}
+
+// Continue a read after its first bytes have been placed in a larger buffer.
+// This keeps the same deadline and size policy as an ordinary partial read.
+func coalesceChunkWithPolicyFunc(reader io.Reader, buffer []byte, n int, forceBulk func() bool) (int, error) {
+	if n <= 0 || n >= len(buffer) {
+		return n, nil
+	}
+	bulk := forceBulk()
 	deadlineConn, ok := reader.(interface {
 		SetReadDeadline(time.Time) error
 	})
 	if !ok {
-		return n, err
+		return n, nil
 	}
 	defer deadlineConn.SetReadDeadline(time.Time{})
 	started := time.Now()
 	for n < len(buffer) {
-		delay := coalesceDelayForBytesWithPolicy(n, forceBulk)
-		maxAge := coalesceMaxAgeForBytesWithPolicy(n, forceBulk)
+		delay := coalesceDelayForBytesWithPolicy(n, bulk)
+		maxAge := coalesceMaxAgeForBytesWithPolicy(n, bulk)
 		if maxAge > 0 {
 			remaining := maxAge - time.Since(started)
 			if remaining <= 0 {

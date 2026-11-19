@@ -34,27 +34,14 @@ Choose the release version explicitly:
 VERSION=vX.Y.Z make package-release
 ```
 
-Official release builds must include the Skirk OAuth client so setup does not
-ask users for `oauth-client.json`. The GitHub release workflow fails unless
-these repository secrets are configured before tagging:
+Public packages use a Desktop OAuth client supplied by each exit operator. Keep Google credentials out of the build environment and release artifacts. Android production signing uses these encrypted repository secrets:
 
-- `SKIRK_OAUTH_CLIENT_ID`
-- `SKIRK_OAUTH_CLIENT_SECRET`
 - `SKIRK_ANDROID_KEYSTORE_BASE64`
 - `SKIRK_ANDROID_KEYSTORE_PASSWORD`
 - `SKIRK_ANDROID_KEY_ALIAS`
 - `SKIRK_ANDROID_KEY_PASSWORD`
 
-Local release smoke builds can use the same variables:
-
-```bash
-SKIRK_OAUTH_CLIENT_ID='...' \
-SKIRK_OAUTH_CLIENT_SECRET='...' \
-VERSION=vX.Y.Z make package-release
-```
-
-The built-in easy setup path uses Google's device-code OAuth flow. Google's
-token polling requires both the client ID and client secret for that flow.
+The tagged workflow prepares a draft. Verify its package digests and expected signing identities, then publish the draft.
 
 This writes:
 
@@ -68,9 +55,10 @@ Client release assets are built by GitHub Actions:
 - Windows portable desktop zip (`Skirk_windows_x64_portable.zip`) for normal GUI use.
 - Linux portable desktop zip (`Skirk_linux_x64_portable.zip`) for normal Linux
   GUI proxy use.
-- macOS Apple Silicon desktop app zip (`Skirk_macos_arm64.app.zip`) for proxy
-  mode.
-- macOS Intel desktop app zip (`Skirk_macos_x64.app.zip`) for proxy mode.
+- macOS Apple Silicon desktop app zip (`Skirk_macos_arm64_signed_notarized.app.zip`
+  or `Skirk_macos_arm64_unsigned.app.zip`) for proxy mode.
+- macOS Intel desktop app zip (`Skirk_macos_x64_signed_notarized.app.zip` or
+  `Skirk_macos_x64_unsigned.app.zip`) for proxy mode.
 - Windows CLI zip (`skirk-windows-amd64.zip`) for manual PowerShell use. This
   asset is not the desktop app.
 - Android universal APK (`skirk-android-universal.apk`) for sideload testing on
@@ -80,6 +68,16 @@ Client release assets are built by GitHub Actions:
 - Android arm64 compatibility alias (`skirk-android-arm64.apk`) for existing
   links. The GitHub release tag carries the version; APK filenames intentionally
   stay stable for simple user instructions.
+
+macOS release signing and notarization are enabled only when all five
+repository secrets are set: `APPLE_CERTIFICATE` (base64-encoded Developer ID
+Application `.p12` including its private key), `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_API_KEY` (App Store Connect key ID), `APPLE_API_ISSUER` (issuer ID), and
+`APPLE_API_PRIVATE_KEY` (the `.p8` contents). A release with none of these
+secrets is labeled `_unsigned`; a partial set fails the release job. Signed
+releases use hardened runtime, an Apple timestamp, notarization, and a stapled
+ticket. A Developer ID certificate and Apple notarization access are required
+to produce the `_signed_notarized` assets.
 
 The workflow publishes SHA-256 checksums and GitHub artifact attestations for
 the APK and archives. Verify a downloaded asset with:

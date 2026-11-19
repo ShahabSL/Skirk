@@ -12,22 +12,31 @@ notice in sync with vendored source changes.
 - License file: `third_party/hev-socks5-tunnel/License`
 - Local path: `third_party/hev-socks5-tunnel`
 
-Skirk builds this project into `libhev-socks5-tunnel.so` and uses it as the
-Android TUN-to-SOCKS packet bridge behind `VpnService`.
+Skirk builds this project into `libhev-socks5-tunnel.so` for Android `VpnService`
+and into a static framework for the iOS packet tunnel.
+The vendored build preserves complete supported UDP payloads after IP
+reassembly and uses the configured tunnel MTU for lwIP output.
+It also preserves empty UDP datagrams in both directions.
 
 ## sing-box
 
-- Project: `sing-box`
-- Upstream: https://github.com/SagerNet/sing-box
-- Release artifact used by Skirk Windows releases: `sing-box-1.13.12-windows-amd64.zip`
-- Release SHA-256: `e93fc531134eb1beb4efa3c74990a24e48456098a31c03b60d5ddf17f223cf98`
-- License: GPL-3.0-or-later
-- License file included in Windows portable releases: `third_party/sing-box-LICENSE.txt`
-- Corresponding source: https://github.com/SagerNet/sing-box/tree/v1.13.12
+Skirk runs the unmodified [sing-box 1.13.12](https://github.com/SagerNet/sing-box/releases/tag/v1.13.12)
+as a separate VPN process in the Windows and Linux portable packages.
+The Windows helper is named `skirk-tunnel.exe` and the Linux helper is named
+`skirk-tunnel`. Both packages include the GPL-3.0-or-later license and the
+matching source archive under `third_party/`. The
+[upstream source archive](https://github.com/SagerNet/sing-box/archive/refs/tags/v1.13.12.tar.gz)
+contains the Go module definitions and release build scripts.
 
-Skirk Windows portable releases stage the `sing-box.exe` release binary as
-`skirk-tunnel.exe` and run it as a separate VPN/TUN sidecar process for Windows
-VPN mode. The Skirk repository does not vendor sing-box source code.
+The Windows helper embeds the [Wintun 0.14.1](https://www.wintun.net/)
+driver from WireGuard LLC. The portable package includes the upstream
+prebuilt binaries license at `third_party/wintun-LICENSE.txt`.
+
+| Upstream archive | SHA-256 |
+| --- | --- |
+| sing-box-1.13.12-windows-amd64.zip | `e93fc531134eb1beb4efa3c74990a24e48456098a31c03b60d5ddf17f223cf98` |
+| sing-box-1.13.12-linux-amd64.tar.gz | `1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4` |
+| sing-box v1.13.12 source tarball | `08f3f7295130b76a60c1cb6565b89da6c4ce98d7bdea8852973a5d2e3c6de3b7` |
 
 ## Nested Components
 

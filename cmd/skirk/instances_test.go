@@ -18,7 +18,9 @@ func TestDefaultInstanceID(t *testing.T) {
 
 func TestDiscoverExitInstances(t *testing.T) {
 	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg"))
+	t.Setenv("APPDATA", filepath.Join(tmp, "appdata"))
 	t.Chdir(tmp)
 
 	root, err := skirkInstancesRoot()
@@ -49,7 +51,9 @@ func TestDiscoverExitInstances(t *testing.T) {
 
 func TestDiscoverExitInstancesFindsInstalledDefaultKitOutsideCWD(t *testing.T) {
 	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg"))
+	t.Setenv("APPDATA", filepath.Join(tmp, "appdata"))
 	t.Chdir(filepath.Join(tmp))
 	installedKit := filepath.Join(tmp, "opt", "skirk-kit")
 	if err := os.MkdirAll(installedKit, 0o700); err != nil {

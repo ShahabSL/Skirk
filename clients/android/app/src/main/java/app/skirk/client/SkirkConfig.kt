@@ -3,47 +3,94 @@ package app.skirk.client
 import android.util.Base64
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.lang.IllegalArgumentException
 import java.util.zip.GZIPInputStream
 
+internal const val PROFILE_TEXT_TOO_LARGE = "Profile text is too large. Copy the full profile again or choose a profile file."
+
 data class SkirkConfig(
     val sessionId: String,
+    val secret: String,
+    val oauthClientId: String,
+    val transport: String,
     val routeMode: String,
     val driveSpace: String,
     val driveFolderId: String,
+    val udpPreviewIpv6: Boolean = false,
+    val udpPreviewRemoteDns: Boolean = false,
 ) {
     companion object {
         private const val TEXT_PREFIX = "skirk:"
+        private const val MAX_PROFILE_BYTES = 256 * 1024
+
+        internal fun isOversizedDraft(length: Int): Boolean = length > MAX_PROFILE_BYTES * 2
 
         fun parse(raw: String): SkirkConfig {
             val root = try {
                 JSONObject(decodeRaw(raw))
-            } catch (error: Exception) {
+            } catch (_: Exception) {
+                // A JSON parser exception can contain the profile's credentials.
                 throw IllegalArgumentException(
                     "Invalid Skirk profile. Copy the full one-line skirk: config again.",
-                    error,
                 )
             }
             val route = root.optJSONObject("route") ?: JSONObject()
             val drive = root.optJSONObject("drive") ?: JSONObject()
+            val auth = root.optJSONObject("auth") ?: JSONObject()
+            val tunnelValue = root.opt("tunnel")
+            require(tunnelValue == null || tunnelValue == JSONObject.NULL || tunnelValue is JSONObject) {
+                "Config has an invalid Skirk transport section"
+            }
+            val tunnel = tunnelValue as? JSONObject ?: JSONObject()
+            val transportValue = tunnel.opt("transport")
+            require(transportValue == null || transportValue == JSONObject.NULL || transportValue is String) {
+                "Config has an invalid Skirk transport version"
+            }
             return SkirkConfig(
                 sessionId = root.optString("session_id"),
-                routeMode = route.optString("mode", "direct"),
+                secret = root.optString("secret"),
+                oauthClientId = auth.optString("client_id"),
+                transport = (transportValue as? String)?.trim()?.ifEmpty { "muxv5" } ?: "muxv5",
+                routeMode = route.optString("mode", "google_front_pinned").ifBlank { "google_front_pinned" },
                 driveSpace = drive.optString("space"),
                 driveFolderId = drive.optString("folder_id"),
+                udpPreviewIpv6 = tunnel.readPreviewFlag("udp_preview_ipv6"),
+                udpPreviewRemoteDns = tunnel.readPreviewFlag("udp_preview_remote_dns"),
             )
         }
 
+        private fun JSONObject.readPreviewFlag(key: String): Boolean {
+            val value = opt(key)
+            require(value == null || value == JSONObject.NULL || value is Boolean) {
+                "Config has an invalid Skirk transport setting: $key"
+            }
+            return value == true
+        }
+
         fun decodeRaw(raw: String): String {
-            val text = normalizeInlineConfig(raw) ?: return raw.trim()
+            require(!isOversizedDraft(raw.length)) { PROFILE_TEXT_TOO_LARGE }
+            val text = normalizeInlineConfig(raw) ?: return raw.trim().also {
+                require(it.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) { "Skirk profile is too large" }
+            }
             val encoded = text.removePrefix(TEXT_PREFIX)
             try {
+                require(encoded.length <= MAX_PROFILE_BYTES * 2) { "Skirk profile is too large" }
                 val compressed = Base64.decode(
                     encoded,
                     Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
                 )
+                require(compressed.size <= MAX_PROFILE_BYTES) { "Skirk profile is too large" }
                 return GZIPInputStream(ByteArrayInputStream(compressed)).use { stream ->
-                    stream.readBytes().toString(Charsets.UTF_8)
+                    val output = ByteArrayOutputStream()
+                    val chunk = ByteArray(4096)
+                    while (true) {
+                        val count = stream.read(chunk)
+                        if (count < 0) break
+                        require(output.size() + count <= MAX_PROFILE_BYTES) { "Skirk profile is too large" }
+                        output.write(chunk, 0, count)
+                    }
+                    output.toString(Charsets.UTF_8.name())
                 }
             } catch (error: Exception) {
                 throw IllegalArgumentException(
