@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -54,10 +56,13 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
         val toolchainBin = ndkRoot.resolve("toolchains/llvm/prebuilt/$hostTag/bin")
         val clangSuffix = if (org.gradle.internal.os.OperatingSystem.current().isWindows) ".cmd" else ""
         val cCompilers = mapOf(
-            "arm64-v8a" to toolchainBin.resolve("aarch64-linux-android26-clang$clangSuffix").absolutePath,
-            "armeabi-v7a" to toolchainBin.resolve("armv7a-linux-androideabi26-clang$clangSuffix").absolutePath,
+            "arm64-v8a" to toolchainBin.resolve("aarch64-linux-android26-clang$clangSuffix"),
+            "armeabi-v7a" to toolchainBin.resolve("armv7a-linux-androideabi26-clang$clangSuffix"),
         )
+        val compilerPath = listOfNotNull(toolchainBin.absolutePath, System.getenv("PATH")).joinToString(File.pathSeparator)
         goAndroidTargets.forEach { (abi, goArch, goArm) ->
+            val compiler = cCompilers.getValue(abi)
+            check(compiler.isFile) { "Android NDK compiler was not found at ${compiler.absolutePath}" }
             val outputDir = generatedSkirkJniLibs.get().dir(abi).asFile
             outputDir.mkdirs()
             exec {
@@ -79,21 +84,23 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
                     environment("GOARM", goArm)
                 }
                 environment("CGO_ENABLED", "1")
-                environment("CC", requireNotNull(cCompilers[abi]) { "missing Android compiler for $abi" })
+                // cgo parses CC as a command line. Keep spaces in the SDK path out of that command.
+                environment("CC", compiler.name)
+                environment("PATH", compilerPath)
             }
         }
     }
 }
 
 fun androidSdkRoot(): File {
-    val explicit = providers.gradleProperty("android.sdk.path").orNull
-    val env = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
-    val local = rootProject.file("local.properties")
-        .takeIf { it.exists() }
-        ?.readLines()
-        ?.firstOrNull { it.startsWith("sdk.dir=") }
-        ?.substringAfter("sdk.dir=")
-    return File(explicit ?: env ?: local ?: error("Android SDK path was not found"))
+    val path = providers.gradleProperty("android.sdk.path").orNull
+        ?: System.getenv("ANDROID_HOME")
+        ?: System.getenv("ANDROID_SDK_ROOT")
+        ?: rootProject.file("local.properties").takeIf { it.isFile }?.reader()?.use { reader ->
+            Properties().apply { load(reader) }.getProperty("sdk.dir")
+        }
+        ?: error("Android SDK path was not found")
+    return File(path)
 }
 
 val buildHevTun2socks = tasks.register("buildHevTun2socks") {
