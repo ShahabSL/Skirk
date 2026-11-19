@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -143,6 +144,52 @@ class ProfileSidecarTest {
         assertFalse(oldText.exists())
         assertTrue(other.exists())
         assertTrue(outside.exists())
+    }
+
+    @Test
+    fun clearAllRemovesOrphansInBothLegacyFormatsAndLeavesOtherFilesAlone() {
+        val files = temporary.newFolder()
+        deleteAllLegacyRuntimeProfiles(files)
+        val configs = File(files, "configs").apply { mkdir() }
+        val orphanText = File(configs, "removed.skirk").apply { writeText("synthetic fixture") }
+        val orphanJson = File(configs, "other.json").apply { writeText("{}") }
+        val unrelated = File(configs, "info.txt").apply { writeText("keep") }
+        val nested = File(configs, "directory.skirk").apply { mkdir() }
+        val nestedJson = File(nested, "nested.json").apply { writeText("{}") }
+        val sidecar = File(files, "skirk-sidecars/profile-active.cfg").apply {
+            parentFile!!.mkdir()
+            writeText("synthetic fixture")
+        }
+
+        deleteAllLegacyRuntimeProfiles(files)
+        deleteAllLegacyRuntimeProfiles(files)
+
+        assertFalse(orphanText.exists())
+        assertFalse(orphanJson.exists())
+        assertTrue(unrelated.isFile)
+        assertTrue(nestedJson.isFile)
+        assertTrue(sidecar.isFile)
+    }
+
+    @Test
+    fun legacyCleanupPreservesLinksAndNeverFollowsALinkedConfigsDirectory() {
+        val files = temporary.newFolder()
+        val outside = temporary.newFolder()
+        val target = File(outside, "first.json").apply { writeText("outside") }
+        val configs = File(files, "configs")
+        Files.createSymbolicLink(configs.toPath(), outside.toPath())
+        deleteLegacyRuntimeProfiles(files, "first")
+        deleteAllLegacyRuntimeProfiles(files)
+        assertTrue(Files.isSymbolicLink(configs.toPath()))
+        assertEquals("outside", target.readText())
+
+        Files.delete(configs.toPath())
+        assertTrue(configs.mkdir())
+        val link = Files.createSymbolicLink(File(configs, "first.json").toPath(), target.toPath())
+        deleteLegacyRuntimeProfiles(files, "first")
+        deleteAllLegacyRuntimeProfiles(files)
+        assertTrue(Files.isSymbolicLink(link))
+        assertEquals("outside", target.readText())
     }
 
     private class Child(

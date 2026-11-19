@@ -54,7 +54,8 @@ class ProfileStore(context: Context) {
     }
 
     fun deleteProfile(profileId: String) {
-        val next = listProfiles().filterNot { it.id == profileId }
+        val current = listProfiles()
+        val next = current.filterNot { it.id == profileId }
         val nextSelected = if (selectedProfileId() == profileId) next.firstOrNull()?.id else selectedProfileId()
         val array = JSONArray()
         next.forEach { array.put(it.toJson()) }
@@ -62,13 +63,16 @@ class ProfileStore(context: Context) {
             .putString(KEY_PROFILES, array.toString())
             .putString(KEY_SELECTED, nextSelected)
             .apply()
-        deleteLegacyRuntimeProfiles(filesDir, profileId)
+        if (current.isNotEmpty() && next.isEmpty()) {
+            deleteAllLegacyRuntimeProfiles(filesDir)
+        } else {
+            deleteLegacyRuntimeProfiles(filesDir, profileId)
+        }
     }
 
     fun deleteAll() {
-        val current = listProfiles()
         prefs.edit().clear().apply()
-        current.forEach { deleteLegacyRuntimeProfiles(filesDir, it.id) }
+        deleteAllLegacyRuntimeProfiles(filesDir)
     }
 
     private companion object {

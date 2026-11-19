@@ -1,6 +1,8 @@
 package app.skirk.client
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -81,13 +83,28 @@ internal class ProfileSidecar private constructor(
 }
 
 private val legacyProfileId = Regex("[A-Za-z0-9_.-]{3,96}")
+private val legacyProfileExtensions = setOf("skirk", "json")
+
+// Sidecars and probes now use separate cache files. Only inspect the original
+// configs directory itself, never a directory or file reached through a link.
+private fun legacyConfigsDirectory(filesDir: File): File? =
+    File(filesDir, "configs").takeIf { Files.isDirectory(it.toPath(), NOFOLLOW_LINKS) }
+
+private fun File.deleteIfRegularFile() {
+    if (Files.isRegularFile(toPath(), NOFOLLOW_LINKS)) delete()
+}
 
 internal fun deleteLegacyRuntimeProfiles(filesDir: File, profileId: String) {
     if (!legacyProfileId.matches(profileId)) return
-    // New sidecars and probes use distinct cache files, never these old paths.
-    val dir = File(filesDir, "configs")
-    for (suffix in listOf("skirk", "json")) {
-        val legacy = File(dir, "$profileId.$suffix")
-        if (legacy.isFile) legacy.delete()
+    val dir = legacyConfigsDirectory(filesDir) ?: return
+    for (suffix in legacyProfileExtensions) {
+        File(dir, "$profileId.$suffix").deleteIfRegularFile()
+    }
+}
+
+internal fun deleteAllLegacyRuntimeProfiles(filesDir: File) {
+    val dir = legacyConfigsDirectory(filesDir) ?: return
+    dir.listFiles()?.forEach { file ->
+        if (file.extension in legacyProfileExtensions) file.deleteIfRegularFile()
     }
 }
