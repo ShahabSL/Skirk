@@ -78,20 +78,20 @@ func promptPersonalOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 		fallback = "oauth-client.json"
 	}
 	for {
-		printPersonalOAuthGuide(fallback)
+		printPersonalOAuthGuide()
 		fmt.Println("How do you want to provide the OAuth client?")
 		fmt.Println("1. Paste Desktop app client ID and client secret")
 		fmt.Println("2. Use a downloaded OAuth client JSON file")
 		fmt.Println("3. Show these instructions again")
 		fmt.Println("0. Cancel")
-		choice, err := prompt(ctx, reader, "Personal OAuth setup", "2")
+		choice, err := prompt(ctx, reader, "Personal OAuth setup", "1")
 		if err != nil {
 			return "", err
 		}
 		switch strings.ToLower(strings.TrimSpace(choice)) {
-		case "1", "paste", "manual":
+		case "", "1", "paste", "manual":
 			return promptAndSaveOAuthClient(ctx, reader, fallback)
-		case "", "2", "json", "file", "path":
+		case "2", "json", "file", "path":
 			return promptExistingOAuthClientFile(ctx, reader, fallback)
 		case "3", "help", "guide":
 			continue
@@ -103,7 +103,7 @@ func promptPersonalOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 	}
 }
 
-func printPersonalOAuthGuide(defaultPath string) {
+func printPersonalOAuthGuide() {
 	fmt.Println()
 	fmt.Println("Set up Skirk with your Google Cloud project")
 	fmt.Println("1. Create a project and enable Google Drive API.")
@@ -113,7 +113,7 @@ func printPersonalOAuthGuide(defaultPath string) {
 	fmt.Println("   https://console.cloud.google.com/auth/overview")
 	fmt.Println("3. In Audience, select Publish app and confirm In production.")
 	fmt.Println("   https://console.cloud.google.com/auth/audience")
-	fmt.Println("4. In Clients, create a Desktop app client and save its downloaded JSON as " + defaultPath + ".")
+	fmt.Println("4. In Clients, create a Desktop app client. Copy its Client ID and Client secret to paste here.")
 	fmt.Println("   https://console.cloud.google.com/auth/clients")
 	fmt.Println()
 	fmt.Println("Skirk will print a Google approval URL. On a VPS, approve it in your")
@@ -164,9 +164,9 @@ func promptExistingOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 				path = fallback
 			}
 		case "2", "paste", "manual":
-			return promptAndSaveOAuthClient(ctx, reader, path)
+			return promptAndSaveOAuthClient(ctx, reader, fallback)
 		case "3", "help", "guide":
-			printPersonalOAuthGuide(fallback)
+			printPersonalOAuthGuide()
 		case "0", "q", "quit", "cancel":
 			return "", errors.New("personal OAuth setup canceled")
 		default:
@@ -175,16 +175,14 @@ func promptExistingOAuthClientFile(ctx context.Context, reader *bufio.Reader, fa
 	}
 }
 
-func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbackPath string) (string, error) {
+func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, path string) (string, error) {
 	fmt.Println()
-	fmt.Println("Paste the values from the Google Cloud OAuth client page.")
-	fmt.Println("They are labels for your Google Cloud project; by themselves they do not grant Drive access.")
-	fmt.Println("Use application type \"Desktop app\". If Google only shows a Client ID, you probably created a TV/Limited Input client; create a Desktop app client instead.")
+	fmt.Println("Paste each value from your Desktop app client in Google Cloud, then press Enter.")
 	clientID, err := prompt(ctx, reader, "OAuth client ID", "")
 	if err != nil {
 		return "", err
 	}
-	clientSecret, err := prompt(ctx, reader, "OAuth client secret (optional)", "")
+	clientSecret, err := promptOAuthClientSecret(ctx, reader)
 	if err != nil {
 		return "", err
 	}
@@ -196,27 +194,37 @@ func promptAndSaveOAuthClient(ctx context.Context, reader *bufio.Reader, fallbac
 		return "", errors.New("pasted OAuth client ID cannot be empty")
 	}
 	creds.Flow = "desktop"
-	savePath, err := prompt(ctx, reader, "Save OAuth client JSON as", fallbackPath)
+	savePath, err := writeOAuthClientJSON(path, creds)
 	if err != nil {
-		return "", err
-	}
-	savePath = strings.TrimSpace(savePath)
-	if savePath == "" {
-		savePath = fallbackPath
-	}
-	if err := writeOAuthClientJSON(savePath, creds); err != nil {
 		return "", err
 	}
 	fmt.Printf("Saved personal OAuth client JSON to %s.\n\n", savePath)
 	return savePath, nil
 }
 
-func writeOAuthClientJSON(path string, creds oauthClientCredentials) error {
+func promptOAuthClientSecret(ctx context.Context, reader *bufio.Reader) (secret string, err error) {
+	restore, err := disableInputEcho(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("hide OAuth client secret: %w", err)
+	}
+	label := "OAuth client secret (optional)"
+	if restore != nil {
+		label += " [input hidden]"
+		defer func() {
+			restoreErr := restore()
+			fmt.Println()
+			if err == nil && restoreErr != nil {
+				secret, err = "", fmt.Errorf("restore terminal input: %w", restoreErr)
+			}
+		}()
+	}
+	return prompt(ctx, reader, label, "")
+}
+
+func writeOAuthClientJSON(path string, creds oauthClientCredentials) (string, error) {
 	dir := filepath.Dir(path)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
 	}
 	installed := map[string]string{
 		"client_id": creds.ClientID,
@@ -232,8 +240,23 @@ func writeOAuthClientJSON(path string, creds oauthClientCredentials) error {
 	}
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
 	body = append(body, '\n')
-	return os.WriteFile(path, body, 0600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		// A second kit can use another OAuth project from the same directory.
+		ext := filepath.Ext(path)
+		prefix := strings.TrimSuffix(filepath.Base(path), ext)
+		f, err = os.CreateTemp(dir, prefix+"-*"+ext)
+	}
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := f.Write(body)
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }

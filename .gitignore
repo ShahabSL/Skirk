@@ -26,6 +26,8 @@ exit.json
 *.pfx
 google-services.json
 oauth-client.json
+oauth-client-*.json
+client_secret_*.apps.googleusercontent.com.json
 
 # Probe/build artifacts
 .skirk-runs/

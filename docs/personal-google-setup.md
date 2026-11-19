@@ -39,31 +39,27 @@ Publishing and verification are separate. Google describes a verification except
 
 ## 4. Create a Desktop app client
 
-![Open Clients, click Create client, choose Desktop app, then create the client and download the JSON.](images/personal-google-desktop-client.png)
-
 ![Desktop app in the Google OAuth application-type selector.](images/personal-google-desktop-option.jpg)
 
-Open **Clients → Create client**. Set **Application type** to **Desktop app**, enter a name, and click **Create**. Download the JSON when the credential is created and save it as `oauth-client.json`. Google shows the full secret when it is created, so keep the original JSON in a private directory or secret store. [Clients](https://console.cloud.google.com/auth/clients) · [Google's client secret guidance](https://support.google.com/cloud/answer/15549257)
+In your computer's browser, open **Clients → Create client**. Choose **Desktop app**, enter a name, and click **Create**. Leave the window open. Google shows the full **Client secret** when you create it, and you'll copy both **Client ID** and **Client secret** in the next step. [Clients](https://console.cloud.google.com/auth/clients) · [Google's client secret guidance](https://support.google.com/cloud/answer/15549257)
 
 ## 5. Create the Skirk kit
 
-After installing Skirk, put the JSON in a private directory on the exit machine. On Linux and macOS, run `chmod 600 ./oauth-client.json` from that directory. On Windows, use a directory accessible only to your Windows account. Run setup from that directory and choose a fresh output path. To recover an existing kit, use renewal below.
+Once Skirk is installed, open a terminal on the exit. Connect to it using SSH if it is a remote server. For a new kit on Linux with systemd, run the command below. For macOS, Windows, or a foreground exit, see the platform commands in the installation guide. [Install Skirk](install.md#configure-the-exit)
 
 ```sh
-skirk setup init --oauth-mode personal --oauth-client-file ./oauth-client.json --out skirk-kit --start-exit=false
+skirk setup init --out skirk-kit
 ```
 
-On Windows, use the path to `skirk.exe` if it is outside `PATH`.
+1. At Skirk’s credential menu, press Enter for **1. Paste**. Copy **Client ID** from the Google window, paste it into Skirk, and press Enter. At the next prompt paste **Client secret** and press Enter. The secret stays hidden as you paste. Skirk saves the credentials on the exit.
+2. Open Skirk’s approval link in your browser. Sign in with the Google account that will own the mailbox and approve access. If you are using SSH and your browser ends on a localhost address that fails to load, copy the **entire address** from the address bar and paste it into the waiting Skirk prompt. Keep the address private. [Google's desktop authorization flow](https://developers.google.com/identity/protocols/oauth2/native-app)
+3. Keep the saved credentials and `skirk-kit/exit.json` on the exit. Privately send the one-line contents of `skirk-kit/client.skirk` to anyone you trust to use your exit and mailbox. They paste that profile into the Skirk app. [Connect a device](install.md#connect-a-device)
 
-1. Open the Google approval URL printed by Skirk and approve access with the account that will own the mailbox.
-2. When running setup over SSH, Google may redirect your browser to a local address it cannot reach. Copy the entire address from the browser address bar into the same Skirk prompt. On the machine running Skirk, the browser can complete the loopback callback directly. Treat the callback URL as a credential. [Google's desktop authorization flow](https://developers.google.com/identity/protocols/oauth2/native-app)
-3. Start the exit using its generated `skirk-kit/exit.json`. For a foreground exit, run `skirk serve-exit --config skirk-kit/exit.json`. For a background service and client import, follow the [installation guide](install.md#configure-the-exit).
-
-Keep `oauth-client.json` and `exit.json` private. Treat `skirk-kit/client.skirk` as a password because it contains the credentials needed to use your mailbox. Send it privately only to people you trust. Keep all these files, OAuth callback links, and tokens out of Git, screenshots, and shared logs.
+If you already have a Google Desktop app JSON file on the exit, you can select the file option in the wizard or supply its path with `--oauth-client-file`.
 
 ## Renew access and check quota
 
-- **Already authorized in Testing or seeing `invalid_grant`.** Check that the project shows **In production**, then renew the existing kit with `skirk setup renew-oauth --kit skirk-kit --oauth-client-file ./oauth-client.json`. Use the same Google account and OAuth client ID. Restart the exit and import the renewed `client.skirk` on clients whose grant has expired. Renewal keeps the existing tunnel and mailbox. [Skirk renewal details](setup.md#renew-an-expiring-personal-oauth-grant)
+- **Already authorized in Testing or seeing `invalid_grant`.** Check that the project shows **In production**, then run `skirk setup renew-oauth --kit skirk-kit` with the same Google account and OAuth client ID. If the kit lacks its original client secret, supply the saved credential file with `--oauth-client-file`. Restart the exit and import the renewed `client.skirk` on clients whose grant has expired. Renewal keeps the existing tunnel and mailbox. [Skirk renewal details](setup.md#renew-an-expiring-personal-oauth-grant)
 - **Google says the app is being tested.** For a long-running kit, publish the project first and authorize again. To run a short test in **Testing**, add the exact signing-in account under **Audience → Test users**. Access granted there will still expire after seven days. [Google's audience guidance](https://support.google.com/cloud/answer/15549945)
 - **Do I need a domain?** The Desktop app flow uses a loopback callback. The exit can use this flow without a public callback URL. If Google asks for a domain for branding or verification, follow the requirements shown for your project. [Desktop callbacks](https://developers.google.com/identity/protocols/oauth2/native-app#redirect-uri_loopback) · [Google branding guidance](https://support.google.com/cloud/answer/15549049)
 - **Estimating capacity for family or friends.** Check the Drive API quota for your project. Google applies limits per project and per user within the project. Devices using the same kit use the mailbox owner's Google authorization. Concurrent usage depends on traffic and API costs, so the project quota is a starting point for testing capacity. [Drive API usage limits](https://developers.google.com/workspace/drive/api/guides/limits)

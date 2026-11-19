@@ -390,10 +390,9 @@ func TestReadOAuthClientCredentials(t *testing.T) {
 func TestPromptPersonalOAuthClientFileCanPasteCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oauth-client.json")
 	input := strings.Join([]string{
-		"1", // paste credentials
+		"", // Enter selects paste
 		"client-id.apps.googleusercontent.com",
 		"client-secret",
-		"", // save to default path
 		"",
 	}, "\n")
 	gotPath, err := promptPersonalOAuthClientFile(context.Background(), bufio.NewReader(strings.NewReader(input)), path)
@@ -428,7 +427,6 @@ func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
 		"1", // paste credentials
 		"client-id.apps.googleusercontent.com",
 		"", // no client secret shown by Google
-		"", // save to default path
 		"",
 	}, "\n")
 	gotPath, err := promptPersonalOAuthClientFile(context.Background(), bufio.NewReader(strings.NewReader(input)), path)
@@ -454,6 +452,63 @@ func TestPromptPersonalOAuthClientFileCanPasteClientIDOnly(t *testing.T) {
 	}
 	if strings.Contains(string(body), "client_secret") {
 		t.Fatalf("client-id-only OAuth JSON should omit client_secret:\n%s", string(body))
+	}
+}
+
+func TestPersonalOAuthPastePreservesExistingClient(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth-client.json")
+	existing := []byte(`{"installed":{"client_id":"previous-project"}}`)
+	if err := os.WriteFile(path, existing, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := promptPersonalOAuthClientFile(t.Context(), bufio.NewReader(strings.NewReader("\nnew-project\nnew-secret\n")), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == path || filepath.Dir(got) != filepath.Dir(path) {
+		t.Fatalf("expected a separate file alongside %q, got %q", path, got)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(body, existing) {
+		t.Fatalf("previous client file changed: %v", err)
+	}
+	creds, err := readOAuthClientCredentials(got)
+	if err != nil || creds.ClientID != "new-project" || creds.ClientSecret != "new-secret" || creds.Flow != "desktop" {
+		t.Fatalf("separately saved client did not round-trip: %v", err)
+	}
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		t.Fatalf("separately saved client file mode = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestPersonalOAuthDownloadedFileRemainsAnOption(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "downloaded.json")
+	if err := os.WriteFile(path, []byte(`{"installed":{"client_id":"existing-client"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(strings.NewReader("2\n" + path + "\n"))
+	got, err := promptPersonalOAuthClientFile(t.Context(), reader, filepath.Join(dir, "oauth-client.json"))
+	if err != nil || got != path {
+		t.Fatalf("downloaded file selection = %q, %v", got, err)
+	}
+}
+
+func TestPersonalOAuthMissingDownloadFallsBackToPaste(t *testing.T) {
+	dir := t.TempDir()
+	defaultPath := filepath.Join(dir, "oauth-client.json")
+	missing := filepath.Join(dir, "mistyped", "download.json")
+	input := "2\n" + missing + "\n\nnew-project\nnew-secret\n"
+	got, err := promptPersonalOAuthClientFile(t.Context(), bufio.NewReader(strings.NewReader(input)), defaultPath)
+	if err != nil || got != defaultPath {
+		t.Fatalf("paste after missing download saved to %q, %v", got, err)
+	}
+	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected file at mistyped path: %v", err)
 	}
 }
 

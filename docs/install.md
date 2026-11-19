@@ -4,8 +4,8 @@
 
 ## Configure the exit
 
-1. Enable Drive in your Google project, publish the OAuth app, and download its **Desktop app** JSON. Use the Google account that will own this exit's mailbox. [Illustrated Google setup](personal-google-setup.md)
-2. Install the CLI on a computer that will stay online. On Linux, run the commands below. A regular user installs to `~/.local/bin`. Root installs to `/usr/local/bin`.
+1. In a browser on your own computer, enable Drive in your Google project, publish the OAuth app, and create a **Desktop app** client. Leave the window showing **Client ID** and **Client secret** open. Only the person setting up the exit does this. [Illustrated Google setup](personal-google-setup.md)
+2. Open a terminal on the computer that will stay online as the exit. If it is a remote server, connect to it using SSH. On Linux, install the CLI there. A regular user installs to `~/.local/bin`. Root installs to `/usr/local/bin`.
 
 ```sh
 curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.56/install.sh -o install-skirk.sh
@@ -13,25 +13,24 @@ sh install-skirk.sh --version v0.1.56
 skirk version
 ```
 
-3. Place the downloaded JSON in a private directory on the exit, name it `oauth-client.json`, and run setup from that directory.
+3. In that terminal, start setup.
 
 ```sh
-chmod 600 oauth-client.json
-skirk setup init --oauth-client-file ./oauth-client.json --out skirk-kit
-skirk service status
+skirk setup init --out skirk-kit
 ```
 
-4. Open the Google approval link printed by setup. When using SSH, your browser may reach a localhost address it cannot open. Copy the entire address from its address bar and paste it into the waiting setup prompt. Keep that address private.
-5. Keep `skirk-kit/exit.json` on the exit. Send the contents of `skirk-kit/client.skirk` privately to the devices you want to connect. Each copy grants access to your mailbox and exit.
+4. At the credential menu, press Enter for **1. Paste**. Copy **Client ID** from Google, paste it at Skirk’s first prompt, and press Enter. At the next prompt paste **Client secret** and press Enter again. The secret stays hidden as you paste. Skirk creates the credential file on the exit.
+5. Open the approval link from Skirk in your browser. Sign in with the Google account that will own the mailbox and approve Drive access. Over SSH, your browser may end on a localhost page that fails to load. Copy the **entire address** from the address bar and paste it into the waiting Skirk prompt. Keep that address private.
+6. Keep `skirk-kit/exit.json` on the exit. To see the profile in your private terminal, run `cat skirk-kit/client.skirk`, or `Get-Content skirk-kit/client.skirk` in PowerShell. Copy the entire line starting with `skirk:` and send it privately to the people who will use this exit. They paste it into the Skirk app on their devices.
 
-Linux setup can install and start a systemd service. On a machine without systemd, or to run in the foreground, use `--start-exit=false` during setup and run `skirk serve-exit --config skirk-kit/exit.json` afterward. For additional instances, assign distinct kit directories and service names. [Service and configuration reference](setup.md)
+On Linux with systemd, setup can install and start the exit service. Run `skirk service status` to check it. On a machine without systemd, or to run in the foreground, use `--start-exit=false` during setup and run `skirk serve-exit --config skirk-kit/exit.json` afterward. For additional instances, assign distinct kit directories and service names. [Service and configuration reference](setup.md)
 
-**macOS and Windows exits.** Download the CLI archive for your OS and CPU, check its digest against `SHA256SUMS`, then extract it. Run the same setup with `--start-exit=false`. On macOS invoke the local executable as `./skirk`. These are the Windows commands from the extracted folder. [Downloads](https://github.com/ShahabSL/Skirk/releases/latest)
+**macOS and Windows exits.** Download the CLI archive for your OS and CPU and check its digest against `SHA256SUMS`. Extract it into a private folder under your user account and open a terminal there. Setup saves the credential file and kit in that folder. Run the setup command for your platform. After setup finishes, run the second command and leave that terminal open. [Downloads](https://github.com/ShahabSL/Skirk/releases/latest)
 
-```powershell
-.\skirk.exe setup init --oauth-client-file .\oauth-client.json --out skirk-kit --start-exit=false
-.\skirk.exe serve-exit --config skirk-kit/exit.json
-```
+| Exit | Set up once | Run the exit |
+| --- | --- | --- |
+| macOS | `./skirk setup init --out skirk-kit --start-exit=false` | `./skirk serve-exit --config skirk-kit/exit.json` |
+| Windows (PowerShell) | `.\skirk.exe setup init --out skirk-kit --start-exit=false` | `.\skirk.exe serve-exit --config skirk-kit/exit.json` |
 
 ## Connect a device
 

@@ -4,7 +4,9 @@ set -eu
 tracked_runtime="$(git ls-files -- \
   .skirk-runs private skirk-kit skirk-config bin dist \
   cloud_resources probe_results sources zips skirk_research_bundle \
-  application_default_credentials.json google-services.json oauth-client.json \
+  application_default_credentials.json google-services.json \
+  ':(glob)**/oauth-client.json' ':(glob)**/oauth-client-*.json' \
+  ':(glob)**/client_secret_*.apps.googleusercontent.com.json' \
   skirk.json client.json exit.json \
   '*.skirk' '*.secret' '*.token' '*.pem' '*.key' \
   '*.jks' '*.keystore' '*.p12' '*.pfx' 2>/dev/null || true)"

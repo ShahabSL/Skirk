@@ -154,8 +154,8 @@ func setupInit(ctx context.Context, args []string) error {
 			if _, statErr := os.Stat(defaultFile); statErr == nil {
 				oauthClientFileValue = defaultFile
 			} else {
-				if !isInteractiveTerminal() {
-					return errors.New("download your Desktop app OAuth JSON and pass --oauth-client-file PATH (see docs/personal-google-setup.md)")
+				if !isInteractiveTerminal() || *jsonOut {
+					return errors.New("run skirk setup init in an interactive terminal to paste your Desktop app client ID and client secret. Alternatively, pass --oauth-client-file PATH or set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_CLIENT_SECRET (see docs/personal-google-setup.md)")
 				}
 				oauthClientFileValue, err = promptPersonalOAuthClientFile(ctx, getSetupReader(), defaultFile)
 				if err != nil {
@@ -763,7 +763,7 @@ func driveOAuthClientRequiredError(credsPath string, cause error) error {
 	}
 	return fmt.Errorf("Google Drive setup needs a Google OAuth client.\n"+
 		"Google blocks the default Google Cloud SDK OAuth client when Skirk requests Drive scopes, which produces the browser page \"This app is blocked\".\n"+
-		"Create a Desktop app OAuth client in your Google project, then pass its downloaded JSON with --oauth-client-file. For environment-based setup, set SKIRK_OAUTH_CLIENT_ID and SKIRK_OAUTH_FLOW=desktop. See docs/personal-google-setup.md.\n"+
+		"Create a Desktop app OAuth client in your Google project and paste its Client ID and Client secret at the interactive skirk setup init prompts. Alternatively, pass --oauth-client-file PATH or set SKIRK_OAUTH_CLIENT_ID, SKIRK_OAUTH_CLIENT_SECRET, and SKIRK_OAUTH_FLOW=desktop. See docs/personal-google-setup.md.\n"+
 		"Current ADC path was %s; original credential error: %w", credsPath, cause)
 }
 
