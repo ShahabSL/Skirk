@@ -1,6 +1,7 @@
 package app.skirk.client
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -11,6 +12,19 @@ import org.junit.runner.RunWith
 class VpnAppsDeviceTest {
     private val present = "app.example.one"
     private fun base() = JSONObject().put("id", "local").put("name", "Example").put("rawConfig", "example")
+
+    @Test fun searchIncludesBackgroundPackagesVisibleToSkirkAndKeepsSavedChoices() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        val entries = queryVpnApps(app)
+        assertFalse(entries.any { it.packageName == app.packageName })
+        val framework = entries.single { it.packageName == "android" }
+        assertFalse(framework.hasLauncher)
+        assertFalse(framework.matchesSearch("", selected = false))
+        assertTrue(framework.matchesSearch("ANDROID", selected = false))
+        assertTrue(framework.matchesSearch("", selected = true))
+        assertFalse(framework.matchesSearch("missing.package.test", selected = true))
+        assertTrue(entries.any { it.hasLauncher && it.matchesSearch("", selected = false) })
+    }
 
     @Test fun migrationKeepsEachSelectionInItsOriginalDirection() {
         val apps = JSONArray(listOf(present, present))
