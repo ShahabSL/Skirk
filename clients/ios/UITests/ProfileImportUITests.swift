@@ -177,13 +177,26 @@ final class ProfileImportUITests: XCTestCase {
         for _ in 0..<4 where !lowerUsage.isHittable { app.swipeUp() }
         XCTAssertEqual(lowerUsage.value as? String, "Profile default")
         lowerUsage.tap()
+        let usageChoices = XCTAttachment(screenshot: app.screenshot())
+        usageChoices.name = "Drive usage options"
+        usageChoices.lifetime = .keepAlways
+        add(usageChoices)
         app.buttons["Lower Drive usage"].tap()
+        for _ in 0..<4 where !lowerUsage.isHittable { app.swipeUp() }
         XCTAssertEqual(lowerUsage.value as? String, "Lower Drive usage")
+        let usageSetting = XCTAttachment(screenshot: app.screenshot())
+        usageSetting.name = "Drive usage on the profile"
+        usageSetting.lifetime = .keepAlways
+        add(usageSetting)
         let route = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route")).firstMatch
         for _ in 0..<4 where !route.isHittable { app.swipeUp() }
         route.tap()
         app.buttons["Direct Google"].tap()
+        for _ in 0..<4 where !route.isHittable { app.swipeUp() }
         XCTAssertEqual(route.value as? String, "Direct Google")
+        // Returning from a picker can leave the top profile rows partly
+        // underneath the navigation bar at larger Dynamic Type sizes.
+        for _ in 0..<3 where !app.buttons["Connect"].isHittable { app.swipeDown() }
         app.buttons["Add profile"].tap()
         importNamed("Mobile data")
 

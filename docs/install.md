@@ -60,7 +60,7 @@ If Android shows **The exit is full for new UDP traffic**, the exit has filled i
 
 For a shared UDP kit, you can test grouped polling by setting `tunnel.udp_preview_grouped_discovery` to `true` in the exit configuration and restarting the exit. The exit can then check up to four clients in one Drive list request. Compare call playback and the project's Drive usage under the same load before keeping the setting.
 
-On iPhone, open **Drive usage**, select **Lower Drive usage**, then reconnect. Skirk saves the choice for this profile. It checks for TCP responses less often, which saves Drive requests but can make pages open more slowly. UDP keeps its own polling schedule. The displayed usage covers this iPhone. Other devices and the exit also consume the shared quota.
+On iPhone, open **Drive usage**, select **Lower Drive usage**, then reconnect. Skirk saves the choice for this profile. It checks for TCP responses less often, which saves Drive requests but can make pages open more slowly. UDP keeps its own polling schedule. The displayed usage covers this iPhone. Other devices and the exit also consume the shared quota. [See the iPhone settings](images/ios-drive-usage.png)
 
 Turn on **VPN disconnect alerts** to receive a notification when Skirk detects an unexpected stop. If iOS terminates the extension before it can send the alert, open Skirk to check the VPN status and reconnect.
 
