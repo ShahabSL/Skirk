@@ -209,7 +209,9 @@ private fun driveErrorReasonLabel(reason: String): String {
     val compact = value.filter { it.isLetterOrDigit() }
     return when {
         "storagequotaexceeded" in compact -> "Drive storage full"
-        "ratelimit" in compact || "toomany" in compact || compact == "status429" -> "Drive rate limited"
+        compact == "dailylimitexceeded" -> "Drive daily quota reached"
+        compact == "resourceexhausted" -> "Drive resource exhausted"
+        "ratelimit" in compact || "toomanyrequests" in compact || compact == "status429" -> "Drive rate limited"
         "invalidgrant" in compact || "unauthorized" in compact || compact == "status401" -> "Drive authorization error"
         "notfound" in compact || compact == "status404" -> "Drive resource not found"
         compact == "retryrecovered" -> "Drive request retried"

@@ -1713,7 +1713,13 @@ function driveErrorReasonLabel(reason?: string) {
   if (compact.includes("storagequotaexceeded")) {
     return "Drive storage full";
   }
-  if (compact.includes("ratelimit") || compact.includes("toomany") || compact === "status429") {
+  if (compact === "dailylimitexceeded") {
+    return "Drive daily quota reached";
+  }
+  if (compact === "resourceexhausted") {
+    return "Drive resource exhausted";
+  }
+  if (compact.includes("ratelimit") || compact.includes("toomanyrequests") || compact === "status429") {
     return "Drive rate limited";
   }
   if (compact.includes("invalidgrant") || compact.includes("unauthorized") || compact === "status401") {
@@ -1721,6 +1727,9 @@ function driveErrorReasonLabel(reason?: string) {
   }
   if (compact.includes("notfound")) {
     return "Drive mailbox missing";
+  }
+  if (compact === "retryrecovered") {
+    return "Drive request retried";
   }
   if (compact.includes("timeout") || compact.includes("deadline")) {
     return "Drive timeout";

@@ -127,5 +127,8 @@ class ClientStateRegressionTest {
         assertEquals("Drive resource not found", drivePressureLabel(900.0, 1.0, "notFound"))
         assertEquals("Drive authorization error", drivePressureLabel(900.0, 1.0, "status_401"))
         assertEquals("Drive request retried", drivePressureLabel(900.0, 1.0, "retry_recovered"))
+        assertEquals("Drive daily quota reached", drivePressureLabel(900.0, 1.0, "dailyLimitExceeded"))
+        assertEquals("Drive rate limited", drivePressureLabel(900.0, 1.0, "Too Many Requests"))
+        assertEquals("Drive errors", drivePressureLabel(900.0, 1.0, "dial tcp: too many open files"))
     }
 }
