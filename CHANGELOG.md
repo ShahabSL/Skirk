@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.57 — 2026-11-19
 
 - Show a saved client profile and its QR code from the VPS terminal menu.
 - Scan profiles on Android and iOS, open QR images on desktop, and share

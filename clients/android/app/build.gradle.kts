@@ -16,7 +16,7 @@ val generatedHevJniLibs = layout.buildDirectory.dir("generated/hev-tun2socks/jni
 val hevObjectDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/obj")
 val hevLibraryDir = layout.buildDirectory.dir("intermediates/hev-tun2socks/libs")
 val hevSourceDir = repoRoot.dir("third_party/hev-socks5-tunnel")
-val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.56").get()
+val skirkAppVersion = providers.gradleProperty("skirk.version").orElse("0.1.57").get()
 val skirkNdkVersion = providers.environmentVariable("SKIRK_ANDROID_NDK_VERSION").orElse("27.0.12077973").get()
 val releaseKeystorePath = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_FILE").orNull
 val releaseKeystorePassword = providers.environmentVariable("SKIRK_ANDROID_KEYSTORE_PASSWORD").orNull
@@ -161,7 +161,7 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 56
+        versionCode = 57
         versionName = skirkAppVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
