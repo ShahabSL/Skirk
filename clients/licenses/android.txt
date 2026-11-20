@@ -1,8 +1,9 @@
 Android runtime libraries
 =========================
 
-AndroidX (Android Open Source Project), Guava (Google), Kotlin, Kotlin coroutines
-and Java annotations (JetBrains) are distributed under the Apache License 2.0.
+AndroidX (Android Open Source Project), Guava (Google), Kotlin, Kotlin coroutines,
+Java annotations (JetBrains), ZXing (ZXing authors) and ZXing Android Embedded
+(ZXing authors and Journey Mobile) are distributed under the Apache License 2.0.
 
 androidx.activity:activity-compose:1.9.3
 androidx.activity:activity-ktx:1.9.3
@@ -56,6 +57,8 @@ androidx.startup:startup-runtime:1.1.1
 androidx.tracing:tracing:1.0.0
 androidx.versionedparcelable:versionedparcelable:1.1.1
 com.google.guava:listenablefuture:1.0
+com.google.zxing:core:3.4.1
+com.journeyapps:zxing-android-embedded:4.3.0
 org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.20
 org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.20
 org.jetbrains.kotlin:kotlin-stdlib:2.0.21

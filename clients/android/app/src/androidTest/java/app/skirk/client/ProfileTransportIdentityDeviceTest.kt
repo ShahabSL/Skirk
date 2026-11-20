@@ -1,14 +1,42 @@
 package app.skirk.client
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.qrcode.QRCodeReader
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ProfileTransportIdentityDeviceTest {
+    @Test fun sharedJsonProfileUsesThePortableFormatAndScansBack() {
+        val original = config("synthetic-grant")
+        val inline = SkirkConfig.shareText(original)
+        assertTrue(inline.startsWith("skirk:"))
+        assertEquals(original, SkirkConfig.decodeRaw(inline))
+        assertEquals(inline, SkirkConfig.shareText(inline))
+        assertEquals(inline, SkirkConfig.scannedProfile(inline))
+        assertNull(SkirkConfig.scannedProfile("https://example.invalid"))
+        assertNull(SkirkConfig.scannedProfile("skirk:invalid"))
+        assertNull(SkirkConfig.scannedProfile("$inline\nextra text"))
+    }
+
+    @Test fun sharedQrHasTheExactProfileAndLeavesLongProfilesCopyable() {
+        val text = SkirkConfig.shareText(config("synthetic-grant"))
+        val qr = requireNotNull(encodeProfileQr(text))
+        val pixels = IntArray(qr.width * qr.height)
+        qr.getPixels(pixels, 0, qr.width, 0, 0, qr.width, qr.height)
+        val image = BinaryBitmap(HybridBinarizer(RGBLuminanceSource(qr.width, qr.height, pixels)))
+        assertEquals(text, QRCodeReader().decode(image, mapOf(DecodeHintType.PURE_BARCODE to true)).text)
+        assertNull(encodeProfileQr("x".repeat(4_000)))
+    }
+
     @Test fun renewalPreservesProfileSettingsAndRequiresTheSameTransport() {
         val original = config("old-grant") // Legacy kit without a transport field means muxv5.
         val profile = ClientProfile.fromRawConfig(

@@ -53,7 +53,7 @@ skirk setup init --out skirk-kit
 
 1. At Skirk’s credential menu, press Enter for **1. Paste**. Copy **Client ID** from the Google window, paste it into Skirk, and press Enter. At the next prompt paste **Client secret** and press Enter. The secret stays hidden as you paste. Skirk saves the credentials on the exit.
 2. Open Skirk’s approval link in your browser. Sign in with the Google account that will own the mailbox and approve access. If you are using SSH and your browser ends on a localhost address that fails to load, copy the **entire address** from the address bar and paste it into the waiting Skirk prompt. Keep the address private. [Google's desktop authorization flow](https://developers.google.com/identity/protocols/oauth2/native-app)
-3. Keep the saved credentials and `skirk-kit/exit.json` on the exit. Privately send the one-line contents of `skirk-kit/client.skirk` to anyone you trust to use your exit and mailbox. They paste that profile into the Skirk app. [Connect a device](install.md#connect-a-device)
+3. Keep the saved credentials and `skirk-kit/exit.json` on the exit. Run `skirk`, choose **11. Show client profile and QR code**, and press Enter to open the suggested `client.skirk`. Scan it in the phone app or copy the one-line profile. Share the code or text privately and only with people you trust to use your exit and mailbox. [Connect a device](install.md#connect-a-device)
 
 If you already have a Google Desktop app JSON file on the exit, you can select the file option in the wizard or supply its path with `--oauth-client-file`.
 

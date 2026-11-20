@@ -53,9 +53,12 @@ validated in that runtime.
 The same signed test must verify Keychain group sharing, OS restart recovery,
 and whether the provider's own Google egress avoids VPN routing recursion.
 
-To use it, generate a profile with `skirk setup init`, tap **Choose client.skirk
-file** in the iOS app (or paste the profile text), review the Google access route,
-and tap **Connect**. The first connection explains what Google Drive and the exit
+Generate a profile with `skirk setup init`. In the iOS app, tap **Scan QR code**
+and point the camera at the code from the exit. You can also paste the profile
+text or tap **Choose client.skirk file**. To transfer a saved profile, tap
+**Share profile** to show its QR code, copy it, or share the text. Treat the
+profile QR code like a password. Review the Google access route and tap
+**Connect**. The first connection explains what Google Drive and the exit
 operator can see. Review the explanation, tap **Agree and connect**, then allow
 iOS to add the VPN configuration. **About Skirk** includes the privacy policy
 and open-source notices and works offline. File reads are limited to 256 KiB and valid UTF-8; the selected
@@ -79,7 +82,7 @@ When connected, **Test exit** reports the result of a round trip through Drive.
 When Google rejects the saved grant, the connection status shows **Google
 access expired** and offers **Import renewed profile**. The exit owner can
 follow the [profile renewal instructions](../../docs/setup.md#renew-an-expiring-personal-oauth-grant) and send an
-updated profile. Import it from Files or paste it into Skirk. Replacement
+updated profile. Scan, paste, or import it from Files. Replacement
 requires the same tunnel and transport version. Remove the saved profile
 before importing a different setup.
 

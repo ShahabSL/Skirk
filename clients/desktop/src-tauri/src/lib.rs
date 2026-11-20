@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use system_proxy::SystemProxyManager;
 
@@ -675,6 +675,28 @@ impl DesktopRuntime {
         serde_json::from_str(raw_config).map_err(|error| format!("invalid JSON: {error}"))
     }
 
+    fn export_saved_profile(&self, profile_id: &str) -> Result<String, String> {
+        let _lifecycle = self
+            .profile_lifecycle
+            .lock()
+            .map_err(|_| "profile lifecycle lock poisoned")?;
+        let profile = load_profiles(&self.paths)?
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or("This profile is no longer saved.")?;
+        let unavailable = "Could not read the saved profile. Import the original profile again.";
+        let config = fs::canonicalize(&profile.config_path).map_err(|_| unavailable)?;
+        let root = fs::canonicalize(&self.paths.config_dir).map_err(|_| unavailable)?;
+        if config.parent() != Some(root.as_path()) || !config.is_file() {
+            return Err(unavailable.into());
+        }
+        let raw = fs::read_to_string(&config).map_err(|_| unavailable)?;
+        if raw.trim_start().starts_with("skirk:") {
+            return extract_inline_config(&raw).ok_or_else(|| unavailable.into());
+        }
+        export_profile_with_sidecar(&self.resolve_sidecar()?, &config)
+    }
+
     fn delete_profile(&self, profile_id: &str) -> Result<(), String> {
         if self.connect_in_progress.load(Ordering::Acquire) {
             return Err("cancel connection startup before deleting a profile".into());
@@ -1200,6 +1222,24 @@ fn decode_profile_with_sidecar(sidecar: &Path, profile: &str) -> Result<Value, S
     write.map_err(|error| format!("could not send the profile to the decoder: {error}"))?;
     serde_json::from_slice(&output.stdout)
         .map_err(|_| "The profile decoder returned an invalid response.".into())
+}
+
+fn export_profile_with_sidecar(sidecar: &Path, config: &Path) -> Result<String, String> {
+    let mut command = Command::new(sidecar);
+    command
+        .args(["config", "export", "--config"])
+        .arg(config)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let unavailable = "Could not export the saved profile. Import the original profile again.";
+    let output = command.output().map_err(|_| unavailable)?;
+    if !output.status.success() {
+        return Err(unavailable.into());
+    }
+    let profile = String::from_utf8(output.stdout).map_err(|_| unavailable)?;
+    extract_inline_config(&profile).ok_or_else(|| unavailable.into())
 }
 
 fn sidecar_candidate_paths(
@@ -2148,6 +2188,15 @@ async fn replace_profile_config(
 }
 
 #[tauri::command]
+async fn export_saved_profile(app: AppHandle, profile_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<DesktopRuntime>().export_saved_profile(&profile_id)
+    })
+    .await
+    .map_err(|_| "Could not open the saved profile.".to_string())?
+}
+
+#[tauri::command]
 async fn delete_profile(
     runtime: State<'_, DesktopRuntime>,
     profile_id: String,
@@ -2253,6 +2302,7 @@ pub fn run() {
             load_snapshot,
             import_config,
             replace_profile_config,
+            export_saved_profile,
             delete_profile,
             select_profile,
             set_connection_mode,
@@ -2590,6 +2640,40 @@ printf '%s' '{"decoded":true}'
         let error = decode_profile_with_sidecar(&decoder, private_input).unwrap_err();
         assert!(!error.contains(private_input));
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sharing_reads_the_requested_profile_only_from_its_config_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-test-share-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        let config_dir = dir.join("config");
+        ensure_private_dir(&config_dir).unwrap();
+        let paths = AppPaths {
+            config_dir: config_dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: config_dir.join("profiles.json"),
+            settings_file: config_dir.join("settings.json"),
+        };
+        let mut profile = test_profile(false);
+        let config = config_dir.join("test.skirk");
+        let text = format!("skirk:{}", "synthetic-profile");
+        write_private_file(&config, format!("{text}\n").as_bytes()).unwrap();
+        profile.config_path = config.display().to_string();
+        save_profiles(&paths, &[profile.clone()]).unwrap();
+        let runtime = DesktopRuntime::new(paths.clone(), None);
+        assert_eq!(runtime.export_saved_profile(&profile.id).unwrap(), text);
+        assert!(runtime.export_saved_profile("unknown").is_err());
+
+        let outside = dir.join("outside.skirk");
+        write_private_file(&outside, text.as_bytes()).unwrap();
+        profile.config_path = outside.display().to_string();
+        save_profiles(&paths, &[profile.clone()]).unwrap();
+        assert!(runtime.export_saved_profile(&profile.id).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 

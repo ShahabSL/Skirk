@@ -15,7 +15,9 @@ import {
   Play,
   Power,
   RefreshCw,
+  ScanQrCode,
   Server,
+  Share2,
   SlidersHorizontal,
   ShieldCheck,
   Sun,
@@ -36,7 +38,9 @@ import {
   type PerformancePreset,
   type UserRouteMode,
 } from "./lib/api";
+import { qrImageTypes, readProfileQr } from "./lib/profileQr";
 import { SnapshotGuard, type SnapshotAction } from "./lib/snapshotGuard";
+import { ProfileShareDialog } from "./ProfileShareDialog";
 import logoMark from "./assets/logo-mark.png";
 import packageInfo from "../package.json";
 
@@ -53,6 +57,8 @@ function App() {
   const [rawConfig, setRawConfig] = useState("");
   const [profileTextVisible, setProfileTextVisible] = useState(false);
   const [profileFileError, setProfileFileError] = useState("");
+  const [readingQrImage, setReadingQrImage] = useState(false);
+  const [qrImageReady, setQrImageReady] = useState(false);
   const [profileName, setProfileName] = useState("Skirk profile");
   const [socksPort, setSocksPort] = useState("18080");
   const [httpPort, setHttpPort] = useState("18081");
@@ -75,8 +81,11 @@ function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [replaceProfileId, setReplaceProfileId] = useState<string | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<ClientProfile | null>(null);
+  const [sharingProfile, setSharingProfile] = useState<ClientProfile | null>(null);
   const importPanelRef = useRef<HTMLDetailsElement>(null);
   const profileFileRef = useRef<HTMLInputElement>(null);
+  const qrImageFileRef = useRef<HTMLInputElement>(null);
+  const importReadGeneration = useRef(0);
   const chooseProfileFileButtonRef = useRef<HTMLButtonElement>(null);
   const maskedProfileRef = useRef<HTMLInputElement>(null);
   const revealedProfileRef = useRef<HTMLTextAreaElement>(null);
@@ -176,7 +185,7 @@ function App() {
   const httpPortNumber = Number(httpPort);
   const portValid = Number.isInteger(portNumber) && portNumber >= 1024 && portNumber <= 65535;
   const httpPortValid = Number.isInteger(httpPortNumber) && httpPortNumber >= 1024 && httpPortNumber <= 65535 && httpPortNumber !== portNumber;
-  const importDisabled = runtimeBusy || connected || rawConfig.trim() === "" ||
+  const importDisabled = runtimeBusy || connected || readingQrImage || rawConfig.trim() === "" ||
     (replaceProfileId === null ? !portValid || !httpPortValid : !snapshot?.profiles.some((profile) => profile.id === replaceProfileId));
   const phase = snapshot?.connection.phase ?? (initialLoading ? "loading" : "disconnected");
   const socksAddress = snapshot?.connection.socksAddress ?? selectedProfileAddress(selectedProfile);
@@ -279,24 +288,34 @@ function App() {
     }
   }
 
+  function resetImportRead() {
+    setReadingQrImage(false);
+    setQrImageReady(false);
+    return ++importReadGeneration.current;
+  }
+
   async function pasteConfig() {
+    const generation = resetImportRead();
     try {
       const text = await navigator.clipboard.readText();
+      if (importReadGeneration.current !== generation) return;
       setRawConfig(text);
       setProfileTextVisible(false);
       setProfileFileError("");
       setError("");
     } catch (nextError) {
-      setError(normalizeError(nextError));
+      if (importReadGeneration.current === generation) setError(normalizeError(nextError));
     }
   }
 
   async function readProfileFile(file: File) {
+    const generation = resetImportRead();
     try {
       if (file.size > 256 * 1024) {
         throw new Error("Profile file is too large (maximum 256 KiB).");
       }
       const data = await file.arrayBuffer();
+      if (importReadGeneration.current !== generation) return;
       if (data.byteLength > 256 * 1024) {
         throw new Error("Profile file is too large (maximum 256 KiB).");
       }
@@ -309,12 +328,33 @@ function App() {
       setProfileFileError("");
       setError("");
     } catch (cause) {
+      if (importReadGeneration.current !== generation) return;
       setRawConfig("");
       setProfileTextVisible(false);
       setProfileFileError(cause instanceof Error &&
         (cause.message === "Profile file is too large (maximum 256 KiB)." || cause.message === "The selected profile file is empty.")
           ? cause.message
           : "Could not read this file. Choose a UTF-8 client.skirk or client.json.");
+    }
+  }
+
+  async function readQrImage(file: File) {
+    const generation = ++importReadGeneration.current;
+    setReadingQrImage(true);
+    setQrImageReady(false);
+    setProfileFileError("");
+    try {
+      const profile = await readProfileQr(file);
+      if (importReadGeneration.current !== generation) return;
+      setRawConfig(profile);
+      setProfileTextVisible(false);
+      setQrImageReady(true);
+      setError("");
+    } catch (cause) {
+      if (importReadGeneration.current !== generation) return;
+      setProfileFileError(cause instanceof Error ? cause.message : "Could not read this QR image.");
+    } finally {
+      if (importReadGeneration.current === generation) setReadingQrImage(false);
     }
   }
 
@@ -676,6 +716,7 @@ function App() {
                     selected={profile.id === selectedProfile?.id}
                     disabled={runtimeBusy || connected}
                     onSelect={() => void run("select", () => desktopApi.selectProfile(profile.id))}
+                    onShare={() => setSharingProfile(profile)}
                     onDelete={() => setPendingDeleteProfile(profile)}
                   />
                 ))
@@ -698,7 +739,10 @@ function App() {
             className="panel disclosure-panel import-panel"
             id="import"
             open={importOpen}
-            onToggle={(event) => setImportOpen(event.currentTarget.open)}
+            onToggle={(event) => {
+              if (!event.currentTarget.open) resetImportRead();
+              setImportOpen(event.currentTarget.open);
+            }}
           >
             <DisclosureSummary
               icon={<Upload />}
@@ -731,13 +775,30 @@ function App() {
                     if (file) void readProfileFile(file);
                   }}
                 />
+                <input
+                  ref={qrImageFileRef}
+                  type="file"
+                  hidden
+                  accept={qrImageTypes}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (file) void readQrImage(file);
+                  }}
+                />
                 <button ref={chooseProfileFileButtonRef} type="button" disabled={runtimeBusy || connected} onClick={() => profileFileRef.current?.click()}>
-                  <FileText /> Choose client.skirk file
+                  <FileText aria-hidden="true" /> Choose profile file
                 </button>
                 <button type="button" disabled={busy} onClick={() => void pasteConfig()}>
-                  <ClipboardPaste /> Paste text
+                  <ClipboardPaste aria-hidden="true" /> Paste text
+                </button>
+                <button type="button" disabled={runtimeBusy || connected || readingQrImage} onClick={() => qrImageFileRef.current?.click()}>
+                  {readingQrImage ? <Loader2 className="spin" aria-hidden="true" /> : <ScanQrCode aria-hidden="true" />}
+                  {readingQrImage ? "Reading image…" : "Open QR image"}
                 </button>
               </div>
+              {qrImageReady ? <p className="field-help import-feedback" role="status">QR profile ready. Review the settings and import it below.</p> : null}
+              {profileFileError ? <p className="field-error import-feedback" role="alert">{profileFileError}</p> : null}
 
               {replacingProfile ? (
                 <p className="replacement-note">
@@ -818,6 +879,7 @@ function App() {
                   aria-describedby={rawConfigHelpId}
                   autoComplete="off"
                   onChange={(event) => {
+                    resetImportRead();
                     setRawConfig(event.target.value);
                     setProfileFileError("");
                   }}
@@ -825,6 +887,7 @@ function App() {
                     const pasted = event.clipboardData.getData("text/plain");
                     if (!pasted) return;
                     event.preventDefault();
+                    resetImportRead();
                     const { selectionStart, selectionEnd } = event.currentTarget;
                     const next = /[\r\n]/.test(rawConfig)
                       ? pasted
@@ -842,6 +905,7 @@ function App() {
                   hidden={!profileTextVisible}
                   aria-describedby={rawConfigHelpId}
                   onChange={(event) => {
+                    resetImportRead();
                     setRawConfig(event.target.value);
                     setProfileFileError("");
                   }}
@@ -852,8 +916,6 @@ function App() {
                   {!profileTextVisible && /[\r\n]/.test(rawConfig) ? " Show to edit multiline text." : ""}
                 </small>
               </div>
-
-              {profileFileError ? <small className="field-error" role="alert">{profileFileError}</small> : null}
 
               {!replaceProfileId ? <label className="switch-row">
                 <input
@@ -878,6 +940,7 @@ function App() {
                       : await desktopApi.importConfig(profileName, rawConfig, portNumber, httpPortNumber, shareLan);
                     setRawConfig("");
                     setProfileFileError("");
+                    resetImportRead();
                     setReplaceProfileId(null);
                     setImportOpen(false);
                     return next;
@@ -945,6 +1008,9 @@ function App() {
             }}
           />
         ) : null}
+        {sharingProfile ? (
+          <ProfileShareDialog profile={sharingProfile} onClose={() => setSharingProfile(null)} />
+        ) : null}
       </main>
     </div>
   );
@@ -1000,6 +1066,7 @@ function ProfileRow({
   selected,
   disabled,
   onSelect,
+  onShare,
   onDelete,
 }: {
   profile: ClientProfile;
@@ -1007,6 +1074,7 @@ function ProfileRow({
   selected: boolean;
   disabled: boolean;
   onSelect: () => void;
+  onShare: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -1029,6 +1097,15 @@ function ProfileRow({
         <span>
           {googleRouteLabel(profile.routeMode)} · {profileRowDetail(profile, mode)}
         </span>
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        onClick={onShare}
+        aria-label={`Share profile ${profile.name}`}
+        title="Share profile"
+      >
+        <Share2 aria-hidden="true" />
       </button>
       <button
         type="button"

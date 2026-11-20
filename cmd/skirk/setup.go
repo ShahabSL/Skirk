@@ -1164,8 +1164,8 @@ func printSetupResult(result setupResult) {
 		fmt.Printf("skirk serve-exit --config %s\n", result.ExitPath)
 		fmt.Println()
 	}
-	fmt.Println("Open Skirk on the client and paste the contents of the client profile.")
-	fmt.Println("Keep both config files private. They contain Google credentials.")
+	fmt.Println("To scan or copy the client profile, run skirk and choose 11. Show client profile and QR code.")
+	fmt.Println("Keep the profile and QR code private. They both contain the credentials to connect.")
 }
 
 func writeSetupReadme(path string, summary setupSummary) error {
@@ -1200,7 +1200,8 @@ skirk serve-client --config %s --listen %s
 curl --socks5-hostname %s http://example.com/
 `+"```"+`
 
-In the Android or desktop app, paste the contents of %s into the profile importer.
+Run skirk and choose **11. Show client profile and QR code**. Select %s when prompted.
+Scan the code in the Skirk phone app, or copy the profile text into the client app.
 
 For a CLI client, copy the private profile to the client machine as `+"`client.skirk`"+`.
 From the directory containing that file, run the command saved in %s:

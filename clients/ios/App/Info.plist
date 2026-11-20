@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Skirk uses the camera to scan profile QR codes.</string>
 	<key>SKIRKKeychainAccessGroup</key>
 	<string>$(AppIdentifierPrefix)app.skirk.ios.shared</string>
 	<key>UILaunchScreen</key>

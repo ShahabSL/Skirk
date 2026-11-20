@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show a saved client profile and its QR code from the VPS terminal menu.
+- Scan profiles on Android and iOS, open QR images on desktop, and share
+  saved profiles from the apps as a QR code or copyable text.
+
 ## v0.1.56 — 2026-11-19
 
 - New exit kits support shared UDP, remote DNS and mux v5 alongside TCP. Setup

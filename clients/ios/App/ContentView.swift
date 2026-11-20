@@ -14,6 +14,9 @@ struct ContentView: View {
     @State private var profileImportAction: ProfileImportAction?
     @State private var showingRemoveConfirmation = false
     @State private var showingProfileFilePicker = false
+    @State private var showingProfileScanner = false
+    @State private var showingProfileShareChooser = false
+    @State private var profileToShare: SharedProfile?
     @State private var showingVPNDisclosure = false
     @AppStorage("didAcceptVPNDataUseV1") private var didAcceptVPNDataUse = false
     @AccessibilityFocusState private var statusFocused: Bool
@@ -103,6 +106,18 @@ struct ContentView: View {
                         }
                         Label("Profile stored on this iPhone", systemImage: "key.fill")
                             .foregroundStyle(.secondary)
+                        Button("Share profile", systemImage: "square.and.arrow.up") {
+                            if tunnel.profiles.count > 1 {
+                                showingProfileShareChooser = true
+                            } else {
+                                shareProfile(selected.id)
+                            }
+                        }
+                        .confirmationDialog("Choose a profile to share", isPresented: $showingProfileShareChooser, titleVisibility: .visible) {
+                            ForEach(tunnel.profiles) { profile in
+                                Button(profile.name) { shareProfile(profile.id) }
+                            }
+                        }
                         Button("Add profile", systemImage: "plus") {
                             beginProfileImport(.add)
                         }
@@ -129,6 +144,11 @@ struct ContentView: View {
                         }
                         .accessibilityLabel("Paste profile")
                         .accessibilityIdentifier("paste-profile")
+                        .disabled(fileImport.isReading || !tunnel.canChangeRoute)
+
+                        Button("Scan QR code", systemImage: "qrcode.viewfinder") {
+                            showingProfileScanner = true
+                        }
                         .disabled(fileImport.isReading || !tunnel.canChangeRoute)
 
                         Button("Choose client.skirk file", systemImage: "doc") {
@@ -241,6 +261,15 @@ struct ContentView: View {
                     Task { await tunnel.connect() }
                 }
             }
+            .sheet(isPresented: $showingProfileScanner) {
+                ProfileQRScanner { profile in
+                    showingProfileScanner = false
+                    importProfile(profile)
+                }
+            }
+            .sheet(item: $profileToShare) { profile in
+                ProfileShareView(profile: profile)
+            }
             .alert("Remove saved profile?", isPresented: $showingRemoveConfirmation) {
                 Button("Remove profile", role: .destructive) {
                     fileImport.cancel()
@@ -334,6 +363,18 @@ struct ContentView: View {
         tunnel.importProfile(value, name: profileName, replacing: replacing ?? (profileImportAction == .replace))
         if tunnel.message == nil {
             resetProfileImport()
+        }
+    }
+
+    private func shareProfile(_ id: UUID) {
+        do {
+            guard let profile = try ProfileVault.profile(id: id) else {
+                throw VaultError.missingProfile
+            }
+            profileToShare = try SharedProfile(profile)
+            tunnel.message = nil
+        } catch {
+            tunnel.message = error.localizedDescription
         }
     }
 

@@ -21,7 +21,9 @@ skirk setup init --out skirk-kit
 
 4. At the credential menu, press Enter for **1. Paste**. Copy **Client ID** from Google, paste it at Skirk’s first prompt, and press Enter. At the next prompt paste **Client secret** and press Enter again. The secret stays hidden as you paste. Skirk creates the credential file on the exit.
 5. Open the approval link from Skirk in your browser. Sign in with the Google account that will own the mailbox and approve Drive access. Over SSH, your browser may end on a localhost page that fails to load. Copy the **entire address** from the address bar and paste it into the waiting Skirk prompt. Keep that address private.
-6. Keep `skirk-kit/exit.json` on the exit. To see the profile in your private terminal, run `cat skirk-kit/client.skirk`, or `Get-Content skirk-kit/client.skirk` in PowerShell. Copy the entire line starting with `skirk:` and send it privately to the people who will use this exit. They paste it into the Skirk app on their devices.
+6. Keep `skirk-kit/exit.json` on the exit. In your private terminal, run `skirk` and choose **11. Show client profile and QR code**. Press Enter to use the suggested `client.skirk` file. On your phone, open the Skirk profile importer, choose **Scan QR code**, and point the camera at the terminal. You can also copy the full `skirk:` line into the app. Treat the code and the line like a password.
+
+You can open the same view with `skirk config show --config skirk-kit/client.skirk`. If the terminal is too small, zoom out and run the command again. Add `--qr-out client-qr.png` to save a private PNG for the desktop app's **Open QR image** option. On v0.1.56, read the profile with `cat skirk-kit/client.skirk` or `Get-Content skirk-kit/client.skirk` in PowerShell, then paste it into the app.
 
 On Linux with systemd, setup can install and start the exit service. Run `skirk service status` to check it. On a machine without systemd, or to run in the foreground, use `--start-exit=false` during setup and run `skirk serve-exit --config skirk-kit/exit.json` afterward. For additional instances, assign distinct kit directories and service names. [Service and configuration reference](setup.md)
 
@@ -35,7 +37,7 @@ On Linux with systemd, setup can install and start the exit service. Run `skirk 
 ## Connect a device
 
 1. Install the Android APK or the desktop package for your operating system and CPU. Android's universal APK suits both supported mobile ABIs. On an Apple silicon Mac choose the arm64 build. On iOS, install a build to which you have access through Apple.
-2. Copy the **whole** profile starting with `skirk:`. Open the app's profile import screen and choose the paste option. Save the profile.
+2. Open the profile import screen. Scan the QR code on Android or iOS, open a QR image on desktop, or paste the entire line starting with `skirk:`. Save the profile.
 3. Select the profile and connect. Accept your operating system's VPN prompt when using VPN mode. In proxy mode, select the proxy in the application that will use it. Use the exit test to confirm that the profile reaches your exit.
 
 | Android | iOS | Desktop |
@@ -43,6 +45,8 @@ On Linux with systemd, setup can install and start the exit service. Run `skirk 
 | ![Android profile import and paste controls](images/android-import.png) | ![iOS profile import](images/ios-import.png) | ![Desktop profile import](images/desktop-import.png) |
 
 ![Android connection controls after saving a profile](images/android-connect.png)
+
+To share a saved profile, open its actions and choose **Share profile**. Show the QR code to someone you trust, or use **Copy profile** to send them the text privately.
 
 A headless client can run `skirk serve-client --config ./client.skirk`. Point your application to SOCKS5 at `127.0.0.1:18080`. Select proxy-side DNS when the application offers it.
 

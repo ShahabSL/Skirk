@@ -14,7 +14,11 @@ What it does:
 
 - imports a `client.skirk` or `client.json` file (up to 256 KiB of valid UTF-8),
   or accepts a pasted one-line `skirk:` config;
+- reads a QR code from a local PNG, JPEG, or WebP image with **Open QR image**;
 - stores profiles in app-local or portable data;
+- shows a QR code for a saved profile with **Share profile**, with **Copy profile**
+  available for any saved profile. The QR code carries the same private credentials
+  as the profile text;
 - gives each imported profile a stable local client identity, so the same
   copied profile can run on multiple devices at the same time;
 - starts/stops the Go Skirk SOCKS and HTTP proxy client;

@@ -59,7 +59,7 @@ enum ProfileVault {
         let transport: String
     }
 
-    private static let maxProfileBytes = 256 * 1024
+    static let maxProfileBytes = 256 * 1024
     private static let service = "app.skirk.ios.profile"
     private static let catalogAccount = "client-profiles-v1"
     private static let legacyProfileAccount = "client-profile"
@@ -121,6 +121,10 @@ enum ProfileVault {
 
     static func selectedProfile() throws -> StoredProfile? {
         try load(group: requiredGroup()).selected
+    }
+
+    static func profile(id: UUID) throws -> StoredProfile? {
+        try load(group: requiredGroup()).profiles.first { $0.id == id }
     }
 
     static func save(_ value: String, name: String = "", replacing: Bool = false) throws {

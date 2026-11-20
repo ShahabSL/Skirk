@@ -27,6 +27,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Skirk
         LSRequiresIPhoneOS: true
+        NSCameraUsageDescription: Skirk uses the camera to scan profile QR codes.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

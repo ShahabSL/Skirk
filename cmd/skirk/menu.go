@@ -35,6 +35,7 @@ func menu(ctx context.Context) error {
 		if runtime.GOOS == "linux" {
 			fmt.Println("10. Uninstall Skirk from this Linux machine")
 		}
+		fmt.Println("11. Show client profile and QR code")
 		fmt.Println("0. Quit")
 		choice, err := prompt(ctx, reader, "Select", "2")
 		if err != nil {
@@ -143,6 +144,14 @@ func menu(ctx context.Context) error {
 				continue
 			}
 			return uninstallFromMenu(ctx, reader)
+		case "11":
+			path, err := prompt(ctx, reader, "Client profile file", defaultKitFile("client.skirk"))
+			if err != nil {
+				return err
+			}
+			if err := showClientProfileFromMenu(ctx, reader, path); err != nil {
+				return err
+			}
 		case "0", "q", "quit", "exit":
 			return nil
 		default:

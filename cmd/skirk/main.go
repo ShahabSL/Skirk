@@ -145,6 +145,7 @@ func usage() {
   setup renew-oauth --kit skirk-kit [--oauth-client-file oauth-client.json] [--restart-exit]
   config export --config skirk-kit/client.json [--out client.skirk]
   config decode (--config client.skirk | --stdin) --out client.json
+  config show [--config skirk-kit/client.skirk] [--qr-out client-qr.png]
   cleanup --config skirk-kit/exit.json --older-than 2h [--delete]
   cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete
   repair-mailbox --kit skirk-kit [--start-exit]
@@ -199,7 +200,7 @@ func probeExit(ctx context.Context, args []string) error {
 
 func configCommand(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("config needs export or decode")
+		return fmt.Errorf("config needs export, decode, or show")
 	}
 	switch args[0] {
 	case "export":
@@ -224,6 +225,8 @@ func configCommand(args []string) error {
 		return writePrivateConfigOutput(*out, []byte(text+"\n"))
 	case "decode":
 		return decodeConfig(args[1:], os.Stdin, os.Stdout)
+	case "show":
+		return showProfileCommand(args[1:])
 	default:
 		return fmt.Errorf("unknown config command %q", args[0])
 	}

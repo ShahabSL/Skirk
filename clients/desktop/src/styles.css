@@ -936,9 +936,13 @@ details[open] > .disclosure-summary::after {
 .profile-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  grid-template-columns: minmax(0, 1fr) 36px 36px;
   gap: 8px;
   align-items: start;
+}
+
+.import-feedback {
+  margin: 0;
 }
 
 .profile-row > button:first-child {
@@ -1207,6 +1211,89 @@ details[open] > .disclosure-summary::after {
   border-color: var(--danger);
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.profile-share-dialog {
+  width: min(430px, calc(100% - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.profile-share-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.44);
+}
+
+.profile-share-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.profile-share-header h2 {
+  margin: 0 0 4px;
+}
+
+.profile-share-name {
+  margin: 0;
+  font-weight: 650;
+  text-align: left;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.profile-share-hint,
+.profile-share-code figcaption {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.profile-share-hint {
+  margin: 12px 0;
+}
+
+.profile-share-code figcaption {
+  font-size: 0.875rem;
+}
+
+.profile-share-code {
+  margin: 12px 0;
+  text-align: center;
+}
+
+.profile-share-code img {
+  display: block;
+  width: min(100%, 320px, max(160px, calc(100vh - 305px)));
+  aspect-ratio: 1;
+  margin: 0 auto 10px;
+  background: #fff;
+}
+
+.profile-share-text {
+  display: grid;
+  gap: 6px;
+  margin-block: 12px;
+}
+
+.profile-share-text textarea {
+  width: 100%;
+  min-height: 64px;
+}
+
+.profile-share-actions {
+  justify-content: flex-end;
+}
+
+:root[data-theme="dark"] .profile-share-actions button.primary {
+  color: var(--bg);
 }
 
 .advanced-dialog {

@@ -2,12 +2,15 @@ package app.skirk.client
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -82,6 +85,7 @@ internal class SkirkScreenState : ViewModel() {
     var page by mutableStateOf(SkirkPage.Home)
     var pendingDeleteProfileId by mutableStateOf<String?>(null)
     var pendingRenameProfileId by mutableStateOf<String?>(null)
+    var pendingShareProfileId by mutableStateOf<String?>(null)
     var replacingProfileId by mutableStateOf<String?>(null)
     var replacementParent = SkirkPage.Home
     var logsParent = SkirkPage.Settings
@@ -92,6 +96,8 @@ internal class SkirkScreenState : ViewModel() {
     var isReadingProfile by mutableStateOf(false)
     private var profileReadJob: Job? = null
     val imports = ProfileImportGeneration()
+    var pendingCameraPermission: ProfileImportGeneration.Request? = null
+    var scanningProfile by mutableStateOf<ProfileImportGeneration.Request?>(null)
     var pendingVpnPermission: Pair<ClientProfile, ConnectionState>? = null
     var pendingNotificationProfile: ClientProfile? = null
     var notificationPermissionResolved by mutableStateOf(false)
@@ -105,6 +111,7 @@ internal class SkirkScreenState : ViewModel() {
 
     fun clearDraft() {
         cancelProfileRead()
+        scanningProfile = null
         replacingProfileId = null
         profileName = ""
         rawConfig = ""
@@ -297,19 +304,21 @@ private fun ConfigScreen(ui: SkirkScreenState) {
         if (ui.page == SkirkPage.Logs) refreshLogs()
     }
 
-    fun fileTarget(): String? = when (ui.page) {
+    fun profileImportTarget(): String? = when (ui.page) {
         SkirkPage.Home -> "new".takeIf { store.listProfiles().isEmpty() }
         SkirkPage.AddProfile -> "new"
         SkirkPage.ReplaceProfile -> ui.replacingProfileId?.let { "replace:$it" }
         else -> null
     }
+    fun ownsProfileImport(request: ProfileImportGeneration.Request): Boolean =
+        request.target == profileImportTarget() && ui.imports.owns(request, request.target) &&
+            !connectionStore.read().running
+
     fun pickedFile(uri: Uri?, replacement: Boolean) {
         val request = ui.imports.finishPicker(replacement) ?: return
-        if (uri == null || request.target != fileTarget() ||
-            !ui.imports.owns(request, request.target) || connectionStore.read().running
-        ) return
+        if (uri == null || !ownsProfileImport(request)) return
         ui.readProfile(uri, request.target, {
-            fileTarget() == request.target && !connectionStore.read().running
+            profileImportTarget() == request.target && !connectionStore.read().running
         }) { readProfileDocument(appContext, it) }
     }
     val profilePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
@@ -317,6 +326,35 @@ private fun ConfigScreen(ui: SkirkScreenState) {
     }
     val replacementPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) {
         pickedFile(it, replacement = true)
+    }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val request = ui.pendingCameraPermission
+        ui.pendingCameraPermission = null
+        if (request != null && ownsProfileImport(request)) {
+            if (granted) ui.scanningProfile = request
+            else ui.importError = "Allow camera access in Android Settings to scan a QR code, or paste the profile."
+        }
+    }
+    val cameraAvailable = remember(context) {
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+    }
+    fun scanProfile() {
+        val target = profileImportTarget() ?: return
+        if (ui.pendingCameraPermission != null || connectionStore.read().running) return
+        ui.cancelProfileRead()
+        ui.importError = ""
+        val request = ui.imports.begin(target)
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            ui.scanningProfile = request
+        } else {
+            ui.pendingCameraPermission = request
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+    fun finishProfileScan(request: ProfileImportGeneration.Request): Boolean {
+        if (ui.scanningProfile !== request) return false
+        ui.scanningProfile = null
+        return ownsProfileImport(request)
     }
 
     fun pasteProfile() {
@@ -409,9 +447,10 @@ private fun ConfigScreen(ui: SkirkScreenState) {
                 }
             },
             onPaste = ::pasteProfile,
+            onScanQr = if (cameraAvailable) ::scanProfile else null,
             onChooseFile = {
                 ui.cancelProfileRead()
-                fileTarget()?.let { target ->
+                profileImportTarget()?.let { target ->
                     ui.imports.beginPicker(target)?.let {
                         if (ui.replacingProfileId == null) profilePicker.launch("*/*")
                         else replacementPicker.launch("*/*")
@@ -494,6 +533,7 @@ private fun ConfigScreen(ui: SkirkScreenState) {
                         onReplace = ::openReplacement,
                         onRename = { ui.pendingRenameProfileId = it.id },
                         onRemove = { ui.pendingDeleteProfileId = it.id },
+                        onShare = { ui.pendingShareProfileId = it.id },
                     )
                     SkirkPage.AddProfile, SkirkPage.ReplaceProfile -> profileForm()
                     SkirkPage.Settings -> panelProfile?.let { profile ->
@@ -536,6 +576,49 @@ private fun ConfigScreen(ui: SkirkScreenState) {
         }
     }
 
+    ui.scanningProfile?.let { request ->
+        ProfileQrScanner(
+            onDismiss = { finishProfileScan(request) },
+            onCameraError = {
+                if (finishProfileScan(request)) {
+                    ui.importError = "Could not open the camera. Try again or paste the profile."
+                }
+            },
+            onCode = { text ->
+                if (finishProfileScan(request)) {
+                    val scanned = SkirkConfig.scannedProfile(text)
+                    if (scanned == null) {
+                        ui.importError = "Scan a Skirk profile QR code or paste the profile."
+                    } else {
+                        ui.rawConfig = scanned
+                        ui.importError = ""
+                    }
+                }
+            },
+        )
+    }
+    profiles.firstOrNull { it.id == ui.pendingShareProfileId }?.let { profile ->
+        ProfileShareDialog(
+            rawConfig = profile.rawConfig,
+            onDismiss = { ui.pendingShareProfileId = null },
+            onCopy = {
+                val clip = ClipData.newPlainText("Skirk profile", it)
+                clip.description.extras = PersistableBundle().apply {
+                    // ClipDescription.EXTRA_IS_SENSITIVE on API 33 and later.
+                    putBoolean("android.content.extra.IS_SENSITIVE", true)
+                }
+                context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+            },
+            onShare = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, it)
+                }
+                ui.pendingShareProfileId = null
+                context.startActivity(Intent.createChooser(send, "Share Skirk profile"))
+            },
+        )
+    }
     profiles.firstOrNull { it.id == ui.pendingRenameProfileId }?.let { profile ->
         RenameProfileDialog(
             name = profile.name,

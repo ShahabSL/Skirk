@@ -7,6 +7,7 @@ tracked_runtime="$(git ls-files -- \
   application_default_credentials.json google-services.json \
   ':(glob)**/oauth-client.json' ':(glob)**/oauth-client-*.json' \
   ':(glob)**/client_secret_*.apps.googleusercontent.com.json' \
+  ':(glob)**/client-qr.png' \
   skirk.json client.json exit.json \
   '*.skirk' '*.secret' '*.token' '*.pem' '*.key' \
   '*.jks' '*.keystore' '*.p12' '*.pfx' 2>/dev/null || true)"

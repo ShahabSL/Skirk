@@ -4,6 +4,66 @@ import zlib
 
 @MainActor
 final class ProfileImportUITests: XCTestCase {
+    func testProfileQRShareAndCameraFallback() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        #if targetEnvironment(simulator)
+        let scan = app.buttons["Scan QR code"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 10))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: scan)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        scan.tap()
+        XCTAssertTrue(app.staticTexts["Camera unavailable"].waitForExistence(timeout: 5))
+        app.navigationBars["Scan QR code"].buttons["Cancel"].tap()
+        #endif
+
+        let value = syntheticProfile(refreshToken: "qr-test-fixture")
+        app.buttons["Enter profile manually"].tap()
+        let field = app.secureTextFields["Skirk profile or client.json"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText(value)
+        app.buttons["Import pasted profile"].tap()
+
+        let share = app.buttons["Share profile"]
+        XCTAssertTrue(share.waitForExistence(timeout: 5))
+        share.tap()
+        let qr = app.images["profile-qr-code"]
+        XCTAssertTrue(qr.waitForExistence(timeout: 5))
+        let shareScreen = XCTAttachment(screenshot: app.screenshot())
+        shareScreen.name = "Share synthetic Skirk profile"
+        shareScreen.lifetime = .keepAlways
+        add(shareScreen)
+
+        let copy = app.buttons["copy-profile"]
+        for _ in 0..<3 where !copy.isHittable { app.swipeUp() }
+        XCTAssertTrue(copy.isHittable)
+        copy.tap()
+        XCTAssertEqual(copy.label, "Copied")
+        let shareText = app.buttons["Share profile text"]
+        for _ in 0..<3 where !shareText.isHittable { app.swipeUp() }
+        XCTAssertTrue(shareText.isHittable)
+        app.navigationBars["Share profile"].buttons["Done"].tap()
+        app.buttons["Add profile"].tap()
+        app.buttons["paste-profile"].tap()
+        let activeProfile = app.buttons["active-profile"]
+        XCTAssertTrue(activeProfile.waitForExistence(timeout: 5))
+        XCTAssertEqual(activeProfile.value as? String, "Profile 2")
+        share.tap()
+        let firstProfile = app.buttons["Profile 1"]
+        XCTAssertTrue(firstProfile.waitForExistence(timeout: 5))
+        firstProfile.tap()
+        XCTAssertTrue(app.staticTexts["Profile 1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(qr.exists)
+        app.navigationBars["Share profile"].buttons["Done"].tap()
+        XCTAssertEqual(activeProfile.value as? String, "Profile 2")
+        app.buttons["Remove profile"].tap()
+        app.alerts.buttons["Remove profile"].tap()
+        app.buttons["Remove profile"].tap()
+        app.alerts.buttons["Remove profile"].tap()
+    }
+
     func testSyntheticProfileLifecycle() throws {
         let app = XCUIApplication()
         app.launch()

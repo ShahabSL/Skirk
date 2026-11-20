@@ -6,6 +6,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.lang.IllegalArgumentException
 import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 internal const val PROFILE_TEXT_TOO_LARGE = "Profile text is too large. Copy the full profile again or choose a profile file."
 
@@ -101,6 +102,28 @@ data class SkirkConfig(
         }
 
         fun normalizeRaw(raw: String): String = normalizeInlineConfig(raw) ?: raw.trim()
+
+        internal fun shareText(raw: String): String {
+            val profile = normalizeRaw(raw)
+            if (profile.startsWith(TEXT_PREFIX)) return profile
+            val compressed = ByteArrayOutputStream()
+            GZIPOutputStream(compressed).use { it.write(profile.toByteArray(Charsets.UTF_8)) }
+            return TEXT_PREFIX + Base64.encodeToString(
+                compressed.toByteArray(),
+                Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+            )
+        }
+
+        internal fun scannedProfile(raw: String): String? {
+            val profile = raw.trim()
+            if (!profile.startsWith(TEXT_PREFIX) || profile != normalizeRaw(profile)) return null
+            return try {
+                parse(profile)
+                profile
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
 
         private fun normalizeInlineConfig(raw: String): String? {
             var text = raw.trim()

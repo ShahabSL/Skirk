@@ -129,6 +129,7 @@ let mockProfiles: ClientProfile[] = [
   },
 ];
 let mockSelectedProfileId: string | null = "mock-profile";
+const mockProfileTexts = new Map<string, string>();
 let mockConnected = false;
 let mockOauthRenewed = false;
 const mockPlatform = browserPreviewPlatform();
@@ -203,6 +204,7 @@ const tauriApi = {
     invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, httpPort, shareLan }),
   replaceProfileConfig: (profileId: string, rawConfig: string) =>
     invoke<DesktopSnapshot>("replace_profile_config", { profileId, rawConfig }),
+  exportSavedProfile: (profileId: string) => invoke<string>("export_saved_profile", { profileId }),
   deleteProfile: (profileId: string) => invoke<DesktopSnapshot>("delete_profile", { profileId }),
   selectProfile: (profileId: string | null) =>
     invoke<DesktopSnapshot>("select_profile", { profileId }),
@@ -218,8 +220,9 @@ const tauriApi = {
 
 const browserPreviewApi = {
   loadSnapshot: async () => mockSnapshot(),
-  importConfig: async (name: string, _rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) => {
+  importConfig: async (name: string, rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) => {
     const id = `mock-${Date.now()}`;
+    mockProfileTexts.set(id, rawConfig.trim());
     mockProfiles = [
       ...mockProfiles,
       {
@@ -241,14 +244,22 @@ const browserPreviewApi = {
     mockSelectedProfileId = id;
     return mockSnapshot();
   },
-  replaceProfileConfig: async (profileId: string, _rawConfig: string) => {
+  replaceProfileConfig: async (profileId: string, rawConfig: string) => {
     if (!mockProfiles.some((profile) => profile.id === profileId)) {
       throw new Error("profile was not found");
     }
+    mockProfileTexts.set(profileId, rawConfig.trim());
     mockOauthRenewed = true;
     return mockSnapshot();
   },
+  exportSavedProfile: async (profileId: string) => {
+    const text = mockProfileTexts.get(profileId);
+    if (text?.startsWith("skirk:")) return text;
+    // This browser-only preview has no local sidecar or saved credentials.
+    return "skirk:" + btoa("Desktop QR preview fixture").replace(/=+$/, "");
+  },
   deleteProfile: async (profileId: string) => {
+    mockProfileTexts.delete(profileId);
     mockProfiles = mockProfiles.filter((profile) => profile.id !== profileId);
     if (mockSelectedProfileId === profileId) {
       mockSelectedProfileId = mockProfiles[0]?.id ?? null;

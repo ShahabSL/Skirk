@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.Add
@@ -96,6 +97,7 @@ internal fun ProfilesPage(
     onReplace: (ClientProfile) -> Unit,
     onRename: (ClientProfile) -> Unit,
     onRemove: (ClientProfile) -> Unit,
+    onShare: (ClientProfile) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -129,6 +131,7 @@ internal fun ProfilesPage(
                 onReplace = { onReplace(profile) },
                 onRename = { onRename(profile) },
                 onRemove = { onRemove(profile) },
+                onShare = { onShare(profile) },
             )
         }
         if (profiles.isNotEmpty()) item { HorizontalDivider() }
@@ -145,6 +148,7 @@ private fun ProfileListRow(
     onReplace: () -> Unit,
     onRename: () -> Unit,
     onRemove: () -> Unit,
+    onShare: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().heightIn(min = 68.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -166,12 +170,13 @@ private fun ProfileListRow(
                 )
             }
         }
-        if (!running) {
-            Box {
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = "Options for $name")
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        Box {
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Rounded.MoreVert, contentDescription = "Options for $name")
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(text = { Text("Share profile") }, onClick = { menuOpen = false; onShare() })
+                if (!running) {
                     DropdownMenuItem(text = { Text("Rename") }, onClick = { menuOpen = false; onRename() })
                     DropdownMenuItem(text = { Text("Replace profile") }, onClick = { menuOpen = false; onReplace() })
                     DropdownMenuItem(
@@ -197,6 +202,7 @@ internal fun ProfileForm(
     onTextChange: (String) -> Unit,
     onPaste: () -> Unit,
     onChooseFile: () -> Unit,
+    onScanQr: (() -> Unit)?,
     onCancelRead: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -214,8 +220,8 @@ internal fun ProfileForm(
         Text(
             when {
                 !enabled -> "Disconnect before changing profiles."
-                replacingName != null -> "Paste the renewed profile for $replacingName. Your connection settings stay the same."
-                else -> "Copy a profile from your Skirk exit and paste it here."
+                replacingName != null -> "Import the renewed profile for $replacingName."
+                else -> "Import a profile from your Skirk exit or another device."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
@@ -279,6 +285,13 @@ internal fun ProfileForm(
             })
         }
         Column {
+            if (onScanQr != null) {
+                TextButton(onClick = { focus.clearFocus(); showText = false; onScanQr() }, enabled = enabled && !reading) {
+                    Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan QR code")
+                }
+            }
             if (hasText) {
                 TextButton(onClick = { focus.clearFocus(); showText = false; onPaste() }, enabled = enabled && !reading) {
                     Icon(Icons.Rounded.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))

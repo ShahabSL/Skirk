@@ -168,7 +168,7 @@ func manageExitInstanceMenu(ctx context.Context, reader *bufio.Reader, instance 
 		fmt.Println("6. Configure outbound proxy or WARP")
 		fmt.Println("7. Tune Drive usage and concurrency")
 		fmt.Println("8. Cleanup stale Drive objects")
-		fmt.Println("9. Show generated client files")
+		fmt.Println("9. Show client profile and QR code")
 		fmt.Println("10. Delete this instance")
 		fmt.Println("0. Back")
 		choice, err := prompt(ctx, reader, "Instance action", "1")
@@ -215,6 +215,9 @@ func manageExitInstanceMenu(ctx context.Context, reader *bufio.Reader, instance 
 			fmt.Printf("Client JSON: %s\n", filepath.Join(instance.KitDir, "client.json"))
 			fmt.Printf("Client profile: %s\n", filepath.Join(instance.KitDir, "client.skirk"))
 			fmt.Printf("Client command: %s\n", filepath.Join(instance.KitDir, "client-command.txt"))
+			if err := showClientProfileFromMenu(ctx, reader, filepath.Join(instance.KitDir, "client.skirk")); err != nil {
+				return err
+			}
 		case "10":
 			return deleteExitInstanceFromMenu(ctx, reader, instance)
 		default:

@@ -6,7 +6,7 @@ This is the operator flow:
 2. Create and publish a personal Google OAuth app in your browser. Leave the new Desktop app's credentials open. [Illustrated Google setup](personal-google-setup.md)
 3. Run `skirk setup init --out skirk-kit` on the exit. Paste the client ID and secret when prompted, open the approval link in your browser, and approve Drive access.
 4. Setup installs/enables `skirk-exit.service` and starts the exit on Linux.
-5. Send only `skirk-kit/client.skirk` or its one-line text to clients.
+5. Run `skirk`, choose **11. Show client profile and QR code**, and select the generated `client.skirk` file. Scan the code in the phone app or copy the full line into a client.
 
 The exit machine needs outbound internet access. It does not need an inbound
 port because both sides exchange encrypted objects through Google Drive.

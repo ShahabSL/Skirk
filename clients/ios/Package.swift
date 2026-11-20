@@ -7,7 +7,7 @@ let package = Package(
     products: [.library(name: "SkirkProfileImport", targets: ["SkirkProfileImport"])],
     targets: [
         .target(name: "SkirkProfileImport", path: "App",
-                exclude: ["Assets.xcassets", "PrivacyInfo.xcprivacy", "VPN-Privacy.txt", "PrivacyViews.swift", "ClientDriveActivity.swift", "ContentView.swift", "TunnelController.swift", "SkirkApp.swift", "Info.plist", "Skirk.entitlements"],
+                exclude: ["Assets.xcassets", "PrivacyInfo.xcprivacy", "VPN-Privacy.txt", "PrivacyViews.swift", "ClientDriveActivity.swift", "ContentView.swift", "ProfileQRScanner.swift", "ProfileShare.swift", "TunnelController.swift", "SkirkApp.swift", "Info.plist", "Skirk.entitlements"],
                 sources: ["ProfileFileImport.swift"]),
         .testTarget(name: "SkirkProfileImportTests", dependencies: ["SkirkProfileImport"], path: "Tests/ProfileImportTests"),
         .target(name: "SkirkTunnelRouting", path: "TunnelExtension",
