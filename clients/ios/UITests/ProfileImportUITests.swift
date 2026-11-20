@@ -146,9 +146,14 @@ final class ProfileImportUITests: XCTestCase {
     }
 
     func testNamedProfilesKeepTheirRoutesAcrossRelaunch() {
+        continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        let stored = app.staticTexts["Profile stored on this iPhone"]
+        let firstRun = app.buttons["Choose client.skirk file"]
+        XCTAssertTrue(firstRun.waitForExistence(timeout: 5))
+        addTeardownBlock { @MainActor in
+            removeSyntheticProfiles(named: ["Home Wi-Fi", "Mobile data"])
+        }
 
         func importNamed(_ name: String) {
             let nameField = app.textFields["Profile name (optional)"]
@@ -161,10 +166,19 @@ final class ProfileImportUITests: XCTestCase {
             value.tap()
             value.typeText(syntheticProfile(refreshToken: "network-profile"))
             app.buttons["Import pasted profile"].tap()
-            XCTAssertTrue(stored.waitForExistence(timeout: 5))
         }
 
         importNamed("Home Wi-Fi")
+        let summary = app.descendants(matching: .any)["active-profile-summary"]
+        for _ in 0..<3 where !summary.isHittable { app.swipeDown() }
+        XCTAssertTrue(summary.isHittable)
+        XCTAssertEqual(summary.value as? String, "Home Wi-Fi")
+        let lowerUsage = app.buttons["drive-usage"]
+        for _ in 0..<4 where !lowerUsage.isHittable { app.swipeUp() }
+        XCTAssertEqual(lowerUsage.value as? String, "Profile default")
+        lowerUsage.tap()
+        app.buttons["Lower Drive usage"].tap()
+        XCTAssertEqual(lowerUsage.value as? String, "Lower Drive usage")
         let route = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route")).firstMatch
         for _ in 0..<4 where !route.isHittable { app.swipeUp() }
         route.tap()
@@ -174,11 +188,16 @@ final class ProfileImportUITests: XCTestCase {
         importNamed("Mobile data")
 
         let picker = app.buttons["active-profile"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !picker.isHittable { app.swipeDown() }
+        XCTAssertTrue(picker.isHittable)
         XCTAssertEqual(picker.value as? String, "Mobile data")
-        XCTAssertTrue(app.staticTexts["Google access: Google front"].exists)
+        for _ in 0..<4 where !route.isHittable { app.swipeUp() }
+        XCTAssertEqual(route.value as? String, "Google front")
+        for _ in 0..<4 where !lowerUsage.isHittable { app.swipeUp() }
+        XCTAssertEqual(lowerUsage.value as? String, "Profile default")
         app.terminate()
         app.launch()
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertEqual(picker.value as? String, "Mobile data")
         picker.tap()
         let screenshot = XCTAttachment(screenshot: app.screenshot())
@@ -187,17 +206,20 @@ final class ProfileImportUITests: XCTestCase {
         add(screenshot)
         app.buttons["Home Wi-Fi"].tap()
         XCTAssertEqual(picker.value as? String, "Home Wi-Fi")
-        XCTAssertTrue(app.staticTexts["Google access: Direct Google"].exists)
+        for _ in 0..<4 where !lowerUsage.isHittable { app.swipeUp() }
+        XCTAssertEqual(lowerUsage.value as? String, "Lower Drive usage")
+        XCTAssertEqual(route.value as? String, "Direct Google")
 
         app.buttons["Remove profile"].tap()
         app.alerts.buttons["Remove profile"].tap()
-        let remaining = app.descendants(matching: .any)["active-profile-summary"]
-        XCTAssertTrue(remaining.waitForExistence(timeout: 5))
-        XCTAssertEqual(remaining.value as? String, "Mobile data")
-        XCTAssertTrue(app.staticTexts["Google access: Google front"].exists)
+        for _ in 0..<3 where !summary.isHittable { app.swipeDown() }
+        XCTAssertTrue(summary.isHittable)
+        XCTAssertEqual(summary.value as? String, "Mobile data")
+        for _ in 0..<4 where !route.isHittable { app.swipeUp() }
+        XCTAssertEqual(route.value as? String, "Google front")
         app.buttons["Remove profile"].tap()
         app.alerts.buttons["Remove profile"].tap()
-        XCTAssertTrue(app.buttons["Choose client.skirk file"].waitForExistence(timeout: 5))
+        XCTAssertTrue(firstRun.waitForExistence(timeout: 5))
     }
 
     private func syntheticProfile(refreshToken: String, secret: String = "synthetic-secret",

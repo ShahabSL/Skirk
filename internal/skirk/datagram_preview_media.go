@@ -200,8 +200,6 @@ func (p *pilotMailbox) requestPilotBatchOnce(ctx context.Context, client *Google
 		}
 		return nil, err
 	}
-	result.RequestStarted = started
-	result.ResponseReceived = time.Now()
 	drive.logDriveRequest(label, result.Attempts, result.Status, result.Body, time.Since(started), nil)
 	drive.backoff.Observe(label, result, drive.Logger)
 	if result.Status == http.StatusUnauthorized && drive.tokenSource != nil {

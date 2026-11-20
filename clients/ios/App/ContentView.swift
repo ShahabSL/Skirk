@@ -213,6 +213,20 @@ struct ContentView: View {
                     }
 
                     Section {
+                        Picker("Drive usage", selection: Binding(
+                            get: { tunnel.lowerDriveUsage },
+                            set: { tunnel.selectLowerDriveUsage($0) }
+                        )) {
+                            Text("Profile default").tag(false)
+                            Text("Lower Drive usage").tag(true)
+                        }
+                        .pickerStyle(.navigationLink)
+                        .accessibilityIdentifier("drive-usage")
+                    } footer: {
+                        Text("Lower Drive usage checks for TCP responses less often, which can slow page loads. Calls and other UDP traffic use their own schedule. Changes apply on the next connection.")
+                    }
+
+                    Section {
                         switch tunnel.driveActivityState {
                         case .unavailable:
                             Text(tunnel.status == .connected
@@ -236,6 +250,10 @@ struct ContentView: View {
                     } footer: {
                         Text("Client only. The exit and other apps can also use the Google project quota.")
                     }
+                }
+
+                if tunnel.hasProfile && profileImportAction == nil {
+                    TunnelStopAlertSettingsView()
                 }
 
                 if tunnel.hasProfile && profileImportAction == nil, let message = tunnel.message {
@@ -311,6 +329,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
                 tunnel.refreshStatus()
             }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { tunnel.refreshStatus() }
+            }
             .onChange(of: tunnel.status) { previous, current in
                 if current == .connected && previous != .connected && !statusFocused {
                     AccessibilityNotification.Announcement("VPN active").post()
@@ -322,7 +343,7 @@ struct ContentView: View {
             }
             .onChange(of: tunnel.connectionError) { _, message in
                 if let message {
-                    AccessibilityNotification.Announcement("Connection failed. \(message)").post()
+                    AccessibilityNotification.Announcement(message).post()
                 }
             }
             .onChange(of: tunnel.googleAuthorizationNeedsRenewal) { _, needsRenewal in

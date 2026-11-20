@@ -111,6 +111,16 @@ internal data class DriveMetrics(
 
 internal enum class UdpEvidence { Unknown, NotEnabled, NoReturnObserved, ReturnObserved }
 
+internal fun remainingDriveBackoffSeconds(
+    active: Boolean, until: String, sampledAtMillis: Long, waitSeconds: Double, nowMillis: Long,
+): Double {
+    if (!active) return 0.0
+    val deadline = runCatching { Instant.parse(until).toEpochMilli() }.getOrNull()
+    val seconds = if (deadline != null) (deadline - nowMillis) / 1000.0
+        else waitSeconds - (nowMillis - sampledAtMillis).coerceAtLeast(0) / 1000.0
+    return seconds.coerceAtLeast(0.0)
+}
+
 internal fun udpEvidence(configured: Boolean?, accepted: Long?): UdpEvidence = when {
     configured == false -> UdpEvidence.NotEnabled
     configured != true || accepted == null || accepted < 0L -> UdpEvidence.Unknown
@@ -139,10 +149,11 @@ internal fun readDriveMetrics(
         // start identifies the sample even if an old file was just updated.
         val startedAt = json.optString("started_at", json.optString("startedAt", ""))
         val sampledAt = json.optString("updated_at", json.optString("updatedAt", ""))
+        val sampledAtMillis = Instant.parse(sampledAt).toEpochMilli()
+        val now = nowMillis ?: System.currentTimeMillis()
         if (!connection.acceptsMetricsFrom(
                 Instant.parse(startedAt).toEpochMilli(),
-                Instant.parse(sampledAt).toEpochMilli(),
-                nowMillis ?: System.currentTimeMillis(),
+                sampledAtMillis, now,
             )
         ) return null
         val rate = json.optJSONObject("recent_quota_per_minute")
@@ -152,6 +163,9 @@ internal fun readDriveMetrics(
             ?: json.optJSONObject("driveBackoff")
             ?: JSONObject()
         val udp = json.optJSONObject("udp_preview")
+        val remaining = remainingDriveBackoffSeconds(backoff.optBoolean("active", false),
+            backoff.optString("until"), sampledAtMillis,
+            backoff.optDouble("wait_seconds", backoff.optDouble("waitSeconds", 0.0)), now)
         DriveMetrics(
             unitsPerMinute = rate.optDouble("units", 0.0),
             errorsPerMinute = rate.optDouble("errors", 0.0),
@@ -160,9 +174,9 @@ internal fun readDriveMetrics(
                 "recent_quota_ops",
                 json.optString("recentQuotaOps", ""),
             ),
-            backoffActive = backoff.optBoolean("active", false),
+            backoffActive = remaining > 0.0,
             backoffReason = backoff.optString("reason", ""),
-            backoffWaitSeconds = backoff.optDouble("wait_seconds", backoff.optDouble("waitSeconds", 0.0)),
+            backoffWaitSeconds = remaining,
             recentUdpAdmissionLimitHits = json.optLong("recent_udp_admission_limit_hits", 0L),
             recentUdpRemoteExitLimitHits = json.optLong("recent_udp_remote_exit_limit_hits", 0L),
             udpEvidence = udpEvidence(

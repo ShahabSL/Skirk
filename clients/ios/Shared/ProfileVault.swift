@@ -39,6 +39,7 @@ enum ProfileVault {
         let name: String
         var configuration: String
         var routeMode: GoogleRouteMode
+        var lowerDriveUsage: Bool? = nil
 
         var choice: Choice { Choice(id: id, name: name) }
     }
@@ -345,6 +346,16 @@ enum ProfileVault {
         try store(catalog, group: group)
     }
 
+    static func saveLowerDriveUsage(_ enabled: Bool) throws {
+        let group = try requiredGroup()
+        var catalog = try load(group: group)
+        guard let index = catalog.profiles.firstIndex(where: { $0.id == catalog.selectedID }) else {
+            throw VaultError.missingProfile
+        }
+        catalog.profiles[index].lowerDriveUsage = enabled
+        try store(catalog, group: group)
+    }
+
     static func clientID() throws -> String {
         if let data = try readItem(clientIDAccount, group: requiredGroup()),
            let existing = String(data: data, encoding: .utf8), !existing.isEmpty {
@@ -360,6 +371,21 @@ enum ProfileVault {
             throw VaultError.invalidClientID
         }
         try saveItem(data, account: clientIDAccount, group: requiredGroup())
+    }
+
+    private static let stopAlertsAccount = "stop-alerts-v1"
+
+    static func stopAlertsEnabled() throws -> Bool {
+        try readItem(stopAlertsAccount, group: requiredGroup()) == Data([1])
+    }
+
+    static func saveStopAlertsEnabled(_ enabled: Bool) throws {
+        let group = try requiredGroup()
+        if enabled {
+            try saveItem(Data([1]), account: stopAlertsAccount, group: group)
+        } else {
+            try deleteItem(stopAlertsAccount, group: group)
+        }
     }
 
     private static func query(_ account: String, group: String?) -> [String: Any] {

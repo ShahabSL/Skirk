@@ -1,6 +1,7 @@
 import Foundation
 import NetworkExtension
 import os
+import UserNotifications
 
 private final class StartCompletion: @unchecked Sendable {
     private let lock = NSLock()
@@ -20,14 +21,19 @@ private final class StartCompletion: @unchecked Sendable {
 }
 
 private final class StopCompletion: @unchecked Sendable {
-    private let callback: () -> Void
+    private let lock = NSLock()
+    private var callback: (() -> Void)?
 
     init(_ callback: @escaping () -> Void) {
         self.callback = callback
     }
 
     func finish() {
-        callback()
+        lock.lock()
+        let callback = self.callback
+        self.callback = nil
+        lock.unlock()
+        callback?()
     }
 }
 
@@ -79,6 +85,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var startCompletion: StartCompletion?
     private var engineWatch: DispatchSourceTimer?
     private var routing = TunnelRouting.legacy
+    private var stopAlert = TunnelStopAlertGate()
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         // Profiles contain OAuth credentials. The app sends one during an
@@ -87,10 +94,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let profile: String
         let clientID: String
         let routeMode: GoogleRouteMode
+        let lowerDriveUsage: Bool
         do {
             let suppliedProfile = options?["profile"] as? String
             let suppliedRoute = options?["routeMode"] as? String
             let selected = suppliedProfile == nil || suppliedRoute == nil ? try ProfileVault.selectedProfile() : nil
+            lowerDriveUsage = (options?["lowerDriveUsage"] as? NSNumber)?.boolValue ?? selected?.lowerDriveUsage ?? false
             profile = (suppliedProfile ?? selected?.configuration ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             clientID = try (options?["clientID"] as? String) ?? ProfileVault.clientID()
@@ -125,6 +134,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             self.generation &+= 1
             let currentGeneration = self.generation
             self.active = true
+            self.stopAlert = TunnelStopAlertGate()
             self.startCompletion = completion
             self.engineStarting = true
             self.engineStartQueue.async {
@@ -133,7 +143,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     let routing = try GoTunnelEngine.packetTunnelOptions(profile: profile)
                     let pinnedIP = try GoTunnelEngine.pinnedGoogleIP(profile: profile, routeMode: routeMode)
                     try GoTunnelEngine.start(profile: profile, clientID: clientID,
-                                             socksPort: PacketBridge.socksPort, routeMode: routeMode)
+                                             socksPort: PacketBridge.socksPort, routeMode: routeMode,
+                                             lowerDriveUsage: lowerDriveUsage)
                     result = .success((pinnedIP, routing))
                 } catch {
                     result = .failure(error)
@@ -192,8 +203,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         let completion = StopCompletion(completionHandler)
         lifecycleQueue.async { [weak self] in
-            self?.stopRuntime()
-            completion.finish()
+            guard let self else {
+                completion.finish()
+                return
+            }
+            let shouldNotify = self.stopAlert.takeAlert(for: reason)
+            self.stopRuntime()
+            guard shouldNotify, (try? ProfileVault.stopAlertsEnabled()) == true else {
+                completion.finish()
+                return
+            }
+            // Give the system a short chance to accept the local request before
+            // handing back the provider's lifetime. The VPN is already stopped.
+            self.lifecycleQueue.asyncAfter(deadline: .now() + .milliseconds(250)) {
+                completion.finish()
+            }
+            UNUserNotificationCenter.current().add(TunnelStopAlert.request()) { [logger = self.logger] error in
+                if error != nil { logger.notice("iOS did not accept the VPN disconnect alert") }
+                completion.finish()
+            }
         }
     }
 
@@ -236,6 +264,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             self.lifecycleQueue.async {
                 guard self.active && self.generation == currentGeneration else { return }
                 self.logger.error("Packet bridge failed: \(error.localizedDescription, privacy: .public)")
+                self.stopAlert.didDetectFailure()
                 self.stopRuntime()
                 self.cancelTunnelWithError(error)
             }
@@ -250,6 +279,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             }
             packetBridge = bridge
             startEngineWatch(generation: currentGeneration)
+            stopAlert.didEstablishTunnel()
             startCompletion?.finish(nil)
             startCompletion = nil
             logger.info("Packet tunnel started")
@@ -307,6 +337,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         userInfo: [NSLocalizedDescriptionKey: "The Skirk client engine stopped unexpectedly."]
                     )
                 self.logger.error("Go tunnel engine stopped unexpectedly")
+                self.stopAlert.didDetectFailure()
                 self.stopRuntime()
                 self.cancelTunnelWithError(error)
                 return

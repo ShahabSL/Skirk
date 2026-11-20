@@ -390,6 +390,7 @@ type driveMux struct {
 	priorityListMu        sync.Mutex
 	priorityListSince     time.Time
 	priorityListPageToken string
+	priorityListScanSince time.Time
 	priorityListPartial   bool
 	priorityRetryObjects  map[muxPriorityRetryKey]muxPriorityRetryState
 	adaptivePollSequence  atomic.Uint64
@@ -3299,8 +3300,8 @@ func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classN
 		return nil, errors.New("mux class list cursor is nil")
 	}
 	cursor, cursorPageToken := m.listFreshCursorFor(mu, since, pageToken)
-	if sliding && mu == &m.listMu {
-		return m.listRecvSlidingNormalClass(ctx, store, prefix, classNeedle, cursor, cursorPageToken)
+	if mu == &m.priorityListMu || (sliding && mu == &m.listMu) {
+		return m.listRecvSlidingClass(ctx, store, prefix, classNeedle, cursor, cursorPageToken, mu == &m.priorityListMu)
 	}
 	requestPageToken := cursorPageToken
 	if sliding {
@@ -3313,11 +3314,6 @@ func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classN
 			m.t.Logger.Printf("mux list page token rejected role=%s direction=%s class=%s prefix=%s error=%s", m.role, directionName(m.recvDir), strings.Trim(classNeedle, "/"), muxShortName(prefix), errorSummary(err))
 		}
 		result, err = store.ListFreshContainsPageStatus(ctx, []string{prefix, classNeedle}, cursor, "", muxFreshClassListPages)
-	}
-	if mu == &m.priorityListMu && err == nil {
-		m.priorityListMu.Lock()
-		m.priorityListPartial = result.Truncated || result.Incomplete
-		m.priorityListMu.Unlock()
 	}
 	switch {
 	case err != nil:
@@ -3338,66 +3334,83 @@ func (m *driveMux) listRecvMuxObjectsByClass(ctx context.Context, prefix, classN
 	return result.Objects, err
 }
 
-// A normal-class scan is at most four Drive pages per poll. While an older
-// scan continues, one page checks the head and three advance the saved page
-// token. This gives new bulk traffic a bounded chance to be noticed without
-// indefinitely hiding objects behind a dense or continuously growing head.
-func (m *driveMux) listRecvSlidingNormalClass(ctx context.Context, store FreshListContainsPageStatusStore, prefix, classNeedle string, since time.Time, pageToken string) ([]ObjectInfo, error) {
+// A class scan is at most four Drive pages per poll. During a continuation,
+// one page checks the head for new traffic and three advance the older scan.
+func (m *driveMux) listRecvSlidingClass(ctx context.Context, store FreshListContainsPageStatusStore, prefix, classNeedle string, since time.Time, pageToken string, priority bool) ([]ObjectInfo, error) {
+	mu, listSince, listToken, scanSince := &m.listMu, &m.listSince, &m.listPageToken, &m.normalListScanSince
+	if priority {
+		mu, listSince, listToken, scanSince = &m.priorityListMu, &m.priorityListSince, &m.priorityListPageToken, &m.priorityListScanSince
+	}
+	markPartial := func(partial bool) {
+		if priority {
+			mu.Lock()
+			m.priorityListPartial = partial
+			mu.Unlock()
+		}
+	}
 	contains := []string{prefix, classNeedle}
 	if pageToken == "" {
 		result, err := store.ListFreshContainsPageStatus(ctx, contains, since, "", muxFreshClassListPages)
 		if err != nil {
 			return nil, err
 		}
+		markPartial(result.Truncated || result.Incomplete)
 		if result.Truncated && !result.Incomplete && result.NextPageToken != "" {
-			m.listMu.Lock()
-			m.normalListScanSince = m.nextListSince(result.Objects)
-			m.listPageToken = result.NextPageToken
-			m.listMu.Unlock()
+			mu.Lock()
+			*scanSince = m.nextListSince(result.Objects)
+			*listToken = result.NextPageToken
+			mu.Unlock()
 		} else if result.Truncated || result.Incomplete {
-			m.clearListPageTokenFor(&m.listMu, &m.listPageToken)
+			m.clearListPageTokenFor(mu, listToken)
 		} else {
-			m.advanceListSinceFor(result.Objects, &m.listMu, &m.listSince, &m.listPageToken)
+			m.advanceListSinceFor(result.Objects, mu, listSince, listToken)
 		}
 		m.logSlidingNormalList(prefix, classNeedle, since, result)
 		return result.Objects, nil
 	}
 
-	// Continue first so a rejected Drive token can fall back to the normal
+	// Continue first so a rejected Drive token can fall back to the full
 	// four-page head scan without spending a fifth successful page.
 	result, err := store.ListFreshContainsPageStatus(ctx, contains, since, pageToken, muxFreshClassListPages-1)
 	if err != nil && isDrivePageTokenRejected(err) {
-		m.clearListPageTokenFor(&m.listMu, &m.listPageToken)
+		m.clearListPageTokenFor(mu, listToken)
 		if m.t != nil && m.t.Logger != nil {
 			m.t.Logger.Printf("mux list page token rejected role=%s direction=%s class=%s prefix=%s error=%s", m.role, directionName(m.recvDir), strings.Trim(classNeedle, "/"), muxShortName(prefix), errorSummary(err))
 		}
-		return m.listRecvSlidingNormalClass(ctx, store, prefix, classNeedle, since, "")
+		return m.listRecvSlidingClass(ctx, store, prefix, classNeedle, since, "", priority)
 	}
 	if err != nil {
 		return nil, err
 	}
-	// A fresh head page is bounded even when the older continuation spans
-	// many polls. Its objects are replayed from the saved scan watermark next
-	// cycle, so a >1000-object burst cannot be skipped at completion.
+	// Replay head arrivals from the saved watermark next cycle so a burst
+	// larger than the head page cannot be skipped at completion.
 	head, headErr := store.ListFreshContainsPageStatus(ctx, contains, since, "", 1)
 	if headErr != nil {
+		if priority {
+			// Keep the admitted older work and retry from a fresh head next
+			// time without advancing the watermark past new opens.
+			m.reportTerminalTransportError(ctx, headErr)
+			m.clearListPageTokenFor(mu, listToken)
+			markPartial(true)
+			return result.Objects, nil
+		}
 		return nil, headErr
 	}
 	result.Objects = append(result.Objects, head.Objects...)
 	result.Pages += head.Pages
+	markPartial(result.Truncated || result.Incomplete || head.Incomplete)
 	if result.Truncated && !result.Incomplete && result.NextPageToken != "" && !head.Incomplete {
-		m.setListPageTokenFor(&m.listMu, &m.listPageToken, result.NextPageToken)
+		m.setListPageTokenFor(mu, listToken, result.NextPageToken)
 	} else if result.Truncated || result.Incomplete || head.Incomplete {
-		m.clearListPageTokenFor(&m.listMu, &m.listPageToken)
+		m.clearListPageTokenFor(mu, listToken)
 	} else {
-		m.listMu.Lock()
-		newSince := m.normalListScanSince
-		if newSince.After(m.listSince) {
-			m.listSince = newSince
+		mu.Lock()
+		if scanSince.After(*listSince) {
+			*listSince = *scanSince
 		}
-		m.listPageToken = ""
-		m.normalListScanSince = time.Time{}
-		m.listMu.Unlock()
+		*listToken = ""
+		*scanSince = time.Time{}
+		mu.Unlock()
 	}
 	m.logSlidingNormalList(prefix, classNeedle, since, result)
 	return result.Objects, nil
@@ -3692,6 +3705,8 @@ func (m *driveMux) advanceListSinceFor(infos []ObjectInfo, mu *sync.Mutex, since
 	*pageToken = ""
 	if mu == &m.listMu {
 		m.normalListScanSince = time.Time{}
+	} else if mu == &m.priorityListMu {
+		m.priorityListScanSince = time.Time{}
 	}
 	mu.Unlock()
 }
@@ -3704,6 +3719,8 @@ func (m *driveMux) clearListPageTokenFor(mu *sync.Mutex, pageToken *string) {
 	*pageToken = ""
 	if mu == &m.listMu {
 		m.normalListScanSince = time.Time{}
+	} else if mu == &m.priorityListMu {
+		m.priorityListScanSince = time.Time{}
 	}
 	mu.Unlock()
 }
@@ -3743,6 +3760,8 @@ func (m *driveMux) rewindListSinceForMetasLocked(metas []muxObjectMeta, mu *sync
 	*pageToken = ""
 	if mu == &m.listMu {
 		m.normalListScanSince = time.Time{}
+	} else if mu == &m.priorityListMu {
+		m.priorityListScanSince = time.Time{}
 	}
 	mu.Unlock()
 }

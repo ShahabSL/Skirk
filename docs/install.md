@@ -52,6 +52,18 @@ A headless client can run `skirk serve-client --config ./client.skirk`. Point yo
 
 ## Capacity
 
+Devices sharing a profile use the same Google user's Drive quota. Each independent VPN client checks its own incoming traffic. When sizing a shared installation, count independent clients, how many need UDP at the same time, and whether each receives data in time for playback.
+
+If Android shows **Google Drive is limiting requests**, open the Drive usage details to see the reason and remaining cooldown. Skirk pauses requests after Google returns a rate-limit response. Leave it connected while it waits. If this happens regularly, check the Drive API metrics for the exit’s Google Cloud project. Publishing the OAuth app addresses the Testing refresh-token expiry. Google documents its request quotas separately. [Drive API usage limits](https://developers.google.com/workspace/drive/api/guides/limits)
+
+If Android shows **The exit is full for new UDP traffic**, the exit has filled its UDP carrier slots. An existing call can keep its slot while a newly started call waits for capacity. The Drive usage details and the UDP capacity message help identify which resource ran out.
+
+For a shared UDP kit, you can test grouped polling by setting `tunnel.udp_preview_grouped_discovery` to `true` in the exit configuration and restarting the exit. The exit can then check up to four clients in one Drive list request. Compare call playback and the project's Drive usage under the same load before keeping the setting.
+
+On iPhone, open **Drive usage**, select **Lower Drive usage**, then reconnect. Skirk saves the choice for this profile. It checks for TCP responses less often, which saves Drive requests but can make pages open more slowly. UDP keeps its own polling schedule. The displayed usage covers this iPhone. Other devices and the exit also consume the shared quota.
+
+Turn on **VPN disconnect alerts** to receive a notification when Skirk detects an unexpected stop. If iOS terminates the extension before it can send the alert, open Skirk to check the VPN status and reconnect.
+
 Size your installation for the work people actually do. In one earlier live Drive run, 120 users behind a shared gateway each completed a 1 MiB upload, a 1 MiB download and an HTTPS request. Neither concurrent call connected in that run. In a separate eight-client run, all sixteen 16 MiB transfers completed alongside two ongoing calls. Combined file throughput was 73.33 Mb/s. In the weakest direction, 78.8% of original audio and 57.9% of video arrived for playback within 1.5 seconds. These measurements describe particular workloads and network conditions.
 
 New kits enable UDP and exit DNS. Setup enables IPv6 when it verifies the exit route. The default exit allows four independent UDP carriers, each serving multiple sessions. A carrier, a UDP socket, and a human user are different units. Watch the Drive API metrics for the Google project and test received media during a transfer before increasing concurrency. [Google Drive quota](https://developers.google.com/workspace/drive/api/guides/limits)

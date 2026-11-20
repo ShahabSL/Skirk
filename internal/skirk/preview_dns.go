@@ -28,13 +28,111 @@ const (
 	previewDNSExitLimit  = 16
 )
 
+var (
+	errPreviewDNSDisabled = errors.New("dns_streams_disabled")
+	errPreviewDNSTarget   = errors.New("dns_target_invalid")
+	errPreviewDNSCapacity = errors.New("dns_stream_capacity")
+)
+
 type previewDNS struct {
 	ctx    context.Context
 	dial   func(context.Context) (net.Conn, error)
 	idle   chan net.Conn
 	active chan struct{}
 	idleMu sync.Mutex
-	exits  chan struct{}
+	exits  *previewDNSExitPool
+}
+
+type previewDNSExitPool struct {
+	mu    sync.Mutex
+	limit int
+	// Entries with a zero timestamp are waiting for their first query or
+	// processing one. Only pipes that finished a reply can be reclaimed.
+	pipes map[*previewDNSExitPipe]time.Time
+}
+
+type previewDNSExitPipe struct {
+	net.Conn
+	pool *previewDNSExitPool
+}
+
+// The reserved DNS stream is a serialized query/reply pipe. Its owner closes
+// it only when it stops using both directions, so mux FIN must close both ends
+// of this local net.Pipe adapter.
+type previewDNSMuxConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *previewDNSMuxConn) Read(buffer []byte) (int, error) {
+	n, err := c.Conn.Read(buffer)
+	if errors.Is(err, io.ErrClosedPipe) {
+		// Mux sends its own orderly FIN rather than a reset on local EOF.
+		err = io.EOF
+	}
+	return n, err
+}
+
+func (c *previewDNSMuxConn) Close() error {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	return c.Conn.Close()
+}
+
+func (c *previewDNSMuxConn) CloseWrite() error { return c.Close() }
+
+func newPreviewDNSExitPool(limit int) *previewDNSExitPool {
+	return &previewDNSExitPool{limit: limit, pipes: make(map[*previewDNSExitPipe]time.Time, limit)}
+}
+
+func (p *previewDNSExitPool) open() (net.Conn, *previewDNSExitPipe) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.pipes) >= p.limit {
+		var oldest *previewDNSExitPipe
+		var oldestSince time.Time
+		for candidate, idleSince := range p.pipes {
+			if !idleSince.IsZero() && (oldest == nil || idleSince.Before(oldestSince)) {
+				oldest, oldestSince = candidate, idleSince
+			}
+		}
+		if oldest == nil {
+			return nil, nil
+		}
+		delete(p.pipes, oldest)
+		_ = oldest.Close()
+	}
+	local, handler := net.Pipe()
+	pipe := &previewDNSExitPipe{Conn: handler, pool: p}
+	p.pipes[pipe] = time.Time{}
+	return local, pipe
+}
+
+func (p *previewDNSExitPool) setIdleSince(pipe *previewDNSExitPipe, since time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, exists := p.pipes[pipe]; !exists {
+		return false
+	}
+	p.pipes[pipe] = since
+	return true
+}
+
+func (p *previewDNSExitPool) release(pipe *previewDNSExitPipe) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.pipes, pipe)
+}
+
+func (p *previewDNSExitPipe) Read(buffer []byte) (int, error) {
+	n, err := p.Conn.Read(buffer)
+	// Claim the pipe as soon as the next frame's length bytes arrive.
+	// If eviction raced that read, let the client's normal retry reopen it.
+	if n > 0 && !p.pool.setIdleSince(p, time.Time{}) {
+		return 0, net.ErrClosed
+	}
+	return n, err
 }
 
 type previewDNSResolver struct {
@@ -88,7 +186,7 @@ func newPreviewDNS(ctx context.Context, mux *driveMux) *previewDNS {
 		local, stream := net.Pipe()
 		go func() {
 			defer stream.Close()
-			_ = mux.openClientStream(ctx, previewDNSMuxTarget, stream)
+			_ = mux.openClientStream(ctx, previewDNSMuxTarget, &previewDNSMuxConn{Conn: stream})
 		}()
 		return local, nil
 	})
@@ -103,7 +201,7 @@ func (upstream previewDNSResolver) open(ctx context.Context, proxyURL string) *p
 	resolver := newPreviewDNSPool(ctx, func(ctx context.Context) (net.Conn, error) {
 		return upstream.dial(ctx, proxyURL, config)
 	})
-	resolver.exits = make(chan struct{}, previewDNSExitLimit)
+	resolver.exits = newPreviewDNSExitPool(previewDNSExitLimit)
 	return resolver
 }
 
@@ -147,24 +245,30 @@ func isPreviewDNSReservedTarget(target string) bool {
 }
 
 func (d *previewDNS) openExit(ctx context.Context, target string) (net.Conn, error) {
-	if d == nil || d.exits == nil || target != previewDNSMuxTarget {
-		return nil, errors.New("reserved DNS transport is disabled")
+	if target != previewDNSMuxTarget {
+		return nil, errPreviewDNSTarget
+	}
+	if d == nil || d.exits == nil {
+		return nil, errPreviewDNSDisabled
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	select {
-	case d.exits <- struct{}{}:
-	default:
-		return nil, errors.New("reserved DNS transport stream limit reached")
+	if err := d.ctx.Err(); err != nil {
+		return nil, err
 	}
-	local, handler := net.Pipe()
+	local, pipe := d.exits.open()
+	if pipe == nil {
+		return nil, errPreviewDNSCapacity
+	}
+	pipeCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		defer func() { <-d.exits }()
-		defer handler.Close()
-		d.serveTCP(ctx, handler)
+		defer d.exits.release(pipe)
+		defer pipe.Close()
+		defer cancel()
+		d.serveTCP(pipeCtx, pipe)
 	}()
-	return local, nil
+	return &previewDNSMuxConn{Conn: local, cancel: cancel}, nil
 }
 
 func unpackPreviewDNSQuery(wire []byte) (dnsmessage.Message, error) {
@@ -372,6 +476,9 @@ func (d *previewDNS) serveTCP(ctx context.Context, conn net.Conn) {
 		_ = conn.SetWriteDeadline(time.Now().Add(previewDNSTimeout))
 		if err := writePreviewDNSFrame(conn, reply); err != nil {
 			return
+		}
+		if pipe, ok := conn.(*previewDNSExitPipe); ok {
+			pipe.pool.setIdleSince(pipe, time.Now())
 		}
 	}
 }

@@ -30,10 +30,10 @@ type session struct {
 	quota        quotaReporter
 }
 
-// quotaReporter is implemented by the Drive store. Its snapshots read only
+// quotaReporter is implemented by the Drive store. Its methods read only
 // local counters; requesting them must not issue a Google API request.
 type quotaReporter interface {
-	QuotaSnapshot() skirk.DriveQuotaSnapshot
+	QuotaCounters() (units, failures int64)
 	QuotaBackoffSnapshot() skirk.DriveQuotaBackoffSnapshot
 }
 
@@ -57,7 +57,12 @@ func Start(profile, clientID string, socksPort int) error {
 // StartWithRoute starts the client with the route explicitly selected on this
 // device. The profile and its OAuth credentials remain unchanged.
 func StartWithRoute(profile, clientID string, socksPort int, routeMode string) error {
-	return startWithRoute(profile, clientID, socksPort, 0, routeMode, func(ctx context.Context, cfg *skirk.Config) (skirk.BlobStore, error) {
+	return StartWithDriveUsage(profile, clientID, socksPort, routeMode, false)
+}
+
+// StartWithDriveUsage applies the device's optional lower-frequency TCP polling.
+func StartWithDriveUsage(profile, clientID string, socksPort int, routeMode string, lowerDriveUsage bool) error {
+	return startWithRoute(profile, clientID, socksPort, 0, routeMode, lowerDriveUsage, func(ctx context.Context, cfg *skirk.Config) (skirk.BlobStore, error) {
 		return skirk.StoresFromConfig(ctx, cfg)
 	})
 }
@@ -125,7 +130,7 @@ func pinnedGoogleIP(profile, routeMode string) (string, error) {
 type storeFactory func(context.Context, *skirk.Config) (skirk.BlobStore, error)
 
 func start(profile, clientID string, socksPort, httpPort int, makeStore storeFactory) error {
-	return startWithRoute(profile, clientID, socksPort, httpPort, "", makeStore)
+	return startWithRoute(profile, clientID, socksPort, httpPort, "", false, makeStore)
 }
 
 func validateSelectedRoute(routeMode string) error {
@@ -137,7 +142,7 @@ func validateSelectedRoute(routeMode string) error {
 	}
 }
 
-func startWithRoute(profile, clientID string, socksPort, httpPort int, routeMode string, makeStore storeFactory) error {
+func startWithRoute(profile, clientID string, socksPort, httpPort int, routeMode string, lowerDriveUsage bool, makeStore storeFactory) error {
 	if routeMode != "" {
 		if err := validateSelectedRoute(routeMode); err != nil {
 			return err
@@ -158,7 +163,7 @@ func startWithRoute(profile, clientID string, socksPort, httpPort int, routeMode
 	bridge.lastErr = ""
 	bridge.Unlock()
 
-	err := prepareAndRun(s, profile, clientID, socksPort, httpPort, routeMode, makeStore)
+	err := prepareAndRun(s, profile, clientID, socksPort, httpPort, routeMode, lowerDriveUsage, makeStore)
 	bridge.Lock()
 	if bridge.pending == s {
 		bridge.pending = nil
@@ -197,7 +202,7 @@ func validatePorts(socksPort, httpPort int) error {
 	return nil
 }
 
-func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int, routeMode string, makeStore storeFactory) error {
+func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int, routeMode string, lowerDriveUsage bool, makeStore storeFactory) error {
 	if strings.TrimSpace(profile) == "" {
 		return errors.New("Skirk profile is empty")
 	}
@@ -207,6 +212,10 @@ func prepareAndRun(s *session, profile, clientID string, socksPort, httpPort int
 	}
 	if routeMode != "" && routeMode != "profile" {
 		cfg.Route.Mode = routeMode
+	}
+	if lowerDriveUsage {
+		cfg.Tunnel.PollIntervalMS = max(2000, cfg.Tunnel.PollIntervalMS)
+		cfg.Tunnel.BurstPoll = false
 	}
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
@@ -307,14 +316,14 @@ func QuotaStatusJSON() string {
 	if s == nil || s.ctx.Err() != nil || s.quota == nil {
 		return quotaUnavailable
 	}
-	quota := s.quota.QuotaSnapshot()
+	units, failures := s.quota.QuotaCounters()
 	backoff := s.quota.QuotaBackoffSnapshot()
 	seconds := int64(0)
 	if backoff.Active && !math.IsNaN(backoff.WaitSeconds) && backoff.WaitSeconds > 0 {
 		seconds = int64(math.Ceil(math.Min(backoff.WaitSeconds, 86400)))
 	}
 	return fmt.Sprintf(`{"v":1,"available":true,"units":%d,"errors":%d,"cooldown_seconds":%d}`,
-		max(0, quota.Units), max(0, quota.Errors), seconds)
+		max(0, units), max(0, failures), seconds)
 }
 
 func watchListeners(s *session, errCh <-chan error, count int) {

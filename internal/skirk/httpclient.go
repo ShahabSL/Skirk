@@ -324,11 +324,11 @@ func NewGoogleHTTPClient(route RouteConfig) *GoogleHTTPClient {
 }
 
 func (c *GoogleHTTPClient) Request(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
-	return c.request(ctx, method, host, path, headers, body, true)
+	return c.request(ctx, method, host, path, headers, body, true, nil)
 }
 
 func (c *GoogleHTTPClient) RequestNoRateLimitRetry(ctx context.Context, method, host, path string, headers map[string]string, body []byte) (*HTTPResult, error) {
-	return c.request(ctx, method, host, path, headers, body, false)
+	return c.request(ctx, method, host, path, headers, body, false, nil)
 }
 
 // RequestSingleAttempt is used by mutable protocol records. An uncertain
@@ -341,16 +341,21 @@ func (c *GoogleHTTPClient) RequestSingleAttempt(ctx context.Context, method, hos
 	return result, err
 }
 
-func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
+func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool, waitBeforeRetry func() error) (*HTTPResult, error) {
 	var lastErr error
 	var lastResult *HTTPResult
 	totalAttempts := 0
 	for i, route := range googleHTTPRouteAttempts(c.route) {
 		client := c
 		if i > 0 {
+			if waitBeforeRetry != nil {
+				if err := waitBeforeRetry(); err != nil {
+					return lastResult, &httpAttemptError{err: err, attempts: totalAttempts}
+				}
+			}
 			client = NewGoogleHTTPClient(route)
 		}
-		result, err := client.requestWithRetries(ctx, method, host, path, headers, body, retryRateLimit)
+		result, err := client.requestWithRetries(ctx, method, host, path, headers, body, retryRateLimit, waitBeforeRetry)
 		totalAttempts += httpAttemptCount(result, err)
 		if result != nil {
 			result.Attempts = totalAttempts
@@ -375,7 +380,7 @@ func (c *GoogleHTTPClient) request(ctx context.Context, method, host, path strin
 	return lastResult, nil
 }
 
-func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool) (*HTTPResult, error) {
+func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host, path string, headers map[string]string, body []byte, retryRateLimit bool, waitBeforeRetry func() error) (*HTTPResult, error) {
 	attempts := 4
 	if isGoogleFrontRoute(c.route.Mode) {
 		attempts = 5
@@ -401,6 +406,11 @@ func (c *GoogleHTTPClient) requestWithRetries(ctx context.Context, method, host,
 		}
 		if err := sleepBeforeRetry(ctx, attempt, retryAfter(result)); err != nil {
 			return lastResult, &httpAttemptError{err: err, attempts: attempted}
+		}
+		if waitBeforeRetry != nil {
+			if err := waitBeforeRetry(); err != nil {
+				return lastResult, &httpAttemptError{err: err, attempts: attempted}
+			}
 		}
 	}
 	if lastErr != nil {
@@ -535,6 +545,7 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 	if body != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
+	started := time.Now()
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -544,7 +555,8 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		stallAttempt.gotHeaders()
 	}
 	status = resp.StatusCode
-	bodyReader := resp.Body
+	var bodyReader io.Reader = resp.Body
+	contentLength := resp.ContentLength
 	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
 		gzipReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
@@ -552,13 +564,23 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 		}
 		defer gzipReader.Close()
 		bodyReader = gzipReader
+		contentLength = -1 // The header describes compressed bytes.
 		resp.Header.Del("Content-Encoding")
 	}
 	responseLimit, _ := ctx.Value(googleResponseLimitKey{}).(int64)
 	if responseLimit > 0 {
-		bodyReader = io.NopCloser(io.LimitReader(bodyReader, responseLimit+1))
+		bodyReader = io.LimitReader(bodyReader, responseLimit+1)
 	}
-	responseBody, err := io.ReadAll(bodyReader)
+	var responseBody []byte
+	if contentLength >= 32<<10 && contentLength <= responseLimit && contentLength <= muxMaxSealedBatch && !resp.Uncompressed {
+		// Reserve space for a final EOF read without growing or copying the
+		// payload. The local response limit still applies if the hint is wrong.
+		buffer := bytes.NewBuffer(make([]byte, 0, int(contentLength)+bytes.MinRead))
+		_, err = buffer.ReadFrom(bodyReader)
+		responseBody = buffer.Bytes()
+	} else {
+		responseBody, err = io.ReadAll(bodyReader)
+	}
 	if err != nil {
 		if len(responseBody) == 0 {
 			return nil, err
@@ -568,7 +590,8 @@ func (c *GoogleHTTPClient) requestOnce(ctx context.Context, method, host, path s
 	if responseLimit > 0 && int64(len(responseBody)) > responseLimit {
 		return nil, errGoogleResponseTooLarge
 	}
-	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header, Proto: resp.Proto}, nil
+	return &HTTPResult{Status: resp.StatusCode, Body: responseBody, Header: resp.Header, Proto: resp.Proto,
+		RequestStarted: started, ResponseReceived: time.Now()}, nil
 }
 
 func isGoogleFrontRoute(mode string) bool {

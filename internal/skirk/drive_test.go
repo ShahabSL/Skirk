@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -241,6 +242,117 @@ func TestDriveStoreDoesNotHTTPRetryRateLimit(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want one Drive HTTP attempt before returning quota error", requests)
+	}
+}
+
+func TestDriveQuotaCountersFollowSnapshotAndReset(t *testing.T) {
+	store := &DriveStore{quota: newDriveQuotaStats(0)}
+	check := func() {
+		t.Helper()
+		units, failures := store.QuotaCounters()
+		snapshot := store.QuotaSnapshot()
+		if units != snapshot.Units || failures != snapshot.Errors {
+			t.Fatalf("counters = %d/%d, snapshot = %d/%d", units, failures, snapshot.Units, snapshot.Errors)
+		}
+	}
+	check()
+	store.quota.Record("list", http.StatusOK, 0, 100*time.Millisecond, nil, "", 2)
+	store.quota.Record("upload", http.StatusTooManyRequests, 0, 100*time.Millisecond, nil, "rateLimitExceeded")
+	check()
+	store.ResetTelemetry()
+	check()
+	if units, failures := store.QuotaCounters(); units != 0 || failures != 0 {
+		t.Fatalf("reset counters = %d/%d, want 0/0", units, failures)
+	}
+}
+
+func TestDriveStoreTransientRetryHonorsConcurrentQuotaBackoff(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		deadline       time.Duration
+		responseStatus int
+		wantFailures   int
+	}{
+		{name: "success after cooldown", deadline: 10 * time.Second, responseStatus: http.StatusOK},
+		{name: "new rate limit after cooldown", deadline: 10 * time.Second, responseStatus: http.StatusForbidden, wantFailures: 2},
+		{name: "deadline during cooldown", deadline: time.Second, wantFailures: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const retryPath = "/drive/v3/files/retry"
+				const limitPath = "/drive/v3/files/limit"
+				const limitBody = `{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`
+				var retryCalls atomic.Int32
+				retryStarted := make(chan time.Time, 1)
+				httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path == limitPath {
+						resp := stringResponse(http.StatusForbidden, limitBody)
+						resp.Header.Set("Retry-After", "3")
+						return resp, nil
+					}
+					switch retryCalls.Add(1) {
+					case 1:
+						return stringResponse(http.StatusServiceUnavailable, "{}"), nil
+					case 2:
+						retryStarted <- time.Now()
+					}
+					return stringResponse(tc.responseStatus, limitBody), nil
+				})}}
+				store := NewDriveStore(httpClient, "test-token", DriveConfig{Space: "appDataFolder"})
+				store.backoff.jitter = 0
+				ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
+				defer cancel()
+				type requestOutcome struct {
+					result *HTTPResult
+					err    error
+				}
+				done := make(chan requestOutcome, 1)
+				go func() {
+					result, err := store.request(ctx, http.MethodGet, retryPath, nil, nil)
+					done <- requestOutcome{result, err}
+				}()
+				synctest.Wait() // The first request is now sleeping before its HTTP retry.
+				if attempts := retryCalls.Load(); attempts != 1 {
+					t.Fatalf("initial HTTP attempts = %d, want 1", attempts)
+				}
+				limit, err := store.request(t.Context(), http.MethodGet, limitPath, nil, nil)
+				if err != nil || limit == nil || limit.Status != http.StatusForbidden {
+					t.Fatalf("triggering rate limit = %+v, err=%v", limit, err)
+				}
+				cooldownEnd := time.Now().Add(3 * time.Second)
+				time.Sleep(3*time.Second - time.Millisecond)
+				synctest.Wait()
+				if attempts := retryCalls.Load(); attempts != 1 {
+					t.Fatalf("HTTP attempts before cooldown expired = %d, want 1", attempts)
+				}
+				if tc.responseStatus != 0 {
+					time.Sleep(time.Millisecond)
+				}
+				synctest.Wait()
+				var outcome requestOutcome
+				select {
+				case outcome = <-done:
+				default:
+					t.Fatal("request did not finish at its deadline or the end of the cooldown")
+				}
+				if tc.responseStatus == 0 {
+					if !errors.Is(outcome.err, context.DeadlineExceeded) || store.QuotaSnapshot().Calls != 2 {
+						t.Fatalf("expired retry err=%v Drive attempts=%d, want deadline and 2 attempts total", outcome.err, store.QuotaSnapshot().Calls)
+					}
+				} else {
+					result := outcome.result
+					if outcome.err != nil || result == nil || result.Status != tc.responseStatus || result.Attempts != 2 {
+						t.Fatalf("resumed retry result=%+v err=%v, want status %d and 2 attempts", result, outcome.err, tc.responseStatus)
+					}
+					if started := <-retryStarted; started.Before(cooldownEnd) || !result.RequestStarted.Equal(started) {
+						t.Fatalf("retry started at %s and reported start %s, want a new attempt at or after %s", started, result.RequestStarted, cooldownEnd)
+					}
+				}
+				if snapshot := store.QuotaBackoffSnapshot(); snapshot.Failures != tc.wantFailures {
+					t.Fatalf("cooldown = %+v, want %d consecutive failures", snapshot, tc.wantFailures)
+				}
+			})
+		})
 	}
 }
 

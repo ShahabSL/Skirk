@@ -8,6 +8,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ClientStateRegressionTest {
+    @Test fun cooldownEndsBetweenMetricSamples() {
+        val deadline = "1970-01-01T00:00:05.250Z"
+        assertEquals(0.25, remainingDriveBackoffSeconds(true, deadline, 1000, 4.25, 5000), 0.0)
+        assertEquals(0.0, remainingDriveBackoffSeconds(true, deadline, 1000, 4.25, 5300), 0.0)
+        assertEquals(0.25, remainingDriveBackoffSeconds(true, "", 1000, 4.25, 5000), 0.0)
+        assertEquals(0.0, remainingDriveBackoffSeconds(false, deadline, 1000, 4.25, 2000), 0.0)
+    }
+
     @Test fun reportsOnlyTheFinalClockFailure() {
         val skew = "error: device clock differs from Google Drive clock; enable automatic date and time, then reconnect: this device is ahead of Google Drive"
         val unverified = "error: could not verify Google Drive clock; reconnect when the connection is stable"

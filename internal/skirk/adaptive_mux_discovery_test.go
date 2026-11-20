@@ -387,7 +387,9 @@ func TestAdaptiveMuxDiscoveryFinishesPriorityCursorAfterBroadScanCompletes(t *te
 	if mux.hasListFreshPageToken() || mux.hasPriorityListPartial() || mux.hasListFreshPageTokenFor(&mux.priorityListMu, &mux.priorityListPageToken) {
 		t.Fatal("priority page token was abandoned when broad list became complete")
 	}
-	if len(store.calls) != 5 || store.calls[3].pageToken != "offset:4000" || store.calls[4].pageToken != "offset:400" {
+	if len(store.calls) != 6 || store.calls[3].pageToken != "offset:4000" ||
+		store.calls[4].pageToken != "offset:400" || store.calls[4].maxPages != 3 ||
+		store.calls[5].pageToken != "" || store.calls[5].maxPages != 1 || !containsString(store.calls[5].contains, "/p0/") {
 		t.Fatalf("cursor continuation calls = %#v", store.calls)
 	}
 	if len(mux.recvUrgent) != 401 {

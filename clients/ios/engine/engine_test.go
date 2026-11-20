@@ -19,11 +19,12 @@ import (
 
 type quotaStoreFixture struct {
 	skirk.BlobStore
-	quota   skirk.DriveQuotaSnapshot
-	backoff skirk.DriveQuotaBackoffSnapshot
+	units    int64
+	failures int64
+	backoff  skirk.DriveQuotaBackoffSnapshot
 }
 
-func (s *quotaStoreFixture) QuotaSnapshot() skirk.DriveQuotaSnapshot { return s.quota }
+func (s *quotaStoreFixture) QuotaCounters() (int64, int64) { return s.units, s.failures }
 func (s *quotaStoreFixture) QuotaBackoffSnapshot() skirk.DriveQuotaBackoffSnapshot {
 	return s.backoff
 }
@@ -36,7 +37,8 @@ func TestQuotaStatusReadsOnlyLocalBoundedCounters(t *testing.T) {
 	profile := testProfile(t)
 	store := &quotaStoreFixture{
 		BlobStore: skirk.NewMemoryStore(),
-		quota:     skirk.DriveQuotaSnapshot{Units: 37, Errors: 2, LastErrorReason: "private error detail"},
+		units:     37,
+		failures:  2,
 		backoff:   skirk.DriveQuotaBackoffSnapshot{Active: true, WaitSeconds: 90000, Reason: "private reason"},
 	}
 	if err := start(profile, "ios-quota-test", freePort(t), 0,
@@ -216,7 +218,7 @@ func TestSelectedGoogleRouteOverridesProfile(t *testing.T) {
 				t.Fatalf("pinned address = %q, error %v; want %q", address, err, tt.pinned)
 			}
 			var selected string
-			err = startWithRoute(profile, "ios-route-test", freePort(t), 0, tt.mode,
+			err = startWithRoute(profile, "ios-route-test", freePort(t), 0, tt.mode, false,
 				func(_ context.Context, cfg *skirk.Config) (skirk.BlobStore, error) {
 					selected = cfg.Route.Mode
 					return skirk.NewMemoryStore(), nil
@@ -249,7 +251,7 @@ func TestSelectedGoogleRouteOverridesProfile(t *testing.T) {
 		t.Fatalf("profile route address = %q, error %v; want no pinned IP", address, err)
 	}
 	var selected string
-	err = startWithRoute(customProfile, "ios-profile-route-test", freePort(t), 0, "profile",
+	err = startWithRoute(customProfile, "ios-profile-route-test", freePort(t), 0, "profile", false,
 		func(_ context.Context, cfg *skirk.Config) (skirk.BlobStore, error) {
 			selected = cfg.Route.Mode
 			return skirk.NewMemoryStore(), nil
@@ -295,6 +297,37 @@ func TestStartStopLoopbackListeners(t *testing.T) {
 		if err == nil {
 			_ = conn.Close()
 			t.Fatalf("port %d remains open after Stop", port)
+		}
+	}
+}
+
+func TestLowerDriveUsageAppliesOnlyToTCPDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		enabled       bool
+		initial, want int
+	}{{false, 1000, 1000}, {true, 1000, 2000}, {true, 3500, 3500}} {
+		cfg, err := skirk.ParseConfig([]byte(testProfile(t)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Tunnel.PollIntervalMS = tc.initial
+		cfg.Tunnel.BurstPoll = true
+		profile, err := skirk.EncodeConfigText(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = startWithRoute(profile, "ios-quota-test", freePort(t), 0, "profile", tc.enabled,
+			func(_ context.Context, active *skirk.Config) (skirk.BlobStore, error) {
+				if active.Tunnel.PollIntervalMS != tc.want || active.Tunnel.BurstPoll == tc.enabled {
+					t.Errorf("lower usage %t: interval %d, burst %t", tc.enabled, active.Tunnel.PollIntervalMS, active.Tunnel.BurstPoll)
+				}
+				return skirk.NewMemoryStore(), nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Stop(); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

@@ -32,6 +32,7 @@ final class TunnelController: ObservableObject {
     @Published private var hasLoadedVPNStatus = false
     @Published private(set) var isConnecting = false
     @Published private(set) var routeMode: GoogleRouteMode = .front
+    @Published private(set) var lowerDriveUsage = false
     @Published private(set) var importedRouteTitle: String?
     @Published private(set) var googleAuthorizationNeedsRenewal = false
     @Published private(set) var exitProbeMessage: String?
@@ -42,8 +43,9 @@ final class TunnelController: ObservableObject {
 
     private let providerBundleID = "app.skirk.ios.PacketTunnel"
     private let legacyClientIDKey = "skirk.ios.client-id"
+    private let lastActiveProfileKey = "skirk.ios.last-active-vpn-profile"
     private var cancelRequested = false
-    private var intentionalDisconnect = false
+    private var disconnectState = TunnelDisconnectState()
     private var authorizationCheckGeneration: UInt64 = 0
     private var exitProbeGeneration: UInt64 = 0
     private var manager: NETunnelProviderManager?
@@ -108,6 +110,15 @@ final class TunnelController: ObservableObject {
         }
     }
 
+    func selectLowerDriveUsage(_ enabled: Bool) {
+        do {
+            try ProfileVault.saveLowerDriveUsage(enabled)
+            lowerDriveUsage = enabled
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
     func importProfile(_ value: String, name: String, replacing: Bool = false) {
         guard canChangeRoute else {
             message = "Disconnect before importing or replacing a profile."
@@ -149,6 +160,7 @@ final class TunnelController: ObservableObject {
         profiles = snapshot.choices
         selectedProfile = snapshot.selected?.choice
         routeMode = snapshot.selected?.routeMode ?? .front
+        lowerDriveUsage = snapshot.selected?.lowerDriveUsage ?? false
         importedRouteTitle = snapshot.selected.flatMap {
             ProfileVault.importedRouteTitle($0.configuration)
         }
@@ -169,8 +181,8 @@ final class TunnelController: ObservableObject {
     func load() async {
         do {
             manager = try await Self.existingManager()
-            refreshStatus()
             hasLoadedVPNStatus = true
+            refreshStatus()
         } catch {
             // Import is the only actionable first step without a profile.
             // Report VPN-service failures when a profile can actually connect.
@@ -187,7 +199,7 @@ final class TunnelController: ObservableObject {
         guard canConnect else { return }
         isConnecting = true
         cancelRequested = false
-        intentionalDisconnect = false
+        disconnectState.willConnect()
         authorizationCheckGeneration &+= 1
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
@@ -211,6 +223,7 @@ final class TunnelController: ObservableObject {
                 "profile": profile.configuration as NSString,
                 "clientID": try stableClientID() as NSString,
                 "routeMode": profile.routeMode.rawValue as NSString,
+                "lowerDriveUsage": NSNumber(value: profile.lowerDriveUsage ?? false),
             ])
             connectionError = nil
             refreshStatus()
@@ -222,7 +235,8 @@ final class TunnelController: ObservableObject {
 
     func disconnect() {
         if isConnecting { cancelRequested = true }
-        intentionalDisconnect = true
+        disconnectState.willDisconnect()
+        UserDefaults.standard.removeObject(forKey: lastActiveProfileKey)
         authorizationCheckGeneration &+= 1
         exitProbeGeneration &+= 1
         exitProbeMessage = nil
@@ -235,18 +249,25 @@ final class TunnelController: ObservableObject {
 
     func refreshStatus() {
         let previous = status
-        status = manager?.connection.status ?? .invalid
+        let current = manager?.connection.status ?? .invalid
+        if previous != current {
+            authorizationCheckGeneration &+= 1
+            status = current
+        }
         if status == .connected {
+            if !disconnectState.stopRequested, let id = selectedProfile?.id.uuidString,
+               UserDefaults.standard.string(forKey: lastActiveProfileKey) != id {
+                UserDefaults.standard.set(id, forKey: lastActiveProfileKey)
+            }
             if previous != .connected {
                 exitProbeGeneration &+= 1
                 exitProbeMessage = nil
                 resetDriveActivity()
                 isTestingExit = false
+                googleAuthorizationNeedsRenewal = false
+                connectionError = nil
+                message = nil
             }
-            intentionalDisconnect = false
-            googleAuthorizationNeedsRenewal = false
-            connectionError = nil
-            message = nil
             return
         }
         if previous == .connected {
@@ -255,22 +276,31 @@ final class TunnelController: ObservableObject {
             resetDriveActivity()
             isTestingExit = false
         }
-        // A cold launch can expose an old provider error after the profile was replaced.
-        // Only attribute a disconnect to this session after observing a connection attempt.
-        let observedAttempt = isConnecting || previous == .connecting || previous == .connected
-            || previous == .reasserting || previous == .disconnecting
-        guard hasProfile, status == .disconnected, previous != .disconnected,
-              observedAttempt, !intentionalDisconnect,
+        guard hasLoadedVPNStatus, TunnelDisconnectState.isOffline(current) else { return }
+        let lastActiveProfile = UserDefaults.standard.string(forKey: lastActiveProfileKey)
+        if lastActiveProfile != nil { UserDefaults.standard.removeObject(forKey: lastActiveProfileKey) }
+        let rememberedActive = lastActiveProfile != nil && lastActiveProfile == selectedProfile?.id.uuidString
+        guard let notice = disconnectState.notice(from: previous, to: current, rememberedActive: rememberedActive),
+              hasProfile, connectionError == nil, !googleAuthorizationNeedsRenewal else { return }
+        connectionError = notice.message
+        // On a cold launch the stored profile shows the last known active state.
+        // A historical provider error cannot reliably describe that transition.
+        guard current == .disconnected, TunnelDisconnectState.canReadCause(from: previous),
               let connection = manager?.connection else { return }
         let checkGeneration = authorizationCheckGeneration
         connection.fetchLastDisconnectError { [weak self] error in
-            let authorizationExpired = GoogleAuthorizationStatus.isExpiredDisconnectError(error)
-            guard authorizationExpired else { return }
+            guard let cause = TunnelDisconnectState.cause(for: error) else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.status == .disconnected, !self.intentionalDisconnect,
+                guard let self, self.status == .disconnected,
                       self.authorizationCheckGeneration == checkGeneration else { return }
-                self.googleAuthorizationNeedsRenewal = true
-                self.message = nil
+                switch cause {
+                case .authorizationExpired:
+                    self.googleAuthorizationNeedsRenewal = true
+                    self.connectionError = nil
+                    self.message = nil
+                case .message(let detail):
+                    self.connectionError = detail
+                }
             }
         }
     }

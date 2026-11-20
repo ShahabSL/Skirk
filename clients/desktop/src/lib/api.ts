@@ -93,8 +93,6 @@ export type DesktopSnapshot = {
   };
   logsDir: string;
   configDir: string;
-  logTail: string;
-  tunnelLogTail: string;
   metrics: RuntimeMetrics | null;
   platform: string;
   capabilities: {
@@ -105,6 +103,8 @@ export type DesktopSnapshot = {
     vpnSidecarPresent: boolean;
   };
 };
+
+export type RuntimeLogs = { logTail: string; tunnelLogTail: string };
 
 const isTauriRuntime =
   typeof window !== "undefined" &&
@@ -161,10 +161,6 @@ function mockSnapshot(): DesktopSnapshot {
     },
     logsDir: "portable-data/logs",
     configDir: "portable-data/config",
-    logTail: mockConnected
-      ? "skirk client SOCKS5 listening on 127.0.0.1:18080\\nmailbox download direction=down status=ok duration=452ms"
-      : "",
-    tunnelLogTail: mockConnected && mockMode === "vpn" ? "sing-box started\\nTUN interface Skirk Tunnel ready" : "",
     metrics: mockConnected
       ? {
           version: 1,
@@ -200,6 +196,7 @@ function mockSnapshot(): DesktopSnapshot {
 
 const tauriApi = {
   loadSnapshot: () => invoke<DesktopSnapshot>("load_snapshot"),
+  loadRuntimeLogs: () => invoke<RuntimeLogs>("load_runtime_logs"),
   importConfig: (name: string, rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) =>
     invoke<DesktopSnapshot>("import_config", { name, rawConfig, socksPort, httpPort, shareLan }),
   replaceProfileConfig: (profileId: string, rawConfig: string) =>
@@ -220,6 +217,12 @@ const tauriApi = {
 
 const browserPreviewApi = {
   loadSnapshot: async () => mockSnapshot(),
+  loadRuntimeLogs: async () => ({
+    logTail: mockConnected
+      ? "skirk client SOCKS5 listening on 127.0.0.1:18080\nmailbox download direction=down status=ok duration=452ms"
+      : "",
+    tunnelLogTail: mockConnected && mockMode === "vpn" ? "sing-box started\nTUN interface Skirk Tunnel ready" : "",
+  }),
   importConfig: async (name: string, rawConfig: string, socksPort: number, httpPort: number, shareLan: boolean) => {
     const id = `mock-${Date.now()}`;
     mockProfileTexts.set(id, rawConfig.trim());

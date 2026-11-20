@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -364,6 +365,48 @@ func TestGoogleHTTPClientCanReturnRateLimitWithoutRetry(t *testing.T) {
 	}
 	if requests != 1 || result.Attempts != 1 {
 		t.Fatalf("requests=%d result attempts=%d, want one immediate Drive rate-limit response", requests, result.Attempts)
+	}
+}
+
+func TestGoogleHTTPClientBoundedResponsePreservesReadSemantics(t *testing.T) {
+	body := bytes.Repeat([]byte{0x33}, 64<<10)
+	for _, tc := range []struct {
+		name           string
+		declaredLength int64
+		limit          int64
+		readError      error
+		wantError      error
+	}{
+		{name: "known length", declaredLength: 64 << 10, limit: 64 << 10},
+		{name: "unknown length", declaredLength: -1, limit: 64 << 10},
+		{name: "overstated length", declaredLength: 96 << 10, limit: 96 << 10},
+		{name: "understated length", declaredLength: 32 << 10, limit: 64 << 10},
+		{name: "understated oversized body", declaredLength: 32 << 10, limit: 48 << 10, wantError: errGoogleResponseTooLarge},
+		{name: "truncated body", declaredLength: 96 << 10, limit: 96 << 10, readError: io.ErrUnexpectedEOF, wantError: io.ErrUnexpectedEOF},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				var reader io.Reader = bytes.NewReader(body)
+				if tc.readError != nil {
+					reader = io.MultiReader(reader, iotest.ErrReader(tc.readError))
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(reader), ContentLength: tc.declaredLength}, nil
+			})}}
+			ctx := withGoogleResponseLimit(t.Context(), tc.limit)
+			result, err := client.RequestSingleAttempt(ctx, http.MethodGet, "www.googleapis.com", "/drive/v3/files/object?alt=media", nil, nil)
+			if !errors.Is(err, tc.wantError) {
+				t.Fatalf("error = %v, want %v", err, tc.wantError)
+			}
+			if tc.wantError == nil && (result == nil || !bytes.Equal(result.Body, body)) {
+				t.Fatal("response body did not preserve every byte")
+			}
+			if tc.readError != nil {
+				var partial *googleResponseBodyError
+				if !errors.As(err, &partial) || partial.bytesRead != len(body) {
+					t.Fatalf("partial response did not report %d read bytes: %v", len(body), err)
+				}
+			}
+		})
 	}
 }
 

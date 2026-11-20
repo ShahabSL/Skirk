@@ -259,6 +259,8 @@ func sanitizeTransportErrorText(text string) string {
 		return "closed"
 	case strings.Contains(lower, "remote reset"):
 		return "remote_reset"
+	case lower == "dns_streams_disabled", lower == "dns_target_invalid", lower == "dns_stream_capacity":
+		return lower
 	default:
 		return "transport_error"
 	}

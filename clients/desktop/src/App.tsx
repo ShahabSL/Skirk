@@ -36,6 +36,7 @@ import {
   type DesktopSnapshot,
   type ExitProbeResult,
   type PerformancePreset,
+  type RuntimeLogs,
   type UserRouteMode,
 } from "./lib/api";
 import { qrImageTypes, readProfileQr } from "./lib/profileQr";
@@ -967,12 +968,7 @@ function App() {
             </div>
           </section>
 
-          <details className="panel disclosure-panel logs-panel" id="logs">
-            <DisclosureSummary icon={<FileText />} title="Logs" detail={snapshot?.logsDir ?? "-"} />
-            <pre aria-label="Runtime log output" tabIndex={0}>
-              {initialLoading ? "Loading logs..." : combinedLogs(snapshot)}
-            </pre>
-          </details>
+          <RuntimeLogsPanel path={snapshot?.logsDir ?? "-"} />
 
           <details className="panel disclosure-panel" onToggle={async (event) => {
             if (!event.currentTarget.open || licenseText) return;
@@ -1757,16 +1753,57 @@ function runtimeMetric(snapshot: DesktopSnapshot | null) {
   return parts.join(" · ");
 }
 
-function combinedLogs(snapshot: DesktopSnapshot | null) {
-  if (!snapshot) {
-    return "Loading logs...";
-  }
+function RuntimeLogsPanel({ path }: { path: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="panel disclosure-panel logs-panel" id="logs" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <DisclosureSummary icon={<FileText />} title="Logs" detail={path} />
+      {open && <RuntimeLogOutput />}
+    </details>
+  );
+}
+
+function RuntimeLogOutput() {
+  const [output, setOutput] = useState("Loading logs…");
+  useEffect(() => {
+    let disposed = false;
+    let pending = false;
+    let timer: number | undefined;
+    async function refreshLogs() {
+      if (disposed || pending || document.hidden) return;
+      pending = true;
+      try {
+        const logs = await desktopApi.loadRuntimeLogs();
+        if (!disposed && !document.hidden) setOutput(combinedLogs(logs));
+      } catch {
+        if (!disposed && !document.hidden) setOutput("Couldn’t read connection logs. Retrying…");
+      } finally {
+        pending = false;
+        if (!disposed && !document.hidden) timer = window.setTimeout(refreshLogs, 1500);
+      }
+    }
+    function refreshWhenVisible() {
+      window.clearTimeout(timer);
+      void refreshLogs();
+    }
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void refreshLogs();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+  return <pre aria-label="Runtime log output" tabIndex={0}>{output}</pre>;
+}
+
+function combinedLogs(logs: RuntimeLogs) {
   const parts = [];
-  if (snapshot.logTail) {
-    parts.push(`[client]\n${snapshot.logTail}`);
+  if (logs.logTail) {
+    parts.push(`[client]\n${logs.logTail}`);
   }
-  if (snapshot.tunnelLogTail) {
-    parts.push(`[vpn]\n${snapshot.tunnelLogTail}`);
+  if (logs.tunnelLogTail) {
+    parts.push(`[vpn]\n${logs.tunnelLogTail}`);
   }
   return parts.join("\n\n") || "No log output yet.";
 }

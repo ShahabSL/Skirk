@@ -31,9 +31,9 @@ enum GoTunnelEngine {
     }
 
     static func start(profile: String, clientID: String, socksPort: Int,
-                      routeMode: GoogleRouteMode) throws {
+                      routeMode: GoogleRouteMode, lowerDriveUsage: Bool) throws {
         var error: NSError?
-        guard EngineStartWithRoute(profile, clientID, socksPort, routeMode.rawValue, &error) else {
+        guard EngineStartWithDriveUsage(profile, clientID, socksPort, routeMode.rawValue, lowerDriveUsage, &error) else {
             throw error ?? GoTunnelEngineError.startFailed
         }
     }

@@ -48,6 +48,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -64,7 +66,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val ui = ViewModelProvider(this)[SkirkScreenState::class.java]
-        setContent { SkirkTheme { ConfigScreen(ui) } }
+        setContent { SkirkTheme { ConfigScreen(ui, lifecycle) } }
     }
 }
 
@@ -145,7 +147,7 @@ internal class SkirkScreenState : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ConfigScreen(ui: SkirkScreenState) {
+private fun ConfigScreen(ui: SkirkScreenState, lifecycle: Lifecycle) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val clipboard = LocalClipboardManager.current
@@ -284,20 +286,22 @@ private fun ConfigScreen(ui: SkirkScreenState) {
             profile?.let(::connect)
         }
     }
-    LaunchedEffect(Unit) {
-        while (true) {
-            refreshConnection()
-            val current = connection
-            if (current.canShowDriveMetrics) {
-                val measurement = withContext(Dispatchers.IO) { readDriveMetrics(appContext, current) }
-                val actual = connectionStore.read()
-                if (actual.sharesLiveDiagnostics(current)) {
-                    metrics = measurement
-                } else {
-                    refreshConnection()
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                refreshConnection()
+                val current = connection
+                if (current.canShowDriveMetrics) {
+                    val measurement = withContext(Dispatchers.IO) { readDriveMetrics(appContext, current) }
+                    val actual = connectionStore.read()
+                    if (actual.sharesLiveDiagnostics(current)) {
+                        metrics = measurement
+                    } else {
+                        refreshConnection()
+                    }
                 }
+                delay(2_000L)
             }
-            delay(2_000L)
         }
     }
     LaunchedEffect(ui.page, connection.mode) {

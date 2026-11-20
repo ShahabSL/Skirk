@@ -150,11 +150,16 @@ struct DesktopSnapshot {
     connection: ConnectionStatus,
     logs_dir: String,
     config_dir: String,
-    log_tail: String,
-    tunnel_log_tail: String,
     metrics: Option<RuntimeMetrics>,
     platform: String,
     capabilities: PlatformCapabilities,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeLogs {
+    log_tail: String,
+    tunnel_log_tail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -485,8 +490,6 @@ impl DesktopRuntime {
             connection,
             logs_dir: self.paths.logs_dir.display().to_string(),
             config_dir: self.paths.config_dir.display().to_string(),
-            log_tail: read_log_tail(&client_log_path(&self.paths), 80),
-            tunnel_log_tail: read_log_tail(&tunnel_log_path(&self.paths), 80),
             metrics: state
                 .client
                 .as_ref()
@@ -494,6 +497,13 @@ impl DesktopRuntime {
             platform: std::env::consts::OS.to_string(),
             capabilities: self.platform_capabilities(),
         })
+    }
+
+    fn runtime_logs(&self) -> RuntimeLogs {
+        RuntimeLogs {
+            log_tail: read_log_tail(&client_log_path(&self.paths), 80),
+            tunnel_log_tail: read_log_tail(&tunnel_log_path(&self.paths), 80),
+        }
     }
 
     fn import_config(
@@ -2165,6 +2175,11 @@ async fn load_snapshot(runtime: State<'_, DesktopRuntime>) -> Result<DesktopSnap
 }
 
 #[tauri::command]
+async fn load_runtime_logs(runtime: State<'_, DesktopRuntime>) -> Result<RuntimeLogs, String> {
+    Ok(runtime.runtime_logs())
+}
+
+#[tauri::command]
 async fn import_config(
     runtime: State<'_, DesktopRuntime>,
     name: String,
@@ -2300,6 +2315,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             load_snapshot,
+            load_runtime_logs,
             import_config,
             replace_profile_config,
             export_saved_profile,
@@ -2484,19 +2500,23 @@ fn read_log_tail(path: &Path, limit: usize) -> String {
     if limit == 0 {
         return String::new();
     }
-    let Ok(mut file) = fs::File::open(path) else {
+    let Ok(file) = fs::File::open(path) else {
         return String::new();
     };
-    let start = file
-        .metadata()
-        .ok()
-        .map(|metadata| metadata.len().saturating_sub(LOG_TAIL_MAX_BYTES))
-        .unwrap_or(0);
+    let Ok(metadata) = file.metadata() else {
+        return String::new();
+    };
+    read_log_tail_at(file, metadata.len(), limit)
+}
+
+fn read_log_tail_at(mut file: fs::File, end: u64, limit: usize) -> String {
+    let start = end.saturating_sub(LOG_TAIL_MAX_BYTES);
     if file.seek(SeekFrom::Start(start)).is_err() {
         return String::new();
     };
     let mut bytes = Vec::new();
-    if file.read_to_end(&mut bytes).is_err() {
+    // A sidecar writing concurrently must not extend this read past its snapshot.
+    if file.take(end - start).read_to_end(&mut bytes).is_err() {
         return String::new();
     }
     let content = String::from_utf8_lossy(&bytes);
@@ -2885,6 +2905,61 @@ printf '%s' '{"decoded":true}'
         assert_eq!(tail, "tail-2\ntail-3");
         assert!(!tail.contains("old-prefix-line"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn log_tail_read_ignores_bytes_appended_after_snapshot() {
+        let path = std::env::temp_dir().join(format!(
+            "skirk-test-tail-append-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        fs::write(&path, "at snapshot\n").expect("write log");
+        let file = fs::File::open(&path).expect("open log snapshot");
+        let end = file.metadata().expect("stat log snapshot").len();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open log append")
+            .write_all(b"written after snapshot\n")
+            .expect("append log");
+
+        assert_eq!(read_log_tail_at(file, end, 10), "at snapshot");
+        assert_eq!(
+            read_log_tail(&path, 10),
+            "at snapshot\nwritten after snapshot"
+        );
+        fs::remove_file(path).expect("remove test log");
+    }
+
+    #[test]
+    fn runtime_logs_are_separate_from_status_snapshot() {
+        let dir = std::env::temp_dir().join(format!(
+            "skirk-test-logs-snapshot-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        let paths = AppPaths {
+            config_dir: dir.clone(),
+            runtime_dir: dir.join("runtime"),
+            logs_dir: dir.join("logs"),
+            profiles_file: dir.join("profiles.json"),
+            settings_file: dir.join("settings.json"),
+        };
+        fs::create_dir_all(&paths.logs_dir).expect("create logs directory");
+        fs::write(client_log_path(&paths), "client diagnostics\n").expect("write client log");
+        fs::write(tunnel_log_path(&paths), "tunnel diagnostics\n").expect("write tunnel log");
+        let runtime = DesktopRuntime::new(paths, None);
+
+        let status = runtime.snapshot().expect("status snapshot");
+        assert!(matches!(status.connection.phase, ConnectionPhase::Disconnected));
+        let status = serde_json::to_value(status).expect("serialize status snapshot");
+        assert!(status.get("logTail").is_none());
+        assert!(status.get("tunnelLogTail").is_none());
+        let logs = runtime.runtime_logs();
+        assert_eq!(logs.log_tail, "client diagnostics");
+        assert_eq!(logs.tunnel_log_tail, "tunnel diagnostics");
+        fs::remove_dir_all(dir).expect("remove test log directory");
     }
 
     #[test]
