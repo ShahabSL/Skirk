@@ -1055,17 +1055,13 @@ func (d *DriveStore) listFreshQueryPageStatus(ctx context.Context, query string,
 }
 
 func (d *DriveStore) Delete(ctx context.Context, name string) error {
-	infos, err := d.listExact(ctx, name)
+	infos, err := d.listExact(ctx, name, false)
 	if err != nil {
 		return err
 	}
 	for _, info := range infos {
-		result, err := d.request(ctx, http.MethodDelete, "/drive/v3/files/"+url.PathEscape(info.ID), nil, nil)
-		if err != nil {
+		if err := d.DeleteID(ctx, info.ID); err != nil {
 			return err
-		}
-		if result.Status != http.StatusNoContent && result.Status != http.StatusOK && result.Status != http.StatusNotFound {
-			return require2xx(result, "drive delete")
 		}
 	}
 	return nil
@@ -1297,39 +1293,55 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 }
 
 func (d *DriveStore) latest(ctx context.Context, name string) (ObjectInfo, error) {
-	infos, err := d.listExact(ctx, name)
+	infos, err := d.listExact(ctx, name, true)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 	if len(infos) == 0 {
 		return ObjectInfo{}, fmt.Errorf("drive object not found: %s", name)
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Updated > infos[j].Updated })
 	return infos[0], nil
 }
 
-func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, error) {
+func (d *DriveStore) listExact(ctx context.Context, name string, latestOnly bool) ([]ObjectInfo, error) {
 	values := url.Values{}
 	values.Set("q", d.query(name, true)+" and "+driveNonFolderFilter)
-	values.Set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime)")
 	values.Set("orderBy", "modifiedTime desc")
 	values.Set("pageSize", driveListPageSize)
+	if latestOnly {
+		values.Set("pageSize", "1")
+	}
 	if d.isAppData() {
 		values.Set("spaces", "appDataFolder")
 	}
 	var infos []ObjectInfo
-	err := d.eachFilesPage(ctx, values, "drive lookup", func(payload driveListPayload) error {
+	seen := make(map[string]struct{})
+	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive lookup", driveListMaxPages, func(payload driveListPayload) (bool, error) {
+		if payload.IncompleteSearch {
+			return false, errors.New("Drive exact-name search was incomplete")
+		}
 		for _, item := range payload.Files {
 			if item.Name != name || item.ID == "" || item.MimeType == "" || item.MimeType == driveFolderMimeType {
 				continue
 			}
+			if _, duplicate := seen[item.ID]; duplicate {
+				continue
+			}
+			seen[item.ID] = struct{}{}
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
 			infos = append(infos, ObjectInfo{Name: item.Name, ID: item.ID, Size: size, Updated: item.ModifiedTime})
+			if latestOnly {
+				return false, nil // Drive orders the whole result by modifiedTime.
+			}
 		}
-		return nil
+		return true, nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if status.Truncated {
+		return nil, errors.New("Drive exact-name search exceeded its page limit")
 	}
 	return infos, nil
 }

@@ -1342,6 +1342,54 @@ func TestDriveStoreGetUsesIdentityEncoding(t *testing.T) {
 	}
 }
 
+func TestDriveExactLookupFollowsEmptyPagesAndStopsAtNewest(t *testing.T) {
+	var pages []string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		q := req.URL.Query()
+		pages = append(pages, q.Get("pageToken"))
+		if q.Get("pageSize") != "1" || q.Get("orderBy") != "modifiedTime desc" {
+			t.Errorf("unexpected size or order: %v", q)
+		}
+		if q.Get("pageToken") == "" {
+			return stringResponse(200, `{"files":[],"nextPageToken":"p2"}`), nil
+		}
+		if q.Get("pageToken") != "p2" {
+			return stringResponse(400, "unnecessary continuation"), nil
+		}
+		return stringResponse(200, `{"files":[{"name":"object","id":"new","mimeType":"application/octet-stream"}],"nextPageToken":"older"}`), nil
+	})}}
+	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+	info, err := store.latest(t.Context(), "object")
+	if err != nil || info.ID != "new" || len(pages) != 2 || pages[0] != "" || pages[1] != "p2" {
+		t.Fatalf("info=%+v pages=%v err=%v", info, pages, err)
+	}
+}
+
+func TestDriveExactDeleteOverlappingOrIncompletePages(t *testing.T) {
+	for _, incomplete := range []bool{false, true} {
+		var deleted []string
+		client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Method == http.MethodDelete {
+				deleted = append(deleted, req.URL.Path)
+				return stringResponse(204, ""), nil
+			}
+			if req.URL.Query().Get("pageToken") == "" {
+				return stringResponse(200, `{"files":[{"name":"a","id":"a1","mimeType":"application/octet-stream"}],"nextPageToken":"next"}`), nil
+			}
+			return stringResponse(200, fmt.Sprintf(`{"incompleteSearch":%t,"files":[{"name":"a","id":"a1","mimeType":"application/octet-stream"},{"name":"a","id":"a2","mimeType":"application/octet-stream"}]}`, incomplete)), nil
+		})}}
+		store := NewDriveStoreWithTokenSource(client, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
+		err := store.Delete(t.Context(), "a")
+		if incomplete {
+			if err == nil || len(deleted) != 0 {
+				t.Fatalf("incomplete search: deleted=%v err=%v", deleted, err)
+			}
+		} else if err != nil || len(deleted) != 2 || deleted[0] != "/drive/v3/files/a1" || deleted[1] != "/drive/v3/files/a2" {
+			t.Fatalf("complete search: deleted=%v err=%v", deleted, err)
+		}
+	}
+}
+
 func TestDriveStoreGetObjectRangeByIDRejectsWrongContentRange(t *testing.T) {
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		resp := stringResponse(http.StatusPartialContent, "hello")
