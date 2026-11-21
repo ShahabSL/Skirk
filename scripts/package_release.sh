@@ -42,7 +42,9 @@ build_one() {
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "$out" ./cmd/skirk
   cp README.md README.fa.md LICENSE DISCLAIMER.md SECURITY.md CHANGELOG.md "$dist/$name/"
   mkdir -p "$dist/$name/docs/images" "$dist/$name/third_party"
-  cp docs/install.md docs/install.fa.md docs/setup.md docs/personal-google-setup.md docs/personal-google-setup.fa.md docs/skirk_modes.md docs/go_skirk.md docs/architecture.md docs/udp-preview-platform-parity.md "$dist/$name/docs/"
+  cp docs/install.md docs/install.fa.md docs/setup.md docs/personal-google-setup.md docs/personal-google-setup.fa.md \
+    docs/skirk_modes.md docs/go_skirk.md docs/architecture.md docs/udp-preview-platform-parity.md \
+    docs/mux-v5-migration.md docs/openwrt.md "$dist/$name/docs/"
   cp -R docs/images/. "$dist/$name/docs/images/"
   cp clients/licenses/engine.txt "$dist/$name/third_party/Go-licenses.txt"
   cp third_party/NOTICE.md "$dist/$name/third_party/"
