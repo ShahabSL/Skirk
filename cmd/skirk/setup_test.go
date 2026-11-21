@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"net"
 	"os"
@@ -127,7 +128,22 @@ func TestGeneratedClientCommandReadsCopiedProfile(t *testing.T) {
 
 func TestKitDiscoveryOptions(t *testing.T) {
 	mailbox := skirk.DriveConfig{FolderID: "kit-folder", QuotaProject: "kit-project"}
-	for _, group := range []bool{false, true} {
+	for _, tc := range []struct {
+		args            []string
+		group, conserve bool
+	}{
+		{nil, true, false},
+		{[]string{"--group-drive-polls"}, true, false},
+		{[]string{"--group-drive-polls=false"}, false, false},
+		{[]string{"--conserve-idle-udp"}, true, true},
+		{[]string{"--group-drive-polls=false", "--conserve-idle-udp"}, false, true},
+	} {
+		var options kitDiscoveryOptions
+		flags := flag.NewFlagSet("setup init", flag.ContinueOnError)
+		options.registerFlags(flags)
+		if err := flags.Parse(tc.args); err != nil {
+			t.Fatal(err)
+		}
 		for _, udp := range []bool{false, true} {
 			client := skirk.Config{Secret: "test-kit-discovery"}
 			var exit skirk.Config
@@ -135,7 +151,7 @@ func TestKitDiscoveryOptions(t *testing.T) {
 				configureSetupUDP(&client.Tunnel, false)
 				configureSetupUDP(&exit.Tunnel, false)
 			}
-			configureKitDiscovery(mailbox, &client, &exit, kitDiscoveryOptions{groupDrivePolls: group})
+			configureKitDiscovery(mailbox, &client, &exit, options)
 			encoded, err := skirk.EncodeConfigText(&client)
 			if err != nil {
 				t.Fatal(err)
@@ -145,12 +161,13 @@ func TestKitDiscoveryOptions(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, cfg := range []*skirk.Config{imported, &exit} {
-				if cfg.Drive.FolderID != mailbox.FolderID || cfg.Drive.QuotaProject != mailbox.QuotaProject || cfg.Drive.AdaptiveMuxDiscovery != group {
-					t.Fatalf("unexpected mailbox discovery settings for group=%t udp=%t", group, udp)
+				if cfg.Drive.FolderID != mailbox.FolderID || cfg.Drive.QuotaProject != mailbox.QuotaProject || cfg.Drive.AdaptiveMuxDiscovery != tc.group {
+					t.Fatalf("unexpected mailbox discovery settings for args=%v udp=%t", tc.args, udp)
 				}
 			}
-			if imported.Tunnel.UDPPreviewGroupedDiscovery || exit.Tunnel.UDPPreviewGroupedDiscovery != (group && udp) {
-				t.Fatalf("unexpected UDP discovery on client or exit for group=%t udp=%t", group, udp)
+			if imported.Tunnel.UDPPreviewGroupedDiscovery || exit.Tunnel.UDPPreviewGroupedDiscovery != (tc.group && udp) ||
+				imported.Tunnel.ConserveIdleUDP != (tc.conserve && udp) || exit.Tunnel.ConserveIdleUDP {
+				t.Fatalf("unexpected UDP discovery settings for args=%v udp=%t", tc.args, udp)
 			}
 		}
 	}

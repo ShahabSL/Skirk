@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- New kits group Drive checks for TCP traffic and for clients on a shared UDP
+  exit. The active call polling interval stays the same. Existing kits keep
+  their settings. Use `skirk setup init --group-drive-polls=false` to create
+  a kit with separate checks.
+- When a partial UDP list needs separate checks, the exit checks each current
+  client once. Each client can receive its next check while another client’s
+  request is still in flight.
+
 ## v0.1.58 — 2026-11-20
 
 - Repeated IPv4 and IPv6 address lookups reuse an answer until its DNS TTL

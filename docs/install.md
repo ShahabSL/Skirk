@@ -58,9 +58,15 @@ If Android shows **Google Drive is limiting requests**, open the Drive usage det
 
 If Android shows **The exit is full for new UDP traffic**, the exit has filled its UDP carrier slots. An existing call can keep its slot while a newly started call waits for capacity. The Drive usage details and the UDP capacity message help identify which resource ran out.
 
-For a new shared kit, `skirk setup init --group-drive-polls` lets each peer check both TCP traffic classes in one Drive list when the results fit on a page. A shared UDP exit can also check up to four clients together. Compare call playback and page load times during a transfer to decide whether this suits your connection.
+New kits group Drive checks by default. Each peer can find both TCP traffic classes with one list. On a shared UDP exit, up to four clients can share one check on the usual call polling schedule. A single UDP client keeps its own check. Slow or incomplete grouped UDP results can trigger separate checks so a busy client cannot fill the only page another client sees. To create a kit with separate checks, run `skirk setup init --group-drive-polls=false`.
 
-For an existing kit, the equivalent settings are `drive.adaptive_mux_discovery` on each peer and `tunnel.udp_preview_grouped_discovery` on the shared UDP exit. Set them to `true`, restart the exit and reimport the updated client profile. Set them to `false` to restore separate polling.
+Existing kits keep their saved settings. To enable grouping, set `drive.adaptive_mux_discovery` to `true` in both `client.json` and `exit.json`. For shared UDP, also set `tunnel.udp_preview_grouped_discovery` to `true` in `exit.json`. From the kit directory, run the command below, restart the exit and import the updated profile on each client. To switch back, set the same values to `false` and repeat these steps.
+
+```sh
+skirk config export --config client.json --out client.skirk
+```
+
+If a device has a customized profile, edit and export that profile’s own JSON file to preserve its settings.
 
 If your clients spend long periods connected with little UDP traffic, add `--conserve-idle-udp` to `skirk setup init`. After four complete empty checks, each quiet client checks Drive every 700 ms. An incoming packet after silence can wait one extra 350 ms tick. Sending a UDP packet restores the usual 350 ms schedule at the next tick. This option is off by default and can be used independently of `--group-drive-polls`.
 

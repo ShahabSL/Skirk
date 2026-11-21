@@ -77,8 +77,7 @@ func setupInit(ctx context.Context, args []string) error {
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
 	enableUDP := fs.Bool("udp", true, "enable shared UDP and exit DNS using a dedicated Drive folder")
 	var discovery kitDiscoveryOptions
-	fs.BoolVar(&discovery.groupDrivePolls, "group-drive-polls", false, "combine TCP discovery lists and let a shared UDP exit poll clients together")
-	fs.BoolVar(&discovery.conserveIdleUDP, "conserve-idle-udp", false, "check for incoming UDP less often on quiet clients (up to one extra poll tick after silence)")
+	discovery.registerFlags(fs)
 	ipv6Mode := setupIPv6Mode("auto")
 	fs.Var(&ipv6Mode, "ipv6", "IPv6 for UDP kits: auto, on, or off")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
@@ -707,6 +706,11 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 type kitDiscoveryOptions struct {
 	groupDrivePolls bool
 	conserveIdleUDP bool
+}
+
+func (o *kitDiscoveryOptions) registerFlags(fs *flag.FlagSet) {
+	fs.BoolVar(&o.groupDrivePolls, "group-drive-polls", true, "combine TCP discovery lists and let a shared UDP exit poll clients together")
+	fs.BoolVar(&o.conserveIdleUDP, "conserve-idle-udp", false, "check for incoming UDP less often on quiet clients (up to one extra poll tick after silence)")
 }
 
 func configureKitDiscovery(mailbox skirk.DriveConfig, client, exit *skirk.Config, options kitDiscoveryOptions) {
