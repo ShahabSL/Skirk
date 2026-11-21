@@ -262,6 +262,11 @@ func (p *pilotExitDiscovery) pollSeparately(parent context.Context, group *pilot
 	for {
 		active := p.activeReceivers(group)
 		if len(active) < 2 {
+			// Other leases may have left during the grouped request. Give
+			// a surviving lease its first independent read immediately.
+			if len(active) == 1 && workers[active[0]] == nil {
+				active[0].poll(ctx)
+			}
 			return
 		}
 		for receiver, worker := range workers {
@@ -346,20 +351,7 @@ func pollPilotDiscoveryGroup(ctx context.Context, group []*pilotDiscoveryReceive
 		found.Files = byPrefix[r.prefix]
 		r.deliver(found)
 	}
-	if len(group) == 1 || !page.partial() {
-		return shouldSplit
-	}
-	// A busy lease can occupy the entire newest-first result. Each lease
-	// receives its own bounded list on truncation, even one with no hits above.
-	var fallbacks sync.WaitGroup
-	for _, r := range group {
-		fallbacks.Go(func() {
-			if r.ctx.Err() != nil {
-				return
-			}
-			r.poll(ctx)
-		})
-	}
-	fallbacks.Wait()
+	// On truncation, the split workers immediately check every current lease,
+	// including ones missing from the first page.
 	return shouldSplit
 }

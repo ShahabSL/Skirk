@@ -231,9 +231,6 @@ func TestUDPPreviewExitDiscoveryPartialListDoesNotStarveSparseMailbox(t *testing
 				objectsByPrefix := make(map[string][]pilotObject)
 				sparse := mailboxes[len(mailboxes)-1]
 				for _, mailbox := range mailboxes {
-					receiver, remove := discovery.register(t.Context(), mailbox)
-					defer remove()
-					receivers = append(receivers, receiver)
 					prefix := mailbox.dirPrefix(mailbox.recvDir)
 					if mailbox == sparse {
 						objectsByPrefix[prefix] = []pilotObject{pilotDiscoveryTestObject(t, sparse, 1, "quiet-call")}
@@ -254,7 +251,12 @@ func TestUDPPreviewExitDiscoveryPartialListDoesNotStarveSparseMailbox(t *testing
 					}
 					return pilotDiscoveryPage{}
 				}
-				discovery.pollOnce(t.Context())
+				for _, mailbox := range mailboxes {
+					receiver, remove := discovery.register(t.Context(), mailbox)
+					defer remove()
+					receivers = append(receivers, receiver)
+				}
+				time.Sleep(pilotPollTick)
 				synctest.Wait()
 				queries := provider.snapshot()
 				if len(queries) != 1+len(mailboxes) {
@@ -265,6 +267,78 @@ func TestUDPPreviewExitDiscoveryPartialListDoesNotStarveSparseMailbox(t *testing
 			})
 		})
 	}
+}
+
+func TestUDPPreviewExitDiscoveryPartialDuringQuotaHoldKeepsGroup(t *testing.T) {
+	t.Setenv("SKIRK_ACCESS_TOKEN", "")
+	synctest.Test(t, func(t *testing.T) {
+		provider := &pilotDiscoveryTestProvider{}
+		mailboxes := pilotDiscoveryTestMailboxes(t, provider, 2)
+		var first sync.Once
+		provider.answer = func([]string) pilotDiscoveryPage {
+			var page pilotDiscoveryPage
+			first.Do(func() {
+				// Another in-flight operation hit a provider limit.
+				holdPilotQuota(mailboxes[0].drive, "2")
+				page.IncompleteSearch = true
+			})
+			return page
+		}
+		var discovery pilotExitDiscovery
+		for _, mailbox := range mailboxes {
+			_, remove := discovery.register(t.Context(), mailbox)
+			defer remove()
+		}
+		time.Sleep(pilotPollTick + time.Second)
+		synctest.Wait()
+		if count := len(provider.snapshot()); count != 1 {
+			t.Fatalf("got %d provider requests during cooldown, want the original grouped poll only", count)
+		}
+		time.Sleep(time.Second + pilotPollTick)
+		synctest.Wait()
+		queries := provider.snapshot()
+		if len(queries) < 2 {
+			t.Fatal("grouped polling did not resume after cooldown")
+		}
+		for _, query := range queries {
+			if !strings.Contains(query, " or ") {
+				t.Fatal("a partial group queued individual polls behind the provider cooldown")
+			}
+		}
+	})
+}
+
+func TestUDPPreviewExitDiscoveryPartialAfterOtherLeaseLeaves(t *testing.T) {
+	t.Setenv("SKIRK_ACCESS_TOKEN", "")
+	synctest.Test(t, func(t *testing.T) {
+		provider := &pilotDiscoveryTestProvider{}
+		mailboxes := pilotDiscoveryTestMailboxes(t, provider, 2)
+		want := pilotDiscoveryTestObject(t, mailboxes[1], 1, "still-here")
+		started, resume := make(chan struct{}), make(chan struct{})
+		provider.answer = func(prefixes []string) pilotDiscoveryPage {
+			if len(prefixes) > 1 {
+				close(started)
+				<-resume
+				return pilotDiscoveryPage{NextPageToken: "truncated"}
+			}
+			return pilotDiscoveryPage{Files: []pilotObject{want}}
+		}
+		var discovery pilotExitDiscovery
+		_, leave := discovery.register(t.Context(), mailboxes[0])
+		defer leave()
+		receiver, stop := discovery.register(t.Context(), mailboxes[1])
+		defer stop()
+		time.Sleep(pilotPollTick)
+		<-started
+		leave()
+		close(resume)
+		synctest.Wait()
+		queries := provider.snapshot()
+		if len(queries) != 2 || !strings.Contains(queries[1], receiver.prefix) {
+			t.Fatalf("want one group poll and one immediate fallback for the remaining lease, got %v", queries)
+		}
+		pilotDiscoveryTestCheckPage(t, receiver, mailboxes[1], want, "still-here")
+	})
 }
 
 func TestUDPPreviewExitDiscoveryStalledGroupDoesNotDelayHealthyGroup(t *testing.T) {
@@ -306,15 +380,23 @@ func TestUDPPreviewExitDiscoveryStalledGroupDoesNotDelayHealthyGroup(t *testing.
 }
 
 func TestUDPPreviewExitDiscoverySlowCombinedListFallsBackUntilHealthy(t *testing.T) {
+	t.Run("group timeout", func(t *testing.T) { testIndependentDiscoveryCadence(t, false) })
+	t.Run("partial page", func(t *testing.T) { testIndependentDiscoveryCadence(t, true) })
+}
+
+func testIndependentDiscoveryCadence(t *testing.T, partial bool) {
+	t.Helper()
 	t.Setenv("SKIRK_ACCESS_TOKEN", "")
 	synctest.Test(t, func(t *testing.T) {
-		provider := &pilotDiscoveryTestProvider{answer: func([]string) pilotDiscoveryPage { return pilotDiscoveryPage{} }}
+		var forcedSplit atomic.Bool
+		provider := &pilotDiscoveryTestProvider{answer: func(prefixes []string) pilotDiscoveryPage {
+			return pilotDiscoveryPage{IncompleteSearch: partial && len(prefixes) > 1 && forcedSplit.CompareAndSwap(false, true)}
+		}}
 		mailboxes := pilotDiscoveryTestMailboxes(t, provider, 2)
 		slowPrefix := mailboxes[0].dirPrefix(mailboxes[0].recvDir)
-		var simulatedTimeout atomic.Bool
 		started := time.Now()
 		provider.before = func(req *http.Request, prefixes []string) error {
-			if len(prefixes) > 1 && simulatedTimeout.CompareAndSwap(false, true) {
+			if !partial && len(prefixes) > 1 && forcedSplit.CompareAndSwap(false, true) {
 				<-req.Context().Done()
 				return req.Context().Err()
 			}
