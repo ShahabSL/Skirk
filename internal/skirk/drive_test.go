@@ -1578,6 +1578,35 @@ func TestDriveStoreCleanupReportsTruncatedList(t *testing.T) {
 	}
 }
 
+func TestDriveCleanupDeduplicatesOverlappingPages(t *testing.T) {
+	const item = `{"id":"a","name":"muxv5/old","size":"7","modifiedTime":"2026-01-01T00:00:00Z"}`
+	var deleted []string
+	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodDelete {
+			deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/drive/v3/files/"))
+			return stringResponse(http.StatusNoContent, ""), nil
+		}
+		query := req.URL.Query()
+		if !strings.Contains(query.Get("fields"), "incompleteSearch") {
+			t.Fatal("cleanup cannot detect an incomplete search without the field")
+		}
+		if query.Get("pageToken") == "" {
+			return stringResponse(200, `{"files":[`+item+`],"nextPageToken":"more"}`), nil
+		}
+		b := strings.Replace(item, `"id":"a"`, `"id":"b"`, 1)
+		return stringResponse(200, `{"incompleteSearch":true,"files":[`+item+`,`+b+`]}`), nil
+	})}}
+	store := NewDriveStore(httpClient, "token", DriveConfig{FolderID: "test-mailbox"})
+	result, err := store.Cleanup(t.Context(), DriveCleanupOptions{
+		Prefix: "muxv5/", Now: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+		OlderThan: time.Hour, MaxDeletes: 3, DeleteConcurrency: 1,
+	})
+	if err != nil || !result.Truncated || result.Scanned != 3 || result.Matched != 2 || result.MatchedSize != 14 ||
+		result.Deleted != 2 || strings.Join(deleted, ",") != "a,b" {
+		t.Fatalf("cleanup = %+v, deleted %v, error %v", result, deleted, err)
+	}
+}
+
 func TestDriveStoreCleanupHonorsMaxDeletes(t *testing.T) {
 	var deleted []string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

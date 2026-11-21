@@ -1189,13 +1189,14 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 		id string
 	}
 	var candidates []candidate
+	seenIDs := make(map[string]struct{})
 	values := url.Values{}
 	var contains []string
 	if !opts.All {
 		contains = []string{prefix}
 	}
 	values.Set("q", d.containsQuery(contains)+" and modifiedTime < '"+cutoff.UTC().Format(time.RFC3339Nano)+"'")
-	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime asc")
 	if d.isAppData() {
@@ -1214,6 +1215,10 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 			if !updated.Before(cutoff) {
 				return false, nil
 			}
+			if _, seen := seenIDs[item.ID]; item.ID == "" || seen {
+				continue
+			}
+			seenIDs[item.ID] = struct{}{}
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
 			result.Matched++
 			result.MatchedSize += size
