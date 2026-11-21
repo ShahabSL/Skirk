@@ -2,6 +2,9 @@
 
 ## v0.1.58 — 2026-11-20
 
+- Repeated IPv4 and IPv6 address lookups reuse an answer until its DNS TTL
+  expires. Simultaneous identical queries share one lookup through the exit.
+  Disconnecting releases pending DNS streams. [Issue #37](https://github.com/ShahabSL/Skirk/issues/37)
 - Established connections keep their normal polling schedule. Busy exits can
   reclaim an idle DNS stream for a new client, and fresh connections get a
   chance to open while Skirk works through older Drive files.
