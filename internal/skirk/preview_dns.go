@@ -41,6 +41,7 @@ type previewDNS struct {
 	active chan struct{}
 	idleMu sync.Mutex
 	exits  *previewDNSExitPool
+	cache  *previewDNSCache
 }
 
 type previewDNSExitPool struct {
@@ -179,17 +180,23 @@ func validPreviewDNSTLSName(name string) bool {
 }
 
 func newPreviewDNS(ctx context.Context, mux *driveMux) *previewDNS {
-	return newPreviewDNSPool(ctx, func(queryCtx context.Context) (net.Conn, error) {
+	resolver := newPreviewDNSPool(ctx, func(queryCtx context.Context) (net.Conn, error) {
 		if err := queryCtx.Err(); err != nil {
 			return nil, err
 		}
 		local, stream := net.Pipe()
+		// A pooled pipe outlives one query. Closing that pipe must also
+		// retire its mux OPEN when the upload is still waiting for Drive.
+		streamCtx, stop := context.WithCancel(ctx)
 		go func() {
+			defer stop()
 			defer stream.Close()
-			_ = mux.openClientStream(ctx, previewDNSMuxTarget, &previewDNSMuxConn{Conn: stream})
+			_ = mux.openClientStream(streamCtx, previewDNSMuxTarget, &previewDNSMuxConn{Conn: stream})
 		}()
-		return local, nil
+		return &previewDNSMuxConn{Conn: local, cancel: stop}, nil
 	})
+	resolver.cache = newPreviewDNSCache()
+	return resolver
 }
 
 func newExitPreviewDNS(ctx context.Context, proxyURL string) *previewDNS {
@@ -430,7 +437,12 @@ func (d *previewDNS) respond(ctx context.Context, query []byte, udp bool) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	wire, err := d.exchange(ctx, query, request)
+	var wire []byte
+	if d.cache != nil && cacheableAddressQuestion(request) {
+		wire, err = d.cachedExchange(ctx, query, request)
+	} else {
+		wire, err = d.exchange(ctx, query, request)
+	}
 	if err != nil {
 		return minimalPreviewDNSReply(request, dnsmessage.RCodeServerFailure, false)
 	}

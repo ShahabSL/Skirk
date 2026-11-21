@@ -119,6 +119,8 @@ func newPreviewDNSMuxFixtureResolver(ctx context.Context, upstreamDials *atomic.
 func requirePreviewDNSMuxAnswer(t *testing.T, ctx context.Context, client *previewDNS, id uint16) {
 	t.Helper()
 	request := previewDNSFixture(id, dnsmessage.TypeAAAA)
+	// Exercise the reserved stream and its pool on each request.
+	request.Questions[0].Name = dnsmessage.MustNewName(fmt.Sprintf("q%d.fixture.example.", id))
 	wire, err := request.Pack()
 	if err != nil {
 		t.Fatal(err)

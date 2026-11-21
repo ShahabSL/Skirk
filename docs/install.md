@@ -68,6 +68,8 @@ Size your installation for the work people actually do. In one earlier live Driv
 
 New kits enable UDP and exit DNS. Setup enables IPv6 when it verifies the exit route. The default exit allows four independent UDP carriers, each serving multiple sessions. A carrier, a UDP socket, and a human user are different units. Watch the Drive API metrics for the Google project and test received media during a transfer before increasing concurrency. [Google Drive quota](https://developers.google.com/workspace/drive/api/guides/limits)
 
+**Slow DNS or unreliable IPv6.** Update the clients as well as the exit. The client shares simultaneous ordinary A or AAAA lookups for the same query and reuses positive answers until the shortest record TTL expires. The first lookup for a new name still needs a Drive round trip. For a new kit, `skirk setup init --ipv6=off` keeps UDP calls and exit DNS while disabling IPv6 UDP. For browsing on a severely constrained network, `skirk setup init --udp=false` creates a TCP-only kit. Native UDP calls and games require a UDP kit. Use a fresh output directory (`--out DIRECTORY`) and import the generated profile on the clients.
+
 ## Maintenance
 
 - **Expired authorization.** Publish your OAuth app, then renew with the same Google account and Desktop client. Restart the exit service and import the updated client profile. [Renewal instructions](personal-google-setup.md#renew-access-and-check-quota)
