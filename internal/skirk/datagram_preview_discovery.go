@@ -39,20 +39,12 @@ func (p *pilotMailbox) listDiscovery(ctx context.Context, prefixes []string) (pi
 	if len(prefixes) == 0 {
 		return page, errors.New("UDP discovery requires a prefix")
 	}
-	filter := p.drive.containsQuery(prefixes)
-	if len(prefixes) > 1 {
-		alternatives := make([]string, 0, len(prefixes))
-		for _, prefix := range prefixes {
-			alternatives = append(alternatives, "name contains '"+escapeDriveQuery(prefix)+"'")
-		}
-		filter = p.drive.containsQuery(nil) + " and (" + strings.Join(alternatives, " or ") + ")"
-	}
 	fields := "incompleteSearch,nextPageToken,files(id,name,description)"
 	if p.media {
 		fields = "incompleteSearch,nextPageToken,files(id,name,description,size)"
 	}
 	query := url.Values{
-		"q": {filter}, "spaces": {"drive"}, "fields": {fields},
+		"q": {p.drive.anyPrefixQuery(prefixes)}, "spaces": {"drive"}, "fields": {fields},
 		"orderBy": {"createdTime desc"}, "pageSize": {strconv.Itoa(pilotMaxListFiles)},
 	}
 	timeout := pilotDiscoveryDeadline

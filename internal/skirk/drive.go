@@ -1124,6 +1124,38 @@ func (d *DriveStore) DeleteIDs(ctx context.Context, fileIDs []string, concurrenc
 	return nil
 }
 
+// CleanupPrefixesDue skips empty namespaces only when Drive returned a complete
+// page. Each selected namespace still gets its own cleanup and deletion budget.
+func (d *DriveStore) CleanupPrefixesDue(ctx context.Context, prefixes []string, cutoff time.Time) ([]string, error) {
+	if len(prefixes) < 2 {
+		return prefixes, nil
+	}
+	values := url.Values{
+		"q":        {d.anyPrefixQuery(prefixes) + " and modifiedTime < '" + cutoff.UTC().Format(time.RFC3339Nano) + "'"},
+		"fields":   {"incompleteSearch,nextPageToken,files(name)"},
+		"pageSize": {driveListPageSize},
+	}
+	if d.isAppData() {
+		values.Set("spaces", "appDataFolder")
+	}
+	var due []string
+	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "list cleanup prefixes", 1, func(page driveListPayload) (bool, error) {
+		for _, prefix := range prefixes {
+			for _, file := range page.Files {
+				if strings.HasPrefix(file.Name, prefix) {
+					due = append(due, prefix)
+					break
+				}
+			}
+		}
+		return true, nil
+	})
+	if err != nil || status.Truncated {
+		return prefixes, err
+	}
+	return due, nil
+}
+
 func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (DriveCleanupResult, error) {
 	prefix := strings.TrimSpace(opts.Prefix)
 	if !opts.All && prefix == UDPPreviewCleanupPrefix {
@@ -2287,6 +2319,17 @@ func (d *DriveStore) containsQuery(values []string) string {
 		clauses = append(clauses, fmt.Sprintf("name contains '%s'", escapeDriveQuery(value)))
 	}
 	return strings.Join(clauses, " and ")
+}
+
+func (d *DriveStore) anyPrefixQuery(prefixes []string) string {
+	if len(prefixes) < 2 {
+		return d.containsQuery(prefixes)
+	}
+	alternatives := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		alternatives = append(alternatives, "name contains '"+escapeDriveQuery(prefix)+"'")
+	}
+	return d.containsQuery(nil) + " and (" + strings.Join(alternatives, " or ") + ")"
 }
 
 func (d *DriveStore) isAppData() bool {

@@ -614,11 +614,20 @@ func runMailboxJanitor(ctx context.Context, drive *skirk.DriveStore, olderThan t
 	if drive.MetadataSlotEnabled() {
 		prefixes = append(append([]string(nil), prefixes...), "slotv1/")
 	}
+	now := time.Now()
+	prefixes, err := drive.CleanupPrefixesDue(ctx, prefixes, now.Add(-olderThan))
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		log.Printf("mailbox janitor checking namespaces individually after discovery error=%s", err)
+	}
 	for _, prefix := range prefixes {
 		cleanupCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		result, err := drive.Cleanup(cleanupCtx, skirk.DriveCleanupOptions{
 			Prefix:            prefix,
 			OlderThan:         olderThan,
+			Now:               now,
 			DeleteConcurrency: mailboxJanitorDefaultDeleteConcurrency,
 			MaxDeletes:        maxDeletes,
 			DeleteDelay:       deleteDelay,
