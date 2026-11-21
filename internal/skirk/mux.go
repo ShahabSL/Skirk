@@ -395,6 +395,7 @@ type driveMux struct {
 	priorityRetryObjects  map[muxPriorityRetryKey]muxPriorityRetryState
 	adaptivePollSequence  atomic.Uint64
 	normalListLastPoll    time.Time
+	normalListRetryHead   bool // Owned by the receive loop, like normalListLastPoll.
 	clientFinalDrainAt    atomic.Int64
 	fatalOnce             sync.Once
 	fatalDone             chan struct{}
@@ -3191,7 +3192,7 @@ func (m *driveMux) shouldPollNormalMuxObjects(now time.Time) bool {
 	}
 	// A bounded list can leave older p1 objects behind even after the last
 	// stream becomes idle. Finish that scan instead of stranding the page.
-	if m.hasListFreshPageTokenFor(&m.listMu, &m.listPageToken) {
+	if m.normalListRetryHead || m.hasListFreshPageTokenFor(&m.listMu, &m.listPageToken) {
 		return m.normalListLastPoll.IsZero() || now.Sub(m.normalListLastPoll) >= m.normalActivePollInterval()
 	}
 	m.recvNormalMu.Lock()
@@ -3371,6 +3372,9 @@ func (m *driveMux) listRecvSlidingClass(ctx context.Context, store FreshListCont
 		if err != nil {
 			return nil, err
 		}
+		if !priority && !result.Incomplete {
+			m.normalListRetryHead = false
+		}
 		markPartial(result.Truncated || result.Incomplete)
 		if result.Truncated && !result.Incomplete && result.NextPageToken != "" {
 			mu.Lock()
@@ -3403,6 +3407,9 @@ func (m *driveMux) listRecvSlidingClass(ctx context.Context, store FreshListCont
 	// larger than the head page cannot be skipped at completion.
 	head, headErr := store.ListFreshContainsPageStatus(ctx, contains, since, "", 1)
 	if headErr != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if priority {
 			// Keep the admitted older work and retry from a fresh head next
 			// time without advancing the watermark past new opens.
@@ -3411,24 +3418,36 @@ func (m *driveMux) listRecvSlidingClass(ctx context.Context, store FreshListCont
 			markPartial(true)
 			return result.Objects, nil
 		}
-		return nil, headErr
+		if m.reportTerminalTransportError(ctx, headErr) {
+			return nil, headErr
+		}
+		if m.t.Logger != nil {
+			m.t.Logger.Printf("mux normal list head refresh failed role=%s pages_kept=%d error=%s", m.role, result.Pages, errorSummary(headErr))
+		}
+		// The continuation was independently verified. Its original head
+		// watermark covers arrivals during the failed refresh on the next scan.
+		head = ObjectListInfo{}
 	}
 	result.Objects = append(result.Objects, head.Objects...)
 	result.Pages += head.Pages
 	markPartial(result.Truncated || result.Incomplete || head.Incomplete)
-	if result.Truncated && !result.Incomplete && result.NextPageToken != "" && !head.Incomplete {
-		m.setListPageTokenFor(mu, listToken, result.NextPageToken)
-	} else if result.Truncated || result.Incomplete || head.Incomplete {
-		m.clearListPageTokenFor(mu, listToken)
-	} else {
-		mu.Lock()
-		if scanSince.After(*listSince) {
-			*listSince = *scanSince
-		}
-		*listToken = ""
-		*scanSince = time.Time{}
-		mu.Unlock()
+	if !priority {
+		m.normalListRetryHead = headErr != nil || (m.normalListRetryHead && head.Incomplete)
 	}
+	mu.Lock()
+	// A worker may have rewound the scan while either request was in flight.
+	if *listToken == pageToken {
+		if result.Truncated && !result.Incomplete && result.NextPageToken != "" && !head.Incomplete {
+			*listToken = result.NextPageToken
+		} else {
+			if !result.Truncated && !result.Incomplete && !head.Incomplete && scanSince.After(*listSince) {
+				*listSince = *scanSince
+			}
+			*listToken = ""
+			*scanSince = time.Time{}
+		}
+	}
+	mu.Unlock()
 	m.logSlidingNormalList(prefix, classNeedle, since, result)
 	return result.Objects, nil
 }
