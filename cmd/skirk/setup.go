@@ -76,7 +76,9 @@ func setupInit(ctx context.Context, args []string) error {
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
 	enableUDP := fs.Bool("udp", true, "enable shared UDP and exit DNS using a dedicated Drive folder")
-	groupDrivePolls := fs.Bool("group-drive-polls", false, "combine TCP discovery lists and let a shared UDP exit poll clients together")
+	var discovery kitDiscoveryOptions
+	fs.BoolVar(&discovery.groupDrivePolls, "group-drive-polls", false, "combine TCP discovery lists and let a shared UDP exit poll clients together")
+	fs.BoolVar(&discovery.conserveIdleUDP, "conserve-idle-udp", false, "check for incoming UDP less often on quiet clients (up to one extra poll tick after silence)")
 	ipv6Mode := setupIPv6Mode("auto")
 	fs.Var(&ipv6Mode, "ipv6", "IPv6 for UDP kits: auto, on, or off")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
@@ -290,7 +292,7 @@ func setupInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	configureKitDiscovery(baseDrive, &clientCfg, &exitCfg, *groupDrivePolls)
+	configureKitDiscovery(baseDrive, &clientCfg, &exitCfg, discovery)
 	clientPath := filepath.Join(*outDir, "client.json")
 	clientTextPath := filepath.Join(*outDir, "client.skirk")
 	clientCommandPath := filepath.Join(*outDir, "client-command.txt")
@@ -702,10 +704,16 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 	return cfg
 }
 
-func configureKitDiscovery(mailbox skirk.DriveConfig, client, exit *skirk.Config, group bool) {
-	mailbox.AdaptiveMuxDiscovery = group
+type kitDiscoveryOptions struct {
+	groupDrivePolls bool
+	conserveIdleUDP bool
+}
+
+func configureKitDiscovery(mailbox skirk.DriveConfig, client, exit *skirk.Config, options kitDiscoveryOptions) {
+	mailbox.AdaptiveMuxDiscovery = options.groupDrivePolls
 	client.Drive, exit.Drive = mailbox, mailbox
-	exit.Tunnel.UDPPreviewGroupedDiscovery = group && exit.Tunnel.UDPPreviewSharedUDP
+	exit.Tunnel.UDPPreviewGroupedDiscovery = options.groupDrivePolls && exit.Tunnel.UDPPreviewSharedUDP
+	client.Tunnel.ConserveIdleUDP = options.conserveIdleUDP && client.Tunnel.UDPPreviewSharedUDP
 }
 
 func configureSetupUDP(cfg *skirk.TunnelConfig, ipv6 bool) {

@@ -150,6 +150,7 @@ type pilotMailbox struct {
 	media            bool
 	mediaBytes       int
 	separateUploads  bool
+	conserveIdleUDP  bool
 	adaptiveUploads  *pilotAdaptiveUploads
 	exitProxy        string
 	frontendMu       sync.Mutex
@@ -199,7 +200,8 @@ func newPilotMailbox(t *Tunnel, drive *DriveStore, lease [16]byte, up bool, allo
 	}
 	return &pilotMailbox{tunnel: t, drive: drive, http: drive.http, lease: lease, prefix: "udp-pilot/" + hex.EncodeToString(lease[:]) + "/",
 		sendDir: a, recvDir: b, sendKey: key(a), recvKey: key(b), allowed: allowed,
-		batchBytes: pilotMaxPlain, queue: make(chan pilotPacket, pilotQueuePackets), cleanup: make(chan string, 128), publishWake: make(chan struct{}, 1)}, nil
+		conserveIdleUDP: up && t.conserveIdleUDP,
+		batchBytes:      pilotMaxPlain, queue: make(chan pilotPacket, pilotQueuePackets), cleanup: make(chan string, 128), publishWake: make(chan struct{}, 1)}, nil
 }
 
 func (p *pilotMailbox) dirPrefix(direction byte) string {
@@ -857,13 +859,20 @@ func (p *pilotMailbox) poll(ctx context.Context) {
 	tick := time.NewTicker(pilotPollTick)
 	defer tick.Stop()
 	prefixes := []string{p.dirPrefix(p.recvDir)}
+	var quiet idleUDPPoll
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
+		if p.conserveIdleUDP && !quiet.due(p.offered.Load()) {
+			continue
+		}
 		page, err := p.listDiscovery(ctx, prefixes)
+		if p.conserveIdleUDP {
+			quiet.observe(page, err, p.offered.Load())
+		}
 		if err != nil {
 			if ctx.Err() == nil {
 				p.errors.Add(1)

@@ -182,6 +182,7 @@ type TunnelConfig struct {
 	UDPPreviewSharedAssociations int      `json:"udp_preview_shared_associations,omitempty"`
 	UDPPreviewExitCarriers       int      `json:"udp_preview_exit_carriers,omitempty"`
 	UDPPreviewGroupedDiscovery   bool     `json:"udp_preview_grouped_discovery,omitempty"`
+	ConserveIdleUDP              bool     `json:"conserve_idle_udp,omitempty"`
 	// Sender-local scheduling only; both peers still agree on the media format.
 	UDPPreviewAdaptiveUploads bool `json:"udp_preview_adaptive_uploads,omitempty"`
 }

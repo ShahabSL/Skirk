@@ -62,6 +62,8 @@ For a new shared kit, `skirk setup init --group-drive-polls` lets each peer chec
 
 For an existing kit, the equivalent settings are `drive.adaptive_mux_discovery` on each peer and `tunnel.udp_preview_grouped_discovery` on the shared UDP exit. Set them to `true`, restart the exit and reimport the updated client profile. Set them to `false` to restore separate polling.
 
+If your clients spend long periods connected with little UDP traffic, add `--conserve-idle-udp` to `skirk setup init`. After four complete empty checks, each quiet client checks Drive every 700 ms. An incoming packet after silence can wait one extra 350 ms tick. Sending a UDP packet restores the usual 350 ms schedule at the next tick. This option is off by default and can be used independently of `--group-drive-polls`.
+
 On iPhone, open **Drive usage**, select **Lower Drive usage**, then reconnect. Skirk saves the choice for this profile. It checks for TCP responses less often, which saves Drive requests but can make pages open more slowly. UDP keeps its own polling schedule. The displayed usage covers this iPhone. Other devices and the exit also consume the shared quota. [See the iPhone settings](images/ios-drive-usage.png)
 
 Turn on **VPN disconnect alerts** to receive a notification when Skirk detects an unexpected stop. If iOS terminates the extension before it can send the alert, open Skirk to check the VPN status and reconnect.

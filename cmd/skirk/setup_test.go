@@ -135,7 +135,7 @@ func TestKitDiscoveryOptions(t *testing.T) {
 				configureSetupUDP(&client.Tunnel, false)
 				configureSetupUDP(&exit.Tunnel, false)
 			}
-			configureKitDiscovery(mailbox, &client, &exit, group)
+			configureKitDiscovery(mailbox, &client, &exit, kitDiscoveryOptions{groupDrivePolls: group})
 			encoded, err := skirk.EncodeConfigText(&client)
 			if err != nil {
 				t.Fatal(err)
@@ -151,6 +151,36 @@ func TestKitDiscoveryOptions(t *testing.T) {
 			}
 			if imported.Tunnel.UDPPreviewGroupedDiscovery || exit.Tunnel.UDPPreviewGroupedDiscovery != (group && udp) {
 				t.Fatalf("unexpected UDP discovery on client or exit for group=%t udp=%t", group, udp)
+			}
+		}
+	}
+}
+
+func TestSetupConserveIdleUDPProfile(t *testing.T) {
+	mailbox := skirk.DriveConfig{FolderID: "kit-folder", QuotaProject: "kit-project"}
+	for _, udp := range []bool{false, true} {
+		client := skirk.Config{Secret: "test-kit-discovery", Route: skirk.RouteConfig{Mode: "google_front_pinned"}}
+		exit := skirk.Config{Route: skirk.RouteConfig{Mode: "direct"}}
+		if udp {
+			configureSetupUDP(&client.Tunnel, false)
+			configureSetupUDP(&exit.Tunnel, false)
+		}
+		for _, options := range []kitDiscoveryOptions{{conserveIdleUDP: true}, {groupDrivePolls: true, conserveIdleUDP: true}, {}} {
+			configureKitDiscovery(mailbox, &client, &exit, options)
+			profile, err := skirk.EncodeConfigText(&client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			imported, err := skirk.DecodeConfigText(profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if imported.Tunnel.ConserveIdleUDP != (udp && options.conserveIdleUDP) || exit.Tunnel.ConserveIdleUDP {
+				t.Fatalf("unexpected polling configuration: udp=%t options=%+v", udp, options)
+			}
+			if imported.Route.Mode != "google_front_pinned" || exit.Route.Mode != "direct" ||
+				imported.Drive.AdaptiveMuxDiscovery != options.groupDrivePolls || exit.Tunnel.UDPPreviewGroupedDiscovery != (udp && options.groupDrivePolls) {
+				t.Fatal("idle UDP option changed a separate route or discovery setting")
 			}
 		}
 	}

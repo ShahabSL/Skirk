@@ -34,6 +34,35 @@ func (p pilotDiscoveryPage) partial() bool {
 	return p.IncompleteSearch || p.NextPageToken != ""
 }
 
+// A quiet UDP client skips at most one tick between discovery requests.
+// Only its polling goroutine owns this state.
+type idleUDPPoll struct {
+	lastOffered uint64
+	emptyPages  int
+	skipNext    bool
+}
+
+func (q *idleUDPPoll) due(offered uint64) bool {
+	if offered != q.lastOffered {
+		*q = idleUDPPoll{lastOffered: offered}
+	}
+	if q.skipNext {
+		q.skipNext = false
+		return false
+	}
+	return true
+}
+
+func (q *idleUDPPoll) observe(page pilotDiscoveryPage, err error, offered uint64) {
+	if err != nil || page.failed || page.partial() || len(page.Files) > 0 || offered != q.lastOffered {
+		*q = idleUDPPoll{lastOffered: offered}
+		return
+	}
+	const quietAfter = 4
+	q.emptyPages = min(q.emptyPages+1, quietAfter)
+	q.skipNext = q.emptyPages == quietAfter
+}
+
 func (p *pilotMailbox) listDiscovery(ctx context.Context, prefixes []string) (pilotDiscoveryPage, error) {
 	var page pilotDiscoveryPage
 	if len(prefixes) == 0 {

@@ -98,6 +98,7 @@ type Tunnel struct {
 	MetadataSlotPrimaryV1  bool
 	CombinedMuxDiscovery   bool
 	AdaptiveMuxDiscovery   bool
+	conserveIdleUDP        bool
 	udpPreview             *datagramPreview
 	slotAttempted          atomic.Bool // One bounded shadow generation per client process/run.
 	role                   string
@@ -174,6 +175,7 @@ func NewTunnel(data BlobStore, cfg *Config) (*Tunnel, error) {
 		MetadataSlotPrimaryV1:  cfg.Drive.MetadataSlotPrimaryV1,
 		CombinedMuxDiscovery:   cfg.Drive.CombinedMuxDiscovery,
 		AdaptiveMuxDiscovery:   cfg.Drive.AdaptiveMuxDiscovery,
+		conserveIdleUDP:        cfg.Tunnel.ConserveIdleUDP,
 		PollInterval:           cfg.PollInterval(),
 		CleanupProcessed:       cfg.Tunnel.CleanupProcessed,
 		Logger:                 log.Default(),
