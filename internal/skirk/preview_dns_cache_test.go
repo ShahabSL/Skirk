@@ -256,3 +256,130 @@ func TestClientDNSCacheScopeAndPolicy(t *testing.T) {
 		t.Fatal("cache eviction or per-client isolation")
 	}
 }
+
+func dnsNegativeTestReply(q dnsmessage.Message) dnsmessage.Message {
+	q.Response = true
+	q.Authorities = []dnsmessage.Resource{{
+		Header: dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName("EXAMPLE."), Class: dnsmessage.ClassINET, TTL: 60},
+		Body: &dnsmessage.SOAResource{
+			NS: dnsmessage.MustNewName("ns.example."), MBox: dnsmessage.MustNewName("hostmaster.example."), MinTTL: 3,
+		},
+	}}
+	return q
+}
+
+func TestClientDNSCacheReusesNegativeAnswersUntilSOAExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int32
+		resolver := newPreviewDNSPool(t.Context(), func(context.Context) (net.Conn, error) {
+			local, remote := net.Pipe()
+			go func() {
+				defer remote.Close()
+				for {
+					wire, err := readPreviewDNSFrame(remote, previewDNSMaxQuery)
+					if err != nil {
+						return
+					}
+					q, err := unpackPreviewDNSQuery(wire)
+					if err != nil {
+						return
+					}
+					out := dnsNegativeTestReply(q)
+					if q.Questions[0].Type == dnsmessage.TypeA {
+						out.RCode = dnsmessage.RCodeNameError
+					}
+					if requests.Add(1) == 3 {
+						out = dnsCacheTestReply(q)
+					}
+					if wire, err = out.Pack(); err != nil || writePreviewDNSFrame(remote, wire) != nil {
+						return
+					}
+				}
+			}()
+			return local, nil
+		})
+		resolver.cache = newPreviewDNSCache()
+		defer resolver.closeIdle()
+		query := func(id uint16, qt dnsmessage.Type, udp bool) dnsmessage.Message {
+			q := previewDNSFixture(id, qt)
+			wire, _ := q.Pack()
+			out, err := resolver.respond(t.Context(), wire, udp)
+			var msg dnsmessage.Message
+			if err != nil || msg.Unpack(out) != nil || msg.ID != id {
+				t.Fatalf("invalid DNS reply for %d: %v", id, err)
+			}
+			return msg
+		}
+		checkSOA := func(msg dnsmessage.Message, code dnsmessage.RCode, ttl uint32) {
+			t.Helper()
+			if msg.RCode != code || len(msg.Answers) != 0 || len(msg.Authorities) != 1 || msg.Authorities[0].Header.TTL != ttl {
+				t.Fatalf("expected negative %v and TTL %d, got %+v", code, ttl, msg)
+			}
+		}
+		checkSOA(query(1, dnsmessage.TypeA, false), dnsmessage.RCodeNameError, 3)
+		checkSOA(query(2, dnsmessage.TypeAAAA, true), dnsmessage.RCodeSuccess, 3)
+		time.Sleep(2 * time.Second)
+		for i := range 10 {
+			checkSOA(query(uint16(3+i), dnsmessage.TypeA, true), dnsmessage.RCodeNameError, 1)
+			checkSOA(query(uint16(13+i), dnsmessage.TypeAAAA, false), dnsmessage.RCodeSuccess, 1)
+		}
+		if requests.Load() != 2 {
+			t.Fatalf("got %d upstream queries for two negative answers", requests.Load())
+		}
+		time.Sleep(time.Second)
+		if msg := query(23, dnsmessage.TypeA, true); len(msg.Answers) != 2 || len(msg.Authorities) != 0 || requests.Load() != 3 {
+			t.Fatal("expired denial masked a newly published address")
+		}
+	})
+}
+
+func TestClientDNSCacheNegativeAnswerPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*dnsmessage.Message)
+		ttl  uint32
+	}{
+		{"root zone", func(m *dnsmessage.Message) { m.Authorities[0].Header.Name = dnsmessage.MustNewName(".") }, 3},
+		{"zone apex", func(m *dnsmessage.Message) { m.Authorities[0].Header.Name = m.Questions[0].Name }, 3},
+		{"unrelated zone", func(m *dnsmessage.Message) { m.Authorities[0].Header.Name = dnsmessage.MustNewName("bad.") }, 0},
+		{"partial label", func(m *dnsmessage.Message) { m.Authorities[0].Header.Name = dnsmessage.MustNewName("ample.") }, 0},
+		{"record TTL", func(m *dnsmessage.Message) { m.Authorities[0].Header.TTL = 2 }, 2},
+		{"zero TTL", func(m *dnsmessage.Message) { m.Authorities[0].Header.TTL = 0 }, 0},
+		{"high bit TTL", func(m *dnsmessage.Message) { m.Authorities[0].Header.TTL = 1 << 31 }, 0},
+		{"zero minimum", func(m *dnsmessage.Message) { m.Authorities[0].Body.(*dnsmessage.SOAResource).MinTTL = 0 }, 0},
+		{"bounded lifetime", func(m *dnsmessage.Message) {
+			m.Authorities[0].Header.TTL = 86400
+			m.Authorities[0].Body.(*dnsmessage.SOAResource).MinTTL = 86400
+		}, maxNegativeDNSTTL},
+		{"wrong class", func(m *dnsmessage.Message) { m.Authorities[0].Header.Class = dnsmessage.ClassCHAOS }, 0},
+		{"no authority", func(m *dnsmessage.Message) { m.Authorities = nil }, 0},
+		{"extra records", func(m *dnsmessage.Message) { m.Authorities = append(m.Authorities, m.Authorities[0]) }, 0},
+		{"alias", func(m *dnsmessage.Message) { m.Answers = dnsCacheTestReply(*m).Answers[:1] }, 0},
+		{"referral", func(m *dnsmessage.Message) { m.Authorities[0].Body = &dnsmessage.NSResource{NS: m.Questions[0].Name} }, 0},
+		{"server failure", func(m *dnsmessage.Message) { m.RCode = dnsmessage.RCodeServerFailure }, 0},
+		{"refused", func(m *dnsmessage.Message) { m.RCode = dnsmessage.RCodeRefused }, 0},
+		{"authenticated data", func(m *dnsmessage.Message) { m.AuthenticData = true }, 0},
+		{"checking disabled", func(m *dnsmessage.Message) { m.CheckingDisabled = true }, 0},
+		{"truncated", func(m *dnsmessage.Message) { m.Truncated = true }, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			msg := dnsNegativeTestReply(previewDNSFixture(1, dnsmessage.TypeAAAA))
+			tc.edit(&msg)
+			wire, err := msg.Pack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer := newPreviewDNSAnswer(wire, now)
+			if tc.ttl == 0 {
+				if !answer.expires.IsZero() {
+					t.Fatal("unexpected cache admission")
+				}
+				return
+			}
+			if answer.expires.Sub(now) != time.Duration(tc.ttl)*time.Second {
+				t.Fatalf("wrong expiry %v", answer.expires)
+			}
+		})
+	}
+}
