@@ -134,7 +134,7 @@ prefixes (`muxv4/`, `bench-drive/`, and `setup/`):
 ```bash
 skirk cleanup --config skirk-kit/exit.json --older-than 2h
 skirk cleanup --config skirk-kit/exit.json --older-than 2h --delete
-# Emergency only: stop clients and the exit before deleting the whole mailbox.
+# Emergency only: stop clients and the exit before removing all files directly in the mailbox.
 skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000
 ```
 

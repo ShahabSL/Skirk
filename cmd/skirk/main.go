@@ -315,7 +315,7 @@ func cleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup", flag.ExitOnError)
 	configPath := fs.String("config", "skirk-kit/exit.json", "config path")
 	prefix := fs.String("prefix", "", "optional mailbox object prefix; defaults to Skirk runtime prefixes")
-	all := fs.Bool("all", false, "delete/list every non-trashed object in the configured Skirk Drive mailbox")
+	all := fs.Bool("all", false, "delete/list all non-trashed files directly in the configured Skirk Drive mailbox")
 	olderThan := fs.Duration("older-than", 2*time.Hour, "delete/list objects older than this duration; UDP preview defaults to 2m with a 1m minimum")
 	deleteObjects := fs.Bool("delete", false, "actually delete matched objects; default is dry-run")
 	concurrency := fs.Int("concurrency", 4, "delete concurrency")

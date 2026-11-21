@@ -1323,7 +1323,7 @@ func TestDriveStoreGetUsesIdentityEncoding(t *testing.T) {
 	var gotEncoding string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path == "/drive/v3/files" {
-			return stringResponse(http.StatusOK, `{"files":[{"id":"file-id","name":"object","size":"5","modifiedTime":"2026-05-14T00:00:00Z"}]}`), nil
+			return stringResponse(http.StatusOK, `{"files":[{"id":"file-id","name":"object","mimeType":"application/octet-stream","size":"5","modifiedTime":"2026-05-14T00:00:00Z"}]}`), nil
 		}
 		gotEncoding = req.Header.Get("Accept-Encoding")
 		return stringResponse(http.StatusOK, "hello"), nil
@@ -1445,9 +1445,9 @@ func TestDriveStoreCleanupDeletesExpiredMuxObjects(t *testing.T) {
 			return stringResponse(http.StatusOK, `{
 				"nextPageToken":"should-not-be-read",
 				"files":[
-					{"id":"old-id","name":"muxv4/abc/up/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
-					{"id":"other-id","name":"other/abc/up/old","size":"20","modifiedTime":"2026-05-11T10:00:00Z"},
-					{"id":"new-id","name":"muxv4/abc/up/new","size":"30","modifiedTime":"2026-05-11T12:30:00Z"}
+					{"id":"old-id","name":"muxv4/abc/up/old","mimeType":"application/octet-stream","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"other-id","name":"other/abc/up/old","mimeType":"application/octet-stream","size":"20","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"new-id","name":"muxv4/abc/up/new","mimeType":"application/octet-stream","size":"30","modifiedTime":"2026-05-11T12:30:00Z"}
 				]
 			}`), nil
 		case http.MethodDelete:
@@ -1484,7 +1484,7 @@ func TestDriveStoreCleanupDryRunDoesNotDelete(t *testing.T) {
 			return stringResponse(http.StatusNoContent, ""), nil
 		}
 		return stringResponse(http.StatusOK, `{
-			"files":[{"id":"old-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
+			"files":[{"id":"old-id","name":"muxv4/abc/down/old","mimeType":"application/octet-stream","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
 		}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
@@ -1518,9 +1518,9 @@ func TestDriveStoreCleanupAllDeletesEveryMailboxObject(t *testing.T) {
 			mu.Unlock()
 			return stringResponse(http.StatusOK, `{
 				"files":[
-					{"id":"mux-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
-					{"id":"bench-id","name":"bench-drive/sample.bin","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
-					{"id":"setup-id","name":"setup/session/marker.json","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
+					{"id":"mux-id","name":"muxv4/abc/down/old","mimeType":"application/octet-stream","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"bench-id","name":"bench-drive/sample.bin","mimeType":"application/octet-stream","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
+					{"id":"setup-id","name":"setup/session/marker.json","mimeType":"application/octet-stream","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
 				]
 			}`), nil
 		case http.MethodDelete:
@@ -1559,7 +1559,7 @@ func TestDriveStoreCleanupReportsTruncatedList(t *testing.T) {
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return stringResponse(http.StatusOK, `{
 			"nextPageToken":"next",
-			"files":[{"id":"old-id","name":"muxv4/abc/down/old","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
+			"files":[{"id":"old-id","name":"muxv4/abc/down/old","mimeType":"application/octet-stream","size":"10","modifiedTime":"2026-05-11T10:00:00Z"}]
 		}`), nil
 	})}}
 	store := NewDriveStoreWithTokenSource(httpClient, NewAccessTokenSource(AuthConfig{AccessToken: "token"}, RouteConfig{Mode: "direct"}), DriveConfig{Space: "appDataFolder"})
@@ -1578,8 +1578,49 @@ func TestDriveStoreCleanupReportsTruncatedList(t *testing.T) {
 	}
 }
 
+func TestMailboxFileDeletionSkipsFolders(t *testing.T) {
+	const name = "muxv5/test/old"
+	const page = `{"files":[
+		{"id":"folder","name":"muxv5/test/old","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2026-01-01T00:00:00Z"},
+		{"id":"unknown","name":"muxv5/test/old","modifiedTime":"2026-01-01T00:00:00Z"},
+		{"id":"file","name":"muxv5/test/old","mimeType":"application/octet-stream","modifiedTime":"2026-01-01T00:00:00Z"}
+	]}`
+	for _, mode := range []string{"prefix", "all", "exact"} {
+		t.Run(mode, func(t *testing.T) {
+			var deleted []string
+			client := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodDelete {
+					deleted = append(deleted, strings.TrimPrefix(req.URL.Path, "/drive/v3/files/"))
+					return stringResponse(http.StatusNoContent, ""), nil
+				}
+				query := req.URL.Query()
+				if req.Method != http.MethodGet || !strings.Contains(query.Get("q"), "mimeType != '"+driveFolderMimeType+"'") ||
+					!strings.Contains(query.Get("q"), "'mailbox' in parents") || !strings.Contains(query.Get("fields"), "mimeType") {
+					t.Fatal("expected folder-scoped file lookup with MIME verification")
+				}
+				return stringResponse(http.StatusOK, page), nil
+			})}}
+			store := NewDriveStore(client, "token", DriveConfig{FolderID: "mailbox"})
+			if mode == "exact" {
+				if err := store.Delete(t.Context(), name); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				opts := DriveCleanupOptions{Prefix: "muxv5/", All: mode == "all", Now: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), DeleteConcurrency: 1}
+				result, err := store.Cleanup(t.Context(), opts)
+				if err != nil || result.Matched != 1 || result.Deleted != 1 {
+					t.Fatalf("unexpected cleanup result %+v, err %v", result, err)
+				}
+			}
+			if len(deleted) != 1 || deleted[0] != "file" {
+				t.Fatalf("deleted %v, want only the ordinary file", deleted)
+			}
+		})
+	}
+}
+
 func TestDriveCleanupDeduplicatesOverlappingPages(t *testing.T) {
-	const item = `{"id":"a","name":"muxv5/old","size":"7","modifiedTime":"2026-01-01T00:00:00Z"}`
+	const item = `{"id":"a","name":"muxv5/old","mimeType":"application/octet-stream","size":"7","modifiedTime":"2026-01-01T00:00:00Z"}`
 	var deleted []string
 	httpClient := &GoogleHTTPClient{client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method == http.MethodDelete {
@@ -1614,9 +1655,9 @@ func TestDriveStoreCleanupHonorsMaxDeletes(t *testing.T) {
 		case http.MethodGet:
 			return stringResponse(http.StatusOK, `{
 				"files":[
-					{"id":"old-1","name":"muxv4/abc/down/old-1","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
-					{"id":"old-2","name":"muxv4/abc/down/old-2","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
-					{"id":"old-3","name":"muxv4/abc/down/old-3","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
+					{"id":"old-1","name":"muxv4/abc/down/old-1","mimeType":"application/octet-stream","size":"10","modifiedTime":"2026-05-11T10:00:00Z"},
+					{"id":"old-2","name":"muxv4/abc/down/old-2","mimeType":"application/octet-stream","size":"20","modifiedTime":"2026-05-11T10:01:00Z"},
+					{"id":"old-3","name":"muxv4/abc/down/old-3","mimeType":"application/octet-stream","size":"30","modifiedTime":"2026-05-11T10:02:00Z"}
 				]
 			}`), nil
 		case http.MethodDelete:

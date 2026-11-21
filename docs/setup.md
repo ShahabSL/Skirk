@@ -526,9 +526,9 @@ Clean a specific prefix:
 skirk cleanup --config skirk-kit/exit.json --prefix muxv5/ --older-than 1s --delete
 ```
 
-Emergency-only cleanup: stop Skirk clients and the exit first, then empty every
-object in this Skirk mailbox. Running this while traffic is active can delete
-live mux objects and disconnect clients.
+For emergency cleanup, stop Skirk clients and the exit first. The following
+command deletes files directly in this mailbox. Subfolders and their contents
+remain in place. Running it during active traffic can disconnect clients.
 
 ```bash
 skirk cleanup --config skirk-kit/exit.json --all --older-than 1ns --delete --max-pages 20000

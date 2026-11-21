@@ -64,6 +64,7 @@ const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 2 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
 const driveFolderMimeType = "application/vnd.google-apps.folder"
+const driveMailboxFileQuery = "trashed = false and mimeType != '" + driveFolderMimeType + "'"
 const driveQuotaBackoffBase = 5 * time.Second
 const driveQuotaBackoffMax = 64 * time.Second
 const driveQuotaBackoffJitter = time.Second
@@ -1196,7 +1197,7 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 		contains = []string{prefix}
 	}
 	values.Set("q", d.containsQuery(contains)+" and modifiedTime < '"+cutoff.UTC().Format(time.RFC3339Nano)+"'")
-	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime asc")
 	if d.isAppData() {
@@ -1205,7 +1206,9 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 	status, err := d.eachFilesPageUntilLimitStatus(ctx, values, "drive list", maxPages, func(payload driveListPayload) (bool, error) {
 		for _, item := range payload.Files {
 			result.Scanned++
-			if !opts.All && !strings.HasPrefix(item.Name, prefix) {
+			// Deleting a Drive folder also deletes its owned descendants, even
+			// when they fall outside this scan's name and age limits.
+			if item.MimeType == "" || item.MimeType == driveFolderMimeType || (!opts.All && !strings.HasPrefix(item.Name, prefix)) {
 				continue
 			}
 			updated, err := time.Parse(time.RFC3339Nano, item.ModifiedTime)
@@ -1308,7 +1311,7 @@ func (d *DriveStore) latest(ctx context.Context, name string) (ObjectInfo, error
 func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, error) {
 	values := url.Values{}
 	values.Set("q", d.query(name, true))
-	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
+	values.Set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime)")
 	values.Set("orderBy", "modifiedTime desc")
 	values.Set("pageSize", driveListPageSize)
 	if d.isAppData() {
@@ -1317,7 +1320,7 @@ func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, 
 	var infos []ObjectInfo
 	err := d.eachFilesPage(ctx, values, "drive lookup", func(payload driveListPayload) error {
 		for _, item := range payload.Files {
-			if item.Name != name {
+			if item.Name != name || item.ID == "" || item.MimeType == "" || item.MimeType == driveFolderMimeType {
 				continue
 			}
 			size, _ := strconv.ParseInt(item.Size, 10, 64)
@@ -1337,6 +1340,7 @@ type driveListPayload struct {
 	Files            []struct {
 		ID           string `json:"id"`
 		Name         string `json:"name"`
+		MimeType     string `json:"mimeType"`
 		Size         string `json:"size"`
 		ModifiedTime string `json:"modifiedTime"`
 		Description  string `json:"description"`
@@ -2300,7 +2304,7 @@ func (d *DriveStore) authHeaders(ctx context.Context) (map[string]string, error)
 }
 
 func (d *DriveStore) query(value string, exact bool) string {
-	clauses := []string{"trashed = false"}
+	clauses := []string{driveMailboxFileQuery}
 	if d.folderID != "" && !d.isAppData() {
 		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
 	}
@@ -2313,7 +2317,7 @@ func (d *DriveStore) query(value string, exact bool) string {
 }
 
 func (d *DriveStore) containsQuery(values []string) string {
-	clauses := []string{"trashed = false"}
+	clauses := []string{driveMailboxFileQuery}
 	if d.folderID != "" && !d.isAppData() {
 		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
 	}

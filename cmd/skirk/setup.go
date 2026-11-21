@@ -1285,7 +1285,7 @@ To delete those matched stale objects:
 skirk cleanup --config %s --older-than 2h --delete
 `+"```"+`
 
-To empty every object in this Skirk mailbox, for example before deleting the kit:
+To delete all files directly in this mailbox before removing the kit:
 
 `+"```bash"+`
 skirk cleanup --config %s --all --older-than 1ns --delete --max-pages 20000
