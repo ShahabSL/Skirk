@@ -288,8 +288,11 @@ func TestClientDNSCacheReusesNegativeAnswersUntilSOAExpiry(t *testing.T) {
 					if q.Questions[0].Type == dnsmessage.TypeA {
 						out.RCode = dnsmessage.RCodeNameError
 					}
-					if requests.Add(1) == 3 {
+					switch requests.Add(1) {
+					case 3:
 						out = dnsCacheTestReply(q)
+					case 4:
+						time.Sleep(4 * time.Second)
 					}
 					if wire, err = out.Pack(); err != nil || writePreviewDNSFrame(remote, wire) != nil {
 						return
@@ -330,6 +333,12 @@ func TestClientDNSCacheReusesNegativeAnswersUntilSOAExpiry(t *testing.T) {
 		if msg := query(23, dnsmessage.TypeA, true); len(msg.Answers) != 2 || len(msg.Authorities) != 0 || requests.Load() != 3 {
 			t.Fatal("expired denial masked a newly published address")
 		}
+		// A cold reply may already have spent its entire negative TTL in transit.
+		checkSOA(query(24, dnsmessage.TypeAAAA, true), dnsmessage.RCodeSuccess, 0)
+		checkSOA(query(25, dnsmessage.TypeAAAA, true), dnsmessage.RCodeSuccess, 3)
+		if requests.Load() != 5 {
+			t.Fatal("a denial received after expiry was reused")
+		}
 	})
 }
 
@@ -347,6 +356,7 @@ func TestClientDNSCacheNegativeAnswerPolicy(t *testing.T) {
 		{"zero TTL", func(m *dnsmessage.Message) { m.Authorities[0].Header.TTL = 0 }, 0},
 		{"high bit TTL", func(m *dnsmessage.Message) { m.Authorities[0].Header.TTL = 1 << 31 }, 0},
 		{"zero minimum", func(m *dnsmessage.Message) { m.Authorities[0].Body.(*dnsmessage.SOAResource).MinTTL = 0 }, 0},
+		{"high bit minimum", func(m *dnsmessage.Message) { m.Authorities[0].Body.(*dnsmessage.SOAResource).MinTTL = 1 << 31 }, 0},
 		{"bounded lifetime", func(m *dnsmessage.Message) {
 			m.Authorities[0].Header.TTL = 86400
 			m.Authorities[0].Body.(*dnsmessage.SOAResource).MinTTL = 86400

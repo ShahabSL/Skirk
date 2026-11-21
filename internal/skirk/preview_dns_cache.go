@@ -23,9 +23,10 @@ type previewDNSCache struct {
 }
 
 type previewDNSAnswer struct {
-	wire    []byte
-	stored  time.Time
-	expires time.Time
+	wire        []byte
+	stored      time.Time
+	expires     time.Time
+	negativeTTL uint32
 }
 
 type previewDNSLookup struct {
@@ -73,7 +74,11 @@ func newPreviewDNSAnswer(wire []byte, started time.Time) previewDNSAnswer {
 		return previewDNSAnswer{}
 	}
 	// Charge the Drive round trip against the TTL as well.
-	return previewDNSAnswer{wire: bytes.Clone(wire), stored: started, expires: started.Add(time.Duration(ttl) * time.Second)}
+	answer := previewDNSAnswer{wire: bytes.Clone(wire), stored: started, expires: started.Add(time.Duration(ttl) * time.Second)}
+	if len(msg.Answers) == 0 {
+		answer.negativeTTL = ttl
+	}
+	return answer
 }
 
 func previewDNSAnswerTTL(msg dnsmessage.Message) uint32 {
@@ -83,7 +88,7 @@ func previewDNSAnswerTTL(msg dnsmessage.Message) uint32 {
 		// signed proofs and negative CNAME chains to the upstream resolver.
 		rr := msg.Authorities[0]
 		soa, ok := rr.Body.(*dnsmessage.SOAResource)
-		if !ok || rr.Header.Class != dnsmessage.ClassINET || rr.Header.TTL > 1<<31-1 ||
+		if !ok || rr.Header.Class != dnsmessage.ClassINET || rr.Header.TTL > 1<<31-1 || soa.MinTTL > 1<<31-1 ||
 			!dnsNameWithinZone(msg.Questions[0].Name, rr.Header.Name) {
 			return 0
 		}
@@ -138,11 +143,9 @@ func (answer previewDNSAnswer) reply(id uint16, now time.Time) ([]byte, error) {
 	msg.ID = id
 	age := uint32(now.Sub(answer.stored) / time.Second)
 	for i := range msg.Answers {
-		ttl := &msg.Answers[i].Header.TTL
-		*ttl -= min(*ttl, age)
+		msg.Answers[i].Header.TTL -= age
 	}
-	if len(msg.Authorities) == 1 {
-		ttl := uint32(answer.expires.Sub(answer.stored) / time.Second)
+	if ttl := answer.negativeTTL; ttl != 0 {
 		msg.Authorities[0].Header.TTL = ttl - min(ttl, age)
 	}
 	return msg.Pack()
@@ -216,7 +219,7 @@ func (d *previewDNS) cachedExchange(ctx context.Context, query []byte, request d
 		wire, err := d.exchange(ctx, query, request)
 		if err == nil {
 			lookup.answer = newPreviewDNSAnswer(wire, now)
-			if !lookup.answer.expires.IsZero() {
+			if lookup.answer.negativeTTL != 0 {
 				wire, err = lookup.answer.reply(request.ID, time.Now())
 			}
 		}
