@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.58 — 2026-11-20
+
+- Established connections keep their normal polling schedule. Busy exits can
+  reclaim an idle DNS stream for a new client, and fresh connections get a
+  chance to open while Skirk works through older Drive files.
+- Drive requests check for a provider cooldown before retrying. Android and
+  desktop show more specific errors, including daily quota and local resource
+  failures.
+- iPhone users can save a lower Drive usage setting per profile and opt into
+  notifications when the VPN stops unexpectedly.
+- CLI downloads include the migration and OpenWrt guides linked from setup.
+
 ## v0.1.57 — 2026-11-19
 
 - Show a saved client profile and its QR code from the VPS terminal menu.
