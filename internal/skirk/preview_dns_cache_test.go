@@ -393,3 +393,29 @@ func TestClientDNSCacheNegativeAnswerPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestClientDNSCacheMissesCannotCrowdOutLiveAddresses(t *testing.T) {
+	now := time.Now()
+	positive := previewDNSAnswer{stored: now, expires: now.Add(time.Minute)}
+	negative := previewDNSAnswer{stored: now, expires: now.Add(time.Hour), negativeTTL: 3600}
+	cache := newPreviewDNSCache()
+	for i := range previewDNSCacheEntries {
+		cache.store(fmt.Sprint(i), negative)
+	}
+	for i := range previewDNSCacheEntries {
+		cache.store("hit-"+fmt.Sprint(i), positive)
+	}
+	cache.store("uncached-miss", negative)
+	for i := range previewDNSCacheEntries {
+		if _, ok := cache.answers["hit-"+fmt.Sprint(i)]; !ok {
+			t.Fatal("a live address was evicted while the cache held reusable misses")
+		}
+	}
+	expired := positive
+	expired.expires = now
+	cache.answers["hit-0"] = expired
+	cache.store("new-miss", negative)
+	if cache.answers["new-miss"].negativeTTL == 0 || len(cache.answers) != previewDNSCacheEntries {
+		t.Fatal("an expired address blocked admission of a new denial")
+	}
+}

@@ -151,15 +151,23 @@ func (answer previewDNSAnswer) reply(id uint16, now time.Time) ([]byte, error) {
 	return msg.Pack()
 }
 
-// Called with mu held. Prefer evicting the answer that expires soonest.
+// Called with mu held. A stream of unique misses must not evict live addresses.
 func (c *previewDNSCache) store(key string, answer previewDNSAnswer) {
 	if len(c.answers) >= previewDNSCacheEntries {
+		now := time.Now()
 		var evict string
 		var earliest time.Time
 		for k, v := range c.answers {
-			if earliest.IsZero() || v.expires.Before(earliest) {
+			if !now.Before(v.expires) || v.negativeTTL != 0 {
+				evict = k
+				break
+			}
+			if answer.negativeTTL == 0 && (earliest.IsZero() || v.expires.Before(earliest)) {
 				evict, earliest = k, v.expires
 			}
+		}
+		if evict == "" {
+			return
 		}
 		delete(c.answers, evict)
 	}
