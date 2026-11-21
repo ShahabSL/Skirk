@@ -457,54 +457,21 @@ func repairMailbox(ctx context.Context, args []string) error {
 
 	clientPath := filepath.Join(kit, "client.json")
 	clientTextPath := filepath.Join(kit, "client.skirk")
-	var clientCfg *skirk.Config
-	var command *kitFileUpdate
-	if _, statErr := os.Stat(clientPath); statErr == nil {
-		clientCfg, err = skirk.LoadConfig(clientPath)
-		if err != nil {
-			return err
-		}
-		if clientCfg.SessionID != exitCfg.SessionID || clientCfg.Secret != exitCfg.Secret {
-			return fmt.Errorf("client config %s does not match exit session/secret; refusing to rewrite it", clientPath)
-		}
-		command, err = planClientCommandUpdate(kit, clientCfg.Tunnel.Listen)
-		if err != nil {
-			return err
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
+	configs, err := loadConfigKit(kit, exitPath, checkRepairClientIdentity)
+	if err != nil {
+		return err
 	}
-
+	exitCfg = configs.exitConfig
 	folderName := "skirk-mailbox-" + exitCfg.SessionID
-	driveCfg, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route, folderName, exitCfg.SessionID, exitCfg.Drive.QuotaProject)
+	_, folderID, err := createVisibleDriveMailbox(ctx, exitCfg.Auth, exitCfg.Route, folderName, exitCfg.SessionID, exitCfg.Drive.QuotaProject)
 	if err != nil {
 		return fmt.Errorf("repair mailbox failed after validation error (%v): %w", validationErr, err)
 	}
 
-	exitCfg.Drive = driveCfg
-	if err := writeJSONFile(exitPath, *exitCfg); err != nil {
+	if err := configs.writeRepairedMailbox(folderID); err != nil {
 		return err
 	}
-
-	clientUpdated := clientCfg != nil
-	if clientUpdated {
-		clientCfg.Drive = driveCfg
-		if err := writeJSONFile(clientPath, *clientCfg); err != nil {
-			return err
-		}
-		clientText, err := skirk.EncodeConfigText(clientCfg)
-		if err != nil {
-			return err
-		}
-		if err := writeTextFile(clientTextPath, clientText+"\n"); err != nil {
-			return err
-		}
-		if command != nil {
-			if err := writeTextFile(command.path, string(command.replacement)); err != nil {
-				return err
-			}
-		}
-	}
+	clientUpdated := configs.clientConfig != nil
 
 	runtimeStatus := ""
 	if *startExit {
@@ -542,6 +509,81 @@ func repairMailbox(ctx context.Context, args []string) error {
 		fmt.Printf("Exit runtime: %s\n", runtimeStatus)
 	}
 	return nil
+}
+
+func checkRepairClientIdentity(exit, client *skirk.Config) error {
+	if exit.SessionID != client.SessionID || exit.Secret != client.Secret {
+		return errors.New("client profile does not match the exit session and secret")
+	}
+	return nil
+}
+
+func (kit *configKit) writeRepairedMailbox(folderID string) error {
+	files, err := kit.rewriteFiles(func(data []byte) ([]byte, error) {
+		return replaceMailboxFolderJSON(data, folderID)
+	}, func(profile *skirk.Config) {
+		profile.Drive.FolderID = folderID
+		profile.Drive.Space = ""
+	})
+	if err != nil {
+		return err
+	}
+	backupDir, err := replaceKitFiles(filepath.Dir(kit.exitPath), ".mailbox-repair-backup-", files)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(backupDir)
+}
+
+// Repair creates a visible folder. Keep every other field, including settings
+// written by a newer client, and retain each peer's independent quota project.
+func replaceMailboxFolderJSON(data []byte, folderID string) ([]byte, error) {
+	if cfg, inline, err := skirk.ParseInlineConfig(string(data)); inline {
+		if err != nil {
+			return nil, err
+		}
+		data, err = json.Marshal(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, errors.New("config must be a JSON object")
+	}
+	drive := map[string]json.RawMessage{}
+	found := false
+	for key, raw := range config {
+		if strings.EqualFold(key, "drive") {
+			if found {
+				return nil, errors.New("config contains multiple Drive sections")
+			}
+			found = true
+			if err := json.Unmarshal(raw, &drive); err != nil {
+				return nil, err
+			}
+			delete(config, key)
+		}
+	}
+	if drive == nil {
+		drive = make(map[string]json.RawMessage)
+	}
+	for key := range drive {
+		if strings.EqualFold(key, "space") || strings.EqualFold(key, "folder_id") {
+			delete(drive, key)
+		}
+	}
+	drive["folder_id"], _ = json.Marshal(folderID)
+	encodedDrive, err := json.Marshal(drive)
+	if err != nil {
+		return nil, err
+	}
+	config["drive"] = encodedDrive
+	updated, err := json.MarshalIndent(config, "", "  ")
+	return append(updated, '\n'), err
 }
 
 func setupDriveMailbox(ctx context.Context, auth skirk.AuthConfig, route skirk.RouteConfig, sessionID, quotaProject string) (skirk.DriveConfig, string, error) {

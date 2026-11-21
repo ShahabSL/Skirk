@@ -17,7 +17,7 @@ import (
 	"github.com/ShahabSL/Skirk/internal/skirk"
 )
 
-type oauthRenewKit struct {
+type configKit struct {
 	kitDir           string
 	exitPath         string
 	exitConfig       *skirk.Config
@@ -160,7 +160,18 @@ func resolveRenewOAuthClient(old skirk.AuthConfig, path string) (oauthClientCred
 	return client, nil
 }
 
-func loadOAuthRenewKit(kitDir, exitPath string) (*oauthRenewKit, error) {
+func loadOAuthRenewKit(kitDir, exitPath string) (*configKit, error) {
+	kit, err := loadConfigKit(kitDir, exitPath, checkOAuthRenewClientIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := resolveRenewOAuthClient(kit.exitConfig.Auth, ""); err != nil {
+		return nil, err
+	}
+	return kit, nil
+}
+
+func loadConfigKit(kitDir, exitPath string, checkClient func(*skirk.Config, *skirk.Config) error) (*configKit, error) {
 	exitJSON, err := readRegularFile(exitPath)
 	if err != nil {
 		return nil, fmt.Errorf("read exit config: %w", err)
@@ -169,16 +180,13 @@ func loadOAuthRenewKit(kitDir, exitPath string) (*oauthRenewKit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse exit config: %w", err)
 	}
-	if _, err := resolveRenewOAuthClient(exitConfig.Auth, ""); err != nil {
-		return nil, err
-	}
-	kit := &oauthRenewKit{kitDir: kitDir, exitPath: exitPath, exitConfig: exitConfig, exitJSON: exitJSON}
+	kit := &configKit{kitDir: kitDir, exitPath: exitPath, exitConfig: exitConfig, exitJSON: exitJSON}
 	clientPath := filepath.Join(kitDir, "client.json")
 	clientJSON, err := readRegularFile(clientPath)
 	if errors.Is(err, os.ErrNotExist) {
 		for _, name := range []string{"client.skirk", "client-command.txt"} {
 			if _, statErr := os.Lstat(filepath.Join(kitDir, name)); statErr == nil {
-				return nil, fmt.Errorf("%s exists but client.json is missing; refusing to leave an exported profile with stale OAuth credentials", name)
+				return nil, fmt.Errorf("%s exists but client.json is missing; refusing to leave a stale exported profile", name)
 			} else if !errors.Is(statErr, os.ErrNotExist) {
 				return nil, statErr
 			}
@@ -192,7 +200,7 @@ func loadOAuthRenewKit(kitDir, exitPath string) (*oauthRenewKit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse client config: %w", err)
 	}
-	if err := checkOAuthRenewClientIdentity(exitConfig, clientConfig); err != nil {
+	if err := checkClient(exitConfig, clientConfig); err != nil {
 		return nil, fmt.Errorf("client.json: %w", err)
 	}
 	kit.clientConfig, kit.clientJSON = clientConfig, clientJSON
@@ -204,7 +212,7 @@ func loadOAuthRenewKit(kitDir, exitPath string) (*oauthRenewKit, error) {
 		if parseErr != nil {
 			return nil, fmt.Errorf("parse client.skirk: %w", parseErr)
 		}
-		if identityErr := checkOAuthRenewClientIdentity(exitConfig, textConfig); identityErr != nil {
+		if identityErr := checkClient(exitConfig, textConfig); identityErr != nil {
 			return nil, fmt.Errorf("client.skirk: %w", identityErr)
 		}
 		kit.clientTextConfig = textConfig
@@ -227,8 +235,13 @@ func checkOAuthRenewClientIdentity(exit, client *skirk.Config) error {
 	return nil
 }
 
-func (kit *oauthRenewKit) updatedFiles(auth skirk.AuthConfig) ([]kitFileUpdate, error) {
-	exitJSON, err := replaceAuthJSON(kit.exitJSON, auth)
+func (kit *configKit) updatedFiles(auth skirk.AuthConfig) ([]kitFileUpdate, error) {
+	return kit.rewriteFiles(func(data []byte) ([]byte, error) { return replaceAuthJSON(data, auth) },
+		func(profile *skirk.Config) { profile.Auth = auth })
+}
+
+func (kit *configKit) rewriteFiles(rewriteJSON func([]byte) ([]byte, error), updateExport func(*skirk.Config)) ([]kitFileUpdate, error) {
+	exitJSON, err := rewriteJSON(kit.exitJSON)
 	if err != nil {
 		return nil, fmt.Errorf("rewrite exit.json: %w", err)
 	}
@@ -236,18 +249,18 @@ func (kit *oauthRenewKit) updatedFiles(auth skirk.AuthConfig) ([]kitFileUpdate, 
 	if kit.clientConfig == nil {
 		return files, nil
 	}
-	clientJSON, err := replaceAuthJSON(kit.clientJSON, auth)
+	clientJSON, err := rewriteJSON(kit.clientJSON)
 	if err != nil {
 		return nil, fmt.Errorf("rewrite client.json: %w", err)
 	}
 	clientConfig, err := skirk.ParseConfig(clientJSON)
 	if err != nil {
-		return nil, fmt.Errorf("validate renewed client config: %w", err)
+		return nil, fmt.Errorf("validate updated client config: %w", err)
 	}
 	profileConfig := clientConfig
 	if kit.clientTextConfig != nil {
 		copy := *kit.clientTextConfig
-		copy.Auth = auth
+		updateExport(&copy)
 		profileConfig = &copy
 	}
 	clientText, err := skirk.EncodeConfigText(profileConfig)
@@ -299,7 +312,11 @@ func readRegularFile(path string) ([]byte, error) {
 }
 
 func replaceOAuthRenewFiles(kitDir string, files []kitFileUpdate) (string, error) {
-	backupDir, err := os.MkdirTemp(kitDir, ".oauth-renew-backup-")
+	return replaceKitFiles(kitDir, ".oauth-renew-backup-", files)
+}
+
+func replaceKitFiles(backupParent, backupPattern string, files []kitFileUpdate) (string, error) {
+	backupDir, err := os.MkdirTemp(backupParent, backupPattern)
 	if err != nil {
 		return "", err
 	}
@@ -346,7 +363,7 @@ func replaceOAuthRenewFiles(kitDir string, files []kitFileUpdate) (string, error
 					rollbackErrors = append(rollbackErrors, stageErr)
 				}
 			}
-			return "", fmt.Errorf("renewal write failed (backup: %s): %w; rollback errors: %v", backupDir, err, rollbackErrors)
+			return "", fmt.Errorf("kit update failed (backup: %s): %w; rollback errors: %v", backupDir, err, rollbackErrors)
 		}
 		files[i].staged = ""
 	}
