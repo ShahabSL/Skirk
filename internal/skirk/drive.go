@@ -2299,6 +2299,8 @@ func driveRequestLabel(method, path string) string {
 		return "upload"
 	case method == http.MethodGet && strings.Contains(path, "alt=media"):
 		return "download"
+	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/changes/startPageToken?"):
+		return "changes_start_token"
 	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/changes"):
 		return "changes"
 	case method == http.MethodGet && strings.HasPrefix(path, "/drive/v3/files/generateIds"):

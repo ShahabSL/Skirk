@@ -1374,6 +1374,9 @@ func TestDriveStoreChangesStartPageToken(t *testing.T) {
 	if gotPath != "/drive/v3/changes/startPageToken?fields=startPageToken" {
 		t.Fatalf("path = %q, want changes start token path", gotPath)
 	}
+	if op := store.QuotaSnapshot().Ops["changes_start_token"]; op.Calls != 1 || op.Units != 5 {
+		t.Fatalf("start token cost = %+v, want one 5-unit metadata request", op)
+	}
 }
 
 func TestDriveStoreListChangesUsesAppDataAndFields(t *testing.T) {
