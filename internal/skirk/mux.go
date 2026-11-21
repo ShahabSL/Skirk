@@ -2996,13 +2996,30 @@ func (m *driveMux) runReceiveLoop(ctx context.Context) {
 			resetTicker(ticker, delay)
 			tickerDelay = delay
 		}
-		select {
-		case <-ctx.Done():
+		if !waitForMuxPoll(ctx, ticker.C, m.recvWake) {
 			return
-		case <-m.recvWake:
-		case <-ticker.C:
 		}
 	}
+}
+
+// A tick and a wake already pending before the next list can share that list.
+// Signals arriving during the list stay queued for the following pass.
+func waitForMuxPoll(ctx context.Context, ticks <-chan time.Time, wakes <-chan struct{}) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-ticks:
+		select {
+		case <-wakes:
+		default:
+		}
+	case <-wakes:
+		select {
+		case <-ticks:
+		default:
+		}
+	}
+	return ctx.Err() == nil
 }
 
 func resetTicker(ticker *time.Ticker, delay time.Duration) {

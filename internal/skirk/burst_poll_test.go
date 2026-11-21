@@ -13,6 +13,31 @@ type pollCountingStore struct {
 	lists atomic.Int64
 }
 
+func TestMuxPollSharesPendingTickAndWake(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ticks := make(chan time.Time, 1)
+	wakes := make(chan struct{}, 1)
+	ticks <- time.Now()
+	wakes <- struct{}{}
+	if !waitForMuxPoll(ctx, ticks, wakes) || len(ticks) != 0 || len(wakes) != 0 {
+		t.Fatal("one poll must service both pending signals")
+	}
+	wakes <- struct{}{}
+	if !waitForMuxPoll(ctx, ticks, wakes) {
+		t.Fatal("an upload arriving during the previous poll must still wake the receiver")
+	}
+	ticks <- time.Now()
+	if !waitForMuxPoll(ctx, ticks, wakes) {
+		t.Fatal("an independent scheduled poll must still run")
+	}
+	cancel()
+	wakes <- struct{}{}
+	if waitForMuxPoll(ctx, ticks, wakes) {
+		t.Fatal("a stopped receiver must not dispatch another poll")
+	}
+}
+
 type classPollCountingStore struct {
 	*MemoryStore
 	priority atomic.Int64
