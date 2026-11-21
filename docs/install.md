@@ -58,7 +58,9 @@ If Android shows **Google Drive is limiting requests**, open the Drive usage det
 
 If Android shows **The exit is full for new UDP traffic**, the exit has filled its UDP carrier slots. An existing call can keep its slot while a newly started call waits for capacity. The Drive usage details and the UDP capacity message help identify which resource ran out.
 
-For a shared UDP kit, you can test grouped polling by setting `tunnel.udp_preview_grouped_discovery` to `true` in the exit configuration and restarting the exit. The exit can then check up to four clients in one Drive list request. Compare call playback and the project's Drive usage under the same load before keeping the setting.
+For a new shared kit, `skirk setup init --group-drive-polls` lets each peer check both TCP traffic classes in one Drive list when the results fit on a page. A shared UDP exit can also check up to four clients together. Compare call playback and page load times during a transfer to decide whether this suits your connection.
+
+For an existing kit, the equivalent settings are `drive.adaptive_mux_discovery` on each peer and `tunnel.udp_preview_grouped_discovery` on the shared UDP exit. Set them to `true`, restart the exit and reimport the updated client profile. Set them to `false` to restore separate polling.
 
 On iPhone, open **Drive usage**, select **Lower Drive usage**, then reconnect. Skirk saves the choice for this profile. It checks for TCP responses less often, which saves Drive requests but can make pages open more slowly. UDP keeps its own polling schedule. The displayed usage covers this iPhone. Other devices and the exit also consume the shared quota. [See the iPhone settings](images/ios-drive-usage.png)
 
@@ -68,7 +70,7 @@ Size your installation for the work people actually do. In one earlier live Driv
 
 New kits enable UDP and exit DNS. Setup enables IPv6 when it verifies the exit route. The default exit allows four independent UDP carriers, each serving multiple sessions. A carrier, a UDP socket, and a human user are different units. Watch the Drive API metrics for the Google project and test received media during a transfer before increasing concurrency. [Google Drive quota](https://developers.google.com/workspace/drive/api/guides/limits)
 
-**Slow DNS or unreliable IPv6.** Update the clients as well as the exit. The client shares simultaneous ordinary A or AAAA lookups for the same query and reuses positive answers until the shortest record TTL expires. The first lookup for a new name still needs a Drive round trip. For a new kit, `skirk setup init --ipv6=off` keeps UDP calls and exit DNS while disabling IPv6 UDP. For browsing on a severely constrained network, `skirk setup init --udp=false` creates a TCP-only kit. Native UDP calls and games require a UDP kit. Use a fresh output directory (`--out DIRECTORY`) and import the generated profile on the clients.
+**Slow DNS or unreliable IPv6.** Update the clients as well as the exit. The client shares simultaneous ordinary A or AAAA lookups for the same query and reuses positive answers until the shortest record TTL expires. If the resolver confirms that a name or address record is absent and supplies an SOA lifetime, the client also reuses that answer until it expires. This cache stays on the running client. The first lookup for a new name still needs a Drive round trip. For a new kit, `skirk setup init --ipv6=off` keeps UDP calls and exit DNS while disabling IPv6 UDP. For browsing on a severely constrained network, `skirk setup init --udp=false` creates a TCP-only kit. Native UDP calls and games require a UDP kit. Use a fresh output directory (`--out DIRECTORY`) and import the generated profile on the clients.
 
 ## Maintenance
 

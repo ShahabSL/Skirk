@@ -76,6 +76,7 @@ func setupInit(ctx context.Context, args []string) error {
 	clientProxy := fs.String("client-proxy", "", "optional upstream SOCKS5 URL for client Google API traffic")
 	exitProxy := fs.String("exit-proxy", "", "optional outbound proxy URL for exit target traffic, for example socks5h://127.0.0.1:40000")
 	enableUDP := fs.Bool("udp", true, "enable shared UDP and exit DNS using a dedicated Drive folder")
+	groupDrivePolls := fs.Bool("group-drive-polls", false, "combine TCP discovery lists and let a shared UDP exit poll clients together")
 	ipv6Mode := setupIPv6Mode("auto")
 	fs.Var(&ipv6Mode, "ipv6", "IPv6 for UDP kits: auto, on, or off")
 	googleIP := fs.String("google-ip", "216.239.38.120", "Google edge IP for pinned routes")
@@ -289,7 +290,7 @@ func setupInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	clientCfg.Drive, exitCfg.Drive = baseDrive, baseDrive
+	configureKitDiscovery(baseDrive, &clientCfg, &exitCfg, *groupDrivePolls)
 	clientPath := filepath.Join(*outDir, "client.json")
 	clientTextPath := filepath.Join(*outDir, "client.skirk")
 	clientCommandPath := filepath.Join(*outDir, "client-command.txt")
@@ -657,6 +658,12 @@ func setupTunnelConfig(listen string, chunkSize, pollMS int, uploadConcurrency, 
 		cfg.DownloadConcurrency = downloadConcurrency
 	}
 	return cfg
+}
+
+func configureKitDiscovery(mailbox skirk.DriveConfig, client, exit *skirk.Config, group bool) {
+	mailbox.AdaptiveMuxDiscovery = group
+	client.Drive, exit.Drive = mailbox, mailbox
+	exit.Tunnel.UDPPreviewGroupedDiscovery = group && exit.Tunnel.UDPPreviewSharedUDP
 }
 
 func configureSetupUDP(cfg *skirk.TunnelConfig, ipv6 bool) {

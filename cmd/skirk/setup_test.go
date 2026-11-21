@@ -125,6 +125,37 @@ func TestGeneratedClientCommandReadsCopiedProfile(t *testing.T) {
 	}
 }
 
+func TestKitDiscoveryOptions(t *testing.T) {
+	mailbox := skirk.DriveConfig{FolderID: "kit-folder", QuotaProject: "kit-project"}
+	for _, group := range []bool{false, true} {
+		for _, udp := range []bool{false, true} {
+			client := skirk.Config{Secret: "test-kit-discovery"}
+			var exit skirk.Config
+			if udp {
+				configureSetupUDP(&client.Tunnel, false)
+				configureSetupUDP(&exit.Tunnel, false)
+			}
+			configureKitDiscovery(mailbox, &client, &exit, group)
+			encoded, err := skirk.EncodeConfigText(&client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			imported, err := skirk.DecodeConfigText(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, cfg := range []*skirk.Config{imported, &exit} {
+				if cfg.Drive.FolderID != mailbox.FolderID || cfg.Drive.QuotaProject != mailbox.QuotaProject || cfg.Drive.AdaptiveMuxDiscovery != group {
+					t.Fatalf("unexpected mailbox discovery settings for group=%t udp=%t", group, udp)
+				}
+			}
+			if imported.Tunnel.UDPPreviewGroupedDiscovery || exit.Tunnel.UDPPreviewGroupedDiscovery != (group && udp) {
+				t.Fatalf("unexpected UDP discovery on client or exit for group=%t udp=%t", group, udp)
+			}
+		}
+	}
+}
+
 func TestSetupKitUsesMuxV5AndRenewRejectsMixedTransport(t *testing.T) {
 	created := setupTunnelConfig("127.0.0.1:18080", 1024, 100, 0, 0)
 	if created.Transport != "muxv5" {
