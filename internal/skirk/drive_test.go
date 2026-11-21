@@ -1436,6 +1436,9 @@ func TestDriveStoreCleanupDeletesExpiredMuxObjects(t *testing.T) {
 			if query.Get("orderBy") != "modifiedTime asc" {
 				t.Fatalf("orderBy = %q, want modifiedTime asc", query.Get("orderBy"))
 			}
+			if !strings.Contains(query.Get("q"), "modifiedTime < '2026-05-11T11:00:00Z'") {
+				t.Fatalf("cleanup list omitted the expiration cutoff: %q", query.Get("q"))
+			}
 			if query.Get("spaces") != "appDataFolder" {
 				t.Fatalf("spaces = %q, want appDataFolder", query.Get("spaces"))
 			}

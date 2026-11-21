@@ -1194,7 +1194,7 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 	if !opts.All {
 		contains = []string{prefix}
 	}
-	values.Set("q", d.containsQuery(contains))
+	values.Set("q", d.containsQuery(contains)+" and modifiedTime < '"+cutoff.UTC().Format(time.RFC3339Nano)+"'")
 	values.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime asc")
