@@ -64,7 +64,7 @@ const driveQuotaMaxSamplesPerOp = 4096
 const driveSlowRequestThreshold = 2 * time.Second
 const defaultDriveQuotaLogInterval = time.Minute
 const driveFolderMimeType = "application/vnd.google-apps.folder"
-const driveMailboxFileQuery = "trashed = false and mimeType != '" + driveFolderMimeType + "'"
+const driveNonFolderFilter = "mimeType != '" + driveFolderMimeType + "'"
 const driveQuotaBackoffBase = 5 * time.Second
 const driveQuotaBackoffMax = 64 * time.Second
 const driveQuotaBackoffJitter = time.Second
@@ -1132,7 +1132,7 @@ func (d *DriveStore) CleanupPrefixesDue(ctx context.Context, prefixes []string, 
 		return prefixes, nil
 	}
 	values := url.Values{
-		"q":        {d.anyPrefixQuery(prefixes) + " and modifiedTime < '" + cutoff.UTC().Format(time.RFC3339Nano) + "'"},
+		"q":        {d.anyPrefixQuery(prefixes) + " and " + driveNonFolderFilter + " and modifiedTime < '" + cutoff.UTC().Format(time.RFC3339Nano) + "'"},
 		"fields":   {"incompleteSearch,nextPageToken,files(name)"},
 		"pageSize": {driveListPageSize},
 	}
@@ -1196,7 +1196,7 @@ func (d *DriveStore) Cleanup(ctx context.Context, opts DriveCleanupOptions) (Dri
 	if !opts.All {
 		contains = []string{prefix}
 	}
-	values.Set("q", d.containsQuery(contains)+" and modifiedTime < '"+cutoff.UTC().Format(time.RFC3339Nano)+"'")
+	values.Set("q", d.containsQuery(contains)+" and "+driveNonFolderFilter+" and modifiedTime < '"+cutoff.UTC().Format(time.RFC3339Nano)+"'")
 	values.Set("fields", "nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime)")
 	values.Set("pageSize", driveListPageSize)
 	values.Set("orderBy", "modifiedTime asc")
@@ -1310,7 +1310,7 @@ func (d *DriveStore) latest(ctx context.Context, name string) (ObjectInfo, error
 
 func (d *DriveStore) listExact(ctx context.Context, name string) ([]ObjectInfo, error) {
 	values := url.Values{}
-	values.Set("q", d.query(name, true))
+	values.Set("q", d.query(name, true)+" and "+driveNonFolderFilter)
 	values.Set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime)")
 	values.Set("orderBy", "modifiedTime desc")
 	values.Set("pageSize", driveListPageSize)
@@ -2304,7 +2304,7 @@ func (d *DriveStore) authHeaders(ctx context.Context) (map[string]string, error)
 }
 
 func (d *DriveStore) query(value string, exact bool) string {
-	clauses := []string{driveMailboxFileQuery}
+	clauses := []string{"trashed = false"}
 	if d.folderID != "" && !d.isAppData() {
 		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
 	}
@@ -2317,7 +2317,7 @@ func (d *DriveStore) query(value string, exact bool) string {
 }
 
 func (d *DriveStore) containsQuery(values []string) string {
-	clauses := []string{driveMailboxFileQuery}
+	clauses := []string{"trashed = false"}
 	if d.folderID != "" && !d.isAppData() {
 		clauses = append(clauses, fmt.Sprintf("'%s' in parents", escapeDriveQuery(d.folderID)))
 	}

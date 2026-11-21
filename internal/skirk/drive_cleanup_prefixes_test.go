@@ -33,7 +33,7 @@ func TestCleanupPrefixesDueUsesOneScopedListAndFallsBackForPartialResults(t *tes
 					t.Fatal("unexpected cleanup discovery request")
 				}
 				q := v.Get("q")
-				for _, clause := range []string{"trashed = false", "(name contains 'muxv4/' or name contains 'muxv5/' or name contains 'bench-drive/' or name contains 'setup/')", "modifiedTime < '2026-05-11T12:00:00Z'"} {
+				for _, clause := range []string{"trashed = false", "mimeType != 'application/vnd.google-apps.folder'", "(name contains 'muxv4/' or name contains 'muxv5/' or name contains 'bench-drive/' or name contains 'setup/')", "modifiedTime < '2026-05-11T12:00:00Z'"} {
 					if !strings.Contains(q, clause) {
 						t.Fatalf("query missing %q: %s", clause, q)
 					}
