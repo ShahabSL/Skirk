@@ -9,8 +9,8 @@
 ۲. ترمینال دستگاهی را باز کنید که قرار است به‌عنوان خروجی روشن بماند. اگر سرور راه دور دارید، ابتدا با SSH به آن وصل شوید. برای نصب روی لینوکس، دستورهای زیر را در همان ترمینال اجرا کنید. محل نصب برای کاربر عادی `~/.local/bin` و برای کاربر ریشه `/usr/local/bin` است.
 
 ```sh
-curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.58/install.sh -o install-skirk.sh
-sh install-skirk.sh --version v0.1.58
+curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.59/install.sh -o install-skirk.sh
+sh install-skirk.sh --version v0.1.59
 skirk version
 ```
 

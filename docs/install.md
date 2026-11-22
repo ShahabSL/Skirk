@@ -8,8 +8,8 @@
 2. Open a terminal on the computer that will stay online as the exit. If it is a remote server, connect to it using SSH. On Linux, install the CLI there. A regular user installs to `~/.local/bin`. Root installs to `/usr/local/bin`.
 
 ```sh
-curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.58/install.sh -o install-skirk.sh
-sh install-skirk.sh --version v0.1.58
+curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.59/install.sh -o install-skirk.sh
+sh install-skirk.sh --version v0.1.59
 skirk version
 ```
 

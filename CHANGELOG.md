@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.59 — 2026-11-21
 
 - New kits group Drive checks for TCP traffic and for clients on a shared UDP
   exit. The active call polling interval stays the same. Existing kits keep
@@ -9,6 +9,14 @@
 - When a partial UDP list needs separate checks, the exit checks each current
   client once. Each client can receive its next check while another client’s
   request is still in flight.
+- Repeated DNS lookups for a missing address can reuse the resolver’s answer
+  until its negative-cache TTL expires. Positive answers stay available when
+  many different names are missing.
+- The exit checks for expired mailbox objects before scanning each traffic
+  class. Cleanup skips folders and deletes a repeated file ID only once.
+  Mailbox repair preserves the polling settings for each peer.
+- Clients can opt into `--conserve-idle-udp` during kit setup. It saves checks
+  during silence and can add up to 350 ms to the first incoming packet.
 
 ## v0.1.58 — 2026-11-20
 
