@@ -1,5 +1,12 @@
 # Changelog
 
+## Android 0.1.59 build 60 — 2026-11-22
+
+- Fix a startup crash on older 32-bit ARM Android devices. Install the
+  [updated APK](https://github.com/ShahabSL/Skirk/releases/tag/android-v0.1.59-2)
+  over the existing app to keep saved profiles. The same fix is included in
+  the universal APK. The exit needs no update.
+
 ## v0.1.59 — 2026-11-21
 
 - New kits group Drive checks for TCP traffic and for clients on a shared UDP

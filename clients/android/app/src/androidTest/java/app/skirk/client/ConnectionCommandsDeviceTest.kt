@@ -23,6 +23,20 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ConnectionCommandsDeviceTest {
+    @Test fun packagedEngineStartsInTheAppSandbox() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        val engine = File(app.applicationInfo.nativeLibraryDir, "libskirk.so")
+        val child = ProcessBuilder(engine.absolutePath, "version").redirectErrorStream(true).start()
+        try {
+            assertTrue("Engine startup timed out", child.waitFor(15, TimeUnit.SECONDS))
+            val output = child.inputStream.bufferedReader().use { it.readText() }
+            assertEquals(output, 0, child.exitValue())
+            assertTrue(output, output.startsWith("skirk android-${BuildConfig.VERSION_NAME} "))
+        } finally {
+            if (child.isAlive) child.destroyForcibly()
+        }
+    }
+
     @Test fun oldNotificationStopKeepsItsOwnPendingIntentIdentity() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext
         for (service in listOf(SkirkProxyService::class.java, SkirkVpnService::class.java)) {

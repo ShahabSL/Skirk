@@ -40,6 +40,12 @@ val buildSkirkAndroidSidecar = tasks.register("buildSkirkAndroidSidecar") {
     inputs.dir(repoRoot.dir("cmd"))
     inputs.dir(repoRoot.dir("internal"))
     inputs.file(repoRoot.file("go.mod"))
+    inputs.file(repoRoot.file("go.sum"))
+    inputs.property("goVersion", providers.exec {
+        workingDir(repoRoot.asFile)
+        commandLine("go", "env", "GOVERSION")
+    }.standardOutput.asText.map { it.trim() })
+    inputs.property("ndkVersion", skirkNdkVersion)
     inputs.property("skirkAppVersion", skirkAppVersion)
     outputs.dir(generatedSkirkJniLibs)
 
@@ -161,7 +167,7 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 59
+        versionCode = 60
         versionName = skirkAppVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

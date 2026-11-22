@@ -16,6 +16,7 @@ internal const val DRIVE_CLOCK_SKEW_HINT = "Drive and this phone disagree about 
 internal const val DRIVE_CLOCK_UNVERIFIED_HINT = "Skirk couldn’t verify the time with Drive. Reconnect when the network is stable."
 
 internal fun skirkEngineExitMessage(code: Int, logTail: String): String {
+    if (code == 159) return "Android stopped the network engine (SIGSYS, code 159). Check for a Skirk update."
     val exitError = logTail.lineSequence().lastOrNull { it.startsWith("error: ") }
     if (code == 1 && exitError != null) {
         if (exitError.startsWith("error: device clock differs from Google Drive clock")) return DRIVE_CLOCK_SKEW_HINT
@@ -61,10 +62,12 @@ internal class AndroidSkirkEngine(
         Files.deleteIfExists(metricsFile.toPath())
         logFile.writeText("")
         val httpListen = if (profile.httpProxyEnabled) profile.httpAddress else "disabled"
+        val processBits = if (android.os.Process.is64Bit()) 64 else 32
         Log.i(TAG, "Starting ${engine.absolutePath} on SOCKS ${profile.socksAddress} HTTP $httpListen")
         appendLogLine(
             logFile,
-            "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen",
+            "android starting mode=${profile.connectionMode} socks=${profile.socksAddress} http=$httpListen " +
+                "build=${BuildConfig.VERSION_CODE} api=${android.os.Build.VERSION.SDK_INT} processBits=$processBits",
         )
         val id = UUID.randomUUID().toString()
         var launchedAtMillis = 0L

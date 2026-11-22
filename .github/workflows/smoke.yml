@@ -437,6 +437,7 @@ jobs:
           verify_apk "$universal" arm64-v8a armeabi-v7a
           verify_apk "$arm64" arm64-v8a
           verify_apk "$armv7" armeabi-v7a
+          bash scripts/check_android_armv7_runtime.sh "$universal" "$armv7"
 
           for apk in "$universal" "$arm64" "$armv7"; do
             echo "== $apk =="

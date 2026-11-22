@@ -36,7 +36,7 @@ On Linux with systemd, setup can install and start the exit service. Run `skirk 
 
 ## Connect a device
 
-1. Install the Android APK or the desktop package for your operating system and CPU. Android's universal APK suits both supported mobile ABIs. On an Apple silicon Mac choose the arm64 build. On iOS, install a build to which you have access through Apple.
+1. On Android, install the [universal APK](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-2/skirk-android-universal.apk). It also runs on supported 32-bit ARM devices. To update, install it over the existing app to keep your profiles. On desktop, choose the package for your operating system and CPU. On an Apple silicon Mac choose arm64. On iOS, install a build to which you have access through Apple.
 2. Open the profile import screen. Scan the QR code on Android or iOS, open a QR image on desktop, or paste the entire line starting with `skirk:`. Save the profile.
 3. Select the profile and connect. Accept your operating system's VPN prompt when using VPN mode. In proxy mode, select the proxy in the application that will use it. Use the exit test to confirm that the profile reaches your exit.
 
