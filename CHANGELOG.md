@@ -17,6 +17,8 @@
   Mailbox repair preserves the polling settings for each peer.
 - Clients can opt into `--conserve-idle-udp` during kit setup. It saves checks
   during silence and can add up to 350 ms to the first incoming packet.
+- On iPhone, leaving profile import returns to the top of the connection
+  screen so the Connect button is visible.
 
 ## v0.1.58 — 2026-11-20
 

@@ -81,6 +81,8 @@ final class ProfileImportUITests: XCTestCase {
         XCTAssertTrue(stored.waitForExistence(timeout: 5))
         let connect = app.buttons["Connect"]
         XCTAssertTrue(connect.exists)
+        XCTAssertGreaterThanOrEqual(connect.frame.minY, app.navigationBars["Skirk"].frame.maxY)
+        XCTAssertLessThanOrEqual(connect.frame.maxY, app.frame.maxY)
         connect.tap()
         XCTAssertTrue(app.navigationBars["Before you connect"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["approve-vpn-data-use"].exists)

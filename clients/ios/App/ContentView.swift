@@ -262,6 +262,8 @@ struct ContentView: View {
                     }
                 }
             }
+            // Import and the saved dashboard each start at the top of their own form.
+            .id(tunnel.hasProfile && profileImportAction == nil)
             .navigationTitle("Skirk")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
