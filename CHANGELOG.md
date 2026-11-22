@@ -1,11 +1,13 @@
 # Changelog
 
-## Android 0.1.59 build 60 — 2026-11-22
+## Android 0.1.59 build 61 — 2026-11-22
 
 - Fix a startup crash on older 32-bit ARM Android devices. Install the
-  [updated APK](https://github.com/ShahabSL/Skirk/releases/tag/android-v0.1.59-2)
+  [updated APK](https://github.com/ShahabSL/Skirk/releases/tag/android-v0.1.59-3)
   over the existing app to keep saved profiles. The same fix is included in
   the universal APK. The exit needs no update.
+- The optional HTTP proxy finishes forwarding the final bytes of an upgraded
+  connection when the two endpoints close their sending sides in either order.
 
 ## v0.1.59 — 2026-11-21
 

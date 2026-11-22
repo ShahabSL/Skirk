@@ -12,7 +12,7 @@ Skirk connects a device to an exit computer you run. The client and exit exchang
 
 | Platform | Client | Exit |
 | --- | --- | --- |
-| Android | [Device VPN (universal APK)](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-2/skirk-android-universal.apk) | — |
+| Android | [Device VPN (universal APK)](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-3/skirk-android-universal.apk) | — |
 | iOS | Packet tunnel | — |
 | Windows | Desktop proxy or x64 VPN, CLI proxy | CLI |
 | macOS | Desktop proxy, CLI proxy | CLI |

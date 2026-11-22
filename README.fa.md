@@ -12,7 +12,7 @@
 
 | سیستم‌عامل | کلاینت | خروجی |
 | --- | --- | --- |
-| اندروید | [VPN دستگاه (نسخهٔ یونیورسال)](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-2/skirk-android-universal.apk) | — |
+| اندروید | [VPN دستگاه (نسخهٔ یونیورسال)](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-3/skirk-android-universal.apk) | — |
 | iOS | تونل شبکه | — |
 | ویندوز | پروکسی در برنامه یا خط فرمان، VPN برای x64 | خط فرمان |
 | macOS | پروکسی در برنامه یا خط فرمان | خط فرمان |

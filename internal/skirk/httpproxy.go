@@ -200,7 +200,13 @@ func (s *HTTPProxyServer) handleHTTPRequest(ctx context.Context, client buffered
 		if err := resp.Write(client); err != nil {
 			return
 		}
-		bridgeHTTPUpgrade(client, bufferedConn{Conn: proxySide, reader: reader})
+		if err := bridgeHTTPUpgrade(client, bufferedConn{Conn: proxySide, reader: reader}); err == nil {
+			// The handler may still be forwarding bytes it read before the last FIN.
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+		}
 		return
 	}
 	resp.Close = true
@@ -320,7 +326,7 @@ func proxyUpgradeOffered(offered, selected []string) bool {
 	return true
 }
 
-func bridgeHTTPUpgrade(client, upstream net.Conn) {
+func bridgeHTTPUpgrade(client, upstream net.Conn) error {
 	done := make(chan error, 2)
 	copyHalf := func(dst, src net.Conn) {
 		_, err := io.Copy(dst, src)
@@ -338,8 +344,10 @@ func bridgeHTTPUpgrade(client, upstream net.Conn) {
 	if err := <-done; err != nil {
 		_ = client.Close()
 		_ = upstream.Close()
+		<-done
+		return err
 	}
-	<-done
+	return <-done
 }
 
 // The mux delivers remote FIN with CloseWrite. Separate pipe legs preserve that

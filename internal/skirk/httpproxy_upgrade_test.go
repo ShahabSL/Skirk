@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -279,6 +280,95 @@ func TestHTTPProxyUpgradeHalfCloseBothDirections(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("origin never received client EOF")
 			}
+		})
+	}
+}
+
+func TestHTTPProxyUpgradeDrainsHandler(t *testing.T) {
+	for _, test := range []string{"flush", "cancel", "client-read-error"} {
+		t.Run(test, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				client, server := newHTTPUpgradePipe()
+				defer client.Close()
+				flush := make(chan struct{})
+				flushed := make(chan string, 1)
+				done := make(chan struct{})
+				proxy := HTTPProxyServer{Handler: func(ctx context.Context, _ string, conn net.Conn) {
+					r := bufio.NewReader(conn)
+					if _, err := http.ReadRequest(r); err != nil {
+						t.Errorf("origin request: %v", err)
+						return
+					}
+					_, _ = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+					_ = conn.(interface{ CloseWrite() error }).CloseWrite()
+					body, err := io.ReadAll(r)
+					if err != nil && test != "client-read-error" {
+						t.Errorf("origin read: %v", err)
+						return
+					}
+					select {
+					case <-flush:
+						flushed <- string(body)
+					case <-ctx.Done():
+					}
+				}}
+				go func() {
+					defer close(done)
+					proxy.handle(ctx, server)
+				}()
+				if _, err := io.WriteString(client, upgradeRequest("example.test", "websocket")); err != nil {
+					t.Fatal(err)
+				}
+				r := bufio.NewReader(client)
+				resp, err := http.ReadResponse(r, nil)
+				if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+					t.Fatalf("upgrade response=%v error=%v", resp, err)
+				}
+				if _, err := r.ReadByte(); err != io.EOF {
+					t.Fatalf("origin half-close: %v", err)
+				}
+				const last = "last client bytes"
+				if _, err := io.WriteString(client, last); err != nil {
+					t.Fatal(err)
+				}
+				if test == "client-read-error" {
+					// The origin already sent FIN. An error in the other direction must abort.
+					synctest.Wait()
+					if err := server.SetReadDeadline(time.Now()); err != nil {
+						t.Fatal(err)
+					}
+					<-done
+					return
+				}
+				if err := client.(interface{ CloseWrite() error }).CloseWrite(); err != nil {
+					t.Fatal(err)
+				}
+				// Both FINs have passed. Only the handler's outbound write is held.
+				synctest.Wait()
+				select {
+				case <-done:
+					t.Fatal("proxy canceled the handler before its final write")
+				default:
+				}
+				if test == "cancel" {
+					cancel()
+				} else {
+					close(flush)
+				}
+				<-done
+				if test == "flush" {
+					select {
+					case got := <-flushed:
+						if got != last {
+							t.Fatalf("flushed %q, want %q", got, last)
+						}
+					default:
+						t.Fatal("handler left without flushing the last client bytes")
+					}
+				}
+			})
 		})
 	}
 }

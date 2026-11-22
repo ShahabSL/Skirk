@@ -167,7 +167,7 @@ android {
         applicationId = "app.skirk.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 60
+        versionCode = 61
         versionName = skirkAppVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
