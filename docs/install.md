@@ -8,8 +8,8 @@
 2. Open a terminal on the computer that will stay online as the exit. If it is a remote server, connect to it using SSH. On Linux, install the CLI there. A regular user installs to `~/.local/bin`. Root installs to `/usr/local/bin`.
 
 ```sh
-curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.59/install.sh -o install-skirk.sh
-sh install-skirk.sh --version v0.1.59
+curl -fL https://raw.githubusercontent.com/ShahabSL/Skirk/v0.1.60/install.sh -o install-skirk.sh
+sh install-skirk.sh --version v0.1.60
 skirk version
 ```
 
@@ -36,7 +36,7 @@ On Linux with systemd, setup can install and start the exit service. Run `skirk 
 
 ## Connect a device
 
-1. On Android, install the [universal APK](https://github.com/ShahabSL/Skirk/releases/download/android-v0.1.59-3/skirk-android-universal.apk). It also runs on supported 32-bit ARM devices. To update, install it over the existing app to keep your profiles. On desktop, choose the package for your operating system and CPU. On an Apple silicon Mac choose arm64. On iOS, install a build to which you have access through Apple.
+1. On Android, install the [universal APK](https://github.com/ShahabSL/Skirk/releases/latest/download/skirk-android-universal.apk). It also runs on supported 32-bit ARM devices. To update, install it over the existing app to keep your profiles. On desktop, choose the package for your operating system and CPU. On an Apple silicon Mac choose arm64. On iOS, install a build to which you have access through Apple.
 2. Open the profile import screen. Scan the QR code on Android or iOS, open a QR image on desktop, or paste the entire line starting with `skirk:`. Save the profile.
 3. Select the profile and connect. Accept your operating system's VPN prompt when using VPN mode. In proxy mode, select the proxy in the application that will use it. Use the exit test to confirm that the profile reaches your exit.
 

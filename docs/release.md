@@ -28,6 +28,8 @@ The second command should print nothing.
 
 ## Version
 
+Use one patch version and GitHub release for a bug fix, including a fix specific to one platform. Set the Android version name to match the release and increment its version code above every previously distributed APK. The universal APK is the default Android download.
+
 Choose the release version explicitly:
 
 ```bash

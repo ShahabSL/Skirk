@@ -1,11 +1,11 @@
 # Changelog
 
-## Android 0.1.59 build 61 — 2026-11-22
+## v0.1.60 — 2026-11-22
 
-- Fix a startup crash on older 32-bit ARM Android devices. Install the
-  [updated APK](https://github.com/ShahabSL/Skirk/releases/tag/android-v0.1.59-3)
-  over the existing app to keep saved profiles. The same fix is included in
-  the universal APK. The exit needs no update.
+- Fix a startup crash on older 32-bit ARM Android devices. The universal APK
+  supports both 32-bit and 64-bit ARM. Install build 62 over either build of
+  0.1.59 to keep your profiles and continue using your existing exit.
+  [Download for Android](https://github.com/ShahabSL/Skirk/releases/download/v0.1.60/skirk-android-universal.apk)
 - The optional HTTP proxy finishes forwarding the final bytes of an upgraded
   connection when the two endpoints close their sending sides in either order.
 
